@@ -1,6 +1,7 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 
 from app.api.market import router as market_router
+from app.api.sources import router as sources_router
 
 
 app = FastAPI(
@@ -10,6 +11,7 @@ app = FastAPI(
 )
 
 app.include_router(market_router)
+app.include_router(sources_router)
 
 
 @app.get("/health")
