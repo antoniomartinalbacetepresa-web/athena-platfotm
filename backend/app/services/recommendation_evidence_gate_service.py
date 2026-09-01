@@ -10,6 +10,9 @@ from app.services.recommendation_fundamental_signal_service import (
 from app.services.recommendation_market_signal_service import (
     RecommendationMarketSignalService,
 )
+from app.services.recommendation_valuation_signal_service import (
+    RecommendationValuationSignalService,
+)
 
 
 class _DiagnosticService(Protocol):
@@ -33,6 +36,7 @@ class RecommendationEvidenceGate:
     blockers: tuple[str, ...]
     market: dict[str, Any]
     fundamentals: dict[str, Any]
+    valuation: dict[str, Any]
     production_eligible: bool
     reason: str
 
@@ -53,6 +57,7 @@ class RecommendationEvidenceGate:
             "blockers": list(self.blockers),
             "market": self.market,
             "fundamentals": self.fundamentals,
+            "valuation": self.valuation,
             "productionEligible": self.production_eligible,
             "reason": self.reason,
             "policy": {
@@ -61,7 +66,7 @@ class RecommendationEvidenceGate:
                 "sameInstrumentRequired": True,
                 "componentDiagnosticsMustRemainNonProductive": True,
                 "qualityThreshold": "not_assumed_until_empirically_calibrated",
-                "valuation": "required_before_recommendation_candidate",
+                "valuation": "pit_reported_annual_pe_required_for_initial_gate",
                 "calibration": "out_of_sample_validation_required",
             },
         }
@@ -75,6 +80,7 @@ class RecommendationEvidenceGateService:
         *,
         market_service: _DiagnosticService | None = None,
         fundamental_service: _DiagnosticService | None = None,
+        valuation_service: _DiagnosticService | None = None,
     ) -> None:
         self._market_service = (
             market_service
@@ -85,6 +91,11 @@ class RecommendationEvidenceGateService:
             fundamental_service
             if fundamental_service is not None
             else RecommendationFundamentalSignalService()
+        )
+        self._valuation_service = (
+            valuation_service
+            if valuation_service is not None
+            else RecommendationValuationSignalService()
         )
 
     def evaluate(
@@ -113,28 +124,46 @@ class RecommendationEvidenceGateService:
             expected_symbol=normalized_symbol,
             expected_as_of=as_of_utc,
         )
+        valuation_payload = self._safe_payload(
+            self._valuation_service.evaluate(
+                symbol=normalized_symbol,
+                as_of=as_of_utc,
+            ),
+            component_name="valuation",
+            expected_symbol=normalized_symbol,
+            expected_as_of=as_of_utc,
+        )
 
         market_ready = market_payload.get("status") == "diagnostic_ready"
         fundamental_ready = (
             fundamental_payload.get("status") == "diagnostic_ready"
             and self._float_at_least(fundamental_payload.get("coverageRatio"), 0.75)
         )
+        valuation_ready = (
+            valuation_payload.get("status") == "diagnostic_ready"
+            and self._positive_float(valuation_payload.get("reportedAnnualPe"))
+        )
 
         market_instrument_id = self._optional_int(market_payload.get("instrumentId"))
         fundamental_instrument_id = self._optional_int(
             fundamental_payload.get("instrumentId")
         )
+        valuation_instrument_id = self._optional_int(
+            valuation_payload.get("instrumentId")
+        )
         identity_consistent = self._identity_consistent(
             market_instrument_id,
             fundamental_instrument_id,
+            valuation_instrument_id,
         )
         instrument_id = market_instrument_id if identity_consistent else None
 
         provenance_contract_ready = self._provenance_contract_ready(
             market_payload=market_payload,
             fundamental_payload=fundamental_payload,
+            valuation_payload=valuation_payload,
+            valuation_ready=valuation_ready,
         )
-        valuation_ready = False
         calibration_ready = False
         core_evidence_ready = (
             market_ready
@@ -165,17 +194,25 @@ class RecommendationEvidenceGateService:
                 "El evidence gate no puede habilitar candidatos todavía."
             )
 
-        status = "core_evidence_ready" if core_evidence_ready else "evidence_incomplete"
-        reason = (
-            "La evidencia técnica/riesgo y fundamental supera el gate básico, "
-            "pero ATHENA mantiene bloqueada cualquier recomendación hasta cerrar "
-            "valoración y calibración fuera de muestra."
-            if core_evidence_ready
-            else (
+        if core_evidence_ready and valuation_ready:
+            status = "evidence_ready_for_calibration"
+            reason = (
+                "Mercado, fundamentales, identidad, procedencia y la valoración PIT "
+                "inicial superan el gate de evidencia. ATHENA mantiene bloqueado el "
+                "consejo hasta validar la combinación fuera de muestra."
+            )
+        elif core_evidence_ready:
+            status = "core_evidence_ready"
+            reason = (
+                "La evidencia técnica/riesgo y fundamental supera el gate básico, "
+                "pero la valoración PIT aún no está lista y no se genera consejo."
+            )
+        else:
+            status = "evidence_incomplete"
+            reason = (
                 "La evidencia disponible no supera todavía el gate básico de ATHENA; "
                 "los bloqueos se exponen explícitamente y no se genera consejo."
             )
-        )
 
         return RecommendationEvidenceGate(
             status=status,
@@ -193,6 +230,7 @@ class RecommendationEvidenceGateService:
             blockers=tuple(blockers),
             market=market_payload,
             fundamentals=fundamental_payload,
+            valuation=valuation_payload,
             production_eligible=False,
             reason=reason,
         )
@@ -235,6 +273,8 @@ class RecommendationEvidenceGateService:
         *,
         market_payload: dict[str, Any],
         fundamental_payload: dict[str, Any],
+        valuation_payload: dict[str, Any],
+        valuation_ready: bool,
     ) -> bool:
         market_sources = market_payload.get("sourceProviders")
         fundamental_facts = fundamental_payload.get("facts")
@@ -253,20 +293,43 @@ class RecommendationEvidenceGateService:
                 for item in fundamental_facts
             )
         )
-        return has_market_sources and has_fundamental_provenance
+        if not valuation_ready:
+            return has_market_sources and has_fundamental_provenance
+        valuation_fact = valuation_payload.get("annualDilutedEps")
+        has_valuation_provenance = (
+            isinstance(valuation_fact, dict)
+            and bool(str(valuation_fact.get("metric") or "").strip())
+            and bool(str(valuation_fact.get("availableAt") or "").strip())
+            and str(valuation_fact.get("sourceVersion") or "").upper().startswith("10-K|")
+        )
+        valuation_sources = valuation_payload.get("marketSourceProviders")
+        has_valuation_market_sources = (
+            isinstance(valuation_sources, list)
+            and bool(valuation_sources)
+            and all(str(item).strip() for item in valuation_sources)
+        )
+        return (
+            has_market_sources
+            and has_fundamental_provenance
+            and has_valuation_provenance
+            and has_valuation_market_sources
+        )
 
-    def _identity_consistent(
-        self,
-        market_instrument_id: int | None,
-        fundamental_instrument_id: int | None,
-    ) -> bool:
-        if market_instrument_id is None or fundamental_instrument_id is None:
+    def _identity_consistent(self, *instrument_ids: int | None) -> bool:
+        if any(value is None for value in instrument_ids):
             return False
-        return market_instrument_id == fundamental_instrument_id
+        resolved = {int(value) for value in instrument_ids if value is not None}
+        return len(resolved) == 1
 
     def _float_at_least(self, value: object, threshold: float) -> bool:
         try:
             return float(value) >= threshold
+        except (TypeError, ValueError):
+            return False
+
+    def _positive_float(self, value: object) -> bool:
+        try:
+            return float(value) > 0
         except (TypeError, ValueError):
             return False
 
