@@ -3,7 +3,7 @@ from app.services.persisted_market_universe_service import (
 )
 
 
-def test_weighting_status_describes_uncanonicalized_listing_market_cap() -> None:
+def test_weighting_status_describes_canonical_issuer_calibration() -> None:
     report = MarketUniverseQualityReport(
         active_count=100,
         market_cap_ready_count=90,
@@ -21,5 +21,16 @@ def test_weighting_status_describes_uncanonicalized_listing_market_cap() -> None
     api = report.to_api_dict()
 
     assert api["isWeightingReady"] is False
-    assert api["weightingMethod"] == "raw_listing_market_cap_uncanonicalized"
-    assert api["weightingStatus"] == "issuer_resolution_required"
+    assert api["weightingMethod"] == (
+        "canonical_issuer_market_cap_pending_validation"
+    )
+    assert api["weightingStatus"] == (
+        "issuer_identity_and_domicile_calibration_required"
+    )
+    assert api["issuerIdentityReadiness"] == {
+        "listingCoverage": 0.0,
+        "marketCapCoverage": 0.0,
+        "domicileMarketCapCoverage": 0.0,
+        "canonicalIssuerCount": 0,
+        "ready": False,
+    }
