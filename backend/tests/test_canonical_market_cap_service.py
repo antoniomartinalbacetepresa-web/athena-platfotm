@@ -86,6 +86,13 @@ def test_canonical_market_cap_counts_same_issuer_once_with_median(tmp_path: Path
     assert report.region_weights == pytest.approx(
         {"america": 1.0, "europe": 0.0, "asia": 0.0}
     )
+    assert report.multi_listing_issuer_count == 1
+    assert report.cross_listing_ratio_observation_count == 1
+    assert report.median_cross_listing_market_cap_ratio == pytest.approx(2000.0 / 490.0)
+    assert report.max_cross_listing_market_cap_ratio == pytest.approx(2000.0 / 490.0)
+    consistency = report.to_api_dict()["crossListingMarketCapConsistency"]
+    assert consistency["multiListingIssuerCount"] == 1
+    assert consistency["ratioObservationCount"] == 1
 
 
 def test_canonical_market_cap_keeps_unresolved_domicile_out_of_region_weights(
@@ -148,4 +155,8 @@ def test_canonical_market_cap_keeps_unresolved_domicile_out_of_region_weights(
     assert report.region_market_cap_usd == pytest.approx(
         {"america": 300.0, "europe": 0.0, "asia": 0.0}
     )
+    assert report.multi_listing_issuer_count == 0
+    assert report.cross_listing_ratio_observation_count == 0
+    assert report.median_cross_listing_market_cap_ratio is None
+    assert report.max_cross_listing_market_cap_ratio is None
     assert report.to_api_dict()["readyForRegionalWeighting"] is False

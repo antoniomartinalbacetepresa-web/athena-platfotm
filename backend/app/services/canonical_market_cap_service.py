@@ -21,6 +21,10 @@ class CanonicalMarketCapReport:
     domicile_unresolved_market_cap_usd: float
     region_market_cap_usd: dict[str, float]
     region_weights: dict[str, float]
+    multi_listing_issuer_count: int
+    cross_listing_ratio_observation_count: int
+    median_cross_listing_market_cap_ratio: float | None
+    max_cross_listing_market_cap_ratio: float | None
 
     @property
     def domicile_market_cap_coverage(self) -> float:
@@ -45,6 +49,16 @@ class CanonicalMarketCapReport:
             "regionMarketCapUsd": dict(self.region_market_cap_usd),
             "regionWeights": dict(self.region_weights),
             "weightsScope": "canonical_issuers_with_resolved_domicile_only",
+            "crossListingMarketCapConsistency": {
+                "multiListingIssuerCount": self.multi_listing_issuer_count,
+                "ratioObservationCount": self.cross_listing_ratio_observation_count,
+                "medianMaxToMinRatio": self.median_cross_listing_market_cap_ratio,
+                "maxMaxToMinRatio": self.max_cross_listing_market_cap_ratio,
+                "interpretation": (
+                    "Ratios alejados de 1 indican discrepancias entre capitalizaciones "
+                    "atribuidas al mismo emisor; son diagnóstico y no habilitan pesos."
+                ),
+            },
             "excludedKnownNonEquityTypes": ["etf", "fund"],
             "readyForRegionalWeighting": False,
         }
@@ -106,10 +120,21 @@ class CanonicalMarketCapService:
         resolved_count = 0
         unresolved_count = 0
         region_caps = {region: 0.0 for region in self._REGIONS}
+        cross_listing_ratios: list[float] = []
+        multi_listing_issuer_count = 0
 
         for group in groups.values():
-            issuer_cap = float(median(group["caps"]))
+            caps = [float(value) for value in group["caps"]]
+            issuer_cap = float(median(caps))
             canonical_total += issuer_cap
+
+            if len(caps) > 1:
+                multi_listing_issuer_count += 1
+                minimum_cap = min(caps)
+                maximum_cap = max(caps)
+                if minimum_cap > 0:
+                    cross_listing_ratios.append(maximum_cap / minimum_cap)
+
             region = str(group.get("region_key") or "").strip().lower()
             country = str(group.get("domicile_country") or "").strip()
 
@@ -135,6 +160,16 @@ class CanonicalMarketCapService:
             domicile_unresolved_market_cap_usd=unresolved_total,
             region_market_cap_usd=region_caps,
             region_weights=region_weights,
+            multi_listing_issuer_count=multi_listing_issuer_count,
+            cross_listing_ratio_observation_count=len(cross_listing_ratios),
+            median_cross_listing_market_cap_ratio=(
+                float(median(cross_listing_ratios))
+                if cross_listing_ratios
+                else None
+            ),
+            max_cross_listing_market_cap_ratio=(
+                max(cross_listing_ratios) if cross_listing_ratios else None
+            ),
         )
 
     def _weights_from_caps(self, caps: dict[str, float]) -> dict[str, float]:
