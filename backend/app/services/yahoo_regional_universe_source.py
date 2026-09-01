@@ -13,13 +13,17 @@ class YahooRegionalUniverseSource:
     source_id = "yahoo_regional_screener"
 
     DEFAULT_REGIONS = (
+        # United States is included here because the weighted universe needs
+        # market capitalization; Nasdaq Trader remains a catalog/identity
+        # source and does not provide market cap by itself.
+        "us",
         # Europe
         "gb", "de", "fr", "ch", "nl", "se", "it", "es", "dk", "no",
         "fi", "be", "at", "ie", "pt", "pl",
         # Asia
         "jp", "cn", "hk", "kr", "in", "tw", "sg", "id", "my", "th",
         "ph", "vn",
-        # Americas outside the US official Nasdaq feed
+        # Americas outside the US
         "ca", "mx", "br", "ar", "cl", "co", "pe",
     )
 
@@ -58,11 +62,15 @@ class YahooRegionalUniverseSource:
         "sg": "Singapore",
         "th": "Thailand",
         "tw": "Taiwan",
+        "us": "United States",
         "vn": "Vietnam",
     }
 
     _ATHENA_REGION = {
-        **{code: "america" for code in ("ar", "br", "ca", "cl", "co", "mx", "pe")},
+        **{
+            code: "america"
+            for code in ("ar", "br", "ca", "cl", "co", "mx", "pe", "us")
+        },
         **{
             code: "europe"
             for code in (
