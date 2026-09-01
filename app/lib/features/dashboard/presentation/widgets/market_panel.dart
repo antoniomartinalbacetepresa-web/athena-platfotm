@@ -133,7 +133,20 @@ class _MarketPanelState extends State<MarketPanel> {
           ),
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
+
+        const Text(
+          'COBERTURA PILOTO · DIRECCIÓN POR BENCHMARKS · PESOS SOBRE UNIVERSO SEMILLA',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: AthenaColors.textSecondary,
+            fontSize: 8,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+
+        const SizedBox(height: 10),
 
         _regionalRow(
           context: globalContext.america,
@@ -200,7 +213,7 @@ class _MarketPanelState extends State<MarketPanel> {
           children: [
             Expanded(
               child: _secondaryMetric(
-                label: 'ACTIVOS',
+                label: 'BENCHMARKS',
                 value:
                     _totalAssets(globalContext).toString(),
               ),
