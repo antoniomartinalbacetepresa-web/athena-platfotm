@@ -69,20 +69,23 @@ def _console_progress(event: dict[str, Any]) -> None:
     received = event.get("received")
     total = event.get("total")
     accumulated = event.get("accumulated")
+    new_symbols = event.get("newSymbols")
     status = str(event.get("status") or "")
 
     total_label = "?" if total is None else str(total)
+    new_symbols_label = "?" if new_symbols is None else str(new_symbols)
     status_label = {
         "page_completed": "OK",
         "completed": "FIN",
         "repeated_page": "PAGINA REPETIDA; SE DETIENE",
+        "no_new_symbols": "SIN SIMBOLOS NUEVOS; SE DETIENE",
         "safety_limit": "LIMITE DE SEGURIDAD; SE DETIENE",
     }.get(status, status.upper())
 
     print(
         f"[Yahoo {region}] {country} | página {page} | "
-        f"recibidos {received} | total {total_label} | "
-        f"acumulados {accumulated} | {status_label}",
+        f"recibidos {received} | nuevos {new_symbols_label} | "
+        f"total {total_label} | acumulados {accumulated} | {status_label}",
         flush=True,
     )
 
