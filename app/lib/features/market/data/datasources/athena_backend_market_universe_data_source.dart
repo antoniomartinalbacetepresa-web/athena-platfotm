@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../../models/market_instrument_type.dart';
 import '../../models/market_universe_asset.dart';
+import '../../models/market_universe_status.dart';
 
 /// Fuente de datos del universo global proporcionado por el backend
 /// de ATHENA TYCHE.
@@ -13,7 +14,7 @@ import '../../models/market_universe_asset.dart';
 ///
 /// El backend es responsable de recopilar, normalizar y combinar las
 /// distintas fuentes disponibles. Esta clase únicamente transforma el
-/// contrato HTTP normalizado en objetos [MarketUniverseAsset].
+/// contrato HTTP normalizado en objetos de dominio de mercado.
 class AthenaBackendMarketUniverseDataSource {
   final String baseUrl;
   final http.Client client;
@@ -35,7 +36,7 @@ class AthenaBackendMarketUniverseDataSource {
 
     final response = await client.get(uri);
 
-    _validateResponse(response);
+    _validateResponse(response, resourceLabel: 'el universo de mercado');
 
     final decoded = _decodeObject(response.body);
 
@@ -69,6 +70,50 @@ class AthenaBackendMarketUniverseDataSource {
     }
 
     return assetsByListing.values.toList(growable: false);
+  }
+
+  /// Obtiene el estado de calidad del universo persistido del backend.
+  Future<MarketUniverseStatus> getStatus() async {
+    final uri = Uri.parse('$baseUrl/api/v1/market/universe/status');
+
+    final response = await client.get(uri);
+
+    _validateResponse(
+      response,
+      resourceLabel: 'el estado del universo de mercado',
+    );
+
+    final decoded = _decodeObject(response.body);
+    final data = decoded['data'];
+
+    if (data is! Map) {
+      throw const FormatException(
+        'La respuesta del estado del universo del backend '
+        'no contiene un objeto válido.',
+      );
+    }
+
+    final status = Map<String, dynamic>.from(data);
+    final regionCountsRaw = status['regionCounts'];
+    final regionCounts = <String, int>{};
+
+    if (regionCountsRaw is Map) {
+      for (final entry in regionCountsRaw.entries) {
+        final value = _int(entry.value);
+        if (value != null) {
+          regionCounts[entry.key.toString()] = value;
+        }
+      }
+    }
+
+    return MarketUniverseStatus(
+      activeCount: _int(status['activeCount']) ?? 0,
+      globallyUsableCount: _int(status['globallyUsableCount']) ?? 0,
+      usableCoverage: _double(status['usableCoverage']) ?? 0,
+      regionCounts: regionCounts,
+      isGlobalReady: _bool(status['isGlobalReady']) ?? false,
+      usingFallback: _bool(status['usingFallback']) ?? true,
+    );
   }
 
   MarketUniverseAsset? _mapAsset(Map<String, dynamic> json) {
@@ -159,6 +204,22 @@ class AthenaBackendMarketUniverseDataSource {
     return null;
   }
 
+  int? _int(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    if (value is String) {
+      return int.tryParse(value.trim());
+    }
+
+    return null;
+  }
+
   double? _double(dynamic value) {
     if (value is num) {
       return value.toDouble();
@@ -185,12 +246,15 @@ class AthenaBackendMarketUniverseDataSource {
     return normalized;
   }
 
-  void _validateResponse(http.Response response) {
+  void _validateResponse(
+    http.Response response, {
+    required String resourceLabel,
+  }) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'El backend de ATHENA TYCHE respondió '
         'con código HTTP ${response.statusCode} '
-        'al obtener el universo de mercado.',
+        'al obtener $resourceLabel.',
       );
     }
   }
