@@ -37,15 +37,15 @@ class MarketUniverseQualityReport:
 
     @property
     def is_weighting_ready(self) -> bool:
-        # El universo persistido actual se descubre con una cuota fija de
-        # resultados por país (top-N por capitalización). Esa estrategia es
-        # válida para construir catálogo y cobertura, pero no para inferir
-        # directamente el peso bursátil relativo de continentes: regiones con
-        # más países configurados quedarían sobrerrepresentadas.
+        # El catálogo puede ser amplio y tener market cap real, pero Yahoo
+        # devuelve múltiples listados del mismo emisor. Sumar cada listing
+        # volvería a contar varias veces la capitalización completa de la misma
+        # empresa y distorsionaría especialmente regiones con muchas
+        # cotizaciones secundarias internacionales.
         #
-        # Se mantendrá False hasta sustituir esta selección por una metodología
-        # comparable entre regiones (por ejemplo, umbral global uniforme o
-        # cobertura acumulada de capitalización suficientemente completa).
+        # Se mantendrá False hasta que la cobertura de identidad de emisor y la
+        # selección de listado principal sean suficientemente completas y los
+        # agregados resultantes hayan sido validados contra referencias externas.
         return False
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -65,8 +65,8 @@ class MarketUniverseQualityReport:
             "isGlobalReady": self.is_global_ready,
             "usingFallback": self.using_fallback,
             "isWeightingReady": self.is_weighting_ready,
-            "weightingMethod": "country_top_n_market_cap",
-            "weightingStatus": "calibration_required",
+            "weightingMethod": "raw_listing_market_cap_uncanonicalized",
+            "weightingStatus": "issuer_resolution_required",
         }
 
 
@@ -131,10 +131,7 @@ class PersistedMarketUniverseService:
         market_cap_ready_count = 0
         country_ready_count = 0
         globally_usable_count = 0
-        region_counts = {
-            region: 0
-            for region in self._REGION_ORDER
-        }
+        region_counts = {region: 0 for region in self._REGION_ORDER}
 
         for row in rows:
             market_cap = row.get("market_cap_usd")
