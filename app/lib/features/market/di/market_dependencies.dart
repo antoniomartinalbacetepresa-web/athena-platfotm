@@ -113,6 +113,7 @@ class MarketDependencies {
       globalMarketContextService: globalMarketContextService,
       marketUniverseRepository: marketUniverseRepository,
       regionalMarketWeightService: regionalMarketWeightService,
+      marketUniverseStatusProvider: backendUniverseDataSource,
     );
 
     return MarketDependencies(
