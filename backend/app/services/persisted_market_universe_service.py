@@ -45,8 +45,12 @@ class PersistedMarketUniverseService:
         for row in rows:
             market_cap = row.get("market_cap_usd")
             region_key = str(row.get("region_key") or "").strip().lower()
+            country = str(row.get("country") or "").strip()
 
             if not isinstance(market_cap, (int, float)) or market_cap <= 0:
+                continue
+
+            if not country:
                 continue
 
             if region_key in self._REQUIRED_REGIONS:
