@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.recommendation_fundamental_signal_service import (
+    RecommendationFundamentalSignalService,
+)
 from app.services.recommendation_learning_status_service import (
     RecommendationLearningStatusService,
 )
@@ -19,6 +22,7 @@ router = APIRouter(
 
 learning_status_service = RecommendationLearningStatusService()
 market_signal_service = RecommendationMarketSignalService()
+fundamental_signal_service = RecommendationFundamentalSignalService()
 
 
 def _effective_as_of(as_of: datetime | None) -> datetime:
@@ -29,6 +33,34 @@ def _effective_as_of(as_of: datetime | None) -> datetime:
             detail="as_of debe incluir zona horaria.",
         )
     return value
+
+
+def _diagnostic_payload_or_fail(
+    diagnostic: object,
+    *,
+    diagnostic_name: str,
+) -> dict[str, object]:
+    to_api_dict = getattr(diagnostic, "to_api_dict", None)
+    if not callable(to_api_dict):
+        raise HTTPException(
+            status_code=500,
+            detail=f"El diagnóstico {diagnostic_name} no respeta el contrato de ATHENA.",
+        )
+    payload = to_api_dict()
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=500,
+            detail=f"El diagnóstico {diagnostic_name} devolvió un contrato inválido.",
+        )
+    if payload.get("productionEligible") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"El diagnóstico {diagnostic_name} violó la política de seguridad: "
+                "no puede ser productivo antes de la calibración completa."
+            ),
+        )
+    return payload
 
 
 @router.get("/diagnostics/market-signal")
@@ -65,16 +97,54 @@ def get_market_signal_diagnostic(
             detail="No se pudo construir el diagnóstico de mercado de ATHENA.",
         ) from exc
 
-    payload = diagnostic.to_api_dict()
-    if payload.get("productionEligible") is not False:
+    payload = _diagnostic_payload_or_fail(
+        diagnostic,
+        diagnostic_name="de mercado",
+    )
+    return {
+        "data": payload,
+        "advisoryStatus": "diagnostic_only",
+    }
+
+
+@router.get("/diagnostics/fundamentals")
+def get_fundamental_diagnostic(
+    symbol: str = Query(
+        ...,
+        min_length=1,
+        description="Símbolo del instrumento que se desea diagnosticar.",
+    ),
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Instante de corte point-in-time. Si se omite se usa la hora UTC actual."
+        ),
+    ),
+) -> dict[str, object]:
+    """Return transparent PIT fundamental evidence without issuing advice."""
+
+    effective_as_of = _effective_as_of(as_of)
+
+    try:
+        diagnostic = fundamental_signal_service.evaluate(
+            symbol=symbol,
+            as_of=effective_as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=(
-                "El diagnóstico de mercado violó la política de seguridad: "
-                "no puede ser productivo antes de la calibración completa."
-            ),
-        )
+            detail="No se pudo construir el diagnóstico fundamental de ATHENA.",
+        ) from exc
 
+    payload = _diagnostic_payload_or_fail(
+        diagnostic,
+        diagnostic_name="fundamental",
+    )
     return {
         "data": payload,
         "advisoryStatus": "diagnostic_only",
