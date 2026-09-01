@@ -18,6 +18,7 @@ def _report(
     regions: dict[str, float] | None = None,
     external_validation_passed: bool = True,
     ambiguous_listing_count: int = 0,
+    no_domestic_listing_count: int = 0,
     canonical_listing_cap_count: int = 4500,
     median_fallback_cap_count: int = 500,
 ) -> MarketWeightingReadinessReport:
@@ -38,6 +39,7 @@ def _report(
             "independent_reference" if external_validation_passed else None
         ),
         canonical_listing_ambiguous_issuer_count=ambiguous_listing_count,
+        canonical_listing_no_domestic_issuer_count=no_domestic_listing_count,
         canonical_listing_market_cap_count=canonical_listing_cap_count,
         median_fallback_market_cap_count=median_fallback_cap_count,
     )
@@ -57,6 +59,7 @@ def test_weighting_readiness_requires_all_evidence() -> None:
         "medianFallbackCount": 500,
         "fallbackIsDiagnosticOnly": True,
     }
+    assert api["canonicalListingValidation"]["domesticListingCoverageComplete"] is True
 
 
 def test_weighting_readiness_keeps_external_validation_as_hard_gate() -> None:
@@ -89,10 +92,19 @@ def test_weighting_readiness_blocks_ambiguous_canonical_listings() -> None:
 
     assert report.ready is False
     assert report.blockers == ("ambiguous_canonical_listings_require_resolution",)
-    assert report.to_api_dict()["canonicalListingValidation"] == {
-        "ambiguousIssuerCount": 2,
-        "ambiguityResolved": False,
-    }
+    validation = report.to_api_dict()["canonicalListingValidation"]
+    assert validation["ambiguousIssuerCount"] == 2
+    assert validation["ambiguityResolved"] is False
+
+
+def test_weighting_readiness_blocks_missing_domestic_canonical_listing() -> None:
+    report = _report(no_domestic_listing_count=3)
+
+    assert report.ready is False
+    assert report.blockers == ("canonical_domestic_listings_required",)
+    validation = report.to_api_dict()["canonicalListingValidation"]
+    assert validation["noDomesticListingIssuerCount"] == 3
+    assert validation["domesticListingCoverageComplete"] is False
 
 
 def test_weighting_readiness_reports_each_structural_blocker() -> None:

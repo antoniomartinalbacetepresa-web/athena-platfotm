@@ -21,6 +21,7 @@ class MarketWeightingReadinessReport:
     external_validation_passed: bool
     external_validation_reference: str | None
     canonical_listing_ambiguous_issuer_count: int = 0
+    canonical_listing_no_domestic_issuer_count: int = 0
     canonical_listing_market_cap_count: int = 0
     median_fallback_market_cap_count: int = 0
 
@@ -50,6 +51,8 @@ class MarketWeightingReadinessReport:
             blockers.append("required_regions_not_represented")
         if self.canonical_listing_ambiguous_issuer_count > 0:
             blockers.append("ambiguous_canonical_listings_require_resolution")
+        if self.canonical_listing_no_domestic_issuer_count > 0:
+            blockers.append("canonical_domestic_listings_required")
         if not self.external_validation_evidence_complete:
             blockers.append("external_market_cap_validation_required")
         return tuple(blockers)
@@ -69,7 +72,9 @@ class MarketWeightingReadinessReport:
             "allRegionsRepresented": self.all_regions_represented,
             "canonicalListingValidation": {
                 "ambiguousIssuerCount": self.canonical_listing_ambiguous_issuer_count,
+                "noDomesticListingIssuerCount": self.canonical_listing_no_domestic_issuer_count,
                 "ambiguityResolved": self.canonical_listing_ambiguous_issuer_count == 0,
+                "domesticListingCoverageComplete": self.canonical_listing_no_domestic_issuer_count == 0,
             },
             "canonicalMarketCapDiagnostics": {
                 "canonicalListingCount": self.canonical_listing_market_cap_count,
@@ -142,6 +147,7 @@ class MarketWeightingReadinessService:
             external_validation_passed=self._external_validation_passed,
             external_validation_reference=self._external_validation_reference,
             canonical_listing_ambiguous_issuer_count=canonical_listings.ambiguous_issuer_count,
+            canonical_listing_no_domestic_issuer_count=canonical_listings.no_domestic_listing_count,
             canonical_listing_market_cap_count=canonical.canonical_listing_market_cap_count,
             median_fallback_market_cap_count=canonical.median_fallback_market_cap_count,
         )
