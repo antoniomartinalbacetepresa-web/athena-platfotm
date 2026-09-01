@@ -69,6 +69,15 @@ def _normalize_regions(value: str) -> tuple[str, ...]:
     return regions
 
 
+def _build_capitalization_profile(database_path: Path | None) -> dict[str, object]:
+    database = AthenaDatabase(database_path)
+    return (
+        MarketCapCoverageService(database=database)
+        .get_report()
+        .to_api_dict()
+    )
+
+
 def run_refresh(
     *,
     database_path: Path | None = None,
@@ -76,6 +85,9 @@ def run_refresh(
     page_size: int = DEFAULT_PAGE_SIZE,
     max_pages: int | None = DEFAULT_MAX_PAGES_PER_REGION,
     importer: Callable[..., dict[str, object]] = run_import,
+    profile_builder: Callable[[Path | None], dict[str, object]] = (
+        _build_capitalization_profile
+    ),
 ) -> dict[str, object]:
     selected_regions = regions or YahooRegionalUniverseSource.DEFAULT_REGIONS
 
@@ -92,12 +104,7 @@ def run_refresh(
             "El refresco no devolvió un informe de calidad del catálogo."
         )
 
-    database = AthenaDatabase(database_path)
-    capitalization_profile = (
-        MarketCapCoverageService(database=database)
-        .get_report()
-        .to_api_dict()
-    )
+    capitalization_profile = profile_builder(database_path)
 
     return {
         "status": "ready" if quality.get("isGlobalReady") else "fallback",
