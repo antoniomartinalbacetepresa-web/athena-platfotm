@@ -210,7 +210,8 @@ def test_market_cap_report_quantifies_probable_duplicate_issuers_without_inventi
     )
 
     group = report.heuristic_top_duplicate_groups[0]
-    assert group["companyName"].strip().lower() == "nvidia corporation"
+    normalized_group_name = " ".join(group["companyName"].casefold().split())
+    assert normalized_group_name == "nvidia corporation"
     assert group["listingCount"] == 3
     assert group["representativeMarketCapUsd"] == pytest.approx(495.0)
     assert group["representativeMethod"] == "median_cross_listing_market_cap"
