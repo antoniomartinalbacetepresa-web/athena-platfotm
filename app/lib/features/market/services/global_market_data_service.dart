@@ -1,12 +1,17 @@
 import '../models/global_market_context.dart';
 import '../models/market_region.dart';
 import '../models/market_universe_asset.dart';
+import '../models/market_universe_status.dart';
 import '../models/regional_market_context.dart';
 import '../models/regional_market_weights.dart';
 import '../repositories/market_universe_repository.dart';
 import 'global_market_context_service.dart';
 import 'regional_market_context_service.dart';
 import 'regional_market_weight_service.dart';
+
+abstract class MarketUniverseStatusProvider {
+  Future<MarketUniverseStatus> getStatus();
+}
 
 /// Orquesta la construcción del contexto global de mercado.
 ///
@@ -25,8 +30,9 @@ import 'regional_market_weight_service.dart';
 /// Cuando todavía no existe suficiente información de capitalización,
 /// ATHENA TYCHE utiliza un baseline estructural provisional.
 ///
-/// El origen de los pesos queda registrado en [GlobalMarketContext]
-/// para no confundir una estimación provisional con un cálculo observado.
+/// El origen de los pesos y el estado del universo quedan registrados en
+/// [GlobalMarketContext] para no confundir una estimación provisional con un
+/// cálculo respaldado por el universo persistido real.
 ///
 /// Este servicio no contiene lógica de inversión ni recomendaciones.
 class GlobalMarketDataService {
@@ -34,23 +40,17 @@ class GlobalMarketDataService {
   final GlobalMarketContextService globalMarketContextService;
   final MarketUniverseRepository marketUniverseRepository;
   final RegionalMarketWeightService regionalMarketWeightService;
+  final MarketUniverseStatusProvider? marketUniverseStatusProvider;
 
   const GlobalMarketDataService({
     required this.regionalMarketContextService,
     required this.globalMarketContextService,
     required this.marketUniverseRepository,
     required this.regionalMarketWeightService,
+    this.marketUniverseStatusProvider,
   });
 
   /// Construye el contexto global actual del mercado.
-  ///
-  /// Obtiene en paralelo:
-  /// - el comportamiento de América, Europa y Asia;
-  /// - el universo de activos utilizado para intentar calcular
-  ///   los pesos regionales.
-  ///
-  /// Si el universo todavía no contiene capitalizaciones suficientes,
-  /// utiliza temporalmente [RegionalMarketWeights.baseline].
   Future<GlobalMarketContext> getGlobalContext() async {
     const regions = [
       MarketRegion.america,
@@ -60,47 +60,40 @@ class GlobalMarketDataService {
 
     final regionalContextsFuture = Future.wait(
       regions.map(
-        (region) =>
-            regionalMarketContextService.getRegionalContext(
+        (region) => regionalMarketContextService.getRegionalContext(
           region: region,
         ),
       ),
     );
 
-    final universeFuture =
-        marketUniverseRepository.getUniverse();
+    final universeFuture = marketUniverseRepository.getUniverse();
+    final universeStatusFuture = marketUniverseStatusProvider?.getStatus();
 
     final regionalContexts = await regionalContextsFuture;
     final universe = await universeFuture;
+    final universeStatus = universeStatusFuture == null
+        ? const MarketUniverseStatus.fallback()
+        : await universeStatusFuture;
 
     final contextsByRegion = <String, RegionalMarketContext>{
-      for (final context in regionalContexts)
-        context.region: context,
+      for (final context in regionalContexts) context.region: context,
     };
 
-    final america =
-        contextsByRegion[MarketRegion.america.key];
+    final america = contextsByRegion[MarketRegion.america.key];
+    final europe = contextsByRegion[MarketRegion.europe.key];
+    final asia = contextsByRegion[MarketRegion.asia.key];
 
-    final europe =
-        contextsByRegion[MarketRegion.europe.key];
-
-    final asia =
-        contextsByRegion[MarketRegion.asia.key];
-
-    if (america == null ||
-        europe == null ||
-        asia == null) {
+    if (america == null || europe == null || asia == null) {
       throw StateError(
         'No se pudieron construir todos los contextos regionales.',
       );
     }
 
-    final regionalWeights =
-        _resolveRegionalWeights(universe);
+    final regionalWeights = _resolveRegionalWeights(universe);
 
     _validateRegionalWeights(regionalWeights);
 
-    return globalMarketContextService.build(
+    final baseContext = globalMarketContextService.build(
       america: america,
       europe: europe,
       asia: asia,
@@ -110,37 +103,41 @@ class GlobalMarketDataService {
       weightSource: regionalWeights.source,
       weightConfidence: regionalWeights.confidence,
     );
+
+    return GlobalMarketContext(
+      updatedAt: baseContext.updatedAt,
+      america: baseContext.america,
+      europe: baseContext.europe,
+      asia: baseContext.asia,
+      americaWeight: baseContext.americaWeight,
+      europeWeight: baseContext.europeWeight,
+      asiaWeight: baseContext.asiaWeight,
+      weightSource: baseContext.weightSource,
+      weightConfidence: baseContext.weightConfidence,
+      marketUniverseStatus: universeStatus,
+      advancingPercentage: baseContext.advancingPercentage,
+      decliningPercentage: baseContext.decliningPercentage,
+      sentiment: baseContext.sentiment,
+      summary: baseContext.summary,
+    );
   }
 
-  /// Intenta obtener pesos calculados utilizando el universo disponible.
-  ///
-  /// Si todavía no existe capitalización válida suficiente para efectuar
-  /// el cálculo, utiliza el baseline estructural.
-  ///
-  /// No se capturan indiscriminadamente todas las excepciones:
-  /// únicamente se utiliza el fallback ante [StateError].
-  ///
-  /// Otros errores continúan propagándose para evitar ocultar fallos reales.
   RegionalMarketWeights _resolveRegionalWeights(
     List<MarketUniverseAsset> universe,
   ) {
     try {
-      return regionalMarketWeightService.calculate(
-        universe,
-      );
+      return regionalMarketWeightService.calculate(universe);
     } on StateError {
       return RegionalMarketWeights.baseline;
     }
   }
 
-  /// Verifica que los pesos utilizados formen una distribución válida.
   void _validateRegionalWeights(
     RegionalMarketWeights weights,
   ) {
     if (!weights.isValid) {
       throw StateError(
-        'Los pesos regionales no forman '
-        'una distribución válida.',
+        'Los pesos regionales no forman una distribución válida.',
       );
     }
   }
