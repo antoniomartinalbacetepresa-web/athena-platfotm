@@ -50,12 +50,14 @@ class RecommendationOutcomeEvaluationReport:
             "evaluated": [dict(item) for item in self.evaluated],
             "pricePolicy": "raw_close_first_adjusted_close_fallback",
             "temporalWindowPolicy": "entry_before_due_exit_not_after_as_of",
+            "knowledgePolicy": "retrieved_at_not_after_evaluation_as_of",
+            "duplicateObservationPolicy": "latest_retrieved_at_before_as_of",
             "benchmarkStatus": "evaluated_when_explicit_frozen_benchmark_is_resolvable",
         }
 
 
 class RecommendationOutcomeEvaluationService:
-    """Evaluates due recommendations from persisted point-in-time prices only."""
+    """Evaluates due recommendations from persisted PIT prices without backfill leakage."""
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -103,6 +105,7 @@ class RecommendationOutcomeEvaluationService:
                 instrument_id=int(instrument_id),
                 at_or_after=generated_at,
                 not_after=due_at,
+                knowledge_cutoff=as_of_utc,
             )
             if entry is None:
                 missing_entry += 1
@@ -112,6 +115,7 @@ class RecommendationOutcomeEvaluationService:
                 instrument_id=int(instrument_id),
                 at_or_after=due_at,
                 not_after=as_of_utc,
+                knowledge_cutoff=as_of_utc,
             )
             if exit_observation is None:
                 missing_exit += 1
@@ -134,6 +138,7 @@ class RecommendationOutcomeEvaluationService:
                 instrument_id=int(instrument_id),
                 start_at=entry_time,
                 end_at=exit_time,
+                knowledge_cutoff=as_of_utc,
                 entry_price=entry_price,
             )
             benchmark = self._benchmark.calculate(
@@ -157,6 +162,7 @@ class RecommendationOutcomeEvaluationService:
                 source_provider=source_provider,
                 benchmark_return=benchmark_return,
                 max_drawdown=max_drawdown,
+                source_timestamp=datetime.fromisoformat(exit_observation["retrieved_at"]),
             )
             realized_return = (exit_price / entry_price) - 1.0
             evaluated.append(
@@ -166,7 +172,9 @@ class RecommendationOutcomeEvaluationService:
                     "symbol": due.symbol,
                     "horizonDays": due.horizon_days,
                     "entryObservedAt": entry_time.astimezone(timezone.utc).isoformat(),
+                    "entryRetrievedAt": str(entry["retrieved_at"]),
                     "exitObservedAt": exit_time.astimezone(timezone.utc).isoformat(),
+                    "exitRetrievedAt": str(exit_observation["retrieved_at"]),
                     "entryPrice": entry_price,
                     "exitPrice": exit_price,
                     "realizedReturn": realized_return,
@@ -198,24 +206,38 @@ class RecommendationOutcomeEvaluationService:
         instrument_id: int,
         at_or_after: datetime,
         not_after: datetime,
+        knowledge_cutoff: datetime,
     ) -> dict[str, Any] | None:
         start = at_or_after.astimezone(timezone.utc)
         end = not_after.astimezone(timezone.utc)
+        cutoff = knowledge_cutoff.astimezone(timezone.utc)
         if end < start:
             return None
 
         with self._database.connect() as connection:
             row = connection.execute(
                 """
-                SELECT
-                    observed_at,
-                    COALESCE(close, adjusted_close) AS price
-                FROM market_observations
-                WHERE instrument_id = ?
-                  AND observed_at >= ?
-                  AND observed_at <= ?
-                  AND COALESCE(close, adjusted_close) IS NOT NULL
-                  AND COALESCE(close, adjusted_close) > 0
+                WITH eligible AS (
+                    SELECT
+                        observed_at,
+                        COALESCE(close, adjusted_close) AS price,
+                        retrieved_at,
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY observed_at
+                            ORDER BY retrieved_at DESC, id DESC
+                        ) AS row_rank
+                    FROM market_observations
+                    WHERE instrument_id = ?
+                      AND observed_at >= ?
+                      AND observed_at <= ?
+                      AND retrieved_at <= ?
+                      AND COALESCE(close, adjusted_close) IS NOT NULL
+                      AND COALESCE(close, adjusted_close) > 0
+                )
+                SELECT observed_at, price, retrieved_at
+                FROM eligible
+                WHERE row_rank = 1
                 ORDER BY observed_at ASC
                 LIMIT 1
                 """,
@@ -223,6 +245,7 @@ class RecommendationOutcomeEvaluationService:
                     instrument_id,
                     start.isoformat(),
                     end.isoformat(),
+                    cutoff.isoformat(),
                 ),
             ).fetchone()
         if row is None:
@@ -230,6 +253,7 @@ class RecommendationOutcomeEvaluationService:
         return {
             "observed_at": str(row["observed_at"]),
             "price": float(row["price"]),
+            "retrieved_at": str(row["retrieved_at"]),
         }
 
     def _max_drawdown(
@@ -238,24 +262,40 @@ class RecommendationOutcomeEvaluationService:
         instrument_id: int,
         start_at: datetime,
         end_at: datetime,
+        knowledge_cutoff: datetime,
         entry_price: float,
     ) -> float | None:
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT COALESCE(close, adjusted_close) AS price
-                FROM market_observations
-                WHERE instrument_id = ?
-                  AND observed_at >= ?
-                  AND observed_at <= ?
-                  AND COALESCE(close, adjusted_close) IS NOT NULL
-                  AND COALESCE(close, adjusted_close) > 0
+                WITH eligible AS (
+                    SELECT
+                        observed_at,
+                        COALESCE(close, adjusted_close) AS price,
+                        retrieved_at,
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY observed_at
+                            ORDER BY retrieved_at DESC, id DESC
+                        ) AS row_rank
+                    FROM market_observations
+                    WHERE instrument_id = ?
+                      AND observed_at >= ?
+                      AND observed_at <= ?
+                      AND retrieved_at <= ?
+                      AND COALESCE(close, adjusted_close) IS NOT NULL
+                      AND COALESCE(close, adjusted_close) > 0
+                )
+                SELECT observed_at, price
+                FROM eligible
+                WHERE row_rank = 1
                 ORDER BY observed_at ASC
                 """,
                 (
                     instrument_id,
                     start_at.astimezone(timezone.utc).isoformat(),
                     end_at.astimezone(timezone.utc).isoformat(),
+                    knowledge_cutoff.astimezone(timezone.utc).isoformat(),
                 ),
             ).fetchall()
 
