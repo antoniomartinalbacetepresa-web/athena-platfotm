@@ -108,19 +108,35 @@ def test_outcome_calculates_realized_and_excess_return(tmp_path: Path) -> None:
     assert outcomes[0]["max_drawdown"] == pytest.approx(-0.08)
 
 
-def test_outcome_cannot_be_evaluated_before_recommendation(tmp_path: Path) -> None:
+def test_outcome_cannot_be_evaluated_before_horizon(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     recommendation_id = _create(repository)
 
-    with pytest.raises(ValueError, match="posterior"):
+    with pytest.raises(ValueError, match="horizonte"):
         repository.record_outcome(
             recommendation_id=recommendation_id,
             horizon_days=7,
-            evaluated_at=datetime(2026, 9, 1, 11, 0, tzinfo=timezone.utc),
+            evaluated_at=datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc),
             entry_price=200.0,
             exit_price=201.0,
             source_provider="yahoo",
         )
+
+
+def test_outcome_accepts_exact_horizon_boundary(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    recommendation_id = _create(repository)
+
+    outcome_id = repository.record_outcome(
+        recommendation_id=recommendation_id,
+        horizon_days=7,
+        evaluated_at=datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc),
+        entry_price=200.0,
+        exit_price=202.0,
+        source_provider="yahoo",
+    )
+
+    assert outcome_id > 0
 
 
 def test_recommendation_validates_action_scores_and_horizon(tmp_path: Path) -> None:
