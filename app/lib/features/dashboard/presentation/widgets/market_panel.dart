@@ -137,11 +137,11 @@ class _MarketPanelState extends State<MarketPanel> {
               ),
             ),
             SizedBox(height: compact ? 4 : 6),
-            const Text(
-              'COBERTURA PILOTO · DIRECCIÓN POR BENCHMARKS · PESOS SOBRE UNIVERSO SEMILLA',
+            Text(
+              _coverageLabel(globalContext),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: const TextStyle(
                 color: AthenaColors.textSecondary,
                 fontSize: 8,
                 fontWeight: FontWeight.w600,
@@ -258,6 +258,19 @@ class _MarketPanelState extends State<MarketPanel> {
         );
       },
     );
+  }
+
+  String _coverageLabel(GlobalMarketContext context) {
+    final status = context.marketUniverseStatus;
+
+    if (context.hasRealMarketUniverse) {
+      return 'UNIVERSO REAL PERSISTIDO · '
+          '${status.globallyUsableCount} ACTIVOS PONDERABLES · '
+          'DIRECCIÓN POR BENCHMARKS';
+    }
+
+    return 'COBERTURA PILOTO · DIRECCIÓN POR BENCHMARKS · '
+        'PESOS CON FALLBACK';
   }
 
   Widget _regionalRow({
