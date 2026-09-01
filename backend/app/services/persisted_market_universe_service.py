@@ -21,32 +21,44 @@ class MarketUniverseQualityReport:
     globally_usable_count: int
     region_counts: dict[str, int]
     represented_regions: tuple[str, ...]
+    minimum_global_usable_count: int
+    minimum_usable_per_region: int
+    minimum_usable_coverage: float
     is_global_ready: bool
     using_fallback: bool
 
-    def to_api_dict(self) -> dict[str, Any]:
-        coverage = (
+    @property
+    def usable_coverage(self) -> float:
+        return (
             self.globally_usable_count / self.active_count
             if self.active_count > 0
             else 0.0
         )
 
+    def to_api_dict(self) -> dict[str, Any]:
         return {
             "activeCount": self.active_count,
             "marketCapReadyCount": self.market_cap_ready_count,
             "countryReadyCount": self.country_ready_count,
             "globallyUsableCount": self.globally_usable_count,
-            "usableCoverage": coverage,
+            "usableCoverage": self.usable_coverage,
             "regionCounts": dict(self.region_counts),
             "representedRegions": list(self.represented_regions),
             "requiredRegions": ["america", "europe", "asia"],
+            "minimumGlobalUsableCount": self.minimum_global_usable_count,
+            "minimumUsablePerRegion": self.minimum_usable_per_region,
+            "minimumUsableCoverage": self.minimum_usable_coverage,
             "isGlobalReady": self.is_global_ready,
             "usingFallback": self.using_fallback,
         }
 
 
 class PersistedMarketUniverseService:
-    """Sirve un universo persistido sólo cuando es apto para pesos globales."""
+    """Sirve el catálogo persistido sólo cuando supera barreras de cobertura."""
+
+    DEFAULT_MINIMUM_GLOBAL_USABLE_COUNT = 100
+    DEFAULT_MINIMUM_USABLE_PER_REGION = 20
+    DEFAULT_MINIMUM_USABLE_COVERAGE = 0.30
 
     _REQUIRED_REGIONS = frozenset({"america", "europe", "asia"})
     _REGION_ORDER = ("america", "europe", "asia")
@@ -55,7 +67,17 @@ class PersistedMarketUniverseService:
         self,
         database: AthenaDatabase | None = None,
         fallback_service: MarketUniverseFallback | None = None,
+        minimum_global_usable_count: int = DEFAULT_MINIMUM_GLOBAL_USABLE_COUNT,
+        minimum_usable_per_region: int = DEFAULT_MINIMUM_USABLE_PER_REGION,
+        minimum_usable_coverage: float = DEFAULT_MINIMUM_USABLE_COVERAGE,
     ) -> None:
+        if minimum_global_usable_count <= 0:
+            raise ValueError("minimum_global_usable_count debe ser mayor que 0.")
+        if minimum_usable_per_region <= 0:
+            raise ValueError("minimum_usable_per_region debe ser mayor que 0.")
+        if not 0 < minimum_usable_coverage <= 1:
+            raise ValueError("minimum_usable_coverage debe estar entre 0 y 1.")
+
         self._database = database if database is not None else AthenaDatabase()
         self._repository = InstrumentRepository(database=self._database)
         self._fallback_service = (
@@ -63,6 +85,9 @@ class PersistedMarketUniverseService:
             if fallback_service is not None
             else YahooMarketUniverseService()
         )
+        self._minimum_global_usable_count = int(minimum_global_usable_count)
+        self._minimum_usable_per_region = int(minimum_usable_per_region)
+        self._minimum_usable_coverage = float(minimum_usable_coverage)
 
     def get_universe(self) -> list[dict[str, Any]]:
         rows = self._load_active_rows()
@@ -119,8 +144,19 @@ class PersistedMarketUniverseService:
             for region in self._REGION_ORDER
             if region_counts[region] > 0
         )
+        usable_coverage = (
+            globally_usable_count / len(rows)
+            if rows
+            else 0.0
+        )
+        regions_have_depth = all(
+            region_counts[region] >= self._minimum_usable_per_region
+            for region in self._REGION_ORDER
+        )
         is_global_ready = (
-            set(represented_regions) == self._REQUIRED_REGIONS
+            globally_usable_count >= self._minimum_global_usable_count
+            and usable_coverage >= self._minimum_usable_coverage
+            and regions_have_depth
         )
 
         return MarketUniverseQualityReport(
@@ -130,6 +166,9 @@ class PersistedMarketUniverseService:
             globally_usable_count=globally_usable_count,
             region_counts=region_counts,
             represented_regions=represented_regions,
+            minimum_global_usable_count=self._minimum_global_usable_count,
+            minimum_usable_per_region=self._minimum_usable_per_region,
+            minimum_usable_coverage=self._minimum_usable_coverage,
             is_global_ready=is_global_ready,
             using_fallback=not is_global_ready,
         )
