@@ -16,6 +16,9 @@ from app.services.recommendation_learning_status_service import (
 from app.services.recommendation_market_signal_service import (
     RecommendationMarketSignalService,
 )
+from app.services.recommendation_valuation_signal_service import (
+    RecommendationValuationSignalService,
+)
 
 
 router = APIRouter(
@@ -26,6 +29,7 @@ router = APIRouter(
 learning_status_service = RecommendationLearningStatusService()
 market_signal_service = RecommendationMarketSignalService()
 fundamental_signal_service = RecommendationFundamentalSignalService()
+valuation_signal_service = RecommendationValuationSignalService()
 evidence_gate_service = RecommendationEvidenceGateService()
 
 
@@ -149,6 +153,46 @@ def get_fundamental_diagnostic(
     }
 
 
+@router.get("/diagnostics/valuation")
+def get_valuation_diagnostic(
+    symbol: str = Query(
+        ...,
+        min_length=1,
+        description="Símbolo del instrumento cuya valoración PIT se diagnostica.",
+    ),
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Instante de corte point-in-time común al precio y al dato SEC."
+        ),
+    ),
+) -> dict[str, object]:
+    """Return a narrow PIT valuation multiple without issuing investment advice."""
+
+    effective_as_of = _effective_as_of(as_of)
+    try:
+        diagnostic = valuation_signal_service.evaluate(
+            symbol=symbol,
+            as_of=effective_as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir el diagnóstico de valoración de ATHENA.",
+        ) from exc
+
+    payload = _diagnostic_payload_or_fail(
+        diagnostic,
+        diagnostic_name="de valoración",
+    )
+    return {
+        "data": payload,
+        "advisoryStatus": "diagnostic_only",
+    }
+
+
 @router.get("/diagnostics/evidence-gate")
 def get_evidence_gate_diagnostic(
     symbol: str = Query(
@@ -187,8 +231,8 @@ def get_evidence_gate_diagnostic(
         raise HTTPException(
             status_code=500,
             detail=(
-                "El evidence gate intentó habilitar una recomendación antes de que "
-                "valoración y calibración estén validadas."
+                "El evidence gate intentó habilitar una recomendación antes de "
+                "completar todas las barreras de validación."
             ),
         )
     return {
