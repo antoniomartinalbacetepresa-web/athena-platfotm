@@ -75,6 +75,43 @@ def test_selector_uses_single_domestic_listing(tmp_path: Path) -> None:
     assert report.selections[0]["selectionMethod"] == "single_domestic_listing"
 
 
+def test_selector_matches_country_aliases_without_conflating_listing_and_domicile(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    domestic_id = _listing(
+        instruments,
+        symbol="ALIAS",
+        country="USA",
+        region="america",
+    )
+    identities = IssuerIdentityRepository(database=database)
+    issuer_id = identities.upsert_external_issuer(
+        source_provider="official",
+        external_id="ALIAS",
+        canonical_name="Alias Issuer",
+        evidence_confidence=1.0,
+        domicile_country="United States",
+        region_key="america",
+    )
+    identities.link_instrument(
+        instrument_id=domestic_id,
+        issuer_id=issuer_id,
+        evidence_source="official",
+        resolution_method="official_identifier",
+        confidence=1.0,
+    )
+
+    report = CanonicalListingSelectionService(database=database).get_report()
+
+    assert report.selected_issuer_count == 1
+    assert report.no_domestic_listing_count == 0
+    assert report.selections[0]["symbol"] == "ALIAS"
+    assert report.selections[0]["domicileCountry"] == "United States"
+
+
 def test_selector_prefers_explicit_primary_among_multiple_domestic_listings(
     tmp_path: Path,
 ) -> None:

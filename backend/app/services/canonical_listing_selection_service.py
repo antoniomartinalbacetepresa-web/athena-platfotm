@@ -5,6 +5,7 @@ from typing import Any
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.issuer_identity_repository import IssuerIdentityRepository
+from app.services.country_region_service import CountryRegionService
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class CanonicalListingSelectionService:
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._identities = IssuerIdentityRepository(database=self._database)
+        self._countries = CountryRegionService()
 
     def get_report(self) -> CanonicalListingSelectionReport:
         self._identities.initialize()
@@ -159,4 +161,4 @@ class CanonicalListingSelectionService:
         )
 
     def _normalize_country(self, value: str) -> str:
-        return " ".join(str(value or "").strip().casefold().split())
+        return self._countries.normalize_country(value) or ""
