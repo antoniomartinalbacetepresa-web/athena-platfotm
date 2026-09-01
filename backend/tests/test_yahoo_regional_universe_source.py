@@ -157,6 +157,58 @@ def test_source_exhaustive_mode_reads_until_market_is_exhausted() -> None:
     assert len(assets) == 5
 
 
+def test_source_exhaustive_mode_stops_on_repeated_page_and_reports_progress() -> None:
+    offsets: list[int] = []
+    events: list[dict[str, Any]] = []
+
+    repeated_quotes = [
+        {
+            "symbol": "A.DE",
+            "quoteType": "EQUITY",
+            "exchange": "GER",
+            "currency": "EUR",
+            "marketCap": 100.0,
+        },
+        {
+            "symbol": "B.DE",
+            "quoteType": "EQUITY",
+            "exchange": "GER",
+            "currency": "EUR",
+            "marketCap": 90.0,
+        },
+    ]
+
+    def screen(query, **kwargs):
+        offsets.append(kwargs["offset"])
+        return {
+            "total": None,
+            "quotes": repeated_quotes,
+        }
+
+    source = YahooRegionalUniverseSource(
+        regions=("de",),
+        page_size=2,
+        max_pages_per_region=None,
+        screen_function=screen,
+        query_factory=fake_query,
+        fx_service=FakeFx({"EUR": 1.0}),
+        progress_callback=events.append,
+    )
+
+    assets = source.get_instruments()
+
+    assert offsets == [0, 2]
+    assert len(assets) == 2
+    assert [event["status"] for event in events] == [
+        "page_completed",
+        "repeated_page",
+    ]
+    assert events[0]["page"] == 1
+    assert events[0]["received"] == 2
+    assert events[0]["accumulated"] == 2
+    assert events[1]["page"] == 2
+
+
 def test_source_explicit_page_limit_stops_before_market_is_exhausted() -> None:
     offsets: list[int] = []
 
