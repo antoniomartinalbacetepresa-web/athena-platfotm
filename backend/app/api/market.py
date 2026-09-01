@@ -92,7 +92,7 @@ def get_universe() -> dict[str, object]:
             status_code=502,
             detail=(
                 "No se pudo obtener el universo "
-                "desde el catálogo de ATHENA TYCHE."
+                "desde la fuente de mercado."
             ),
         ) from exc
 
