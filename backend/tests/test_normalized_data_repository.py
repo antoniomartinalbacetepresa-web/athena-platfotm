@@ -62,3 +62,82 @@ def test_repository_deduplicates_same_observation(tmp_path) -> None:
     second_id = repository.save(datum)
 
     assert first_id == second_id
+
+
+def test_repository_deduplicates_observation_with_nullable_identity(tmp_path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    repository = NormalizedDataRepository(database)
+    datum = NormalizedDatum(
+        metric="market.sentiment.sample",
+        value=0.25,
+        data_kind="calculation",
+        provenance=DataProvenance(
+            source_id="athena",
+            retrieved_at="2026-09-01T08:00:00+00:00",
+        ),
+    )
+
+    first_id = repository.save(datum)
+    second_id = repository.save(datum)
+
+    assert first_id == second_id
+
+    history = repository.get_latest(
+        metric="market.sentiment.sample",
+    )
+    assert len(history) == 1
+    assert history[0]["id"] == first_id
+
+
+def test_initialize_collapses_legacy_null_duplicates(tmp_path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    repository = NormalizedDataRepository(database)
+    repository.initialize()
+
+    with database.connect() as connection:
+        connection.execute(
+            "DROP INDEX uq_normalized_data_observation_identity"
+        )
+        values = (
+            "market.sentiment.legacy",
+            None,
+            "0.5",
+            "calculation",
+            "athena",
+            "2026-09-01T08:00:00+00:00",
+        )
+        connection.execute(
+            """
+            INSERT INTO normalized_data_observations (
+                metric,
+                entity_id,
+                value_json,
+                data_kind,
+                source_id,
+                retrieved_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        connection.execute(
+            """
+            INSERT INTO normalized_data_observations (
+                metric,
+                entity_id,
+                value_json,
+                data_kind,
+                source_id,
+                retrieved_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+
+    repository.initialize()
+
+    history = repository.get_latest(
+        metric="market.sentiment.legacy",
+    )
+    assert len(history) == 1
