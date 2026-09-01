@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.issuer_identity_repository import IssuerIdentityRepository
 
 
 class RecommendationHistoryRepository:
@@ -16,7 +17,10 @@ class RecommendationHistoryRepository:
         self._database = database if database is not None else AthenaDatabase()
 
     def initialize(self) -> None:
-        self._database.initialize()
+        # Recommendations may optionally reference a canonical issuer. Ensure the
+        # referenced table exists before SQLite validates that foreign key, even
+        # when a particular recommendation has canonical_issuer_id = NULL.
+        IssuerIdentityRepository(database=self._database).initialize()
         with self._database.connect() as connection:
             connection.executescript(
                 """
