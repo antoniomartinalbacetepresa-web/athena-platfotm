@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any, Callable
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
@@ -20,6 +21,7 @@ from app.services.source_aware_universe_import_service import (
     SourceAwareUniverseImportService,
 )
 from app.services.yahoo_regional_universe_source import (
+    ProgressCallback,
     YahooRegionalUniverseSource,
 )
 
@@ -60,12 +62,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _console_progress(event: dict[str, Any]) -> None:
+    region = str(event.get("region") or "?").upper()
+    country = str(event.get("country") or region)
+    page = event.get("page")
+    received = event.get("received")
+    total = event.get("total")
+    accumulated = event.get("accumulated")
+    status = str(event.get("status") or "")
+
+    total_label = "?" if total is None else str(total)
+    status_label = {
+        "page_completed": "OK",
+        "completed": "FIN",
+        "repeated_page": "PAGINA REPETIDA; SE DETIENE",
+        "safety_limit": "LIMITE DE SEGURIDAD; SE DETIENE",
+    }.get(status, status.upper())
+
+    print(
+        f"[Yahoo {region}] {country} | página {page} | "
+        f"recibidos {received} | total {total_label} | "
+        f"acumulados {accumulated} | {status_label}",
+        flush=True,
+    )
+
+
 def run_import(
     *,
     database_path: Path | None,
     regions: tuple[str, ...],
     page_size: int,
     max_pages: int | None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
     database = AthenaDatabase(database_path)
     database.initialize()
@@ -87,6 +115,7 @@ def run_import(
         regions=regions,
         page_size=page_size,
         max_pages_per_region=max_pages,
+        progress_callback=progress_callback,
     )
 
     report = importer.import_source(source)
@@ -127,11 +156,19 @@ def main() -> int:
     if not regions:
         raise SystemExit("Debe indicarse al menos una región.")
 
+    print(
+        "Iniciando captura Yahoo "
+        + ("exhaustiva" if args.exhaustive else "acotada")
+        + f" para {len(regions)} mercados...",
+        flush=True,
+    )
+
     result = run_import(
         database_path=args.database,
         regions=regions,
         page_size=250 if args.exhaustive else args.page_size,
         max_pages=None if args.exhaustive else args.max_pages,
+        progress_callback=_console_progress,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
