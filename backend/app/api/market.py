@@ -1,9 +1,9 @@
-﻿from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from app.services.yahoo_market_service import YahooMarketService
-from app.services.yahoo_market_universe_service import (
-    YahooMarketUniverseService,
+from app.services.persisted_market_universe_service import (
+    PersistedMarketUniverseService,
 )
+from app.services.yahoo_market_service import YahooMarketService
 
 
 router = APIRouter(
@@ -12,7 +12,7 @@ router = APIRouter(
 )
 
 market_service = YahooMarketService()
-market_universe_service = YahooMarketUniverseService()
+market_universe_service = PersistedMarketUniverseService()
 
 
 @router.get("/quote")
@@ -92,7 +92,7 @@ def get_universe() -> dict[str, object]:
             status_code=502,
             detail=(
                 "No se pudo obtener el universo "
-                "desde la fuente de mercado."
+                "desde el catálogo de ATHENA TYCHE."
             ),
         ) from exc
 
