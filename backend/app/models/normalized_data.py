@@ -20,6 +20,7 @@ class DataProvenance:
     effective_at: str | None = None
     published_at: str | None = None
     source_timestamp: str | None = None
+    available_at: str | None = None
     version: str | None = None
     raw_identifier: str | None = None
     normalized_identifier: str | None = None
@@ -33,6 +34,7 @@ class DataProvenance:
         effective_at: str | None = None,
         published_at: str | None = None,
         source_timestamp: str | None = None,
+        available_at: str | None = None,
         version: str | None = None,
         raw_identifier: str | None = None,
         normalized_identifier: str | None = None,
@@ -44,6 +46,7 @@ class DataProvenance:
             effective_at=effective_at,
             published_at=published_at,
             source_timestamp=source_timestamp,
+            available_at=available_at,
             version=version,
             raw_identifier=raw_identifier,
             normalized_identifier=normalized_identifier,
@@ -83,5 +86,4 @@ class NormalizedDatum:
                 raise ValueError(f"{name} must be between 0 and 100.")
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        return data
+        return asdict(self)

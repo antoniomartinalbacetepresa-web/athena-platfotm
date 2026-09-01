@@ -7,6 +7,7 @@ def test_normalized_datum_preserves_provenance_and_kind() -> None:
         retrieved_at="2026-09-01T00:00:00+00:00",
         effective_at="2026-06-30",
         published_at="2026-08-01T12:00:00+00:00",
+        available_at="2026-08-01T12:00:00+00:00",
         raw_identifier="us-gaap:OperatingIncomeLoss",
         normalized_identifier="ebit",
     )
@@ -25,6 +26,7 @@ def test_normalized_datum_preserves_provenance_and_kind() -> None:
     assert payload["data_kind"] == "fact"
     assert payload["provenance"]["source_id"] == "sec_edgar_xbrl"
     assert payload["provenance"]["normalized_identifier"] == "ebit"
+    assert payload["provenance"]["available_at"] == "2026-08-01T12:00:00+00:00"
 
 
 def test_normalized_datum_rejects_invalid_scores() -> None:
