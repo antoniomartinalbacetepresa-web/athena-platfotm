@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.services.canonical_listing_selection_service import CanonicalListingSelectionService
 from app.services.canonical_market_cap_service import CanonicalMarketCapService
 from app.services.issuer_identity_coverage_service import IssuerIdentityCoverageService
 
@@ -19,6 +20,7 @@ class MarketWeightingReadinessReport:
     minimum_canonical_issuer_count: int
     external_validation_passed: bool
     external_validation_reference: str | None
+    canonical_listing_ambiguous_issuer_count: int = 0
 
     @property
     def all_regions_represented(self) -> bool:
@@ -44,6 +46,8 @@ class MarketWeightingReadinessReport:
             blockers.append("insufficient_canonical_issuer_count")
         if not self.all_regions_represented:
             blockers.append("required_regions_not_represented")
+        if self.canonical_listing_ambiguous_issuer_count > 0:
+            blockers.append("ambiguous_canonical_listings_require_resolution")
         if not self.external_validation_evidence_complete:
             blockers.append("external_market_cap_validation_required")
         return tuple(blockers)
@@ -61,13 +65,13 @@ class MarketWeightingReadinessReport:
             "canonicalIssuerCount": self.canonical_issuer_count,
             "regionMarketCapUsd": dict(self.region_market_cap_usd),
             "allRegionsRepresented": self.all_regions_represented,
+            "canonicalListingValidation": {
+                "ambiguousIssuerCount": self.canonical_listing_ambiguous_issuer_count,
+                "ambiguityResolved": self.canonical_listing_ambiguous_issuer_count == 0,
+            },
             "thresholds": {
-                "minimumIdentityMarketCapCoverage": (
-                    self.minimum_identity_market_cap_coverage
-                ),
-                "minimumDomicileMarketCapCoverage": (
-                    self.minimum_domicile_market_cap_coverage
-                ),
+                "minimumIdentityMarketCapCoverage": self.minimum_identity_market_cap_coverage,
+                "minimumDomicileMarketCapCoverage": self.minimum_domicile_market_cap_coverage,
                 "minimumCanonicalIssuerCount": self.minimum_canonical_issuer_count,
             },
             "externalValidation": {
@@ -90,34 +94,22 @@ class MarketWeightingReadinessService:
         self,
         *,
         database: AthenaDatabase | None = None,
-        minimum_identity_market_cap_coverage: float = (
-            DEFAULT_MINIMUM_IDENTITY_MARKET_CAP_COVERAGE
-        ),
-        minimum_domicile_market_cap_coverage: float = (
-            DEFAULT_MINIMUM_DOMICILE_MARKET_CAP_COVERAGE
-        ),
+        minimum_identity_market_cap_coverage: float = DEFAULT_MINIMUM_IDENTITY_MARKET_CAP_COVERAGE,
+        minimum_domicile_market_cap_coverage: float = DEFAULT_MINIMUM_DOMICILE_MARKET_CAP_COVERAGE,
         minimum_canonical_issuer_count: int = DEFAULT_MINIMUM_CANONICAL_ISSUER_COUNT,
         external_validation_passed: bool = False,
         external_validation_reference: str | None = None,
     ) -> None:
         if not 0 < minimum_identity_market_cap_coverage <= 1:
-            raise ValueError(
-                "minimum_identity_market_cap_coverage debe estar entre 0 y 1."
-            )
+            raise ValueError("minimum_identity_market_cap_coverage debe estar entre 0 y 1.")
         if not 0 < minimum_domicile_market_cap_coverage <= 1:
-            raise ValueError(
-                "minimum_domicile_market_cap_coverage debe estar entre 0 y 1."
-            )
+            raise ValueError("minimum_domicile_market_cap_coverage debe estar entre 0 y 1.")
         if minimum_canonical_issuer_count <= 0:
             raise ValueError("minimum_canonical_issuer_count debe ser mayor que 0.")
 
         self._database = database if database is not None else AthenaDatabase()
-        self._minimum_identity_market_cap_coverage = float(
-            minimum_identity_market_cap_coverage
-        )
-        self._minimum_domicile_market_cap_coverage = float(
-            minimum_domicile_market_cap_coverage
-        )
+        self._minimum_identity_market_cap_coverage = float(minimum_identity_market_cap_coverage)
+        self._minimum_domicile_market_cap_coverage = float(minimum_domicile_market_cap_coverage)
         self._minimum_canonical_issuer_count = int(minimum_canonical_issuer_count)
         self._external_validation_passed = bool(external_validation_passed)
         self._external_validation_reference = (
@@ -128,25 +120,19 @@ class MarketWeightingReadinessService:
         )
 
     def get_report(self) -> MarketWeightingReadinessReport:
-        identity = IssuerIdentityCoverageService(
-            database=self._database
-        ).get_report()
-        canonical = CanonicalMarketCapService(
-            database=self._database
-        ).get_report()
+        identity = IssuerIdentityCoverageService(database=self._database).get_report()
+        canonical = CanonicalMarketCapService(database=self._database).get_report()
+        canonical_listings = CanonicalListingSelectionService(database=self._database).get_report()
 
         return MarketWeightingReadinessReport(
             identity_market_cap_coverage=identity.market_cap_coverage,
             domicile_market_cap_coverage=canonical.domicile_market_cap_coverage,
             canonical_issuer_count=canonical.canonical_issuer_count,
             region_market_cap_usd=dict(canonical.region_market_cap_usd),
-            minimum_identity_market_cap_coverage=(
-                self._minimum_identity_market_cap_coverage
-            ),
-            minimum_domicile_market_cap_coverage=(
-                self._minimum_domicile_market_cap_coverage
-            ),
+            minimum_identity_market_cap_coverage=self._minimum_identity_market_cap_coverage,
+            minimum_domicile_market_cap_coverage=self._minimum_domicile_market_cap_coverage,
             minimum_canonical_issuer_count=self._minimum_canonical_issuer_count,
             external_validation_passed=self._external_validation_passed,
             external_validation_reference=self._external_validation_reference,
+            canonical_listing_ambiguous_issuer_count=canonical_listings.ambiguous_issuer_count,
         )
