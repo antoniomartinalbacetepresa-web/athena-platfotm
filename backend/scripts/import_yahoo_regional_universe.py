@@ -27,8 +27,8 @@ from app.services.yahoo_regional_universe_source import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Descubre equities por región mediante Yahoo y los importa de "
-            "forma acotada en la base local de ATHENA TYCHE."
+            "Descubre equities por región mediante Yahoo y los importa en la "
+            "base local de ATHENA TYCHE."
         )
     )
     parser.add_argument("--database", type=Path, default=None)
@@ -47,7 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-pages",
         type=int,
         default=1,
-        help="Máximo de páginas por región.",
+        help="Máximo de páginas por región cuando no se usa --exhaustive.",
+    )
+    parser.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help=(
+            "Recorre todas las páginas disponibles de cada mercado hasta "
+            "alcanzar el total informado por Yahoo."
+        ),
     )
     return parser
 
@@ -57,7 +65,7 @@ def run_import(
     database_path: Path | None,
     regions: tuple[str, ...],
     page_size: int,
-    max_pages: int,
+    max_pages: int | None,
 ) -> dict[str, object]:
     database = AthenaDatabase(database_path)
     database.initialize()
@@ -93,6 +101,7 @@ def run_import(
         "regions": list(regions),
         "pageSize": page_size,
         "maxPagesPerRegion": max_pages,
+        "exhaustive": max_pages is None,
         "received": report.received,
         "accepted": report.accepted,
         "rejected": report.rejected,
@@ -121,8 +130,8 @@ def main() -> int:
     result = run_import(
         database_path=args.database,
         regions=regions,
-        page_size=args.page_size,
-        max_pages=args.max_pages,
+        page_size=250 if args.exhaustive else args.page_size,
+        max_pages=None if args.exhaustive else args.max_pages,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
