@@ -48,6 +48,7 @@ class MarketUniverseQualityReport:
             "minimumGlobalUsableCount": self.minimum_global_usable_count,
             "minimumUsablePerRegion": self.minimum_usable_per_region,
             "minimumUsableCoverage": self.minimum_usable_coverage,
+            "coverageGateEnabled": False,
             "isGlobalReady": self.is_global_ready,
             "usingFallback": self.using_fallback,
         }
@@ -145,18 +146,19 @@ class PersistedMarketUniverseService:
             for region in self._REGION_ORDER
             if region_counts[region] > 0
         )
-        usable_coverage = (
-            globally_usable_count / len(rows)
-            if rows
-            else 0.0
-        )
         regions_have_depth = all(
             region_counts[region] >= self._minimum_usable_per_region
             for region in self._REGION_ORDER
         )
+
+        # El catálogo persistido puede contener miles de instrumentos de
+        # identidad todavía no enriquecidos. Desde que Flutter recibe sólo el
+        # subconjunto ponderable, la densidad de enriquecimiento del catálogo
+        # completo deja de ser una barrera adecuada para activar pesos reales.
+        # Se conserva usable_coverage como diagnóstico, pero la preparación
+        # global depende de profundidad absoluta y representación regional.
         is_global_ready = (
             globally_usable_count >= self._minimum_global_usable_count
-            and usable_coverage >= self._minimum_usable_coverage
             and regions_have_depth
         )
 
