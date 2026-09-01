@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -196,7 +196,8 @@ class RecommendationHistoryRepository:
         if entry_price <= 0 or exit_price <= 0:
             raise ValueError("entry_price y exit_price deben ser positivos.")
 
-        evaluated = self._utc_iso(evaluated_at, "evaluated_at")
+        evaluated_at_utc = self._aware_utc(evaluated_at, "evaluated_at")
+        evaluated = evaluated_at_utc.isoformat()
         provider = self._required_text(source_provider, "source_provider")
         source_time = (
             self._utc_iso(source_timestamp, "source_timestamp")
@@ -215,9 +216,15 @@ class RecommendationHistoryRepository:
             ).fetchone()
             if recommendation is None:
                 raise ValueError("La recomendación indicada no existe.")
-            if evaluated <= str(recommendation["generated_at"]):
+
+            generated_at_utc = self._parse_utc(
+                str(recommendation["generated_at"]),
+                "generated_at",
+            )
+            due_at = generated_at_utc + timedelta(days=int(horizon_days))
+            if evaluated_at_utc < due_at:
                 raise ValueError(
-                    "evaluated_at debe ser posterior a la recomendación."
+                    "evaluated_at no puede ser anterior al vencimiento del horizonte."
                 )
 
             realized_return = (float(exit_price) / float(entry_price)) - 1.0
@@ -304,6 +311,15 @@ class RecommendationHistoryRepository:
         return result
 
     def _utc_iso(self, value: datetime, field: str) -> str:
+        return self._aware_utc(value, field).isoformat()
+
+    def _aware_utc(self, value: datetime, field: str) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{field} debe incluir zona horaria.")
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(timezone.utc)
+
+    def _parse_utc(self, value: str, field: str) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise RuntimeError(f"{field} histórico debe incluir zona horaria.")
+        return parsed.astimezone(timezone.utc)
