@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from app.database.athena_database import AthenaDatabase
+from app.services.market_cap_coverage_service import MarketCapCoverageService
 from app.services.yahoo_regional_universe_source import (
     YahooRegionalUniverseSource,
 )
@@ -13,13 +15,15 @@ from scripts.import_yahoo_regional_universe import run_import
 
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_MAX_PAGES_PER_REGION = 1
+EXHAUSTIVE_PAGE_SIZE = 250
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Refresca el universo ponderable de ATHENA TYCHE con equities "
-            "regionales de Yahoo y devuelve un informe de cobertura."
+            "regionales de Yahoo y devuelve informes de cobertura y "
+            "concentración de capitalización."
         )
     )
     parser.add_argument("--database", type=Path, default=None)
@@ -41,7 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-pages",
         type=int,
         default=DEFAULT_MAX_PAGES_PER_REGION,
-        help="Máximo de páginas por región.",
+        help="Máximo de páginas por región cuando no se usa --exhaustive.",
+    )
+    parser.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help=(
+            "Usa páginas de 250 y continúa hasta agotar los resultados "
+            "disponibles de cada mercado."
+        ),
     )
     return parser
 
@@ -62,7 +74,7 @@ def run_refresh(
     database_path: Path | None = None,
     regions: tuple[str, ...] | None = None,
     page_size: int = DEFAULT_PAGE_SIZE,
-    max_pages: int = DEFAULT_MAX_PAGES_PER_REGION,
+    max_pages: int | None = DEFAULT_MAX_PAGES_PER_REGION,
     importer: Callable[..., dict[str, object]] = run_import,
 ) -> dict[str, object]:
     selected_regions = regions or YahooRegionalUniverseSource.DEFAULT_REGIONS
@@ -80,10 +92,20 @@ def run_refresh(
             "El refresco no devolvió un informe de calidad del catálogo."
         )
 
+    database = AthenaDatabase(database_path)
+    capitalization_profile = (
+        MarketCapCoverageService(database=database)
+        .get_report()
+        .to_api_dict()
+    )
+
     return {
         "status": "ready" if quality.get("isGlobalReady") else "fallback",
         "source": result.get("source"),
         "regions": list(selected_regions),
+        "pageSize": page_size,
+        "maxPagesPerRegion": max_pages,
+        "exhaustive": max_pages is None,
         "received": result.get("received"),
         "accepted": result.get("accepted"),
         "rejected": result.get("rejected"),
@@ -92,6 +114,7 @@ def run_refresh(
         "unchanged": result.get("unchanged"),
         "activeSourceMemberships": result.get("activeSourceMemberships"),
         "catalogQuality": quality,
+        "capitalizationProfile": capitalization_profile,
     }
 
 
@@ -99,11 +122,12 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         regions = _normalize_regions(args.regions)
+        exhaustive = bool(args.exhaustive)
         result = run_refresh(
             database_path=args.database,
             regions=regions,
-            page_size=args.page_size,
-            max_pages=args.max_pages,
+            page_size=EXHAUSTIVE_PAGE_SIZE if exhaustive else args.page_size,
+            max_pages=None if exhaustive else args.max_pages,
         )
     except (ValueError, RuntimeError) as exc:
         raise SystemExit(str(exc)) from exc
