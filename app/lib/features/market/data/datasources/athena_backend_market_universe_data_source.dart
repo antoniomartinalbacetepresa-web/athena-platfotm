@@ -104,6 +104,9 @@ class AthenaBackendMarketUniverseDataSource
       regionCounts: regionCounts,
       isGlobalReady: _bool(status['isGlobalReady']) ?? false,
       usingFallback: _bool(status['usingFallback']) ?? true,
+      isWeightingReady: _bool(status['isWeightingReady']) ?? false,
+      weightingMethod: _string(status['weightingMethod']) ?? 'unknown',
+      weightingStatus: _string(status['weightingStatus']) ?? 'unknown',
     );
   }
 
