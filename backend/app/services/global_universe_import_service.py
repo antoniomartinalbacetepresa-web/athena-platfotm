@@ -44,6 +44,8 @@ class UniverseImportReport:
         ...
     ]
 
+    persisted_instrument_ids: tuple[int, ...] = ()
+
     @property
     def created_or_updated(self) -> int:
         return self.inserted + self.updated
@@ -119,6 +121,7 @@ class GlobalUniverseImportService:
         inserted = 0
         updated = 0
         unchanged = 0
+        persisted_instrument_ids: tuple[int, ...] = ()
 
         deactivated = 0
         reconciliation_applied = False
@@ -198,6 +201,7 @@ class GlobalUniverseImportService:
                 inserted = stats.inserted
                 updated = stats.updated
                 unchanged = stats.unchanged
+                persisted_instrument_ids = stats.instrument_ids
 
                 if stats.processed != len(
                     accepted_records
@@ -216,6 +220,12 @@ class GlobalUniverseImportService:
                     raise RuntimeError(
                         "Las estadísticas de cambios "
                         "no son consistentes."
+                    )
+
+                if len(persisted_instrument_ids) != len(accepted_records):
+                    raise RuntimeError(
+                        "Los identificadores persistidos no coinciden "
+                        "con los registros aceptados."
                     )
 
             if (
@@ -278,6 +288,7 @@ class GlobalUniverseImportService:
                 rejected_records=tuple(
                     rejected_records
                 ),
+                persisted_instrument_ids=persisted_instrument_ids,
             )
         except Exception as exc:
             completed_at = self._now()
@@ -554,6 +565,3 @@ class GlobalUniverseImportService:
         return datetime.now(
             timezone.utc
         ).isoformat()
-
-
-
