@@ -40,10 +40,9 @@ class MarketDependencies {
     required this.marketContextRepository,
     required this.marketUniverseRepository,
     required this.globalMarketDataService,
-    AthenaBackendMarketDataProvider? backendMarketProvider,
-    AthenaBackendMarketUniverseDataSource? backendUniverseDataSource,
-  })  : _backendMarketProvider = backendMarketProvider,
-        _backendUniverseDataSource = backendUniverseDataSource;
+    this._backendMarketProvider,
+    this._backendUniverseDataSource,
+  });
 
   factory MarketDependencies.create({
     MarketProviderSettings? settings,
@@ -121,8 +120,8 @@ class MarketDependencies {
       marketContextRepository: marketContextRepository,
       marketUniverseRepository: marketUniverseRepository,
       globalMarketDataService: globalMarketDataService,
-      backendMarketProvider: backendMarketProvider,
-      backendUniverseDataSource: backendUniverseDataSource,
+      _backendMarketProvider: backendMarketProvider,
+      _backendUniverseDataSource: backendUniverseDataSource,
     );
   }
 
