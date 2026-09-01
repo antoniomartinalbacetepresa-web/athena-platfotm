@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.services.market_weighting_readiness_service import (
@@ -47,6 +49,7 @@ def test_weighting_readiness_requires_all_evidence() -> None:
     assert report.ready is True
     assert report.blockers == ()
     assert report.all_regions_represented is True
+    assert report.external_validation_evidence_complete is True
 
 
 def test_weighting_readiness_keeps_external_validation_as_hard_gate() -> None:
@@ -56,7 +59,22 @@ def test_weighting_readiness_keeps_external_validation_as_hard_gate() -> None:
     assert report.blockers == ("external_market_cap_validation_required",)
     api = report.to_api_dict()
     assert api["externalValidation"]["passed"] is False
+    assert api["externalValidation"]["evidenceComplete"] is False
     assert api["ready"] is False
+
+
+def test_weighting_readiness_requires_external_validation_reference() -> None:
+    report = replace(_report(), external_validation_reference=None)
+
+    assert report.external_validation_passed is True
+    assert report.external_validation_evidence_complete is False
+    assert report.ready is False
+    assert report.blockers == ("external_market_cap_validation_required",)
+    assert report.to_api_dict()["externalValidation"] == {
+        "passed": True,
+        "reference": None,
+        "evidenceComplete": False,
+    }
 
 
 def test_weighting_readiness_reports_each_structural_blocker() -> None:

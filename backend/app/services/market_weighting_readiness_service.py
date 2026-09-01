@@ -28,6 +28,12 @@ class MarketWeightingReadinessReport:
         )
 
     @property
+    def external_validation_evidence_complete(self) -> bool:
+        return self.external_validation_passed and bool(
+            str(self.external_validation_reference or "").strip()
+        )
+
+    @property
     def blockers(self) -> tuple[str, ...]:
         blockers: list[str] = []
         if self.identity_market_cap_coverage < self.minimum_identity_market_cap_coverage:
@@ -38,7 +44,7 @@ class MarketWeightingReadinessReport:
             blockers.append("insufficient_canonical_issuer_count")
         if not self.all_regions_represented:
             blockers.append("required_regions_not_represented")
-        if not self.external_validation_passed:
+        if not self.external_validation_evidence_complete:
             blockers.append("external_market_cap_validation_required")
         return tuple(blockers)
 
@@ -67,6 +73,7 @@ class MarketWeightingReadinessReport:
             "externalValidation": {
                 "passed": self.external_validation_passed,
                 "reference": self.external_validation_reference,
+                "evidenceComplete": self.external_validation_evidence_complete,
             },
             "blockers": list(self.blockers),
         }
