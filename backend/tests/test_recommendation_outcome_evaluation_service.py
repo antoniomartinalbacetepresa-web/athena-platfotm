@@ -60,6 +60,7 @@ def _price(
     instrument_id: int,
     observed_at: datetime,
     close: float,
+    adjusted_close: float | None = None,
 ) -> None:
     with database.connect() as connection:
         connection.execute(
@@ -68,14 +69,16 @@ def _price(
                 instrument_id,
                 observed_at,
                 close,
+                adjusted_close,
                 source_provider,
                 retrieved_at
-            ) VALUES (?, ?, ?, 'test_prices', ?)
+            ) VALUES (?, ?, ?, ?, 'test_prices', ?)
             """,
             (
                 instrument_id,
                 observed_at.astimezone(timezone.utc).isoformat(),
                 close,
+                adjusted_close,
                 observed_at.astimezone(timezone.utc).isoformat(),
             ),
         )
@@ -133,6 +136,47 @@ def test_outcome_evaluator_uses_first_prices_after_entry_and_due_date(
     assert len(outcomes) == 1
     assert outcomes[0]["horizon_days"] == 7
     assert outcomes[0]["realized_return"] == pytest.approx(0.10)
+
+
+def test_outcome_evaluator_prefers_raw_close_over_later_adjusted_close(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    generated = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    _recommendation(
+        database,
+        generated=generated,
+        instrument_id=instrument_id,
+    )
+
+    _price(
+        database,
+        instrument_id=instrument_id,
+        observed_at=generated + timedelta(hours=1),
+        close=100.0,
+        adjusted_close=50.0,
+    )
+    _price(
+        database,
+        instrument_id=instrument_id,
+        observed_at=generated + timedelta(days=7, hours=1),
+        close=110.0,
+        adjusted_close=55.0,
+    )
+
+    report = RecommendationOutcomeEvaluationService(
+        database=database
+    ).evaluate_due(
+        as_of=generated + timedelta(days=8),
+    )
+
+    assert report.evaluated_count == 1
+    assert report.evaluated[0]["entryPrice"] == pytest.approx(100.0)
+    assert report.evaluated[0]["exitPrice"] == pytest.approx(110.0)
+    assert report.to_api_dict()["pricePolicy"] == (
+        "raw_close_first_adjusted_close_fallback"
+    )
 
 
 def test_outcome_evaluator_does_not_use_pre_due_price_as_exit(tmp_path: Path) -> None:
