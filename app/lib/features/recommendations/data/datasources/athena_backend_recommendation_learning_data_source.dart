@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../models/recommendation_learning_status.dart';
+import '../../services/recommendation_learning_status_provider.dart';
 
-class AthenaBackendRecommendationLearningDataSource {
+class AthenaBackendRecommendationLearningDataSource
+    implements RecommendationLearningStatusProvider {
   final String baseUrl;
   final http.Client client;
 
@@ -13,6 +15,7 @@ class AthenaBackendRecommendationLearningDataSource {
     http.Client? client,
   }) : client = client ?? http.Client();
 
+  @override
   Future<RecommendationLearningStatus> getStatus({
     DateTime? asOf,
     String? modelVersion,
