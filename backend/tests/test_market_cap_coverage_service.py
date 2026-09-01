@@ -72,10 +72,17 @@ def test_market_cap_report_sorts_by_size_and_calculates_region_weights(
 
     assert report.heuristic_unique_company_count == 100
     assert report.heuristic_duplicate_group_count == 0
+    assert report.heuristic_cross_region_duplicate_group_count == 0
     assert report.heuristic_deduplicated_total_market_cap_usd == pytest.approx(
         5050.0
     )
     assert report.heuristic_duplicate_excess_market_cap_usd == pytest.approx(0.0)
+    assert report.heuristic_deduplicated_region_market_cap_usd == pytest.approx(
+        report.region_market_cap_usd
+    )
+    assert report.heuristic_deduplicated_region_weights == pytest.approx(
+        report.region_weights
+    )
 
     api = report.to_api_dict()
     assert api["topAssets"][0]["symbol"] == "S0"
@@ -189,16 +196,27 @@ def test_market_cap_report_quantifies_probable_duplicate_issuers(
     assert report.total_market_cap_usd == pytest.approx(1585.0)
     assert report.heuristic_unique_company_count == 2
     assert report.heuristic_duplicate_group_count == 1
+    assert report.heuristic_cross_region_duplicate_group_count == 1
     assert report.heuristic_deduplicated_total_market_cap_usd == pytest.approx(
         600.0
     )
     assert report.heuristic_duplicate_excess_market_cap_usd == pytest.approx(
         985.0
     )
+    assert report.heuristic_deduplicated_region_market_cap_usd == pytest.approx(
+        {"america": 500.0, "europe": 0.0, "asia": 100.0}
+    )
+    assert report.heuristic_deduplicated_region_weights == pytest.approx(
+        {"america": 5 / 6, "europe": 0.0, "asia": 1 / 6}
+    )
 
     group = report.heuristic_top_duplicate_groups[0]
     assert group["companyName"] == "NVIDIA Corporation"
     assert group["listingCount"] == 3
     assert group["representativeMarketCapUsd"] == pytest.approx(500.0)
+    assert group["representativeSymbol"] == "NVDA"
+    assert group["representativeCountry"] == "United States"
+    assert group["representativeRegionKey"] == "america"
     assert group["duplicateExcessMarketCapUsd"] == pytest.approx(985.0)
     assert set(group["countries"]) == {"United States", "Germany", "Mexico"}
+    assert group["regions"] == ["america", "europe"]
