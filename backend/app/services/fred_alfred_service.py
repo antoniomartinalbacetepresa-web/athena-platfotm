@@ -16,7 +16,12 @@ class FredAlfredService:
         api_key: str | None = None,
         client: httpx.Client | None = None,
     ) -> None:
-        self._api_key = (api_key or os.getenv("FRED_API_KEY", "")).strip()
+        resolved_api_key = (
+            api_key
+            if api_key is not None
+            else os.getenv("FRED_API_KEY", "")
+        )
+        self._api_key = resolved_api_key.strip()
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=30.0)
 
