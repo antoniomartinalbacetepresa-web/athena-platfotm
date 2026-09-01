@@ -28,6 +28,10 @@ class RecommendationBenchmarkReturnResult:
             "benchmarkReturn": self.benchmark_return,
             "entryObservedAt": self.entry_observed_at,
             "exitObservedAt": self.exit_observed_at,
+            "policy": {
+                "retrievalCutoff": "retrieved_at_not_after_evaluation_as_of",
+                "duplicateObservation": "latest_retrieved_at_before_as_of",
+            },
         }
 
 
@@ -68,6 +72,7 @@ class RecommendationBenchmarkReturnService:
             instrument_id=instrument_id,
             at_or_after=generated,
             not_after=due,
+            knowledge_cutoff=effective_as_of,
         )
         if entry is None:
             return self._empty(
@@ -80,6 +85,7 @@ class RecommendationBenchmarkReturnService:
             instrument_id=instrument_id,
             at_or_after=due,
             not_after=effective_as_of,
+            knowledge_cutoff=effective_as_of,
         )
         if exit_observation is None:
             return self._empty(
@@ -122,19 +128,32 @@ class RecommendationBenchmarkReturnService:
         instrument_id: int,
         at_or_after: datetime,
         not_after: datetime,
+        knowledge_cutoff: datetime,
     ) -> dict[str, Any] | None:
         with self._database.connect() as connection:
             row = connection.execute(
                 """
-                SELECT
-                    observed_at,
-                    COALESCE(close, adjusted_close) AS price
-                FROM market_observations
-                WHERE instrument_id = ?
-                  AND observed_at >= ?
-                  AND observed_at <= ?
-                  AND COALESCE(close, adjusted_close) IS NOT NULL
-                  AND COALESCE(close, adjusted_close) > 0
+                WITH eligible AS (
+                    SELECT
+                        observed_at,
+                        COALESCE(close, adjusted_close) AS price,
+                        retrieved_at,
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY observed_at
+                            ORDER BY retrieved_at DESC, id DESC
+                        ) AS row_rank
+                    FROM market_observations
+                    WHERE instrument_id = ?
+                      AND observed_at >= ?
+                      AND observed_at <= ?
+                      AND retrieved_at <= ?
+                      AND COALESCE(close, adjusted_close) IS NOT NULL
+                      AND COALESCE(close, adjusted_close) > 0
+                )
+                SELECT observed_at, price, retrieved_at
+                FROM eligible
+                WHERE row_rank = 1
                 ORDER BY observed_at ASC
                 LIMIT 1
                 """,
@@ -142,6 +161,7 @@ class RecommendationBenchmarkReturnService:
                     instrument_id,
                     at_or_after.astimezone(timezone.utc).isoformat(),
                     not_after.astimezone(timezone.utc).isoformat(),
+                    knowledge_cutoff.astimezone(timezone.utc).isoformat(),
                 ),
             ).fetchone()
         if row is None:
@@ -149,6 +169,7 @@ class RecommendationBenchmarkReturnService:
         return {
             "observed_at": str(row["observed_at"]),
             "price": float(row["price"]),
+            "retrieved_at": str(row["retrieved_at"]),
         }
 
     def _empty(
