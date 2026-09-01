@@ -1,5 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.market_weighting_readiness_service import (
+    MarketWeightingReadinessService,
+)
 from app.services.persisted_market_universe_service import (
     PersistedMarketUniverseService,
 )
@@ -13,6 +16,7 @@ router = APIRouter(
 
 market_service = YahooMarketService()
 market_universe_service = PersistedMarketUniverseService()
+market_weighting_readiness_service = MarketWeightingReadinessService()
 
 
 @router.get("/quote")
@@ -111,6 +115,23 @@ def get_universe_status() -> dict[str, object]:
             detail=(
                 "No se pudo evaluar la calidad "
                 "del universo de mercado."
+            ),
+        ) from exc
+
+    return {
+        "data": report.to_api_dict(),
+    }
+
+
+@router.get("/universe/weighting-readiness")
+def get_universe_weighting_readiness() -> dict[str, object]:
+    try:
+        report = market_weighting_readiness_service.get_report()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "No se pudo evaluar la preparación de los pesos regionales."
             ),
         ) from exc
 
