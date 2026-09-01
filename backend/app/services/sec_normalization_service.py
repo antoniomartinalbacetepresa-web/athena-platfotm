@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from app.models.normalized_data import DataProvenance, NormalizedDatum
@@ -49,6 +50,7 @@ class SecNormalizationService:
                 effective_at=effective_at,
                 published_at=filed,
                 source_timestamp=filed,
+                available_at=self._conservative_available_at(filed),
                 version=version,
                 raw_identifier=raw_identifier,
                 normalized_identifier=normalized_metric,
@@ -92,6 +94,31 @@ class SecNormalizationService:
         if not normalized_taxonomy or not normalized_concept:
             raise ValueError("taxonomy and concept are required.")
         return f"fundamental.{normalized_taxonomy}.{normalized_concept}"
+
+    @staticmethod
+    def _conservative_available_at(filed: str | None) -> str | None:
+        """Translate SEC's date-only filed field into a no-look-ahead timestamp.
+
+        Company Facts normally exposes ``filed`` only as YYYY-MM-DD. Without an
+        acceptance time ATHENA must not assume that the filing was knowable at
+        midnight at the start of that day. The conservative policy therefore
+        makes it available at 00:00 UTC on the following day. This can delay a
+        fact by several hours but cannot make it appear earlier than its filing
+        date.
+        """
+
+        if not filed:
+            return None
+        try:
+            filed_date = date.fromisoformat(filed)
+        except ValueError:
+            return None
+        available_date = filed_date + timedelta(days=1)
+        return datetime.combine(
+            available_date,
+            time.min,
+            tzinfo=timezone.utc,
+        ).isoformat()
 
     @staticmethod
     def _optional_text(value: Any) -> str | None:
