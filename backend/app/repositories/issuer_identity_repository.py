@@ -198,6 +198,7 @@ class IssuerIdentityRepository:
                     resolution_method = excluded.resolution_method,
                     confidence = excluded.confidence,
                     updated_at = excluded.updated_at
+                WHERE excluded.confidence >= instrument_issuer_links.confidence
                 """,
                 (
                     instrument_id,
