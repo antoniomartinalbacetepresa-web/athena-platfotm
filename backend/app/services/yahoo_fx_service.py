@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +16,7 @@ class FxRate:
 class YahooFxService:
     _USD = "USD"
 
+    # Known Yahoo conventions retained for compatibility and fewer probes.
     _DIRECT_TO_USD_SYMBOLS: dict[str, str] = {
         "EUR": "EURUSD=X",
     }
@@ -71,10 +72,32 @@ class YahooFxService:
                 source_symbol=inverse_symbol,
             )
 
-        raise ValueError(
-            "No existe una conversión a USD configurada "
-            f"para la moneda {normalized_currency}."
-        )
+        generic_direct = f"{normalized_currency}USD=X"
+        try:
+            quote = self._get_positive_last_price(
+                generic_direct
+            )
+            return FxRate(
+                currency=normalized_currency,
+                usd_rate=quote,
+                source_symbol=generic_direct,
+            )
+        except RuntimeError:
+            generic_inverse = f"USD{normalized_currency}=X"
+            try:
+                quote = self._get_positive_last_price(
+                    generic_inverse
+                )
+                return FxRate(
+                    currency=normalized_currency,
+                    usd_rate=1.0 / quote,
+                    source_symbol=generic_inverse,
+                )
+            except RuntimeError as inverse_error:
+                raise ValueError(
+                    "No se pudo obtener una conversión a USD válida "
+                    f"para la moneda {normalized_currency}."
+                ) from inverse_error
 
     def convert_to_usd(
         self,
