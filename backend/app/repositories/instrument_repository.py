@@ -351,6 +351,60 @@ class InstrumentRepository:
 
         return self._row_to_dict(row)
 
+    def list_active(
+        self,
+        source_provider: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        if limit is not None and limit <= 0:
+            raise ValueError(
+                "limit debe ser mayor que 0."
+            )
+
+        if offset < 0:
+            raise ValueError(
+                "offset no puede ser negativo."
+            )
+
+        params: list[Any] = []
+        where_parts = ["is_active = 1"]
+
+        if source_provider is not None:
+            normalized_source_provider = (
+                self._normalize_required_text(
+                    source_provider,
+                    "source_provider",
+                )
+            )
+            where_parts.append("source_provider = ?")
+            params.append(normalized_source_provider)
+
+        query = (
+            "SELECT * FROM instruments WHERE "
+            + " AND ".join(where_parts)
+            + " ORDER BY symbol ASC, exchange_short_name ASC"
+        )
+
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        elif offset > 0:
+            query += " LIMIT -1 OFFSET ?"
+            params.append(offset)
+
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                query,
+                tuple(params),
+            ).fetchall()
+
+        return [
+            self._row_to_dict(row)
+            for row in rows
+            if row is not None
+        ]
+
     def count(
         self,
         active_only: bool = False,
@@ -643,13 +697,10 @@ class InstrumentRepository:
                 instrument.get("exchange")
             ),
             "exchange_short_name": exchange_short_name,
-            "instrument_type": (
-                self._normalize_optional_text(
-                    instrument.get("instrumentType")
-                )
-                or "unknown"
+            "instrument_type": self._normalize_optional_text(
+                instrument.get("instrumentType")
             ),
-            "is_primary_listing": self._normalize_bool(
+            "is_primary_listing": self._normalize_optional_bool(
                 instrument.get("isPrimaryListing")
             ),
             "sector": self._normalize_optional_text(
@@ -661,15 +712,15 @@ class InstrumentRepository:
             "currency": self._normalize_upper_optional_text(
                 instrument.get("currency")
             ),
-            "market_cap_usd": self._normalize_positive_float(
+            "market_cap_usd": self._normalize_optional_float(
                 instrument.get("marketCap")
             ),
-            "market_cap_local": self._normalize_positive_float(
+            "market_cap_local": self._normalize_optional_float(
                 instrument.get("marketCapLocal")
             ),
             "market_cap_local_currency": (
                 self._normalize_upper_optional_text(
-                    instrument.get("currency")
+                    instrument.get("marketCapCurrency")
                 )
             ),
             "source_provider": self._normalize_optional_text(
@@ -681,12 +732,22 @@ class InstrumentRepository:
             "retrieved_at": self._normalize_optional_text(
                 instrument.get("retrievedAt")
             ),
-            "is_active": self._normalize_bool(
-                instrument.get(
-                    "isActive",
-                    True,
-                )
+            "is_active": self._normalize_bool_with_default(
+                instrument.get("isActive"),
+                default=True,
             ),
+        }
+
+    def _row_to_dict(
+        self,
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+
+        return {
+            key: row[key]
+            for key in row.keys()
         }
 
     def _normalize_required_text(
@@ -699,9 +760,7 @@ class InstrumentRepository:
                 f"{field_name} es obligatorio."
             )
 
-        normalized = str(
-            value
-        ).strip()
+        normalized = str(value).strip()
 
         if not normalized:
             raise ValueError(
@@ -717,9 +776,7 @@ class InstrumentRepository:
         if value is None:
             return None
 
-        normalized = str(
-            value
-        ).strip()
+        normalized = str(value).strip()
 
         if not normalized:
             return None
@@ -739,7 +796,7 @@ class InstrumentRepository:
 
         return normalized.upper()
 
-    def _normalize_positive_float(
+    def _normalize_optional_float(
         self,
         value: Any,
     ) -> float | None:
@@ -747,40 +804,53 @@ class InstrumentRepository:
             return None
 
         try:
-            result = float(
-                value
-            )
+            result = float(value)
         except (TypeError, ValueError):
             return None
 
         if result != result:
             return None
 
-        if result <= 0:
+        return result
+
+    def _normalize_optional_bool(
+        self,
+        value: Any,
+    ) -> int | None:
+        if value is None:
             return None
 
-        return result
+        return int(
+            self._normalize_bool(value)
+        )
+
+    def _normalize_bool_with_default(
+        self,
+        value: Any,
+        default: bool,
+    ) -> int:
+        if value is None:
+            return int(default)
+
+        return int(
+            self._normalize_bool(value)
+        )
 
     def _normalize_bool(
         self,
         value: Any,
-    ) -> int:
-        if isinstance(
-            value,
-            bool,
-        ):
-            return 1 if value else 0
+    ) -> bool:
+        if isinstance(value, bool):
+            return value
 
-        if isinstance(
-            value,
-            (int, float),
-        ):
-            return 1 if value != 0 else 0
+        if isinstance(value, (int, float)):
+            if value == 1:
+                return True
 
-        if isinstance(
-            value,
-            str,
-        ):
+            if value == 0:
+                return False
+
+        if isinstance(value, str):
             normalized = value.strip().lower()
 
             if normalized in {
@@ -788,27 +858,19 @@ class InstrumentRepository:
                 "1",
                 "yes",
                 "y",
+                "si",
+                "sí",
             }:
-                return 1
+                return True
 
             if normalized in {
                 "false",
                 "0",
                 "no",
                 "n",
-                "",
             }:
-                return 0
+                return False
 
-        return 0
-
-    def _row_to_dict(
-        self,
-        row: sqlite3.Row | None,
-    ) -> dict[str, Any] | None:
-        if row is None:
-            return None
-
-        return dict(
-            row
+        raise ValueError(
+            "El valor booleano no es válido."
         )
