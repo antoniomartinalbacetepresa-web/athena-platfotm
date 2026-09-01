@@ -6,6 +6,7 @@ from typing import Any
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.issuer_identity_repository import IssuerIdentityRepository
+from app.services.country_region_service import CountryRegionService
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,8 @@ class CanonicalMarketCapReport:
     cross_listing_ratio_observation_count: int
     median_cross_listing_market_cap_ratio: float | None
     max_cross_listing_market_cap_ratio: float | None
+    canonical_listing_market_cap_count: int = 0
+    median_fallback_market_cap_count: int = 0
 
     @property
     def domicile_market_cap_coverage(self) -> float:
@@ -35,7 +38,7 @@ class CanonicalMarketCapReport:
     def to_api_dict(self) -> dict[str, Any]:
         return {
             "status": "diagnostic_only",
-            "method": "canonical_issuer_median_cross_listing_market_cap",
+            "method": "canonical_domestic_listing_else_median_cross_listing_market_cap",
             "linkedListingCount": self.linked_listing_count,
             "canonicalIssuerCount": self.canonical_issuer_count,
             "rawLinkedMarketCapUsd": self.raw_linked_market_cap_usd,
@@ -49,6 +52,14 @@ class CanonicalMarketCapReport:
             "regionMarketCapUsd": dict(self.region_market_cap_usd),
             "regionWeights": dict(self.region_weights),
             "weightsScope": "canonical_issuers_with_resolved_domicile_only",
+            "marketCapSelection": {
+                "canonicalListingCount": self.canonical_listing_market_cap_count,
+                "medianFallbackCount": self.median_fallback_market_cap_count,
+                "fallbackMeaning": (
+                    "La mediana se conserva sólo como diagnóstico cuando no existe un "
+                    "listado doméstico canónico inequívoco."
+                ),
+            },
             "crossListingMarketCapConsistency": {
                 "multiListingIssuerCount": self.multi_listing_issuer_count,
                 "ratioObservationCount": self.cross_listing_ratio_observation_count,
@@ -71,6 +82,7 @@ class CanonicalMarketCapService:
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._identities = IssuerIdentityRepository(database=self._database)
+        self._countries = CountryRegionService()
 
     def get_report(self) -> CanonicalMarketCapReport:
         self._identities.initialize()
@@ -82,6 +94,10 @@ class CanonicalMarketCapService:
                 f"""
                 SELECT
                     iil.issuer_id,
+                    i.id AS instrument_id,
+                    i.symbol,
+                    i.country AS listing_country,
+                    i.is_primary_listing,
                     i.market_cap_usd,
                     ci.domicile_country,
                     ci.region_key
@@ -93,7 +109,7 @@ class CanonicalMarketCapService:
                   AND i.market_cap_usd > 0
                   AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown')))
                       NOT IN ({excluded_placeholders})
-                ORDER BY iil.issuer_id
+                ORDER BY iil.issuer_id, i.id
                 """,
                 self._EXCLUDED_INSTRUMENT_TYPES,
             ).fetchall()
@@ -107,12 +123,20 @@ class CanonicalMarketCapService:
             group = groups.setdefault(
                 issuer_id,
                 {
-                    "caps": [],
+                    "listings": [],
                     "domicile_country": row["domicile_country"],
                     "region_key": row["region_key"],
                 },
             )
-            group["caps"].append(cap)
+            group["listings"].append(
+                {
+                    "instrument_id": int(row["instrument_id"]),
+                    "symbol": str(row["symbol"]),
+                    "listing_country": str(row["listing_country"] or ""),
+                    "is_primary_listing": bool(row["is_primary_listing"]),
+                    "market_cap_usd": cap,
+                }
+            )
 
         canonical_total = 0.0
         resolved_total = 0.0
@@ -122,10 +146,20 @@ class CanonicalMarketCapService:
         region_caps = {region: 0.0 for region in self._REGIONS}
         cross_listing_ratios: list[float] = []
         multi_listing_issuer_count = 0
+        canonical_listing_market_cap_count = 0
+        median_fallback_market_cap_count = 0
 
         for group in groups.values():
-            caps = [float(value) for value in group["caps"]]
-            issuer_cap = float(median(caps))
+            listings = list(group["listings"])
+            caps = [float(item["market_cap_usd"]) for item in listings]
+            issuer_cap, used_canonical_listing = self._select_issuer_market_cap(
+                listings=listings,
+                domicile_country=str(group.get("domicile_country") or ""),
+            )
+            if used_canonical_listing:
+                canonical_listing_market_cap_count += 1
+            else:
+                median_fallback_market_cap_count += 1
             canonical_total += issuer_cap
 
             if len(caps) > 1:
@@ -163,14 +197,39 @@ class CanonicalMarketCapService:
             multi_listing_issuer_count=multi_listing_issuer_count,
             cross_listing_ratio_observation_count=len(cross_listing_ratios),
             median_cross_listing_market_cap_ratio=(
-                float(median(cross_listing_ratios))
-                if cross_listing_ratios
-                else None
+                float(median(cross_listing_ratios)) if cross_listing_ratios else None
             ),
             max_cross_listing_market_cap_ratio=(
                 max(cross_listing_ratios) if cross_listing_ratios else None
             ),
+            canonical_listing_market_cap_count=canonical_listing_market_cap_count,
+            median_fallback_market_cap_count=median_fallback_market_cap_count,
         )
+
+    def _select_issuer_market_cap(
+        self,
+        *,
+        listings: list[dict[str, Any]],
+        domicile_country: str,
+    ) -> tuple[float, bool]:
+        caps = [float(item["market_cap_usd"]) for item in listings]
+        domicile = self._countries.normalize_country(domicile_country) or ""
+        domestic = [
+            item
+            for item in listings
+            if (self._countries.normalize_country(item["listing_country"]) or "")
+            == domicile
+            and domicile
+        ]
+        explicit_primary = [
+            item for item in domestic if item["is_primary_listing"]
+        ]
+
+        if len(explicit_primary) == 1:
+            return float(explicit_primary[0]["market_cap_usd"]), True
+        if len(domestic) == 1:
+            return float(domestic[0]["market_cap_usd"]), True
+        return float(median(caps)), False
 
     def _weights_from_caps(self, caps: dict[str, float]) -> dict[str, float]:
         total = sum(caps.values())

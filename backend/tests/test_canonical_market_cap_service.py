@@ -15,6 +15,7 @@ def _insert(
     market_cap: float,
     country: str,
     region: str,
+    is_primary: bool = False,
 ) -> int:
     return repository.upsert(
         {
@@ -24,11 +25,14 @@ def _insert(
             "regionKey": region,
             "exchangeShortName": symbol,
             "marketCap": market_cap,
+            "isPrimaryListing": is_primary,
         }
     )
 
 
-def test_canonical_market_cap_counts_same_issuer_once_with_median(tmp_path: Path) -> None:
+def test_canonical_market_cap_counts_same_issuer_once_using_domestic_listing(
+    tmp_path: Path,
+) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
     instruments = InstrumentRepository(database=database)
@@ -86,6 +90,8 @@ def test_canonical_market_cap_counts_same_issuer_once_with_median(tmp_path: Path
     assert report.region_weights == pytest.approx(
         {"america": 1.0, "europe": 0.0, "asia": 0.0}
     )
+    assert report.canonical_listing_market_cap_count == 1
+    assert report.median_fallback_market_cap_count == 0
     assert report.multi_listing_issuer_count == 1
     assert report.cross_listing_ratio_observation_count == 1
     assert report.median_cross_listing_market_cap_ratio == pytest.approx(2000.0 / 490.0)
@@ -93,6 +99,110 @@ def test_canonical_market_cap_counts_same_issuer_once_with_median(tmp_path: Path
     consistency = report.to_api_dict()["crossListingMarketCapConsistency"]
     assert consistency["multiListingIssuerCount"] == 1
     assert consistency["ratioObservationCount"] == 1
+
+
+def test_canonical_market_cap_prefers_explicit_primary_domestic_listing(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    primary_id = _insert(
+        instruments,
+        symbol="PRIMARY",
+        market_cap=300.0,
+        country="USA",
+        region="america",
+        is_primary=True,
+    )
+    secondary_domestic_id = _insert(
+        instruments,
+        symbol="SECONDARY",
+        market_cap=450.0,
+        country="United States",
+        region="america",
+    )
+    foreign_id = _insert(
+        instruments,
+        symbol="FOREIGN.DE",
+        market_cap=500.0,
+        country="Germany",
+        region="europe",
+    )
+
+    identities = IssuerIdentityRepository(database=database)
+    issuer_id = identities.upsert_external_issuer(
+        source_provider="official",
+        external_id="ISSUER-PRIMARY",
+        canonical_name="Primary Issuer",
+        evidence_confidence=1.0,
+        domicile_country="United States",
+        region_key="america",
+    )
+    for instrument_id in (primary_id, secondary_domestic_id, foreign_id):
+        identities.link_instrument(
+            instrument_id=instrument_id,
+            issuer_id=issuer_id,
+            evidence_source="official",
+            resolution_method="official_identifier",
+            confidence=1.0,
+        )
+
+    report = CanonicalMarketCapService(database=database).get_report()
+
+    assert report.canonical_market_cap_usd == pytest.approx(300.0)
+    assert report.canonical_listing_market_cap_count == 1
+    assert report.median_fallback_market_cap_count == 0
+    selection = report.to_api_dict()["marketCapSelection"]
+    assert selection["canonicalListingCount"] == 1
+    assert selection["medianFallbackCount"] == 0
+
+
+def test_canonical_market_cap_uses_median_only_when_domestic_selection_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    first_id = _insert(
+        instruments,
+        symbol="CLASS-A",
+        market_cap=300.0,
+        country="United States",
+        region="america",
+    )
+    second_id = _insert(
+        instruments,
+        symbol="CLASS-B",
+        market_cap=500.0,
+        country="United States",
+        region="america",
+    )
+
+    identities = IssuerIdentityRepository(database=database)
+    issuer_id = identities.upsert_external_issuer(
+        source_provider="official",
+        external_id="ISSUER-AMBIGUOUS",
+        canonical_name="Ambiguous Issuer",
+        evidence_confidence=1.0,
+        domicile_country="United States",
+        region_key="america",
+    )
+    for instrument_id in (first_id, second_id):
+        identities.link_instrument(
+            instrument_id=instrument_id,
+            issuer_id=issuer_id,
+            evidence_source="official",
+            resolution_method="official_identifier",
+            confidence=1.0,
+        )
+
+    report = CanonicalMarketCapService(database=database).get_report()
+
+    assert report.canonical_market_cap_usd == pytest.approx(400.0)
+    assert report.canonical_listing_market_cap_count == 0
+    assert report.median_fallback_market_cap_count == 1
+    assert report.to_api_dict()["readyForRegionalWeighting"] is False
 
 
 def test_canonical_market_cap_keeps_unresolved_domicile_out_of_region_weights(
@@ -155,6 +265,8 @@ def test_canonical_market_cap_keeps_unresolved_domicile_out_of_region_weights(
     assert report.region_market_cap_usd == pytest.approx(
         {"america": 300.0, "europe": 0.0, "asia": 0.0}
     )
+    assert report.canonical_listing_market_cap_count == 1
+    assert report.median_fallback_market_cap_count == 1
     assert report.multi_listing_issuer_count == 0
     assert report.cross_listing_ratio_observation_count == 0
     assert report.median_cross_listing_market_cap_ratio is None
