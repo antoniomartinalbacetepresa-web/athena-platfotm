@@ -21,6 +21,9 @@ class MarketCapCoverageReport:
     heuristic_duplicate_group_count: int
     heuristic_deduplicated_total_market_cap_usd: float
     heuristic_duplicate_excess_market_cap_usd: float
+    heuristic_deduplicated_region_market_cap_usd: dict[str, float]
+    heuristic_deduplicated_region_weights: dict[str, float]
+    heuristic_cross_region_duplicate_group_count: int
     heuristic_top_duplicate_groups: tuple[dict[str, Any], ...]
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -42,11 +45,20 @@ class MarketCapCoverageReport:
                 ),
                 "uniqueCompanyCount": self.heuristic_unique_company_count,
                 "duplicateGroupCount": self.heuristic_duplicate_group_count,
+                "crossRegionDuplicateGroupCount": (
+                    self.heuristic_cross_region_duplicate_group_count
+                ),
                 "deduplicatedTotalMarketCapUsd": (
                     self.heuristic_deduplicated_total_market_cap_usd
                 ),
                 "duplicateExcessMarketCapUsd": (
                     self.heuristic_duplicate_excess_market_cap_usd
+                ),
+                "deduplicatedRegionMarketCapUsd": dict(
+                    self.heuristic_deduplicated_region_market_cap_usd
+                ),
+                "deduplicatedRegionWeights": dict(
+                    self.heuristic_deduplicated_region_weights
                 ),
                 "topDuplicateGroups": [
                     dict(group) for group in self.heuristic_top_duplicate_groups
@@ -125,24 +137,14 @@ class MarketCapCoverageService:
             )
 
         usable.sort(key=lambda item: item["marketCapUsd"], reverse=True)
-        total_market_cap = sum(
-            float(asset["marketCapUsd"])
-            for asset in usable
-        )
+        total_market_cap = sum(float(asset["marketCapUsd"]) for asset in usable)
 
         top_shares = self._build_top_shares(
             usable=usable,
             total_market_cap=total_market_cap,
         )
 
-        region_weights = {
-            region: (
-                market_cap / total_market_cap
-                if total_market_cap > 0
-                else 0.0
-            )
-            for region, market_cap in region_market_cap.items()
-        }
+        region_weights = self._weights_from_caps(region_market_cap)
 
         ordered_country_market_cap = dict(
             sorted(
@@ -179,6 +181,15 @@ class MarketCapCoverageService:
             ],
             heuristic_duplicate_excess_market_cap_usd=issuer_diagnostics[
                 "duplicate_excess"
+            ],
+            heuristic_deduplicated_region_market_cap_usd=issuer_diagnostics[
+                "deduplicated_region_market_cap"
+            ],
+            heuristic_deduplicated_region_weights=issuer_diagnostics[
+                "deduplicated_region_weights"
+            ],
+            heuristic_cross_region_duplicate_group_count=issuer_diagnostics[
+                "cross_region_duplicate_group_count"
             ],
             heuristic_top_duplicate_groups=tuple(
                 issuer_diagnostics["top_duplicate_groups"]
@@ -230,7 +241,11 @@ class MarketCapCoverageService:
             groups.setdefault(normalized_name, []).append(asset)
 
         deduplicated_total = 0.0
+        deduplicated_region_market_cap = {
+            region: 0.0 for region in self._REGIONS
+        }
         duplicate_groups: list[dict[str, Any]] = []
+        cross_region_duplicate_group_count = 0
 
         for assets in groups.values():
             ordered = sorted(
@@ -238,26 +253,35 @@ class MarketCapCoverageService:
                 key=lambda item: float(item["marketCapUsd"]),
                 reverse=True,
             )
-            representative_cap = float(ordered[0]["marketCapUsd"])
+            representative = ordered[0]
+            representative_cap = float(representative["marketCapUsd"])
+            representative_region = str(representative["regionKey"])
             observed_cap = sum(float(item["marketCapUsd"]) for item in ordered)
             deduplicated_total += representative_cap
+            deduplicated_region_market_cap[representative_region] += (
+                representative_cap
+            )
 
             if len(ordered) <= 1:
                 continue
 
+            regions = sorted({str(item["regionKey"]) for item in ordered})
+            if len(regions) > 1:
+                cross_region_duplicate_group_count += 1
+
             duplicate_groups.append(
                 {
-                    "companyName": ordered[0]["companyName"],
+                    "companyName": representative["companyName"],
                     "listingCount": len(ordered),
                     "observedMarketCapUsd": observed_cap,
                     "representativeMarketCapUsd": representative_cap,
+                    "representativeSymbol": representative["symbol"],
+                    "representativeCountry": representative["country"],
+                    "representativeRegionKey": representative_region,
                     "duplicateExcessMarketCapUsd": (
                         observed_cap - representative_cap
                     ),
-                    "symbols": [
-                        str(item["symbol"])
-                        for item in ordered[:20]
-                    ],
+                    "symbols": [str(item["symbol"]) for item in ordered[:20]],
                     "countries": sorted(
                         {
                             str(item["country"])
@@ -265,6 +289,7 @@ class MarketCapCoverageService:
                             if str(item["country"])
                         }
                     ),
+                    "regions": regions,
                 }
             )
 
@@ -277,11 +302,25 @@ class MarketCapCoverageService:
         return {
             "unique_count": len(groups),
             "duplicate_group_count": len(duplicate_groups),
+            "cross_region_duplicate_group_count": (
+                cross_region_duplicate_group_count
+            ),
             "deduplicated_total": deduplicated_total,
             "duplicate_excess": max(0.0, raw_total - deduplicated_total),
+            "deduplicated_region_market_cap": deduplicated_region_market_cap,
+            "deduplicated_region_weights": self._weights_from_caps(
+                deduplicated_region_market_cap
+            ),
             "top_duplicate_groups": duplicate_groups[
                 : self._TOP_DUPLICATE_GROUP_COUNT
             ],
+        }
+
+    def _weights_from_caps(self, caps: dict[str, float]) -> dict[str, float]:
+        total = sum(caps.values())
+        return {
+            region: (caps.get(region, 0.0) / total if total > 0 else 0.0)
+            for region in self._REGIONS
         }
 
     def _normalize_company_name(self, value: str) -> str:
