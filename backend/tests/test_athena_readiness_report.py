@@ -22,6 +22,8 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
         "blockers"
     ]
     assert report["instrumentTypes"]["listingCount"] == 0
+    assert report["marketHistory"]["observationCount"] == 0
+    assert report["marketHistory"]["instrumentCoverage"] == 0.0
     assert (
         report["recommendationLearning"]["automaticModelMutation"]
         is False
