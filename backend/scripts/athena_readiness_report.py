@@ -8,6 +8,9 @@ from app.database.athena_database import AthenaDatabase
 from app.services.instrument_type_market_cap_service import (
     InstrumentTypeMarketCapService,
 )
+from app.services.market_observation_coverage_service import (
+    MarketObservationCoverageService,
+)
 from app.services.market_weighting_readiness_service import (
     MarketWeightingReadinessService,
 )
@@ -38,6 +41,9 @@ def build_report(
     instrument_types = InstrumentTypeMarketCapService(
         database=effective_database,
     ).get_report()
+    market_history = MarketObservationCoverageService(
+        database=effective_database,
+    ).get_report()
     learning = RecommendationLearningStatusService(
         database=effective_database,
     ).get_status(
@@ -50,6 +56,7 @@ def build_report(
         "marketUniverse": universe.to_api_dict(),
         "marketWeighting": weighting.to_api_dict(),
         "instrumentTypes": instrument_types.to_api_dict(),
+        "marketHistory": market_history.to_api_dict(),
         "recommendationLearning": learning,
         "automaticActivation": False,
     }
