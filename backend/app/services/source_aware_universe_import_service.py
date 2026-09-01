@@ -44,6 +44,9 @@ class SourceAwareUniverseImportService:
             )
 
         self._import_service = import_service
+        # Se conserva el argumento por compatibilidad con la composición
+        # existente. Los IDs persistidos llegan ya en UniverseImportReport,
+        # por lo que no es necesario volver a consultar cada cotización.
         self._instrument_repository = instrument_repository
         self._membership_repository = membership_repository
         self._minimum_reconciliation_coverage = float(
@@ -75,7 +78,15 @@ class SourceAwareUniverseImportService:
             )
         )
 
-        instrument_ids = self._resolve_instrument_ids(buffered)
+        instrument_ids = self._unique_ids(
+            report.persisted_instrument_ids
+        )
+
+        if len(instrument_ids) != report.accepted:
+            raise RuntimeError(
+                "Los IDs persistidos del universo no coinciden con "
+                "los registros aceptados."
+            )
 
         self._membership_repository.mark_seen_many(
             source_id=source_id,
@@ -110,38 +121,18 @@ class SourceAwareUniverseImportService:
         coverage = current_active_count / previous_active_count
         return coverage >= self._minimum_reconciliation_coverage
 
-    def _resolve_instrument_ids(
+    def _unique_ids(
         self,
-        instruments: Iterable[dict[str, Any]],
+        instrument_ids: Iterable[int],
     ) -> list[int]:
         result: list[int] = []
-        seen_ids: set[int] = set()
+        seen: set[int] = set()
 
-        for instrument in instruments:
-            symbol = str(instrument.get("symbol") or "").strip().upper()
-            if not symbol:
+        for value in instrument_ids:
+            instrument_id = int(value)
+            if instrument_id in seen:
                 continue
-
-            exchange_value = instrument.get("exchangeShortName")
-            exchange = (
-                str(exchange_value).strip().upper()
-                if exchange_value is not None and str(exchange_value).strip()
-                else None
-            )
-
-            stored = self._instrument_repository.get_by_listing(
-                symbol,
-                exchange,
-            )
-
-            if stored is None:
-                continue
-
-            instrument_id = int(stored["id"])
-            if instrument_id in seen_ids:
-                continue
-
-            seen_ids.add(instrument_id)
+            seen.add(instrument_id)
             result.append(instrument_id)
 
         return result
