@@ -1,0 +1,68 @@
+# FINANCIAL MODEL
+
+Versión 0.1
+
+---
+
+# Objetivo
+
+El Financial Model define todas las variables que ATHENA puede analizar.
+
+No representa únicamente ratios financieros.
+
+Representa el conocimiento financiero completo del sistema.
+
+Cada variable tendrá:
+
+- definición
+- fuente
+- importancia
+- interpretación
+- peso
+- relación con otras variables
+
+---
+
+# Grandes bloques
+
+Actualmente ATHENA divide el análisis en:
+
+1. Información general
+
+2. Precio
+
+3. Valoración
+
+4. Rentabilidad
+
+5. Crecimiento
+
+6. Liquidez
+
+7. Solvencia
+
+8. Cash Flow
+
+9. Dividendos
+
+10. Calidad del negocio
+
+11. Riesgo
+
+12. Momentum
+
+13. Macroeconomía
+
+14. Noticias
+
+15. Sentimiento
+
+16. Gobierno corporativo
+
+17. Competencia
+
+18. Innovación
+
+19. ESG
+
+20. IA

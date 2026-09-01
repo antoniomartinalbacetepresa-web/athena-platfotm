@@ -1,0 +1,119 @@
+﻿# =========================
+# ATHENA TYCHE
+# Root Git ignore
+# =========================
+
+# -------------------------
+# Secrets / local config
+# -------------------------
+.env
+.env.*
+!.env.example
+
+**/config/*secret*
+**/config/*key*
+**/config/*token*
+**/config/fmp_env.json
+**/*credentials*.json
+**/*service-account*.json
+**/secrets/
+**/.secrets/
+
+# -------------------------
+# Flutter / Dart
+# -------------------------
+**/.dart_tool/
+**/.packages
+**/.pub/
+**/.pub-cache/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+
+# Generated Flutter files
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+**/android/**/GeneratedPluginRegistrant.java
+
+**/ios/Flutter/ephemeral/
+**/ios/Pods/
+**/ios/.symlinks/
+
+**/macos/Flutter/ephemeral/
+**/macos/Pods/
+
+**/linux/flutter/ephemeral/
+**/windows/flutter/ephemeral/
+
+# -------------------------
+# IDE / editor
+# -------------------------
+**/.idea/
+**/*.iml
+**/.vscode/
+*.code-workspace
+
+# -------------------------
+# OS files
+# -------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# -------------------------
+# Python
+# -------------------------
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/venv/
+**/env/
+
+# -------------------------
+# Node / JS
+# -------------------------
+**/node_modules/
+**/.npm/
+**/.yarn/
+**/.pnpm-store/
+
+# -------------------------
+# Logs / temporary files
+# -------------------------
+**/*.log
+**/*.tmp
+**/*.temp
+**/*.bak
+**/*.swp
+**/*.swo
+
+# -------------------------
+# Databases / runtime data
+# -------------------------
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.db-journal
+
+# -------------------------
+# Coverage / reports
+# -------------------------
+**/coverage/
+**/.coverage
+**/htmlcov/
+
+# -------------------------
+# Local generated exports
+# -------------------------
+**/exports/
+**/tmp/
+**/temp/
+
+# -------------------------
+# ATHENA local backups
+# -------------------------
+app_v1/
+
+**/*.tmp
