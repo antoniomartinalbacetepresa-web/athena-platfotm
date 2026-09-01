@@ -54,7 +54,7 @@ class MarketUniverseQualityReport:
 
 
 class PersistedMarketUniverseService:
-    """Sirve el catálogo persistido sólo cuando supera barreras de cobertura."""
+    """Sirve sólo activos persistidos aptos para ponderación global."""
 
     DEFAULT_MINIMUM_GLOBAL_USABLE_COUNT = 100
     DEFAULT_MINIMUM_USABLE_PER_REGION = 20
@@ -91,12 +91,13 @@ class PersistedMarketUniverseService:
 
     def get_universe(self) -> list[dict[str, Any]]:
         rows = self._load_active_rows()
+        usable_rows = [row for row in rows if self._is_globally_usable(row)]
         report = self._build_quality_report(rows)
 
         if not report.is_global_ready:
             return self._fallback_service.get_universe()
 
-        return [self._to_api_asset(row) for row in rows]
+        return [self._to_api_asset(row) for row in usable_rows]
 
     def get_quality_report(self) -> MarketUniverseQualityReport:
         rows = self._load_active_rows()
@@ -172,6 +173,18 @@ class PersistedMarketUniverseService:
             is_global_ready=is_global_ready,
             using_fallback=not is_global_ready,
         )
+
+    def _is_globally_usable(self, row: dict[str, Any]) -> bool:
+        market_cap = row.get("market_cap_usd")
+        if not isinstance(market_cap, (int, float)) or market_cap <= 0:
+            return False
+
+        country = str(row.get("country") or "").strip()
+        if not country:
+            return False
+
+        region_key = str(row.get("region_key") or "").strip().lower()
+        return region_key in self._REQUIRED_REGIONS
 
     def _to_api_asset(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
