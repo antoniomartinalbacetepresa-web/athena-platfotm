@@ -21,7 +21,7 @@ class MarketProviderSettings {
           providerId: 'mock_financial',
         );
 
-  const MarketProviderSettings.athenaBackend({
+  MarketProviderSettings.athenaBackend({
     String baseUrl = 'http://127.0.0.1:8000',
   })  : market = MarketProviderConfig(
           providerId: 'athena_backend',
