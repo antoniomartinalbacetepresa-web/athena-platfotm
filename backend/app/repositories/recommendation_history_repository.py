@@ -29,6 +29,7 @@ class RecommendationHistoryRepository:
                     instrument_id INTEGER,
                     canonical_issuer_id INTEGER,
                     symbol TEXT NOT NULL,
+                    benchmark_symbol TEXT,
                     action TEXT NOT NULL
                         CHECK (action IN ('buy', 'hold', 'reduce', 'sell')),
                     score REAL NOT NULL
@@ -92,6 +93,17 @@ class RecommendationHistoryRepository:
                 """
             )
 
+            columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(athena_recommendations)"
+                ).fetchall()
+            }
+            if "benchmark_symbol" not in columns:
+                connection.execute(
+                    "ALTER TABLE athena_recommendations ADD COLUMN benchmark_symbol TEXT"
+                )
+
     def create_recommendation(
         self,
         *,
@@ -108,9 +120,11 @@ class RecommendationHistoryRepository:
         instrument_id: int | None = None,
         canonical_issuer_id: int | None = None,
         risk_score: float | None = None,
+        benchmark_symbol: str | None = None,
     ) -> int:
         self.initialize()
         normalized_symbol = self._required_text(symbol, "symbol").upper()
+        normalized_benchmark = self._optional_symbol(benchmark_symbol)
         normalized_action = self._required_text(action, "action").lower()
         if normalized_action not in self._ACTIONS:
             raise ValueError("action debe ser buy, hold, reduce o sell.")
@@ -141,6 +155,7 @@ class RecommendationHistoryRepository:
                     instrument_id,
                     canonical_issuer_id,
                     symbol,
+                    benchmark_symbol,
                     action,
                     score,
                     conviction,
@@ -152,12 +167,13 @@ class RecommendationHistoryRepository:
                     rationale_json,
                     input_snapshot_json,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instrument_id,
                     canonical_issuer_id,
                     normalized_symbol,
+                    normalized_benchmark,
                     normalized_action,
                     normalized_score,
                     normalized_conviction,
@@ -303,6 +319,12 @@ class RecommendationHistoryRepository:
         if not normalized:
             raise ValueError(f"{field} es obligatorio.")
         return normalized
+
+    def _optional_symbol(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        return normalized or None
 
     def _bounded(self, value: float, field: str, low: float, high: float) -> float:
         result = float(value)
