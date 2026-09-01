@@ -15,6 +15,7 @@ class YahooRegionalUniverseSource:
 
     source_id = "yahoo_regional_screener"
     EXHAUSTIVE_SAFETY_MAX_PAGES = 200
+    EXHAUSTIVE_MAX_CONSECUTIVE_NO_NEW_SYMBOL_PAGES = 2
 
     DEFAULT_REGIONS = (
         # United States is included here because the weighted universe needs
@@ -127,6 +128,7 @@ class YahooRegionalUniverseSource:
 
             page = 0
             previous_page_signature: tuple[str, ...] | None = None
+            consecutive_no_new_symbol_pages = 0
 
             while self._max_pages is None or page < self._max_pages:
                 if (
@@ -140,6 +142,7 @@ class YahooRegionalUniverseSource:
                         total=None,
                         accumulated=len(assets),
                         status="safety_limit",
+                        new_symbols=0,
                     )
                     break
 
@@ -156,6 +159,7 @@ class YahooRegionalUniverseSource:
                         total=total,
                         accumulated=len(assets),
                         status="completed",
+                        new_symbols=0,
                     )
                     break
 
@@ -176,10 +180,12 @@ class YahooRegionalUniverseSource:
                         total=total,
                         accumulated=len(assets),
                         status="repeated_page",
+                        new_symbols=0,
                     )
                     break
 
                 previous_page_signature = page_signature
+                assets_before_page = len(assets)
 
                 for quote in quotes:
                     if not isinstance(quote, dict):
@@ -193,15 +199,32 @@ class YahooRegionalUniverseSource:
                     )
                     assets[key] = asset
 
+                new_symbols = len(assets) - assets_before_page
+                if new_symbols == 0:
+                    consecutive_no_new_symbol_pages += 1
+                else:
+                    consecutive_no_new_symbol_pages = 0
+
+                status = "page_completed"
+                if (
+                    self._max_pages is None
+                    and consecutive_no_new_symbol_pages
+                    >= self.EXHAUSTIVE_MAX_CONSECUTIVE_NO_NEW_SYMBOL_PAGES
+                ):
+                    status = "no_new_symbols"
+
                 self._emit_progress(
                     region=normalized_region,
                     page=page,
                     received=len(quotes),
                     total=total,
                     accumulated=len(assets),
-                    status="page_completed",
+                    status=status,
+                    new_symbols=new_symbols,
                 )
 
+                if status == "no_new_symbols":
+                    break
                 if total is not None and offset + len(quotes) >= total:
                     break
                 if len(quotes) < self._page_size:
@@ -220,6 +243,7 @@ class YahooRegionalUniverseSource:
         total: int | None,
         accumulated: int,
         status: str,
+        new_symbols: int,
     ) -> None:
         if self._progress_callback is None:
             return
@@ -232,6 +256,7 @@ class YahooRegionalUniverseSource:
                 "received": received,
                 "total": total,
                 "accumulated": accumulated,
+                "newSymbols": new_symbols,
                 "status": status,
             }
         )
