@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.recommendation_evidence_gate_service import (
+    RecommendationEvidenceGateService,
+)
 from app.services.recommendation_fundamental_signal_service import (
     RecommendationFundamentalSignalService,
 )
@@ -23,6 +26,7 @@ router = APIRouter(
 learning_status_service = RecommendationLearningStatusService()
 market_signal_service = RecommendationMarketSignalService()
 fundamental_signal_service = RecommendationFundamentalSignalService()
+evidence_gate_service = RecommendationEvidenceGateService()
 
 
 def _effective_as_of(as_of: datetime | None) -> datetime:
@@ -87,10 +91,7 @@ def get_market_signal_diagnostic(
             as_of=effective_as_of,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -131,10 +132,7 @@ def get_fundamental_diagnostic(
             as_of=effective_as_of,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -145,6 +143,54 @@ def get_fundamental_diagnostic(
         diagnostic,
         diagnostic_name="fundamental",
     )
+    return {
+        "data": payload,
+        "advisoryStatus": "diagnostic_only",
+    }
+
+
+@router.get("/diagnostics/evidence-gate")
+def get_evidence_gate_diagnostic(
+    symbol: str = Query(
+        ...,
+        min_length=1,
+        description="Símbolo del instrumento cuyo conjunto de evidencia se valida.",
+    ),
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Instante de corte point-in-time común a todos los componentes del gate."
+        ),
+    ),
+) -> dict[str, object]:
+    """Return a fail-closed PIT evidence gate without issuing investment advice."""
+
+    effective_as_of = _effective_as_of(as_of)
+    try:
+        diagnostic = evidence_gate_service.evaluate(
+            symbol=symbol,
+            as_of=effective_as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir el evidence gate de ATHENA.",
+        ) from exc
+
+    payload = _diagnostic_payload_or_fail(
+        diagnostic,
+        diagnostic_name="de evidence gate",
+    )
+    if payload.get("recommendationCandidateReady") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "El evidence gate intentó habilitar una recomendación antes de que "
+                "valoración y calibración estén validadas."
+            ),
+        )
     return {
         "data": payload,
         "advisoryStatus": "diagnostic_only",
@@ -172,11 +218,7 @@ def get_learning_status(
 ) -> dict[str, object]:
     effective_as_of = _effective_as_of(as_of)
 
-    normalized_model_version = (
-        model_version.strip()
-        if model_version is not None
-        else None
-    )
+    normalized_model_version = model_version.strip() if model_version is not None else None
 
     try:
         status = learning_status_service.get_status(
@@ -185,10 +227,7 @@ def get_learning_status(
             horizon_days=horizon_days,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
