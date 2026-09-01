@@ -35,6 +35,19 @@ class MarketUniverseQualityReport:
             else 0.0
         )
 
+    @property
+    def is_weighting_ready(self) -> bool:
+        # El universo persistido actual se descubre con una cuota fija de
+        # resultados por país (top-N por capitalización). Esa estrategia es
+        # válida para construir catálogo y cobertura, pero no para inferir
+        # directamente el peso bursátil relativo de continentes: regiones con
+        # más países configurados quedarían sobrerrepresentadas.
+        #
+        # Se mantendrá False hasta sustituir esta selección por una metodología
+        # comparable entre regiones (por ejemplo, umbral global uniforme o
+        # cobertura acumulada de capitalización suficientemente completa).
+        return False
+
     def to_api_dict(self) -> dict[str, Any]:
         return {
             "activeCount": self.active_count,
@@ -51,11 +64,14 @@ class MarketUniverseQualityReport:
             "coverageGateEnabled": False,
             "isGlobalReady": self.is_global_ready,
             "usingFallback": self.using_fallback,
+            "isWeightingReady": self.is_weighting_ready,
+            "weightingMethod": "country_top_n_market_cap",
+            "weightingStatus": "calibration_required",
         }
 
 
 class PersistedMarketUniverseService:
-    """Sirve sólo activos persistidos aptos para ponderación global."""
+    """Sirve sólo activos persistidos aptos para análisis de cobertura global."""
 
     DEFAULT_MINIMUM_GLOBAL_USABLE_COUNT = 100
     DEFAULT_MINIMUM_USABLE_PER_REGION = 20
@@ -152,11 +168,10 @@ class PersistedMarketUniverseService:
         )
 
         # El catálogo persistido puede contener miles de instrumentos de
-        # identidad todavía no enriquecidos. Desde que Flutter recibe sólo el
-        # subconjunto ponderable, la densidad de enriquecimiento del catálogo
-        # completo deja de ser una barrera adecuada para activar pesos reales.
-        # Se conserva usable_coverage como diagnóstico, pero la preparación
-        # global depende de profundidad absoluta y representación regional.
+        # identidad todavía no enriquecidos. La densidad de enriquecimiento
+        # se conserva como diagnóstico, pero no bloquea la activación del
+        # catálogo real. La aptitud para calcular pesos regionales se evalúa
+        # separadamente mediante is_weighting_ready.
         is_global_ready = (
             globally_usable_count >= self._minimum_global_usable_count
             and regions_have_depth
