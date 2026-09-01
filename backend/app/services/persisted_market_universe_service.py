@@ -5,6 +5,8 @@ from typing import Any, Protocol
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
+from app.services.canonical_market_cap_service import CanonicalMarketCapService
+from app.services.issuer_identity_coverage_service import IssuerIdentityCoverageService
 from app.services.yahoo_market_universe_service import YahooMarketUniverseService
 
 
@@ -26,6 +28,10 @@ class MarketUniverseQualityReport:
     minimum_usable_coverage: float
     is_global_ready: bool
     using_fallback: bool
+    canonical_identity_listing_coverage: float = 0.0
+    canonical_identity_market_cap_coverage: float = 0.0
+    canonical_domicile_market_cap_coverage: float = 0.0
+    canonical_issuer_count: int = 0
 
     @property
     def usable_coverage(self) -> float:
@@ -43,9 +49,9 @@ class MarketUniverseQualityReport:
         # empresa y distorsionaría especialmente regiones con muchas
         # cotizaciones secundarias internacionales.
         #
-        # Se mantendrá False hasta que la cobertura de identidad de emisor y la
-        # selección de listado principal sean suficientemente completas y los
-        # agregados resultantes hayan sido validados contra referencias externas.
+        # La cobertura canónica y de domicilio ya se mide explícitamente, pero
+        # todavía no se ha fijado un umbral de activación ni se han validado los
+        # agregados canónicos contra referencias externas independientes.
         return False
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -65,8 +71,17 @@ class MarketUniverseQualityReport:
             "isGlobalReady": self.is_global_ready,
             "usingFallback": self.using_fallback,
             "isWeightingReady": self.is_weighting_ready,
-            "weightingMethod": "raw_listing_market_cap_uncanonicalized",
-            "weightingStatus": "issuer_resolution_required",
+            "weightingMethod": "canonical_issuer_market_cap_pending_validation",
+            "weightingStatus": "issuer_identity_and_domicile_calibration_required",
+            "issuerIdentityReadiness": {
+                "listingCoverage": self.canonical_identity_listing_coverage,
+                "marketCapCoverage": self.canonical_identity_market_cap_coverage,
+                "domicileMarketCapCoverage": (
+                    self.canonical_domicile_market_cap_coverage
+                ),
+                "canonicalIssuerCount": self.canonical_issuer_count,
+                "ready": False,
+            },
         }
 
 
@@ -174,6 +189,13 @@ class PersistedMarketUniverseService:
             and regions_have_depth
         )
 
+        identity_report = IssuerIdentityCoverageService(
+            database=self._database
+        ).get_report()
+        canonical_cap_report = CanonicalMarketCapService(
+            database=self._database
+        ).get_report()
+
         return MarketUniverseQualityReport(
             active_count=len(rows),
             market_cap_ready_count=market_cap_ready_count,
@@ -186,6 +208,12 @@ class PersistedMarketUniverseService:
             minimum_usable_coverage=self._minimum_usable_coverage,
             is_global_ready=is_global_ready,
             using_fallback=not is_global_ready,
+            canonical_identity_listing_coverage=identity_report.listing_coverage,
+            canonical_identity_market_cap_coverage=identity_report.market_cap_coverage,
+            canonical_domicile_market_cap_coverage=(
+                canonical_cap_report.domicile_market_cap_coverage
+            ),
+            canonical_issuer_count=canonical_cap_report.canonical_issuer_count,
         )
 
     def _is_globally_usable(self, row: dict[str, Any]) -> bool:
