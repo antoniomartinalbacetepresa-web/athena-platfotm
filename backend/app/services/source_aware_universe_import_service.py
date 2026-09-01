@@ -24,7 +24,9 @@ class _BufferedUniverseSource:
 
 
 class SourceAwareUniverseImportService:
-    """Imports a catalog and records source membership without losing provenance."""
+    """Imports a catalog and tracks source membership independently."""
+
+    DEFAULT_MINIMUM_RECONCILIATION_COVERAGE = 0.95
 
     def __init__(
         self,
@@ -32,10 +34,21 @@ class SourceAwareUniverseImportService:
         import_service: GlobalUniverseImportService,
         instrument_repository: InstrumentRepository,
         membership_repository: InstrumentSourceMembershipRepository,
+        minimum_reconciliation_coverage: float = (
+            DEFAULT_MINIMUM_RECONCILIATION_COVERAGE
+        ),
     ) -> None:
+        if not 0 < minimum_reconciliation_coverage <= 1:
+            raise ValueError(
+                "minimum_reconciliation_coverage debe estar entre 0 y 1."
+            )
+
         self._import_service = import_service
         self._instrument_repository = instrument_repository
         self._membership_repository = membership_repository
+        self._minimum_reconciliation_coverage = float(
+            minimum_reconciliation_coverage
+        )
 
     def import_source(
         self,
@@ -44,6 +57,10 @@ class SourceAwareUniverseImportService:
         source_id = str(source.source_id).strip().lower()
         if not source_id:
             raise ValueError("source_id es obligatorio.")
+
+        previous_active_count = (
+            self._membership_repository.count_active_for_source(source_id)
+        )
 
         buffered = tuple(
             dict(item)
@@ -66,7 +83,11 @@ class SourceAwareUniverseImportService:
             seen_at=report.completed_at,
         )
 
-        if report.reconciliation_applied:
+        if self._should_reconcile_memberships(
+            previous_active_count=previous_active_count,
+            current_active_count=len(instrument_ids),
+            rejected=report.rejected,
+        ):
             self._membership_repository.deactivate_missing_for_source(
                 source_id=source_id,
                 active_instrument_ids=instrument_ids,
@@ -74,11 +95,27 @@ class SourceAwareUniverseImportService:
 
         return report
 
+    def _should_reconcile_memberships(
+        self,
+        *,
+        previous_active_count: int,
+        current_active_count: int,
+        rejected: int,
+    ) -> bool:
+        if rejected > 0:
+            return False
+        if previous_active_count <= 0 or current_active_count <= 0:
+            return False
+
+        coverage = current_active_count / previous_active_count
+        return coverage >= self._minimum_reconciliation_coverage
+
     def _resolve_instrument_ids(
         self,
         instruments: Iterable[dict[str, Any]],
     ) -> list[int]:
         result: list[int] = []
+        seen_ids: set[int] = set()
 
         for instrument in instruments:
             symbol = str(instrument.get("symbol") or "").strip().upper()
@@ -101,7 +138,10 @@ class SourceAwareUniverseImportService:
                 continue
 
             instrument_id = int(stored["id"])
-            if instrument_id not in result:
-                result.append(instrument_id)
+            if instrument_id in seen_ids:
+                continue
+
+            seen_ids.add(instrument_id)
+            result.append(instrument_id)
 
         return result
