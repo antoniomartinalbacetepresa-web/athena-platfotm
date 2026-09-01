@@ -32,6 +32,7 @@ class NormalizedDataRepository:
                     effective_at TEXT,
                     published_at TEXT,
                     source_timestamp TEXT,
+                    available_at TEXT,
                     source_version TEXT,
                     raw_identifier TEXT,
                     normalized_identifier TEXT,
@@ -61,6 +62,24 @@ class NormalizedDataRepository:
                     source_id,
                     retrieved_at
                 );
+                """
+            )
+
+            columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(normalized_data_observations)"
+                ).fetchall()
+            }
+            if "available_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE normalized_data_observations ADD COLUMN available_at TEXT"
+                )
+
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_normalized_data_available_at
+                ON normalized_data_observations (available_at)
                 """
             )
 
@@ -123,11 +142,12 @@ class NormalizedDataRepository:
                     effective_at,
                     published_at,
                     source_timestamp,
+                    available_at,
                     source_version,
                     raw_identifier,
                     normalized_identifier,
                     source_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datum.metric,
@@ -143,6 +163,7 @@ class NormalizedDataRepository:
                     provenance.effective_at,
                     provenance.published_at,
                     provenance.source_timestamp,
+                    provenance.available_at,
                     provenance.version,
                     provenance.raw_identifier,
                     provenance.normalized_identifier,
@@ -203,7 +224,8 @@ class NormalizedDataRepository:
             clauses.append("source_id = ?")
             params.append(source_id)
         if as_of is not None:
-            clauses.append("COALESCE(published_at, retrieved_at) <= ?")
+            clauses.append("available_at IS NOT NULL")
+            clauses.append("available_at <= ?")
             params.append(as_of)
 
         where_sql = " AND ".join(clauses)
@@ -215,7 +237,7 @@ class NormalizedDataRepository:
                 WHERE {where_sql}
                 ORDER BY
                     COALESCE(effective_at, published_at, retrieved_at) DESC,
-                    COALESCE(published_at, retrieved_at) DESC,
+                    COALESCE(available_at, published_at, retrieved_at) DESC,
                     id DESC
                 """,
                 tuple(params),
