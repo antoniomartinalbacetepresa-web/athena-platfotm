@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
@@ -678,6 +678,13 @@ class InstrumentRepository:
             instrument.get("exchangeShortName")
         )
 
+        currency = self._normalize_upper_optional_text(
+            instrument.get("currency")
+        )
+        market_cap_currency = self._normalize_upper_optional_text(
+            instrument.get("marketCapCurrency")
+        )
+
         return {
             "symbol": symbol,
             "company_name": company_name,
@@ -697,11 +704,15 @@ class InstrumentRepository:
                 instrument.get("exchange")
             ),
             "exchange_short_name": exchange_short_name,
-            "instrument_type": self._normalize_optional_text(
-                instrument.get("instrumentType")
+            "instrument_type": (
+                self._normalize_optional_text(
+                    instrument.get("instrumentType")
+                )
+                or "unknown"
             ),
-            "is_primary_listing": self._normalize_optional_bool(
-                instrument.get("isPrimaryListing")
+            "is_primary_listing": self._normalize_bool_with_default(
+                instrument.get("isPrimaryListing"),
+                default=False,
             ),
             "sector": self._normalize_optional_text(
                 instrument.get("sector")
@@ -709,9 +720,7 @@ class InstrumentRepository:
             "industry": self._normalize_optional_text(
                 instrument.get("industry")
             ),
-            "currency": self._normalize_upper_optional_text(
-                instrument.get("currency")
-            ),
+            "currency": currency,
             "market_cap_usd": self._normalize_optional_float(
                 instrument.get("marketCap")
             ),
@@ -719,9 +728,7 @@ class InstrumentRepository:
                 instrument.get("marketCapLocal")
             ),
             "market_cap_local_currency": (
-                self._normalize_upper_optional_text(
-                    instrument.get("marketCapCurrency")
-                )
+                market_cap_currency or currency
             ),
             "source_provider": self._normalize_optional_text(
                 instrument.get("sourceProvider")
@@ -808,7 +815,7 @@ class InstrumentRepository:
         except (TypeError, ValueError):
             return None
 
-        if result != result:
+        if result != result or result < 0:
             return None
 
         return result
