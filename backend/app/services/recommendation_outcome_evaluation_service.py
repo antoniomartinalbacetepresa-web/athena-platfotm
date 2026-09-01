@@ -46,6 +46,7 @@ class RecommendationOutcomeEvaluationReport:
             },
             "evaluated": [dict(item) for item in self.evaluated],
             "pricePolicy": "raw_close_first_adjusted_close_fallback",
+            "temporalWindowPolicy": "entry_before_due_exit_not_after_as_of",
             "benchmarkStatus": "not_evaluated_without_explicit_benchmark_mapping",
         }
 
@@ -92,17 +93,19 @@ class RecommendationOutcomeEvaluationService:
             ).astimezone(timezone.utc)
             due_at = datetime.fromisoformat(due.due_at).astimezone(timezone.utc)
 
-            entry = self._first_price_at_or_after(
+            entry = self._first_price_in_window(
                 instrument_id=int(instrument_id),
                 at_or_after=generated_at,
+                not_after=due_at,
             )
             if entry is None:
                 missing_entry += 1
                 continue
 
-            exit_observation = self._first_price_at_or_after(
+            exit_observation = self._first_price_in_window(
                 instrument_id=int(instrument_id),
                 at_or_after=due_at,
+                not_after=as_of_utc,
             )
             if exit_observation is None:
                 missing_exit += 1
@@ -110,7 +113,12 @@ class RecommendationOutcomeEvaluationService:
 
             entry_time = datetime.fromisoformat(entry["observed_at"])
             exit_time = datetime.fromisoformat(exit_observation["observed_at"])
-            if entry_time >= due_at or exit_time < due_at or exit_time <= entry_time:
+            if (
+                entry_time >= due_at
+                or exit_time < due_at
+                or exit_time > as_of_utc
+                or exit_time <= entry_time
+            ):
                 invalid_window += 1
                 continue
 
@@ -156,12 +164,18 @@ class RecommendationOutcomeEvaluationService:
             evaluated=tuple(evaluated),
         )
 
-    def _first_price_at_or_after(
+    def _first_price_in_window(
         self,
         *,
         instrument_id: int,
         at_or_after: datetime,
+        not_after: datetime,
     ) -> dict[str, Any] | None:
+        start = at_or_after.astimezone(timezone.utc)
+        end = not_after.astimezone(timezone.utc)
+        if end < start:
+            return None
+
         with self._database.connect() as connection:
             row = connection.execute(
                 """
@@ -171,6 +185,7 @@ class RecommendationOutcomeEvaluationService:
                 FROM market_observations
                 WHERE instrument_id = ?
                   AND observed_at >= ?
+                  AND observed_at <= ?
                   AND COALESCE(close, adjusted_close) IS NOT NULL
                   AND COALESCE(close, adjusted_close) > 0
                 ORDER BY observed_at ASC
@@ -178,7 +193,8 @@ class RecommendationOutcomeEvaluationService:
                 """,
                 (
                     instrument_id,
-                    at_or_after.astimezone(timezone.utc).isoformat(),
+                    start.isoformat(),
+                    end.isoformat(),
                 ),
             ).fetchone()
         if row is None:
