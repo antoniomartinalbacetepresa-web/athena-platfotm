@@ -18,9 +18,9 @@ def test_source_catalog_reports_real_integration_states() -> None:
     assert payload["summary"]["total"] == len(sources)
     assert by_id["yahoo_finance"]["status"] == "connected"
     assert by_id["nasdaq_trader"]["status"] == "connected"
-    assert by_id["sec_edgar_xbrl"]["status"] == "ready_to_integrate"
-    assert by_id["sec_13f"]["status"] == "ready_to_integrate"
-    assert by_id["sec_form4"]["status"] == "ready_to_integrate"
+    assert by_id["sec_edgar_xbrl"]["status"] == "connected"
+    assert by_id["sec_13f"]["status"] == "connected"
+    assert by_id["sec_form4"]["status"] == "connected"
     assert by_id["fred_alfred"]["requires_credentials"] is True
     assert by_id["google_trends"]["status"] == "restricted_access"
     assert by_id["analyst_consensus"]["status"] == "research_required"
