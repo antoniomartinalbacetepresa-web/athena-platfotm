@@ -45,12 +45,14 @@ class CanonicalMarketCapReport:
             "regionMarketCapUsd": dict(self.region_market_cap_usd),
             "regionWeights": dict(self.region_weights),
             "weightsScope": "canonical_issuers_with_resolved_domicile_only",
+            "excludedKnownNonEquityTypes": ["etf", "fund"],
             "readyForRegionalWeighting": False,
         }
 
 
 class CanonicalMarketCapService:
     _REGIONS = ("america", "europe", "asia")
+    _EXCLUDED_INSTRUMENT_TYPES = ("etf", "fund")
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -58,9 +60,12 @@ class CanonicalMarketCapService:
 
     def get_report(self) -> CanonicalMarketCapReport:
         self._identities.initialize()
+        excluded_placeholders = ",".join(
+            "?" for _ in self._EXCLUDED_INSTRUMENT_TYPES
+        )
         with self._database.connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     iil.issuer_id,
                     i.market_cap_usd,
@@ -72,8 +77,11 @@ class CanonicalMarketCapService:
                 WHERE i.is_active = 1
                   AND i.market_cap_usd IS NOT NULL
                   AND i.market_cap_usd > 0
+                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown')))
+                      NOT IN ({excluded_placeholders})
                 ORDER BY iil.issuer_id
-                """
+                """,
+                self._EXCLUDED_INSTRUMENT_TYPES,
             ).fetchall()
 
         groups: dict[int, dict[str, Any]] = {}
