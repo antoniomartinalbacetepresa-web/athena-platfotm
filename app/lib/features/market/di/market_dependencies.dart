@@ -49,7 +49,7 @@ class MarketDependencies {
     MarketProviderSettings? settings,
   }) {
     final effectiveSettings = settings ??
-        const MarketProviderSettings.athenaBackend(
+        MarketProviderSettings.athenaBackend(
           baseUrl: _defaultBackendUrl,
         );
 
