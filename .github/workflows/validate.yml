@@ -28,7 +28,16 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run backend tests
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=pytest-results.xml
+
+      - name: Upload backend test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-results
+          path: backend/pytest-results.xml
+          if-no-files-found: warn
+          retention-days: 7
 
   flutter-validation:
     name: Flutter analyze and tests
@@ -53,7 +62,19 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze 2>&1 | tee flutter-analyze.log
 
       - name: Test
-        run: flutter test
+        if: always()
+        run: flutter test 2>&1 | tee flutter-test.log
+
+      - name: Upload Flutter validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-validation-logs
+          path: |
+            app/flutter-analyze.log
+            app/flutter-test.log
+          if-no-files-found: warn
+          retention-days: 7
