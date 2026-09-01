@@ -1,5 +1,7 @@
 from typing import Any
 
+import pytest
+
 from app.services.sec_edgar_service import SecEdgarService
 
 
@@ -43,6 +45,52 @@ def test_company_facts_uses_official_sec_endpoint() -> None:
     )
     assert client.last_headers is not None
     assert "ATHENA test" in client.last_headers["User-Agent"]
+
+
+def test_company_ticker_exchange_associations_normalize_sec_identity_data() -> None:
+    client = FakeClient(
+        {
+            "fields": ["cik", "name", "ticker", "exchange"],
+            "data": [
+                [320193, "Apple Inc.", "aapl", "Nasdaq"],
+                [789019, "Microsoft Corp", "MSFT", "Nasdaq"],
+                [None, "Invalid", "BAD", "NYSE"],
+                [1045810, "NVIDIA CORP", "NVDA", "Nasdaq", "extra"],
+            ],
+        }
+    )
+    service = SecEdgarService(client=client, user_agent="ATHENA test contact@example.com")
+
+    result = service.get_company_ticker_exchange_associations()
+
+    assert client.last_url == "https://www.sec.gov/files/company_tickers_exchange.json"
+    assert result == [
+        {
+            "cik": "0000320193",
+            "name": "Apple Inc.",
+            "ticker": "AAPL",
+            "exchange": "Nasdaq",
+        },
+        {
+            "cik": "0000789019",
+            "name": "Microsoft Corp",
+            "ticker": "MSFT",
+            "exchange": "Nasdaq",
+        },
+    ]
+
+
+def test_company_ticker_exchange_associations_reject_incomplete_schema() -> None:
+    client = FakeClient(
+        {
+            "fields": ["cik", "name", "ticker"],
+            "data": [],
+        }
+    )
+    service = SecEdgarService(client=client, user_agent="ATHENA test contact@example.com")
+
+    with pytest.raises(ValueError, match="fields are incomplete"):
+        service.get_company_ticker_exchange_associations()
 
 
 def test_filter_institutional_and_insider_filings() -> None:
