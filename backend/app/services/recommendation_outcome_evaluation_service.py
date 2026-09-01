@@ -8,6 +8,9 @@ from app.database.athena_database import AthenaDatabase
 from app.repositories.recommendation_history_repository import (
     RecommendationHistoryRepository,
 )
+from app.services.recommendation_benchmark_return_service import (
+    RecommendationBenchmarkReturnService,
+)
 from app.services.recommendation_evaluation_schedule_service import (
     RecommendationEvaluationScheduleService,
 )
@@ -47,7 +50,7 @@ class RecommendationOutcomeEvaluationReport:
             "evaluated": [dict(item) for item in self.evaluated],
             "pricePolicy": "raw_close_first_adjusted_close_fallback",
             "temporalWindowPolicy": "entry_before_due_exit_not_after_as_of",
-            "benchmarkStatus": "not_evaluated_without_explicit_benchmark_mapping",
+            "benchmarkStatus": "evaluated_when_explicit_frozen_benchmark_is_resolvable",
         }
 
 
@@ -58,6 +61,9 @@ class RecommendationOutcomeEvaluationService:
         self._database = database if database is not None else AthenaDatabase()
         self._history = RecommendationHistoryRepository(database=self._database)
         self._schedule = RecommendationEvaluationScheduleService(
+            database=self._database
+        )
+        self._benchmark = RecommendationBenchmarkReturnService(
             database=self._database
         )
 
@@ -130,6 +136,17 @@ class RecommendationOutcomeEvaluationService:
                 end_at=exit_time,
                 entry_price=entry_price,
             )
+            benchmark = self._benchmark.calculate(
+                benchmark_symbol=recommendation.get("benchmark_symbol"),
+                generated_at=generated_at,
+                due_at=due_at,
+                as_of=as_of_utc,
+            )
+            benchmark_return = (
+                benchmark.benchmark_return
+                if benchmark.status == "resolved"
+                else None
+            )
 
             outcome_id = self._history.record_outcome(
                 recommendation_id=due.recommendation_id,
@@ -138,8 +155,10 @@ class RecommendationOutcomeEvaluationService:
                 entry_price=entry_price,
                 exit_price=exit_price,
                 source_provider=source_provider,
+                benchmark_return=benchmark_return,
                 max_drawdown=max_drawdown,
             )
+            realized_return = (exit_price / entry_price) - 1.0
             evaluated.append(
                 {
                     "outcomeId": outcome_id,
@@ -150,7 +169,16 @@ class RecommendationOutcomeEvaluationService:
                     "exitObservedAt": exit_time.astimezone(timezone.utc).isoformat(),
                     "entryPrice": entry_price,
                     "exitPrice": exit_price,
+                    "realizedReturn": realized_return,
                     "maxDrawdown": max_drawdown,
+                    "benchmarkStatus": benchmark.status,
+                    "benchmarkSymbol": benchmark.benchmark_symbol,
+                    "benchmarkReturn": benchmark_return,
+                    "excessReturn": (
+                        realized_return - benchmark_return
+                        if benchmark_return is not None
+                        else None
+                    ),
                 }
             )
 
@@ -233,10 +261,17 @@ class RecommendationOutcomeEvaluationService:
 
         if not rows:
             return None
-        return min(
-            (float(row["price"]) / entry_price) - 1.0
-            for row in rows
-        )
+
+        peak = float(entry_price)
+        max_drawdown = 0.0
+        for row in rows:
+            price = float(row["price"])
+            if price > peak:
+                peak = price
+            drawdown = (price / peak) - 1.0
+            if drawdown < max_drawdown:
+                max_drawdown = drawdown
+        return max_drawdown
 
     def _aware_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
