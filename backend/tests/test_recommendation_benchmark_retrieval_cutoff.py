@@ -29,21 +29,37 @@ def test_benchmark_ignores_prices_retrieved_after_evaluation_cutoff(tmp_path) ->
     exit_observed = due + timedelta(hours=1)
 
     with database.connect() as connection:
-        for observed_at, price, retrieved_at in (
-            (entry_observed, 100.0, entry_observed + timedelta(minutes=1)),
-            (exit_observed, 110.0, exit_observed + timedelta(minutes=1)),
-            (exit_observed, 9999.0, as_of + timedelta(days=1)),
+        for observed_at, price, retrieved_at, provider in (
+            (
+                entry_observed,
+                100.0,
+                entry_observed + timedelta(minutes=1),
+                "known_capture",
+            ),
+            (
+                exit_observed,
+                110.0,
+                exit_observed + timedelta(minutes=1),
+                "known_capture",
+            ),
+            (
+                exit_observed,
+                9999.0,
+                as_of + timedelta(days=1),
+                "future_backfill",
+            ),
         ):
             connection.execute(
                 """
                 INSERT INTO market_observations (
                     instrument_id, observed_at, close, source_provider, retrieved_at
-                ) VALUES (?, ?, ?, 'test', ?)
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     instrument_id,
                     observed_at.isoformat(),
                     price,
+                    provider,
                     retrieved_at.isoformat(),
                 ),
             )
