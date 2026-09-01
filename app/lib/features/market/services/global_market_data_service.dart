@@ -25,14 +25,16 @@ abstract class MarketUniverseStatusProvider {
 ///    de mercado analizado.
 ///
 /// Los benchmarks se utilizan para medir comportamiento.
-/// El universo de mercado se utiliza para calcular pesos.
+/// El universo de mercado se utiliza para calcular pesos únicamente cuando
+/// el backend declara que la metodología de selección es comparable entre
+/// regiones.
 ///
-/// Cuando todavía no existe suficiente información de capitalización,
-/// ATHENA TYCHE utiliza un baseline estructural provisional.
+/// Cuando todavía no existe suficiente información o el muestreo no es apto
+/// para ponderación, ATHENA TYCHE utiliza un baseline estructural provisional.
 ///
 /// El origen de los pesos y el estado del universo quedan registrados en
 /// [GlobalMarketContext] para no confundir una estimación provisional con un
-/// cálculo respaldado por el universo persistido real.
+/// cálculo respaldado por metodología representativa.
 ///
 /// Este servicio no contiene lógica de inversión ni recomendaciones.
 class GlobalMarketDataService {
@@ -89,7 +91,11 @@ class GlobalMarketDataService {
       );
     }
 
-    final regionalWeights = _resolveRegionalWeights(universe);
+    final regionalWeights = _resolveRegionalWeights(
+      universe,
+      enforceBackendReadiness: marketUniverseStatusProvider != null,
+      universeStatus: universeStatus,
+    );
 
     _validateRegionalWeights(regionalWeights);
 
@@ -123,8 +129,14 @@ class GlobalMarketDataService {
   }
 
   RegionalMarketWeights _resolveRegionalWeights(
-    List<MarketUniverseAsset> universe,
-  ) {
+    List<MarketUniverseAsset> universe, {
+    required bool enforceBackendReadiness,
+    required MarketUniverseStatus universeStatus,
+  }) {
+    if (enforceBackendReadiness && !universeStatus.isWeightingReady) {
+      return RegionalMarketWeights.baseline;
+    }
+
     try {
       return regionalMarketWeightService.calculate(universe);
     } on StateError {
