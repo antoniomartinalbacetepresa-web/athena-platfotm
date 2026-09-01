@@ -31,8 +31,8 @@ The backend exposes the live registry at `GET /api/v1/sources`.
 
 | Source | Domain | State | Main use |
 | --- | --- | --- | --- |
-| Yahoo Finance | Market | connected | Quotes, OHLCV history, indices, ETFs, FX |
-| Nasdaq Trader | Universe | connected | Listed symbols, exchanges, instruments |
+| Yahoo Finance | Market | connected | Quotes, OHLCV history, indices, ETFs, FX and bounded regional equity discovery |
+| Nasdaq Trader | Universe | connected | Official US listed symbols, exchanges and instruments |
 | SEC EDGAR / XBRL | Fundamentals | ready_to_integrate | 10-K, 10-Q, 8-K, 20-F, statements, notes |
 | SEC Form 13F | Investors | ready_to_integrate | Institutional holdings and portfolio changes |
 | SEC Form 4 | Insiders | ready_to_integrate | Insider purchases, sales and ownership changes |
@@ -53,6 +53,32 @@ The backend exposes the live registry at `GET /api/v1/sources`.
 | Companies House | Company registry | credentials_required | UK company and officer/filing metadata |
 | USPTO | Innovation | credentials_required | Patents, applications and innovation signals |
 | Analyst consensus providers | Analysts | research_required | Ratings, targets, revisions, upgrades/downgrades |
+
+## Market universe ingestion
+
+The market universe is now built as a controlled multi-source catalog instead of a single hard-coded seed.
+
+1. **Nasdaq Trader** is the official catalog source for US listed instruments.
+2. **Yahoo regional screener** can discover bounded, paginated equity sets for supported international regions. Discovery is ordered by market capitalization and is deliberately limited by page size and maximum pages per region.
+3. **Yahoo metadata enrichment** can fill country, sector, industry, currency and local market capitalization for persisted listings in small batches.
+4. **FX conversion** converts local market capitalization to USD only when a real Yahoo FX pair is available. ATHENA does not create parity or approximate exchange rates.
+5. **Source memberships** are stored separately from the latest instrument metadata so that Nasdaq and Yahoo can both support the same listing without one source erasing the other.
+6. The backend serves the persisted catalog to Flutter only after it passes readiness thresholds. Until then the existing seed remains a fallback.
+
+Operational CLI commands live under `backend/scripts/` and are intentionally not exposed as public mutation endpoints:
+
+- `import_nasdaq_universe.py`
+- `import_yahoo_regional_universe.py`
+
+The backend exposes catalog quality at `GET /api/v1/market/universe/status`. The report includes active instruments, usable instruments, usable coverage, per-region usable counts, readiness thresholds and whether fallback is still active.
+
+Current production-readiness guard for the persisted global universe:
+
+- at least 100 globally usable instruments;
+- at least 20 usable instruments in each of America, Europe and Asia;
+- at least 30% of the active catalog must have country, supported region and positive USD market capitalization.
+
+These thresholds are safety gates, not a claim that the resulting universe is complete. They prevent tiny or poorly enriched samples from being presented as a global market representation.
 
 ## Provider policy
 
