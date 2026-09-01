@@ -18,6 +18,8 @@ def _report(
     regions: dict[str, float] | None = None,
     external_validation_passed: bool = True,
     ambiguous_listing_count: int = 0,
+    canonical_listing_cap_count: int = 4500,
+    median_fallback_cap_count: int = 500,
 ) -> MarketWeightingReadinessReport:
     return MarketWeightingReadinessReport(
         identity_market_cap_coverage=identity_coverage,
@@ -36,6 +38,8 @@ def _report(
             "independent_reference" if external_validation_passed else None
         ),
         canonical_listing_ambiguous_issuer_count=ambiguous_listing_count,
+        canonical_listing_market_cap_count=canonical_listing_cap_count,
+        median_fallback_market_cap_count=median_fallback_cap_count,
     )
 
 
@@ -46,6 +50,13 @@ def test_weighting_readiness_requires_all_evidence() -> None:
     assert report.blockers == ()
     assert report.all_regions_represented is True
     assert report.external_validation_evidence_complete is True
+    api = report.to_api_dict()
+    assert api["method"] == "canonical_domestic_listing_else_median_with_domicile"
+    assert api["canonicalMarketCapDiagnostics"] == {
+        "canonicalListingCount": 4500,
+        "medianFallbackCount": 500,
+        "fallbackIsDiagnosticOnly": True,
+    }
 
 
 def test_weighting_readiness_keeps_external_validation_as_hard_gate() -> None:

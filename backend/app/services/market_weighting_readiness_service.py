@@ -21,6 +21,8 @@ class MarketWeightingReadinessReport:
     external_validation_passed: bool
     external_validation_reference: str | None
     canonical_listing_ambiguous_issuer_count: int = 0
+    canonical_listing_market_cap_count: int = 0
+    median_fallback_market_cap_count: int = 0
 
     @property
     def all_regions_represented(self) -> bool:
@@ -59,7 +61,7 @@ class MarketWeightingReadinessReport:
     def to_api_dict(self) -> dict[str, Any]:
         return {
             "ready": self.ready,
-            "method": "canonical_issuer_median_market_cap_with_domicile",
+            "method": "canonical_domestic_listing_else_median_with_domicile",
             "identityMarketCapCoverage": self.identity_market_cap_coverage,
             "domicileMarketCapCoverage": self.domicile_market_cap_coverage,
             "canonicalIssuerCount": self.canonical_issuer_count,
@@ -68,6 +70,11 @@ class MarketWeightingReadinessReport:
             "canonicalListingValidation": {
                 "ambiguousIssuerCount": self.canonical_listing_ambiguous_issuer_count,
                 "ambiguityResolved": self.canonical_listing_ambiguous_issuer_count == 0,
+            },
+            "canonicalMarketCapDiagnostics": {
+                "canonicalListingCount": self.canonical_listing_market_cap_count,
+                "medianFallbackCount": self.median_fallback_market_cap_count,
+                "fallbackIsDiagnosticOnly": True,
             },
             "thresholds": {
                 "minimumIdentityMarketCapCoverage": self.minimum_identity_market_cap_coverage,
@@ -135,4 +142,6 @@ class MarketWeightingReadinessService:
             external_validation_passed=self._external_validation_passed,
             external_validation_reference=self._external_validation_reference,
             canonical_listing_ambiguous_issuer_count=canonical_listings.ambiguous_issuer_count,
+            canonical_listing_market_cap_count=canonical.canonical_listing_market_cap_count,
+            median_fallback_market_cap_count=canonical.median_fallback_market_cap_count,
         )
