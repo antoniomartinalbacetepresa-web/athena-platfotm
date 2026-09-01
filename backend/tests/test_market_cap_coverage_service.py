@@ -70,11 +70,19 @@ def test_market_cap_report_sorts_by_size_and_calculates_region_weights(
     assert report.top_assets[0]["currency"] == "USD"
     assert report.top_assets[-1]["symbol"] == "S49"
 
+    assert report.heuristic_unique_company_count == 100
+    assert report.heuristic_duplicate_group_count == 0
+    assert report.heuristic_deduplicated_total_market_cap_usd == pytest.approx(
+        5050.0
+    )
+    assert report.heuristic_duplicate_excess_market_cap_usd == pytest.approx(0.0)
+
     api = report.to_api_dict()
     assert api["topAssets"][0]["symbol"] == "S0"
     assert api["countryMarketCapUsd"]["United States"] > api[
         "countryMarketCapUsd"
     ]["Germany"]
+    assert api["heuristicIssuerDeduplication"]["status"] == "diagnostic_only"
 
 
 def test_market_cap_report_ignores_rows_not_ready_for_global_weighting(
@@ -125,3 +133,72 @@ def test_market_cap_report_ignores_rows_not_ready_for_global_weighting(
     assert report.currency_market_cap_usd == {"USD": 100.0}
     assert len(report.top_assets) == 1
     assert report.top_assets[0]["symbol"] == "OK"
+
+
+def test_market_cap_report_quantifies_probable_duplicate_issuers(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    repository = InstrumentRepository(database=database)
+
+    repository.upsert_many(
+        [
+            {
+                "symbol": "NVDA",
+                "companyName": "NVIDIA Corporation",
+                "country": "United States",
+                "regionKey": "america",
+                "exchangeShortName": "NMS",
+                "currency": "USD",
+                "marketCap": 500.0,
+            },
+            {
+                "symbol": "NVD.DE",
+                "companyName": " NVIDIA   Corporation ",
+                "country": "Germany",
+                "regionKey": "europe",
+                "exchangeShortName": "GER",
+                "currency": "EUR",
+                "marketCap": 495.0,
+            },
+            {
+                "symbol": "NVDA.MX",
+                "companyName": "nvidia corporation",
+                "country": "Mexico",
+                "regionKey": "america",
+                "exchangeShortName": "MEX",
+                "currency": "MXN",
+                "marketCap": 490.0,
+            },
+            {
+                "symbol": "OTHER",
+                "companyName": "Other Company",
+                "country": "Japan",
+                "regionKey": "asia",
+                "exchangeShortName": "TSE",
+                "currency": "JPY",
+                "marketCap": 100.0,
+            },
+        ]
+    )
+
+    report = MarketCapCoverageService(database=database).get_report()
+
+    assert report.usable_count == 4
+    assert report.total_market_cap_usd == pytest.approx(1585.0)
+    assert report.heuristic_unique_company_count == 2
+    assert report.heuristic_duplicate_group_count == 1
+    assert report.heuristic_deduplicated_total_market_cap_usd == pytest.approx(
+        600.0
+    )
+    assert report.heuristic_duplicate_excess_market_cap_usd == pytest.approx(
+        985.0
+    )
+
+    group = report.heuristic_top_duplicate_groups[0]
+    assert group["companyName"] == "NVIDIA Corporation"
+    assert group["listingCount"] == 3
+    assert group["representativeMarketCapUsd"] == pytest.approx(500.0)
+    assert group["duplicateExcessMarketCapUsd"] == pytest.approx(985.0)
+    assert set(group["countries"]) == {"United States", "Germany", "Mexico"}
