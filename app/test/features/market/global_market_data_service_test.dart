@@ -126,19 +126,32 @@ class EmptyMarketUniverseRepository
 
 class ReadyMarketUniverseStatusProvider
     implements MarketUniverseStatusProvider {
+  final bool weightingReady;
+
+  const ReadyMarketUniverseStatusProvider({
+    this.weightingReady = false,
+  });
+
   @override
   Future<MarketUniverseStatus> getStatus() async {
-    return const MarketUniverseStatus(
+    return MarketUniverseStatus(
       activeCount: 16192,
       globallyUsableCount: 2999,
       usableCoverage: 0.1852149209486166,
-      regionCounts: {
+      regionCounts: const {
         'america': 581,
         'europe': 1427,
         'asia': 991,
       },
       isGlobalReady: true,
       usingFallback: false,
+      isWeightingReady: weightingReady,
+      weightingMethod: weightingReady
+          ? 'validated_global_method'
+          : 'country_top_n_market_cap',
+      weightingStatus: weightingReady
+          ? 'ready'
+          : 'calibration_required',
     );
   }
 }
@@ -146,7 +159,7 @@ class ReadyMarketUniverseStatusProvider
 void main() {
   group('GlobalMarketDataService', () {
     test(
-      'calcula los pesos globales a partir del universo de mercado',
+      'calcula los pesos globales a partir del universo de mercado sin gate backend',
       () async {
         final service = GlobalMarketDataService(
           regionalMarketContextService:
@@ -199,7 +212,7 @@ void main() {
     );
 
     test(
-      'propaga el estado del universo persistido real',
+      'mantiene catálogo real pero usa baseline cuando la ponderación requiere calibración',
       () async {
         final service = GlobalMarketDataService(
           regionalMarketContextService:
@@ -211,17 +224,47 @@ void main() {
           regionalMarketWeightService:
               const RegionalMarketWeightService(),
           marketUniverseStatusProvider:
-              ReadyMarketUniverseStatusProvider(),
+              const ReadyMarketUniverseStatusProvider(),
         );
 
         final context = await service.getGlobalContext();
 
         expect(context.hasRealMarketUniverse, isTrue);
         expect(context.marketUniverseStatus.globallyUsableCount, 2999);
-        expect(context.marketUniverseStatus.americaCount, 581);
-        expect(context.marketUniverseStatus.europeCount, 1427);
-        expect(context.marketUniverseStatus.asiaCount, 991);
+        expect(context.marketUniverseStatus.isWeightingReady, isFalse);
         expect(context.marketUniverseStatus.usingFallback, isFalse);
+        expect(context.weightSource, RegionalMarketWeightSource.baseline);
+        expect(context.weightConfidence, closeTo(0.35, 0.000001));
+        expect(context.americaWeight, closeTo(0.54, 0.000001));
+        expect(context.europeWeight, closeTo(0.16, 0.000001));
+        expect(context.asiaWeight, closeTo(0.30, 0.000001));
+      },
+    );
+
+    test(
+      'activa pesos calculados cuando backend valida la metodología',
+      () async {
+        final service = GlobalMarketDataService(
+          regionalMarketContextService:
+              FakeRegionalMarketContextService(),
+          globalMarketContextService:
+              const GlobalMarketContextService(),
+          marketUniverseRepository:
+              FakeMarketUniverseRepository(),
+          regionalMarketWeightService:
+              const RegionalMarketWeightService(),
+          marketUniverseStatusProvider:
+              const ReadyMarketUniverseStatusProvider(weightingReady: true),
+        );
+
+        final context = await service.getGlobalContext();
+
+        expect(context.hasRealMarketUniverse, isTrue);
+        expect(context.marketUniverseStatus.isWeightingReady, isTrue);
+        expect(context.weightSource, RegionalMarketWeightSource.calculated);
+        expect(context.americaWeight, closeTo(0.60, 0.000001));
+        expect(context.europeWeight, closeTo(0.20, 0.000001));
+        expect(context.asiaWeight, closeTo(0.20, 0.000001));
       },
     );
 
