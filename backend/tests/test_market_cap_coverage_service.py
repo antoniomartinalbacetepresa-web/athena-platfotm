@@ -19,12 +19,15 @@ def test_market_cap_report_sorts_by_size_and_calculates_region_weights(
         if index < 50:
             region = "america"
             country = "United States"
+            currency = "USD"
         elif index < 80:
             region = "europe"
             country = "Germany"
+            currency = "EUR"
         else:
             region = "asia"
             country = "Japan"
+            currency = "JPY"
 
         rows.append(
             {
@@ -33,7 +36,10 @@ def test_market_cap_report_sorts_by_size_and_calculates_region_weights(
                 "country": country,
                 "regionKey": region,
                 "exchangeShortName": "TEST",
+                "currency": currency,
                 "marketCap": float(100 - index),
+                "marketCapLocal": float(100 - index),
+                "marketCapCurrency": currency,
                 "sourceProvider": "test",
                 "isActive": True,
             }
@@ -52,6 +58,24 @@ def test_market_cap_report_sorts_by_size_and_calculates_region_weights(
     assert report.region_weights["america"] > report.region_weights["europe"]
     assert report.region_weights["europe"] > report.region_weights["asia"]
 
+    assert list(report.country_market_cap_usd) == [
+        "United States",
+        "Germany",
+        "Japan",
+    ]
+    assert list(report.currency_market_cap_usd) == ["USD", "EUR", "JPY"]
+    assert len(report.top_assets) == 50
+    assert report.top_assets[0]["symbol"] == "S0"
+    assert report.top_assets[0]["marketCapUsd"] == pytest.approx(100.0)
+    assert report.top_assets[0]["currency"] == "USD"
+    assert report.top_assets[-1]["symbol"] == "S49"
+
+    api = report.to_api_dict()
+    assert api["topAssets"][0]["symbol"] == "S0"
+    assert api["countryMarketCapUsd"]["United States"] > api[
+        "countryMarketCapUsd"
+    ]["Germany"]
+
 
 def test_market_cap_report_ignores_rows_not_ready_for_global_weighting(
     tmp_path: Path,
@@ -68,6 +92,7 @@ def test_market_cap_report_ignores_rows_not_ready_for_global_weighting(
                 "country": "United States",
                 "regionKey": "america",
                 "exchangeShortName": "NYSE",
+                "currency": "USD",
                 "marketCap": 100.0,
             },
             {
@@ -96,3 +121,7 @@ def test_market_cap_report_ignores_rows_not_ready_for_global_weighting(
         "europe": pytest.approx(0.0),
         "asia": pytest.approx(0.0),
     }
+    assert report.country_market_cap_usd == {"United States": 100.0}
+    assert report.currency_market_cap_usd == {"USD": 100.0}
+    assert len(report.top_assets) == 1
+    assert report.top_assets[0]["symbol"] == "OK"
