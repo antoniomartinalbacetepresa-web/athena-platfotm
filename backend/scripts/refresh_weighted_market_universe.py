@@ -8,9 +8,10 @@ from typing import Callable
 from app.database.athena_database import AthenaDatabase
 from app.services.market_cap_coverage_service import MarketCapCoverageService
 from app.services.yahoo_regional_universe_source import (
+    ProgressCallback,
     YahooRegionalUniverseSource,
 )
-from scripts.import_yahoo_regional_universe import run_import
+from scripts.import_yahoo_regional_universe import _console_progress, run_import
 
 
 DEFAULT_PAGE_SIZE = 100
@@ -88,15 +89,20 @@ def run_refresh(
     profile_builder: Callable[[Path | None], dict[str, object]] = (
         _build_capitalization_profile
     ),
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
     selected_regions = regions or YahooRegionalUniverseSource.DEFAULT_REGIONS
 
-    result = importer(
-        database_path=database_path,
-        regions=selected_regions,
-        page_size=page_size,
-        max_pages=max_pages,
-    )
+    importer_kwargs: dict[str, object] = {
+        "database_path": database_path,
+        "regions": selected_regions,
+        "page_size": page_size,
+        "max_pages": max_pages,
+    }
+    if progress_callback is not None:
+        importer_kwargs["progress_callback"] = progress_callback
+
+    result = importer(**importer_kwargs)
 
     quality = result.get("catalogQuality")
     if not isinstance(quality, dict):
@@ -130,11 +136,18 @@ def main() -> int:
     try:
         regions = _normalize_regions(args.regions)
         exhaustive = bool(args.exhaustive)
+        print(
+            "Iniciando refresco ponderable Yahoo "
+            + ("exhaustivo" if exhaustive else "acotado")
+            + f" para {len(regions)} mercados...",
+            flush=True,
+        )
         result = run_refresh(
             database_path=args.database,
             regions=regions,
             page_size=EXHAUSTIVE_PAGE_SIZE if exhaustive else args.page_size,
             max_pages=None if exhaustive else args.max_pages,
+            progress_callback=_console_progress,
         )
     except (ValueError, RuntimeError) as exc:
         raise SystemExit(str(exc)) from exc
