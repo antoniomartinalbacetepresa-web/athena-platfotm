@@ -233,12 +233,26 @@ class _MarketPanelState extends State<MarketPanel> {
               ],
             ),
             SizedBox(height: compact ? 3 : 6),
-            _secondaryMetric(
-              label: 'ACTUALIZADO',
-              value: _formatUpdatedAt(
-                globalContext.updatedAt,
-              ),
-              compact: compact,
+            Row(
+              children: [
+                Expanded(
+                  child: _secondaryMetric(
+                    label: 'ACTUALIZADO',
+                    value: _formatUpdatedAt(
+                      globalContext.updatedAt,
+                    ),
+                    compact: compact,
+                  ),
+                ),
+                Expanded(
+                  child: _secondaryMetric(
+                    label: 'CONFIANZA PESOS',
+                    value:
+                        '${(globalContext.weightConfidence * 100).toStringAsFixed(0)}%',
+                    compact: compact,
+                  ),
+                ),
+              ],
             ),
           ],
         );
