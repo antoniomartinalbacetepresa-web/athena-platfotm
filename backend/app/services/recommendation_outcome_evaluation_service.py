@@ -45,6 +45,7 @@ class RecommendationOutcomeEvaluationReport:
                 "invalidPriceWindow": self.skipped_invalid_price_window,
             },
             "evaluated": [dict(item) for item in self.evaluated],
+            "pricePolicy": "raw_close_first_adjusted_close_fallback",
             "benchmarkStatus": "not_evaluated_without_explicit_benchmark_mapping",
         }
 
@@ -166,12 +167,12 @@ class RecommendationOutcomeEvaluationService:
                 """
                 SELECT
                     observed_at,
-                    COALESCE(adjusted_close, close) AS price
+                    COALESCE(close, adjusted_close) AS price
                 FROM market_observations
                 WHERE instrument_id = ?
                   AND observed_at >= ?
-                  AND COALESCE(adjusted_close, close) IS NOT NULL
-                  AND COALESCE(adjusted_close, close) > 0
+                  AND COALESCE(close, adjusted_close) IS NOT NULL
+                  AND COALESCE(close, adjusted_close) > 0
                 ORDER BY observed_at ASC
                 LIMIT 1
                 """,
@@ -198,13 +199,13 @@ class RecommendationOutcomeEvaluationService:
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT COALESCE(adjusted_close, close) AS price
+                SELECT COALESCE(close, adjusted_close) AS price
                 FROM market_observations
                 WHERE instrument_id = ?
                   AND observed_at >= ?
                   AND observed_at <= ?
-                  AND COALESCE(adjusted_close, close) IS NOT NULL
-                  AND COALESCE(adjusted_close, close) > 0
+                  AND COALESCE(close, adjusted_close) IS NOT NULL
+                  AND COALESCE(close, adjusted_close) > 0
                 ORDER BY observed_at ASC
                 """,
                 (
