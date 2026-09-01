@@ -205,11 +205,60 @@ def test_source_exhaustive_mode_stops_on_repeated_page_and_reports_progress() ->
     ]
     assert events[0]["page"] == 1
     assert events[0]["received"] == 2
+    assert events[0]["newSymbols"] == 2
     assert events[0]["accumulated"] == 2
     assert events[1]["page"] == 2
+    assert events[1]["newSymbols"] == 0
 
 
-def test_source_explicit_page_limit_stops_before_market_is_exhausted() -> None:
+def test_source_exhaustive_mode_stops_after_two_pages_without_new_symbols() -> None:
+    offsets: list[int] = []
+    events: list[dict[str, Any]] = []
+
+    pages = {
+        0: ["A", "B"],
+        2: ["A", "C"],
+        4: ["B", "C"],
+        6: ["A", "B"],
+        8: ["D", "E"],
+    }
+
+    def screen(query, **kwargs):
+        offset = kwargs["offset"]
+        offsets.append(offset)
+        return {
+            "total": 50,
+            "quotes": [
+                {
+                    "symbol": f"{symbol}.US",
+                    "quoteType": "EQUITY",
+                    "exchange": "NMS",
+                    "currency": "USD",
+                    "marketCap": 100.0,
+                }
+                for symbol in pages[offset]
+            ],
+        }
+
+    source = YahooRegionalUniverseSource(
+        regions=("us",),
+        page_size=2,
+        max_pages_per_region=None,
+        screen_function=screen,
+        query_factory=fake_query,
+        fx_service=FakeFx({"USD": 1.0}),
+        progress_callback=events.append,
+    )
+
+    assets = source.get_instruments()
+
+    assert offsets == [0, 2, 4, 6]
+    assert {asset["symbol"] for asset in assets} == {"A.US", "B.US", "C.US"}
+    assert [event["newSymbols"] for event in events] == [2, 1, 0, 0]
+    assert events[-1]["status"] == "no_new_symbols"
+
+
+def test_source_explicit_page_limit_does_not_use_stagnation_guard() -> None:
     offsets: list[int] = []
 
     def screen(query, **kwargs):
@@ -219,20 +268,26 @@ def test_source_explicit_page_limit_stops_before_market_is_exhausted() -> None:
             "total": 10,
             "quotes": [
                 {
-                    "symbol": f"{offset + index}.L",
+                    "symbol": "A.L",
                     "quoteType": "EQUITY",
                     "exchange": "LSE",
                     "currency": "GBP",
-                    "marketCap": 100.0 - index,
-                }
-                for index in range(2)
+                    "marketCap": 100.0,
+                },
+                {
+                    "symbol": f"{offset}.L",
+                    "quoteType": "EQUITY",
+                    "exchange": "LSE",
+                    "currency": "GBP",
+                    "marketCap": 90.0,
+                },
             ],
         }
 
     source = YahooRegionalUniverseSource(
         regions=("gb",),
         page_size=2,
-        max_pages_per_region=2,
+        max_pages_per_region=3,
         screen_function=screen,
         query_factory=fake_query,
         fx_service=FakeFx({"GBP": 1.0}),
@@ -240,7 +295,7 @@ def test_source_explicit_page_limit_stops_before_market_is_exhausted() -> None:
 
     assets = source.get_instruments()
 
-    assert offsets == [0, 2]
+    assert offsets == [0, 2, 4]
     assert len(assets) == 4
 
 
