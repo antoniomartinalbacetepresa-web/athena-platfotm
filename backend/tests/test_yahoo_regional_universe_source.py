@@ -116,6 +116,82 @@ def test_source_paginates_until_total_is_reached() -> None:
     assert [asset["symbol"] for asset in assets] == ["A.T", "B.T", "C.T"]
 
 
+def test_source_exhaustive_mode_reads_until_market_is_exhausted() -> None:
+    offsets: list[int] = []
+
+    def screen(query, **kwargs):
+        offset = kwargs["offset"]
+        offsets.append(offset)
+        pages = {
+            0: ["A", "B"],
+            2: ["C", "D"],
+            4: ["E"],
+        }
+        symbols = pages.get(offset, [])
+        return {
+            "total": 5,
+            "quotes": [
+                {
+                    "symbol": f"{symbol}.DE",
+                    "quoteType": "EQUITY",
+                    "exchange": "GER",
+                    "currency": "EUR",
+                    "marketCap": 100.0 - offset,
+                }
+                for symbol in symbols
+            ],
+        }
+
+    source = YahooRegionalUniverseSource(
+        regions=("de",),
+        page_size=2,
+        max_pages_per_region=None,
+        screen_function=screen,
+        query_factory=fake_query,
+        fx_service=FakeFx({"EUR": 1.0}),
+    )
+
+    assets = source.get_instruments()
+
+    assert offsets == [0, 2, 4]
+    assert len(assets) == 5
+
+
+def test_source_explicit_page_limit_stops_before_market_is_exhausted() -> None:
+    offsets: list[int] = []
+
+    def screen(query, **kwargs):
+        offset = kwargs["offset"]
+        offsets.append(offset)
+        return {
+            "total": 10,
+            "quotes": [
+                {
+                    "symbol": f"{offset + index}.L",
+                    "quoteType": "EQUITY",
+                    "exchange": "LSE",
+                    "currency": "GBP",
+                    "marketCap": 100.0 - index,
+                }
+                for index in range(2)
+            ],
+        }
+
+    source = YahooRegionalUniverseSource(
+        regions=("gb",),
+        page_size=2,
+        max_pages_per_region=2,
+        screen_function=screen,
+        query_factory=fake_query,
+        fx_service=FakeFx({"GBP": 1.0}),
+    )
+
+    assets = source.get_instruments()
+
+    assert offsets == [0, 2]
+    assert len(assets) == 4
+
+
 def test_source_skips_non_equity_and_keeps_unknown_fx_unconverted() -> None:
     def screen(query, **kwargs):
         return {
@@ -157,6 +233,9 @@ def test_source_skips_non_equity_and_keeps_unknown_fx_unconverted() -> None:
 def test_source_rejects_invalid_configuration() -> None:
     with pytest.raises(ValueError, match="page_size"):
         YahooRegionalUniverseSource(page_size=251)
+
+    with pytest.raises(ValueError, match="max_pages_per_region"):
+        YahooRegionalUniverseSource(max_pages_per_region=0)
 
     source = YahooRegionalUniverseSource(
         regions=("xx",),
