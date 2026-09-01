@@ -17,7 +17,9 @@ class RecommendationMarketSignal:
     as_of: str
     observation_count: int
     latest_observed_at: str | None
+    latest_retrieved_at: str | None
     latest_price: float | None
+    source_providers: tuple[str, ...]
     return_20d: float | None
     return_60d: float | None
     annualized_volatility: float | None
@@ -35,7 +37,9 @@ class RecommendationMarketSignal:
             "asOf": self.as_of,
             "observationCount": self.observation_count,
             "latestObservedAt": self.latest_observed_at,
+            "latestRetrievedAt": self.latest_retrieved_at,
             "latestPrice": self.latest_price,
+            "sourceProviders": list(self.source_providers),
             "return20d": self.return_20d,
             "return60d": self.return_60d,
             "annualizedVolatility": self.annualized_volatility,
@@ -48,13 +52,14 @@ class RecommendationMarketSignal:
                 "temporal": "observed_at_and_retrieved_at_not_after_as_of",
                 "price": "raw_close_first_adjusted_close_fallback",
                 "duplicateObservation": "latest_retrieved_at_before_as_of",
+                "provenance": "source_provider_exposed_for_selected_pit_observations",
                 "calibration": "diagnostic_only_until_out_of_sample_validated",
             },
         }
 
 
 class RecommendationMarketSignalService:
-    """Builds point-in-time technical/risk diagnostics from persisted prices.
+    """Build point-in-time technical/risk diagnostics from persisted prices.
 
     The scores are deliberately NOT production-eligible recommendations. They are
     deterministic features that can later feed a calibrated recommendation model.
@@ -95,6 +100,20 @@ class RecommendationMarketSignalService:
             instrument_id=instrument_id,
             as_of=as_of_utc,
         )
+        source_providers = tuple(
+            sorted(
+                {
+                    str(item["source_provider"]).strip()
+                    for item in observations
+                    if item.get("source_provider")
+                    and str(item["source_provider"]).strip()
+                }
+            )
+        )
+        latest_retrieved_at = (
+            str(observations[-1]["retrieved_at"]) if observations else None
+        )
+
         if len(observations) < self._MIN_OBSERVATIONS:
             return RecommendationMarketSignal(
                 status="insufficient_history",
@@ -105,7 +124,9 @@ class RecommendationMarketSignalService:
                 latest_observed_at=(
                     str(observations[-1]["observed_at"]) if observations else None
                 ),
+                latest_retrieved_at=latest_retrieved_at,
                 latest_price=(float(observations[-1]["price"]) if observations else None),
+                source_providers=source_providers,
                 return_20d=None,
                 return_60d=None,
                 annualized_volatility=None,
@@ -151,7 +172,9 @@ class RecommendationMarketSignalService:
             as_of=as_of_utc.isoformat(),
             observation_count=len(observations),
             latest_observed_at=str(recent[-1]["observed_at"]),
+            latest_retrieved_at=str(recent[-1]["retrieved_at"]),
             latest_price=latest_price,
+            source_providers=source_providers,
             return_20d=return_20d,
             return_60d=return_60d,
             annualized_volatility=annualized_volatility,
@@ -161,8 +184,8 @@ class RecommendationMarketSignalService:
             production_eligible=False,
             reason=(
                 "Las señales técnicas y de riesgo están calculadas con datos "
-                "point-in-time, pero aún deben calibrarse fuera de muestra junto "
-                "con fundamentales, valoración y calidad de datos."
+                "point-in-time y procedencia explícita, pero aún deben calibrarse "
+                "fuera de muestra junto con fundamentales, valoración y calidad."
             ),
         )
 
@@ -194,6 +217,7 @@ class RecommendationMarketSignalService:
                     SELECT
                         observed_at,
                         COALESCE(close, adjusted_close) AS price,
+                        source_provider,
                         retrieved_at,
                         id,
                         ROW_NUMBER() OVER (
@@ -207,7 +231,7 @@ class RecommendationMarketSignalService:
                       AND COALESCE(close, adjusted_close) IS NOT NULL
                       AND COALESCE(close, adjusted_close) > 0
                 )
-                SELECT observed_at, price, retrieved_at
+                SELECT observed_at, price, source_provider, retrieved_at
                 FROM eligible
                 WHERE row_rank = 1
                 ORDER BY observed_at ASC
@@ -242,7 +266,9 @@ class RecommendationMarketSignalService:
             as_of=as_of.isoformat(),
             observation_count=0,
             latest_observed_at=None,
+            latest_retrieved_at=None,
             latest_price=None,
+            source_providers=(),
             return_20d=None,
             return_60d=None,
             annualized_volatility=None,
