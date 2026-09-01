@@ -1,9 +1,9 @@
-﻿import 'market_provider_config.dart';
+import 'market_provider_config.dart';
 
-/// Configuración central de los proveedores de datos de ATHENA TYCHE.
+/// Configuración central de proveedores de ATHENA TYCHE.
 ///
-/// Esta clase define qué proveedores están disponibles para cada
-/// categoría de información. No contiene secretos reales.
+/// Flutter debe depender preferentemente del backend de ATHENA, no de APIs
+/// financieras externas ni de secretos embebidos en el cliente.
 class MarketProviderSettings {
   final MarketProviderConfig market;
   final MarketProviderConfig financial;
@@ -13,11 +13,6 @@ class MarketProviderSettings {
     required this.financial,
   });
 
-  /// Configuración de desarrollo.
-  ///
-  /// No requiere ninguna clave API y permite mantener ATHENA TYCHE
-  /// completamente operativa mientras las fuentes externas no estén
-  /// configuradas.
   const MarketProviderSettings.development()
       : market = const MarketProviderConfig(
           providerId: 'mock_market',
@@ -26,24 +21,18 @@ class MarketProviderSettings {
           providerId: 'mock_financial',
         );
 
-  /// Configuración para proveedores externos.
-  ///
-  /// Las claves se proporcionan desde una capa de configuración
-  /// segura y no se almacenan dentro de este archivo.
-  MarketProviderSettings.external({
-    String? twelveDataApiKey,
-    String? alphaVantageApiKey,
+  const MarketProviderSettings.athenaBackend({
+    String baseUrl = 'http://127.0.0.1:8000',
   })  : market = MarketProviderConfig(
-          providerId: 'twelve_data',
-          apiKey: twelveDataApiKey,
+          providerId: 'athena_backend',
+          baseUrl: baseUrl,
         ),
         financial = MarketProviderConfig(
-          providerId: 'alpha_vantage',
-          apiKey: alphaVantageApiKey,
+          providerId: 'athena_backend',
+          baseUrl: baseUrl,
         );
 
   bool get isMarketExternalConfigured => market.isConfigured;
 
-  bool get isFinancialExternalConfigured =>
-      financial.isConfigured;
+  bool get isFinancialExternalConfigured => financial.isConfigured;
 }
