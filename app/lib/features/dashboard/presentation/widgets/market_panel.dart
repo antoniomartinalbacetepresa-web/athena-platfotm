@@ -67,7 +67,7 @@ class _MarketPanelState extends State<MarketPanel> {
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           Expanded(
             child: _marketContextView(globalContext),
           ),
@@ -119,146 +119,146 @@ class _MarketPanelState extends State<MarketPanel> {
     final sentimentColor =
         _sentimentColor(globalContext.sentiment);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          globalContext.summary,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: AthenaColors.text,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 320;
 
-        const SizedBox(height: 6),
-
-        const Text(
-          'COBERTURA PILOTO · DIRECCIÓN POR BENCHMARKS · PESOS SOBRE UNIVERSO SEMILLA',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: AthenaColors.textSecondary,
-            fontSize: 8,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-
-        const SizedBox(height: 10),
-
-        _regionalRow(
-          context: globalContext.america,
-          weight: globalContext.americaWeight,
-        ),
-
-        const SizedBox(height: 8),
-
-        _regionalRow(
-          context: globalContext.europe,
-          weight: globalContext.europeWeight,
-        ),
-
-        const SizedBox(height: 8),
-
-        _regionalRow(
-          context: globalContext.asia,
-          weight: globalContext.asiaWeight,
-        ),
-
-        const Spacer(),
-
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: AthenaColors.border,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              globalContext.summary,
+              maxLines: compact ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AthenaColors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'SESGO GLOBAL',
-                  style: TextStyle(
-                    color: AthenaColors.textSecondary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
+            SizedBox(height: compact ? 4 : 6),
+            const Text(
+              'COBERTURA PILOTO · DIRECCIÓN POR BENCHMARKS · PESOS SOBRE UNIVERSO SEMILLA',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 8,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(height: compact ? 6 : 10),
+            _regionalRow(
+              context: globalContext.america,
+              weight: globalContext.americaWeight,
+              compact: compact,
+            ),
+            SizedBox(height: compact ? 5 : 8),
+            _regionalRow(
+              context: globalContext.europe,
+              weight: globalContext.europeWeight,
+              compact: compact,
+            ),
+            SizedBox(height: compact ? 5 : 8),
+            _regionalRow(
+              context: globalContext.asia,
+              weight: globalContext.asiaWeight,
+              compact: compact,
+            ),
+            const Spacer(),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: compact ? 5 : 8,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AthenaColors.border,
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'SESGO GLOBAL',
+                      style: TextStyle(
+                        color: AthenaColors.textSecondary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _sentimentLabel(
+                      globalContext.sentiment,
+                    ),
+                    style: TextStyle(
+                      color: sentimentColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: compact ? 5 : 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _secondaryMetric(
+                    label: 'BENCHMARKS',
+                    value:
+                        _totalAssets(globalContext).toString(),
+                    compact: compact,
                   ),
                 ),
-              ),
-              Text(
-                _sentimentLabel(
-                  globalContext.sentiment,
+                Expanded(
+                  child: _secondaryMetric(
+                    label: 'SUBIENDO',
+                    value:
+                        '${globalContext.advancingPercentage.toStringAsFixed(1)}%',
+                    compact: compact,
+                  ),
                 ),
-                style: TextStyle(
-                  color: sentimentColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+                Expanded(
+                  child: _secondaryMetric(
+                    label: 'BAJANDO',
+                    value:
+                        '${globalContext.decliningPercentage.toStringAsFixed(1)}%',
+                    compact: compact,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        Row(
-          children: [
-            Expanded(
-              child: _secondaryMetric(
-                label: 'BENCHMARKS',
-                value:
-                    _totalAssets(globalContext).toString(),
-              ),
+              ],
             ),
-            Expanded(
-              child: _secondaryMetric(
-                label: 'SUBIENDO',
-                value:
-                    '${globalContext.advancingPercentage.toStringAsFixed(1)}%',
+            SizedBox(height: compact ? 3 : 6),
+            _secondaryMetric(
+              label: 'ACTUALIZADO',
+              value: _formatUpdatedAt(
+                globalContext.updatedAt,
               ),
-            ),
-            Expanded(
-              child: _secondaryMetric(
-                label: 'BAJANDO',
-                value:
-                    '${globalContext.decliningPercentage.toStringAsFixed(1)}%',
-              ),
+              compact: compact,
             ),
           ],
-        ),
-
-        const SizedBox(height: 6),
-
-        _secondaryMetric(
-          label: 'ACTUALIZADO',
-          value: _formatUpdatedAt(
-            globalContext.updatedAt,
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
   Widget _regionalRow({
     required RegionalMarketContext context,
     required double weight,
+    required bool compact,
   }) {
     final color =
         _sentimentColor(context.sentiment);
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: 10,
-        vertical: 8,
+        vertical: compact ? 5 : 8,
       ),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
@@ -314,6 +314,7 @@ class _MarketPanelState extends State<MarketPanel> {
   Widget _secondaryMetric({
     required String label,
     required String value,
+    required bool compact,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -326,12 +327,12 @@ class _MarketPanelState extends State<MarketPanel> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 3),
+        SizedBox(height: compact ? 1 : 3),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             color: AthenaColors.text,
-            fontSize: 13,
+            fontSize: compact ? 12 : 13,
             fontWeight: FontWeight.w600,
           ),
         ),
