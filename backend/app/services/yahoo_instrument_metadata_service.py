@@ -24,6 +24,8 @@ class YahooInstrumentMetadataService:
                 f"Yahoo no devolvió metadatos válidos para {normalized_symbol}."
             )
 
+        currency = self._upper_text(info.get("currency"))
+
         return {
             "symbol": normalized_symbol,
             "companyName": self._text(
@@ -34,8 +36,9 @@ class YahooInstrumentMetadataService:
             "instrumentType": self._instrument_type(info.get("quoteType")),
             "sector": self._text(info.get("sector")),
             "industry": self._text(info.get("industry")),
-            "currency": self._upper_text(info.get("currency")),
-            "marketCap": self._positive_float(info.get("marketCap")),
+            "currency": currency,
+            "marketCapLocal": self._positive_float(info.get("marketCap")),
+            "marketCapCurrency": currency,
             "sourceProvider": self.source_id,
         }
 
