@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.macro import router as macro_router
 from app.api.market import router as market_router
+from app.api.recommendations import router as recommendations_router
 from app.api.sec import router as sec_router
 from app.api.sources import router as sources_router
 
@@ -28,6 +29,7 @@ app.include_router(market_router)
 app.include_router(sec_router)
 app.include_router(macro_router)
 app.include_router(sources_router)
+app.include_router(recommendations_router)
 
 
 @app.get("/health")
