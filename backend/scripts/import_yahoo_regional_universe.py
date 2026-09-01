@@ -82,7 +82,11 @@ def run_import(
     )
 
     report = importer.import_source(source)
-    quality = PersistedMarketUniverseService(database=database).get_quality_report()
+    quality = (
+        PersistedMarketUniverseService(database=database)
+        .get_quality_report()
+        .to_api_dict()
+    )
 
     return {
         "source": report.source_id,
