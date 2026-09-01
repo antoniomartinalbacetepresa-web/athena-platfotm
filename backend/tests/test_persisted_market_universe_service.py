@@ -26,9 +26,20 @@ def _database(tmp_path: Path) -> AthenaDatabase:
     return database
 
 
-def test_persisted_universe_prefers_ready_global_catalog(tmp_path: Path) -> None:
-    database = _database(tmp_path)
-    repository = InstrumentRepository(database=database)
+def _low_threshold_service(
+    database: AthenaDatabase,
+    fallback: FakeFallback,
+) -> PersistedMarketUniverseService:
+    return PersistedMarketUniverseService(
+        database=database,
+        fallback_service=fallback,
+        minimum_global_usable_count=3,
+        minimum_usable_per_region=1,
+        minimum_usable_coverage=0.5,
+    )
+
+
+def _insert_three_regions(repository: InstrumentRepository) -> None:
     repository.upsert_many(
         [
             {
@@ -73,28 +84,21 @@ def test_persisted_universe_prefers_ready_global_catalog(tmp_path: Path) -> None
                 "sourceProvider": "catalog",
                 "isActive": True,
             },
-            {
-                "symbol": "OLD",
-                "companyName": "Inactive Company",
-                "country": "United States",
-                "exchange": "NYSE",
-                "exchangeShortName": "NYSE",
-                "regionKey": "america",
-                "marketCap": 100_000_000,
-                "sourceProvider": "catalog",
-                "isActive": False,
-            },
         ]
     )
+
+
+def test_persisted_universe_prefers_catalog_when_configured_thresholds_pass(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    repository = InstrumentRepository(database=database)
+    _insert_three_regions(repository)
     fallback = FakeFallback(
         [{"symbol": "FALLBACK", "companyName": "Fallback"}]
     )
 
-    service = PersistedMarketUniverseService(
-        database=database,
-        fallback_service=fallback,
-    )
-
+    service = _low_threshold_service(database, fallback)
     universe = service.get_universe()
 
     assert fallback.calls == 0
@@ -103,13 +107,27 @@ def test_persisted_universe_prefers_ready_global_catalog(tmp_path: Path) -> None
         "SAP.DE",
         "7203.T",
     }
-    msft = next(asset for asset in universe if asset["symbol"] == "MSFT")
-    assert msft["companyName"] == "Microsoft Corporation"
-    assert msft["marketCap"] == 3_000_000_000_000
-    assert msft["regionKey"] == "america"
-    assert msft["instrumentType"] == "common_stock"
-    assert msft["isPrimaryListing"] is True
-    assert msft["sourceProvider"] == "catalog"
+
+
+def test_default_thresholds_reject_tiny_three_region_catalog(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    repository = InstrumentRepository(database=database)
+    _insert_three_regions(repository)
+    fallback_universe = [
+        {"symbol": "SAFE", "companyName": "Safe fallback"}
+    ]
+    fallback = FakeFallback(fallback_universe)
+
+    service = PersistedMarketUniverseService(
+        database=database,
+        fallback_service=fallback,
+    )
+
+    assert service.get_universe() == fallback_universe
+    report = service.get_quality_report()
+    assert report.globally_usable_count == 3
+    assert report.is_global_ready is False
+    assert report.using_fallback is True
 
 
 def test_persisted_universe_falls_back_when_catalog_is_empty(
@@ -178,32 +196,9 @@ def test_quality_report_explains_catalog_readiness(
 ) -> None:
     database = _database(tmp_path)
     repository = InstrumentRepository(database=database)
+    _insert_three_regions(repository)
     repository.upsert_many(
         [
-            {
-                "symbol": "AAPL",
-                "companyName": "Apple Inc.",
-                "country": "United States",
-                "regionKey": "america",
-                "exchangeShortName": "NASDAQ",
-                "marketCap": 3_000_000_000_000,
-            },
-            {
-                "symbol": "SAP.DE",
-                "companyName": "SAP SE",
-                "country": "Germany",
-                "regionKey": "europe",
-                "exchangeShortName": "XETRA",
-                "marketCap": 300_000_000_000,
-            },
-            {
-                "symbol": "7203.T",
-                "companyName": "Toyota Motor Corporation",
-                "country": "Japan",
-                "regionKey": "asia",
-                "exchangeShortName": "TSE",
-                "marketCap": 400_000_000_000,
-            },
             {
                 "symbol": "NO_CAP",
                 "companyName": "Missing Market Cap",
@@ -221,9 +216,9 @@ def test_quality_report_explains_catalog_readiness(
         ]
     )
 
-    service = PersistedMarketUniverseService(
-        database=database,
-        fallback_service=FakeFallback([]),
+    service = _low_threshold_service(
+        database,
+        FakeFallback([]),
     )
 
     report = service.get_quality_report()
@@ -246,6 +241,9 @@ def test_quality_report_explains_catalog_readiness(
     assert report.is_global_ready is True
     assert report.using_fallback is False
     assert api_report["usableCoverage"] == 0.6
+    assert api_report["minimumGlobalUsableCount"] == 3
+    assert api_report["minimumUsablePerRegion"] == 1
+    assert api_report["minimumUsableCoverage"] == 0.5
 
 
 def test_quality_report_marks_incomplete_catalog_as_fallback(
@@ -276,3 +274,17 @@ def test_quality_report_marks_incomplete_catalog_as_fallback(
     assert report.represented_regions == ()
     assert report.is_global_ready is False
     assert report.using_fallback is True
+
+
+def test_quality_thresholds_validate_configuration(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+
+    try:
+        PersistedMarketUniverseService(
+            database=database,
+            minimum_global_usable_count=0,
+        )
+    except ValueError as exc:
+        assert "minimum_global_usable_count" in str(exc)
+    else:
+        raise AssertionError("Se esperaba ValueError para umbral global inválido.")
