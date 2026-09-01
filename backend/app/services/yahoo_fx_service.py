@@ -27,6 +27,9 @@ class YahooFxService:
         "HKD": "HKD=X",
     }
 
+    def __init__(self) -> None:
+        self._rate_cache: dict[str, FxRate] = {}
+
     def get_usd_rate(
         self,
         currency: str,
@@ -35,6 +38,18 @@ class YahooFxService:
             currency
         )
 
+        cached = self._rate_cache.get(normalized_currency)
+        if cached is not None:
+            return cached
+
+        rate = self._load_usd_rate(normalized_currency)
+        self._rate_cache[normalized_currency] = rate
+        return rate
+
+    def _load_usd_rate(
+        self,
+        normalized_currency: str,
+    ) -> FxRate:
         if normalized_currency == self._USD:
             return FxRate(
                 currency=self._USD,
@@ -118,6 +133,9 @@ class YahooFxService:
         )
 
         return normalized_amount * fx_rate.usd_rate
+
+    def clear_cache(self) -> None:
+        self._rate_cache.clear()
 
     def _get_positive_last_price(
         self,
