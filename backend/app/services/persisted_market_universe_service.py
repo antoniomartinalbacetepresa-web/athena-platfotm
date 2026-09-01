@@ -13,7 +13,9 @@ class MarketUniverseFallback(Protocol):
 
 
 class PersistedMarketUniverseService:
-    """Sirve el universo activo persistido con fallback seguro al seed."""
+    """Sirve un universo persistido sólo cuando es apto para pesos globales."""
+
+    _REQUIRED_REGIONS = frozenset({"america", "europe", "asia"})
 
     def __init__(
         self,
@@ -32,10 +34,25 @@ class PersistedMarketUniverseService:
         self._database.initialize()
         rows = self._repository.list_active()
 
-        if not rows:
+        if not self._is_global_catalog_ready(rows):
             return self._fallback_service.get_universe()
 
         return [self._to_api_asset(row) for row in rows]
+
+    def _is_global_catalog_ready(self, rows: list[dict[str, Any]]) -> bool:
+        represented_regions: set[str] = set()
+
+        for row in rows:
+            market_cap = row.get("market_cap_usd")
+            region_key = str(row.get("region_key") or "").strip().lower()
+
+            if not isinstance(market_cap, (int, float)) or market_cap <= 0:
+                continue
+
+            if region_key in self._REQUIRED_REGIONS:
+                represented_regions.add(region_key)
+
+        return represented_regions == self._REQUIRED_REGIONS
 
     def _to_api_asset(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
