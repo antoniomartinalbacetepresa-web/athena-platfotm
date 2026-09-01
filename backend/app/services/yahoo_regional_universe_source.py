@@ -92,15 +92,15 @@ class YahooRegionalUniverseSource:
         *,
         regions: tuple[str, ...] | None = None,
         page_size: int = 250,
-        max_pages_per_region: int = 1,
+        max_pages_per_region: int | None = 1,
         screen_function: Callable[..., dict[str, Any]] | None = None,
         query_factory: Callable[..., Any] | None = None,
         fx_service: YahooFxService | None = None,
     ) -> None:
         if page_size <= 0 or page_size > 250:
             raise ValueError("page_size debe estar entre 1 y 250.")
-        if max_pages_per_region <= 0:
-            raise ValueError("max_pages_per_region debe ser mayor que 0.")
+        if max_pages_per_region is not None and max_pages_per_region <= 0:
+            raise ValueError("max_pages_per_region debe ser mayor que 0 o None.")
 
         self._regions = regions or self.DEFAULT_REGIONS
         self._page_size = page_size
@@ -119,7 +119,8 @@ class YahooRegionalUniverseSource:
             if normalized_region not in self._COUNTRIES:
                 raise ValueError(f"Región Yahoo no soportada: {region_code}")
 
-            for page in range(self._max_pages):
+            page = 0
+            while self._max_pages is None or page < self._max_pages:
                 offset = page * self._page_size
                 response = self._screen_region(normalized_region, offset)
                 quotes = response.get("quotes")
@@ -143,6 +144,8 @@ class YahooRegionalUniverseSource:
                     break
                 if len(quotes) < self._page_size:
                     break
+
+                page += 1
 
         return list(assets.values())
 
