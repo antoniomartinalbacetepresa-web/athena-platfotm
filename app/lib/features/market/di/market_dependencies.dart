@@ -32,16 +32,16 @@ class MarketDependencies {
   final MarketUniverseRepository marketUniverseRepository;
   final GlobalMarketDataService globalMarketDataService;
 
-  final AthenaBackendMarketDataProvider? _backendMarketProvider;
-  final AthenaBackendMarketUniverseDataSource? _backendUniverseDataSource;
+  final AthenaBackendMarketDataProvider? backendMarketProvider;
+  final AthenaBackendMarketUniverseDataSource? backendUniverseDataSource;
 
   const MarketDependencies({
     required this.repository,
     required this.marketContextRepository,
     required this.marketUniverseRepository,
     required this.globalMarketDataService,
-    this._backendMarketProvider,
-    this._backendUniverseDataSource,
+    this.backendMarketProvider,
+    this.backendUniverseDataSource,
   });
 
   factory MarketDependencies.create({
@@ -120,13 +120,13 @@ class MarketDependencies {
       marketContextRepository: marketContextRepository,
       marketUniverseRepository: marketUniverseRepository,
       globalMarketDataService: globalMarketDataService,
-      _backendMarketProvider: backendMarketProvider,
-      _backendUniverseDataSource: backendUniverseDataSource,
+      backendMarketProvider: backendMarketProvider,
+      backendUniverseDataSource: backendUniverseDataSource,
     );
   }
 
   void dispose() {
-    _backendMarketProvider?.dispose();
-    _backendUniverseDataSource?.dispose();
+    backendMarketProvider?.dispose();
+    backendUniverseDataSource?.dispose();
   }
 }
