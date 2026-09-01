@@ -118,6 +118,46 @@ def test_link_can_be_replaced_by_stronger_evidence(tmp_path: Path) -> None:
     assert resolved["confidence"] == pytest.approx(0.99)
 
 
+def test_weaker_evidence_cannot_replace_stronger_link(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "SAFE")
+    repository = IssuerIdentityRepository(database=database)
+    strong_issuer = repository.upsert_external_issuer(
+        source_provider="official",
+        external_id="STRONG",
+        canonical_name="Strong Issuer",
+        evidence_confidence=0.99,
+    )
+    weak_issuer = repository.upsert_external_issuer(
+        source_provider="heuristic",
+        external_id="WEAK",
+        canonical_name="Weak Issuer",
+        evidence_confidence=0.4,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=strong_issuer,
+        evidence_source="official",
+        resolution_method="official_identifier",
+        confidence=0.99,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=weak_issuer,
+        evidence_source="heuristic",
+        resolution_method="name_match",
+        confidence=0.4,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["issuer_id"] == strong_issuer
+    assert resolved["canonical_name"] == "Strong Issuer"
+    assert resolved["confidence"] == pytest.approx(0.99)
+
+
 def test_repository_rejects_invalid_confidence(tmp_path: Path) -> None:
     repository = IssuerIdentityRepository(
         database=AthenaDatabase(tmp_path / "athena.db")
