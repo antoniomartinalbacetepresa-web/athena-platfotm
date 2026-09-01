@@ -99,3 +99,21 @@ def get_universe() -> dict[str, object]:
     return {
         "data": universe,
     }
+
+
+@router.get("/universe/status")
+def get_universe_status() -> dict[str, object]:
+    try:
+        report = market_universe_service.get_quality_report()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "No se pudo evaluar la calidad "
+                "del universo de mercado."
+            ),
+        ) from exc
+
+    return {
+        "data": report.to_api_dict(),
+    }
