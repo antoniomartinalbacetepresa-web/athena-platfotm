@@ -7,10 +7,14 @@ import yfinance as yf
 from app.services.yahoo_fx_service import YahooFxService
 
 
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+
 class YahooRegionalUniverseSource:
     """Discovers sizeable listed equities by Yahoo region without manual seeds."""
 
     source_id = "yahoo_regional_screener"
+    EXHAUSTIVE_SAFETY_MAX_PAGES = 200
 
     DEFAULT_REGIONS = (
         # United States is included here because the weighted universe needs
@@ -96,6 +100,7 @@ class YahooRegionalUniverseSource:
         screen_function: Callable[..., dict[str, Any]] | None = None,
         query_factory: Callable[..., Any] | None = None,
         fx_service: YahooFxService | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         if page_size <= 0 or page_size > 250:
             raise ValueError("page_size debe estar entre 1 y 250.")
@@ -110,6 +115,7 @@ class YahooRegionalUniverseSource:
             query_factory if query_factory is not None else yf.EquityQuery
         )
         self._fx_service = fx_service if fx_service is not None else YahooFxService()
+        self._progress_callback = progress_callback
 
     def get_instruments(self) -> list[dict[str, Any]]:
         assets: dict[str, dict[str, Any]] = {}
@@ -120,12 +126,60 @@ class YahooRegionalUniverseSource:
                 raise ValueError(f"Región Yahoo no soportada: {region_code}")
 
             page = 0
+            previous_page_signature: tuple[str, ...] | None = None
+
             while self._max_pages is None or page < self._max_pages:
+                if (
+                    self._max_pages is None
+                    and page >= self.EXHAUSTIVE_SAFETY_MAX_PAGES
+                ):
+                    self._emit_progress(
+                        region=normalized_region,
+                        page=page,
+                        received=0,
+                        total=None,
+                        accumulated=len(assets),
+                        status="safety_limit",
+                    )
+                    break
+
                 offset = page * self._page_size
                 response = self._screen_region(normalized_region, offset)
                 quotes = response.get("quotes")
+                total = self._integer(response.get("total"))
+
                 if not isinstance(quotes, list) or not quotes:
+                    self._emit_progress(
+                        region=normalized_region,
+                        page=page,
+                        received=0,
+                        total=total,
+                        accumulated=len(assets),
+                        status="completed",
+                    )
                     break
+
+                page_signature = tuple(
+                    str(quote.get("symbol") or "").strip().upper()
+                    for quote in quotes
+                    if isinstance(quote, dict)
+                )
+
+                if (
+                    previous_page_signature is not None
+                    and page_signature == previous_page_signature
+                ):
+                    self._emit_progress(
+                        region=normalized_region,
+                        page=page,
+                        received=len(quotes),
+                        total=total,
+                        accumulated=len(assets),
+                        status="repeated_page",
+                    )
+                    break
+
+                previous_page_signature = page_signature
 
                 for quote in quotes:
                     if not isinstance(quote, dict):
@@ -139,7 +193,15 @@ class YahooRegionalUniverseSource:
                     )
                     assets[key] = asset
 
-                total = self._integer(response.get("total"))
+                self._emit_progress(
+                    region=normalized_region,
+                    page=page,
+                    received=len(quotes),
+                    total=total,
+                    accumulated=len(assets),
+                    status="page_completed",
+                )
+
                 if total is not None and offset + len(quotes) >= total:
                     break
                 if len(quotes) < self._page_size:
@@ -148,6 +210,31 @@ class YahooRegionalUniverseSource:
                 page += 1
 
         return list(assets.values())
+
+    def _emit_progress(
+        self,
+        *,
+        region: str,
+        page: int,
+        received: int,
+        total: int | None,
+        accumulated: int,
+        status: str,
+    ) -> None:
+        if self._progress_callback is None:
+            return
+
+        self._progress_callback(
+            {
+                "region": region,
+                "country": self._COUNTRIES[region],
+                "page": page + 1,
+                "received": received,
+                "total": total,
+                "accumulated": accumulated,
+                "status": status,
+            }
+        )
 
     def _screen_region(self, region_code: str, offset: int) -> dict[str, Any]:
         query = self._query_factory(
