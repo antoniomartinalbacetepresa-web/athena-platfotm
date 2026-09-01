@@ -64,6 +64,43 @@ class NormalizedDataRepository:
                 """
             )
 
+            # SQLite considera distintos los NULL dentro de una restricción
+            # UNIQUE. Eliminamos duplicados históricos equivalentes antes de
+            # añadir un índice de identidad que normaliza NULL y cadena vacía.
+            connection.execute(
+                """
+                DELETE FROM normalized_data_observations
+                WHERE id NOT IN (
+                    SELECT MIN(id)
+                    FROM normalized_data_observations
+                    GROUP BY
+                        metric,
+                        COALESCE(entity_id, ''),
+                        source_id,
+                        COALESCE(effective_at, ''),
+                        COALESCE(published_at, ''),
+                        COALESCE(source_version, ''),
+                        value_json
+                )
+                """
+            )
+
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    uq_normalized_data_observation_identity
+                ON normalized_data_observations (
+                    metric,
+                    COALESCE(entity_id, ''),
+                    source_id,
+                    COALESCE(effective_at, ''),
+                    COALESCE(published_at, ''),
+                    COALESCE(source_version, ''),
+                    value_json
+                )
+                """
+            )
+
     def save(self, datum: NormalizedDatum) -> int:
         self.initialize()
         provenance = datum.provenance
@@ -112,7 +149,8 @@ class NormalizedDataRepository:
                     provenance.source_url,
                 ),
             )
-            if cursor.lastrowid:
+
+            if cursor.rowcount == 1 and cursor.lastrowid is not None:
                 return int(cursor.lastrowid)
 
             row = connection.execute(
@@ -120,13 +158,13 @@ class NormalizedDataRepository:
                 SELECT id
                 FROM normalized_data_observations
                 WHERE metric = ?
-                  AND entity_id IS ?
+                  AND COALESCE(entity_id, '') = COALESCE(?, '')
                   AND source_id = ?
-                  AND effective_at IS ?
-                  AND published_at IS ?
-                  AND source_version IS ?
+                  AND COALESCE(effective_at, '') = COALESCE(?, '')
+                  AND COALESCE(published_at, '') = COALESCE(?, '')
+                  AND COALESCE(source_version, '') = COALESCE(?, '')
                   AND value_json = ?
-                ORDER BY id DESC
+                ORDER BY id ASC
                 LIMIT 1
                 """,
                 (
