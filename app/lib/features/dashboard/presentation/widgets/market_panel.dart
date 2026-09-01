@@ -263,6 +263,12 @@ class _MarketPanelState extends State<MarketPanel> {
   String _coverageLabel(GlobalMarketContext context) {
     final status = context.marketUniverseStatus;
 
+    if (context.hasRealMarketUniverse && !status.isWeightingReady) {
+      return 'UNIVERSO REAL PERSISTIDO · '
+          '${status.globallyUsableCount} ACTIVOS · '
+          'PESOS EN CALIBRACIÓN';
+    }
+
     if (context.hasRealMarketUniverse) {
       return 'UNIVERSO REAL PERSISTIDO · '
           '${status.globallyUsableCount} ACTIVOS PONDERABLES · '
