@@ -7,6 +7,7 @@ from statistics import mean
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.issuer_identity_repository import IssuerIdentityRepository
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class RecommendationFundamentalSignalService:
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
+        self._identity_repository = IssuerIdentityRepository(database=self._database)
 
     def evaluate(
         self,
@@ -108,6 +110,7 @@ class RecommendationFundamentalSignalService:
             raise ValueError("symbol es obligatorio.")
         as_of_utc = self._aware_utc(as_of)
         self._database.initialize()
+        self._identity_repository.initialize()
 
         instrument_ids = self._active_instrument_ids(normalized_symbol)
         if not instrument_ids:
