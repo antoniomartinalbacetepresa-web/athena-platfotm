@@ -75,6 +75,7 @@ def test_signal_uses_only_information_retrieved_by_as_of(tmp_path) -> None:
             observed_at=observed,
             retrieved_at=observed + timedelta(hours=1),
             price=100.0 + day,
+            provider="historical_source",
         )
 
     as_of = start + timedelta(days=60, hours=12)
@@ -96,10 +97,41 @@ def test_signal_uses_only_information_retrieved_by_as_of(tmp_path) -> None:
     assert result.production_eligible is False
     assert result.observation_count == 61
     assert result.latest_price == pytest.approx(160.0)
+    assert result.latest_retrieved_at == (start + timedelta(days=60, hours=1)).isoformat()
+    assert result.source_providers == ("historical_source",)
+    assert "future_backfill" not in result.source_providers
     assert result.return_20d == pytest.approx((160.0 / 140.0) - 1.0)
     assert result.return_60d == pytest.approx(0.6)
     assert result.technical_score is not None
     assert result.risk_score is not None
+    payload = result.to_api_dict()
+    assert payload["sourceProviders"] == ["historical_source"]
+    assert payload["latestRetrievedAt"] == result.latest_retrieved_at
+
+
+def test_signal_reports_all_selected_point_in_time_providers(tmp_path) -> None:
+    database = _build_database(tmp_path)
+    instrument_id = _insert_instrument(database)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    for day in range(61):
+        observed = start + timedelta(days=day)
+        _insert_observation(
+            database,
+            instrument_id=instrument_id,
+            observed_at=observed,
+            retrieved_at=observed + timedelta(hours=1),
+            price=100.0 + day,
+            provider="source_a" if day < 30 else "source_b",
+        )
+
+    result = RecommendationMarketSignalService(database=database).evaluate(
+        symbol="TEST",
+        as_of=start + timedelta(days=60, hours=2),
+    )
+
+    assert result.status == "diagnostic_ready"
+    assert result.source_providers == ("source_a", "source_b")
 
 
 def test_signal_refuses_to_fill_missing_history(tmp_path) -> None:
@@ -125,6 +157,7 @@ def test_signal_refuses_to_fill_missing_history(tmp_path) -> None:
     assert result.status == "insufficient_history"
     assert result.production_eligible is False
     assert result.observation_count == 20
+    assert result.source_providers == ("test",)
     assert result.technical_score is None
     assert result.risk_score is None
 
@@ -153,6 +186,7 @@ def test_signal_rejects_ambiguous_symbol(tmp_path) -> None:
     assert result.status == "instrument_ambiguous"
     assert result.production_eligible is False
     assert result.instrument_id is None
+    assert result.source_providers == ()
 
 
 def test_signal_requires_timezone_aware_as_of(tmp_path) -> None:
