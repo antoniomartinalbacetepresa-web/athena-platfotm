@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../models/market_instrument_type.dart';
 import '../../models/market_universe_asset.dart';
 import '../../models/market_universe_status.dart';
+import '../../services/global_market_data_service.dart';
 
 /// Fuente de datos del universo global proporcionado por el backend
 /// de ATHENA TYCHE.
@@ -15,7 +16,8 @@ import '../../models/market_universe_status.dart';
 /// El backend es responsable de recopilar, normalizar y combinar las
 /// distintas fuentes disponibles. Esta clase únicamente transforma el
 /// contrato HTTP normalizado en objetos de dominio de mercado.
-class AthenaBackendMarketUniverseDataSource {
+class AthenaBackendMarketUniverseDataSource
+    implements MarketUniverseStatusProvider {
   final String baseUrl;
   final http.Client client;
 
@@ -24,22 +26,13 @@ class AthenaBackendMarketUniverseDataSource {
     http.Client? client,
   }) : client = client ?? http.Client();
 
-  /// Obtiene el universo global disponible en el backend.
-  ///
-  /// Los duplicados inequívocos del mismo listado se eliminan mediante
-  /// [MarketUniverseAsset.listingKey].
-  ///
-  /// No se fusionan automáticamente instrumentos pertenecientes a un mismo
-  /// emisor. Esa decisión requiere información fiable de [issuerId].
   Future<List<MarketUniverseAsset>> getUniverse() async {
     final uri = Uri.parse('$baseUrl/api/v1/market/universe');
-
     final response = await client.get(uri);
 
     _validateResponse(response, resourceLabel: 'el universo de mercado');
 
     final decoded = _decodeObject(response.body);
-
     final data = decoded['data'];
 
     if (data == null) {
@@ -61,7 +54,6 @@ class AthenaBackendMarketUniverseDataSource {
       }
 
       final asset = _mapAsset(Map<String, dynamic>.from(item));
-
       if (asset == null) {
         continue;
       }
@@ -72,10 +64,9 @@ class AthenaBackendMarketUniverseDataSource {
     return assetsByListing.values.toList(growable: false);
   }
 
-  /// Obtiene el estado de calidad del universo persistido del backend.
+  @override
   Future<MarketUniverseStatus> getStatus() async {
     final uri = Uri.parse('$baseUrl/api/v1/market/universe/status');
-
     final response = await client.get(uri);
 
     _validateResponse(
@@ -147,28 +138,20 @@ class AthenaBackendMarketUniverseDataSource {
     switch (normalized) {
       case 'common_stock':
         return MarketInstrumentType.commonStock;
-
       case 'preferred_stock':
         return MarketInstrumentType.preferredStock;
-
       case 'adr':
         return MarketInstrumentType.adr;
-
       case 'cdr':
         return MarketInstrumentType.cdr;
-
       case 'sdr':
         return MarketInstrumentType.sdr;
-
       case 'depositary_receipt':
         return MarketInstrumentType.depositaryReceipt;
-
       case 'etf':
         return MarketInstrumentType.etf;
-
       case 'fund':
         return MarketInstrumentType.fund;
-
       default:
         return MarketInstrumentType.unknown;
     }
@@ -183,7 +166,6 @@ class AthenaBackendMarketUniverseDataSource {
       if (value == 1) {
         return true;
       }
-
       if (value == 0) {
         return false;
       }
@@ -194,7 +176,6 @@ class AthenaBackendMarketUniverseDataSource {
         case 'true':
         case '1':
           return true;
-
         case 'false':
         case '0':
           return false;
@@ -208,15 +189,12 @@ class AthenaBackendMarketUniverseDataSource {
     if (value is int) {
       return value;
     }
-
     if (value is num) {
       return value.toInt();
     }
-
     if (value is String) {
       return int.tryParse(value.trim());
     }
-
     return null;
   }
 
@@ -224,11 +202,9 @@ class AthenaBackendMarketUniverseDataSource {
     if (value is num) {
       return value.toDouble();
     }
-
     if (value is String) {
       return double.tryParse(value.trim());
     }
-
     return null;
   }
 
@@ -238,12 +214,7 @@ class AthenaBackendMarketUniverseDataSource {
     }
 
     final normalized = value.toString().trim();
-
-    if (normalized.isEmpty) {
-      return null;
-    }
-
-    return normalized;
+    return normalized.isEmpty ? null : normalized;
   }
 
   void _validateResponse(
