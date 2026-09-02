@@ -15,6 +15,18 @@ class MarketDataPoint {
   /// Variación porcentual respecto al cierre anterior.
   final double? changePercentage;
 
+  /// Moneda declarada por la fuente para la cotización, por ejemplo USD o EUR.
+  final String? currency;
+
+  /// Mercado/listing declarado por la fuente.
+  final String? exchange;
+
+  /// Tipo de instrumento declarado por la fuente, cuando está disponible.
+  final String? quoteType;
+
+  /// Zona horaria del mercado declarado por la fuente.
+  final String? exchangeTimezone;
+
   /// Identificador del adaptador que entrega el dato a Flutter.
   final String providerId;
 
@@ -35,6 +47,10 @@ class MarketDataPoint {
     this.volume,
     this.change,
     this.changePercentage,
+    this.currency,
+    this.exchange,
+    this.quoteType,
+    this.exchangeTimezone,
     required this.providerId,
     this.sourceProvider,
     this.retrievedAt,
