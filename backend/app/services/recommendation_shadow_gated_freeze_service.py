@@ -2,53 +2,56 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from datetime import datetime, timezone
 from typing import Any
 
 from app.services.recommendation_shadow_independent_holdout_service import (
     RecommendationShadowIndependentHoldoutService,
 )
+from app.services.recommendation_shadow_protocol_selection_service import (
+    RecommendationShadowProtocolSelectionService,
+)
 
 
 class RecommendationShadowGatedFreezeService:
-    """Freeze a shadow candidate only after a verifiable research-gate pass.
+    """Freeze a shadow candidate only after verifiable research decisions.
 
-    The research gate validates a candidate *protocol/family* across walk-forward
-    folds. It does not identify one fold model as the production candidate. The
-    final research-era refit performed by ``IndependentHoldoutService.freeze`` is
-    therefore recorded explicitly as a pre-holdout refit protocol, never as the
-    exact model evaluated in every fold.
+    The research gate validates a candidate protocol/family across walk-forward
+    folds. The final research-era refit is therefore not the exact model from a
+    single fold. Crucially, the refit's ridge lambda may no longer be supplied
+    manually: it must come from a fingerprinted protocol-selection artifact
+    derived only from validation-selected lambdas across research folds.
     """
 
-    BUNDLE_VERSION = "shadow-gated-freeze-v1"
+    BUNDLE_VERSION = "shadow-gated-freeze-v2"
 
     def __init__(
         self,
         *,
         holdout_service: RecommendationShadowIndependentHoldoutService | None = None,
+        protocol_selection_service: RecommendationShadowProtocolSelectionService | None = None,
     ) -> None:
         self._holdout_service = holdout_service or RecommendationShadowIndependentHoldoutService()
+        self._protocol_selection_service = (
+            protocol_selection_service or RecommendationShadowProtocolSelectionService()
+        )
 
     def freeze(
         self,
         *,
         research_gate: dict[str, Any],
+        protocol_selection: dict[str, Any],
         research_cutoff: datetime,
         horizon_days: int,
-        ridge_lambda: float,
     ) -> dict[str, Any]:
         cutoff = self._aware_utc(research_cutoff, "research_cutoff")
         if horizon_days <= 0:
             raise ValueError("horizon_days debe ser positivo.")
-        if ridge_lambda < 0 or not math.isfinite(float(ridge_lambda)):
-            raise ValueError("ridge_lambda debe ser finito y no negativo.")
 
         gate_core = self._validated_gate(research_gate)
         horizon_key = str(int(horizon_days))
         horizon = gate_core["horizons"].get(horizon_key)
         if not isinstance(horizon, dict):
-            # Some callers may preserve integer keys before JSON serialization.
             horizon = gate_core["horizons"].get(int(horizon_days))
         if not isinstance(horizon, dict):
             raise ValueError("El horizonte solicitado no está presente en la research gate.")
@@ -58,11 +61,23 @@ class RecommendationShadowGatedFreezeService:
         if isinstance(reported_horizon, int) and reported_horizon != int(horizon_days):
             raise ValueError("La evidencia del horizonte es inconsistente.")
 
+        validated_selection = self._protocol_selection_service.validate_selection(
+            protocol_selection
+        )
+        selection_horizon = int(validated_selection.get("horizonDays", -1))
+        if selection_horizon != int(horizon_days):
+            raise ValueError("La protocol selection no corresponde al horizonte solicitado.")
+        ridge_lambda = float(validated_selection["selectedRidgeLambda"])
+
         gate_fingerprint = self._fingerprint(gate_core)
+        selection_fingerprint = validated_selection.get("selectionFingerprint")
+        if not isinstance(selection_fingerprint, str) or not selection_fingerprint:
+            raise ValueError("La protocol selection no contiene fingerprint válido.")
+
         frozen = self._holdout_service.freeze(
             research_cutoff=cutoff,
             horizon_days=int(horizon_days),
-            ridge_lambda=float(ridge_lambda),
+            ridge_lambda=ridge_lambda,
         )
         self._assert_shadow(frozen, "frozen_model")
         if frozen.get("status") != "shadow_model_frozen":
@@ -70,6 +85,7 @@ class RecommendationShadowGatedFreezeService:
                 "status": "shadow_gated_freeze_blocked",
                 "reason": frozen.get("status", "freeze_failed"),
                 "researchGateFingerprint": gate_fingerprint,
+                "protocolSelectionFingerprint": selection_fingerprint,
                 "horizonDays": int(horizon_days),
                 "advisoryStatus": "no_advice",
                 "productionEligible": False,
@@ -83,16 +99,22 @@ class RecommendationShadowGatedFreezeService:
             raise ValueError("El artefacto congelado cambió de horizonte.")
         if frozen.get("researchCutoff") != cutoff.isoformat():
             raise ValueError("El artefacto congelado cambió el researchCutoff.")
+        if float(frozen.get("ridgeLambda", -1.0)) != ridge_lambda:
+            raise ValueError("El artefacto congelado cambió la lambda seleccionada.")
 
         bundle_core = {
             "bundleVersion": self.BUNDLE_VERSION,
             "researchGateFingerprint": gate_fingerprint,
+            "protocolSelectionFingerprint": selection_fingerprint,
             "researchGateStatus": gate_core["status"],
             "horizonDays": int(horizon_days),
             "researchCutoff": cutoff.isoformat(),
-            "ridgeLambda": float(ridge_lambda),
+            "ridgeLambda": ridge_lambda,
             "modelFingerprint": frozen["fingerprint"],
             "freezeProtocol": "refit_on_all_mature_research_rows_before_holdout",
+            "ridgeSelectionProtocol": (
+                "modal_validation_selected_lambda_stronger_regularization_on_tie"
+            ),
             "researchIdentity": "candidate_protocol_not_single_walk_forward_fold_model",
         }
         bundle_fingerprint = self._fingerprint(bundle_core)
@@ -102,11 +124,15 @@ class RecommendationShadowGatedFreezeService:
             "bundleFingerprint": bundle_fingerprint,
             "frozenModel": frozen,
             "researchGateEvidence": gate_core,
+            "protocolSelectionEvidence": validated_selection,
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "policy": {
                 "gatePassRequired": True,
                 "passingHorizonRequired": True,
+                "researchDerivedLambdaRequired": True,
+                "manualPostResearchLambdaSelection": False,
+                "foldTestMetricsMaySelectLambda": False,
                 "freezeBeforeHoldout": True,
                 "holdoutCanChangeModel": False,
                 "actions": "not_assigned",
@@ -119,10 +145,20 @@ class RecommendationShadowGatedFreezeService:
         if bundle.get("status") != "shadow_research_gated_model_frozen":
             raise ValueError("Se requiere un bundle shadow_research_gated_model_frozen.")
         self._assert_shadow(bundle, "gated_bundle")
+
         gate_core = self._validated_gate(bundle.get("researchGateEvidence"))
         expected_gate_fingerprint = self._fingerprint(gate_core)
         if expected_gate_fingerprint != bundle.get("researchGateFingerprint"):
             raise ValueError("La evidencia de research gate fue modificada tras la congelación.")
+
+        selection = bundle.get("protocolSelectionEvidence")
+        if not isinstance(selection, dict):
+            raise ValueError("El bundle no contiene protocolSelectionEvidence válida.")
+        validated_selection = self._protocol_selection_service.validate_selection(selection)
+        if validated_selection.get("selectionFingerprint") != bundle.get(
+            "protocolSelectionFingerprint"
+        ):
+            raise ValueError("La protocol selection no coincide con el bundle.")
 
         frozen = bundle.get("frozenModel")
         if not isinstance(frozen, dict):
@@ -134,12 +170,14 @@ class RecommendationShadowGatedFreezeService:
         core_keys = (
             "bundleVersion",
             "researchGateFingerprint",
+            "protocolSelectionFingerprint",
             "researchGateStatus",
             "horizonDays",
             "researchCutoff",
             "ridgeLambda",
             "modelFingerprint",
             "freezeProtocol",
+            "ridgeSelectionProtocol",
             "researchIdentity",
         )
         core = {key: bundle.get(key) for key in core_keys}
@@ -151,6 +189,14 @@ class RecommendationShadowGatedFreezeService:
             raise ValueError("El horizonte del modelo no coincide con el bundle.")
         if frozen.get("researchCutoff") != core["researchCutoff"]:
             raise ValueError("El researchCutoff del modelo no coincide con el bundle.")
+        if float(frozen.get("ridgeLambda", -1.0)) != float(core["ridgeLambda"]):
+            raise ValueError("La lambda del modelo no coincide con el bundle.")
+        if int(validated_selection.get("horizonDays", -1)) != int(core["horizonDays"]):
+            raise ValueError("El horizonte de protocol selection no coincide con el bundle.")
+        if float(validated_selection.get("selectedRidgeLambda", -1.0)) != float(
+            core["ridgeLambda"]
+        ):
+            raise ValueError("La lambda de protocol selection no coincide con el bundle.")
         return bundle
 
     def _validated_gate(self, gate: object) -> dict[str, Any]:
@@ -176,7 +222,6 @@ class RecommendationShadowGatedFreezeService:
             "advisoryStatus": "no_advice",
             "productionEligible": False,
         }
-        # Prove the canonical evidence is serializable without NaN/Infinity.
         self._fingerprint(core)
         return core
 
