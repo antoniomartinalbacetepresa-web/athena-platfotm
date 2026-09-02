@@ -16,9 +16,10 @@ class RecommendationShadowHoldoutSealService:
 
     Once a cohort has enough independent horizons to be judged, its first result
     is immutable. Every distinct cohort that reaches independent holdout is also
-    registered as an experiment. Until a formal multiple-testing correction is
-    implemented, more than one attempted cohort revokes downstream threshold-
-    calibration eligibility even when an individual raw holdout gate passes.
+    registered with the exact first-exposure payload. Until a formal multiple-
+    testing correction is implemented, more than one attempted cohort revokes
+    downstream threshold-calibration eligibility even when an individual raw
+    holdout gate passes.
     """
 
     def __init__(
@@ -56,11 +57,14 @@ class RecommendationShadowHoldoutSealService:
             pipeline.get("researchCutoff"), "researchCutoff"
         )
 
-        self._repository.register_attempt(
-            research_gate_fingerprint=gate_fingerprint,
-            research_cutoff=research_cutoff,
+        first_exposure = self._repository.register_attempt(
+            pipeline=pipeline,
             attempted_at=cutoff,
         )
+        if first_exposure.get("research_gate_fingerprint") != gate_fingerprint:
+            raise ValueError("El linaje holdout cambió el researchGateFingerprint.")
+        if first_exposure.get("research_cutoff") != self._normalized_iso(research_cutoff):
+            raise ValueError("El linaje holdout cambió el researchCutoff.")
 
         existing = self._repository.get(
             research_gate_fingerprint=gate_fingerprint,
@@ -91,6 +95,9 @@ class RecommendationShadowHoldoutSealService:
                 "sealReason": "insufficient_mature_horizons_to_seal",
                 "evaluatedHorizonCount": evaluated,
                 "minimumEvaluatedHorizonsToSeal": minimum,
+                "firstExposureFingerprint": first_exposure.get(
+                    "first_pipeline_fingerprint"
+                ),
                 "experimentMultiplicity": self._repository.multiplicity_summary(),
             }
 
@@ -110,7 +117,8 @@ class RecommendationShadowHoldoutSealService:
         multiplicity = self._repository.multiplicity_summary()
         raw_eligible = gate.get("actionThresholdCalibrationResearchEligible") is True
         multiplicity_controlled = multiplicity.get("multiplicityControlled") is True
-        final_eligible = raw_eligible and multiplicity_controlled
+        complete_lineage = multiplicity.get("firstExposureLineageComplete") is True
+        final_eligible = raw_eligible and multiplicity_controlled and complete_lineage
 
         return {
             "status": "shadow_independent_holdout_sealed",
@@ -129,9 +137,11 @@ class RecommendationShadowHoldoutSealService:
             "productionEligible": False,
             "policy": {
                 "firstSufficientHoldoutResultIsImmutable": True,
+                "firstExposureEvidenceIsImmutable": True,
                 "repeatUntilPass": False,
                 "sameCohortRetestForPromotion": False,
                 "distinctHoldoutCohortsTracked": True,
+                "completeFirstExposureLineageRequired": True,
                 "multipleExperimentSelectionBlocked": True,
                 "uncorrectedMultiplicityMayPromote": False,
                 "thresholdsCanBeFitOnThisHoldout": False,
@@ -151,6 +161,14 @@ class RecommendationShadowHoldoutSealService:
         if not normalized:
             raise ValueError(f"{field} es obligatorio.")
         return normalized
+
+    def _normalized_iso(self, value: object) -> str:
+        raw = str(value or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("researchCutoff debe ser ISO-8601 válido.") from exc
+        return self._aware_utc(parsed, "researchCutoff").isoformat()
 
     def _positive_int(self, value: object, field: str) -> int:
         try:
