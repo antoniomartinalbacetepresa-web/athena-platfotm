@@ -76,21 +76,32 @@ def _selection(*, eligible=True):
     }
 
 
-def _service(selection, repository=None):
+def _panel(evaluated_at):
+    return {
+        "validationUtilityRows": [
+            {"outcomeEvaluatedAt": evaluated_at.isoformat()}
+        ]
+    }
+
+
+def _service(selection, repository=None, *, now=None):
+    clock_value = now or datetime(2026, 2, 1, tzinfo=timezone.utc)
     return RecommendationShadowActionThresholdFreezeService(
         selection_service=_SelectionService(selection),
         selection_repository=repository or _Repository(),
+        clock=lambda: clock_value,
     )
 
 
 def test_freezes_complete_selection_before_future_confirmation():
-    selected_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    result = _service(_selection()).freeze(
-        utility_panel={"synthetic": True},
-        selected_at=selected_at,
+    selected_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    observed_at = selected_at - timedelta(days=1)
+    result = _service(_selection(), now=selected_at).freeze(
+        utility_panel=_panel(observed_at),
     )
 
     assert result["status"] == "shadow_action_thresholds_frozen_before_future_confirmation"
+    assert result["artifactVersion"] == "shadow-action-threshold-freeze-v2"
     assert result["registered"] is True
     assert result["selectedAt"] == selected_at.isoformat()
     assert result["futureReserveConfirmationEligible"] is True
@@ -102,6 +113,7 @@ def test_freezes_complete_selection_before_future_confirmation():
     assert result["action"] is None
     assert result["score"] is None
     assert result["conviction"] is None
+    assert result["policy"]["callerSuppliedSelectionTimestampAccepted"] is False
     assert result["policy"]["futureEvidenceBeforeSelectedAtMayBeUsed"] is False
     assert result["policy"]["futureReserveMayRefitThresholds"] is False
     assert result["policy"]["futureReserveMayReselectPolicies"] is False
@@ -110,23 +122,26 @@ def test_freezes_complete_selection_before_future_confirmation():
 
 def test_repeated_freeze_cannot_move_first_selection_boundary():
     repo = _Repository()
-    service = _service(_selection(), repository=repo)
-    first_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    first_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
     later_at = first_at + timedelta(days=30)
+    panel = _panel(first_at - timedelta(days=1))
 
-    first = service.freeze(utility_panel={}, selected_at=first_at)
-    second = service.freeze(utility_panel={}, selected_at=later_at)
+    first = _service(_selection(), repository=repo, now=first_at).freeze(
+        utility_panel=panel
+    )
+    second = _service(_selection(), repository=repo, now=later_at).freeze(
+        utility_panel=panel
+    )
 
     assert first["selectedAt"] == first_at.isoformat()
     assert second["selectedAt"] == first_at.isoformat()
     assert first["freezeFingerprint"] == second["freezeFingerprint"]
 
 
-def test_insufficient_selection_is_not_registered():
+def test_insufficient_selection_is_not_registered_or_clock_gated():
     repo = _Repository()
     result = _service(_selection(eligible=False), repository=repo).freeze(
         utility_panel={},
-        selected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
     assert result["status"] == "shadow_action_threshold_freeze_insufficient"
@@ -135,14 +150,41 @@ def test_insufficient_selection_is_not_registered():
     assert repo.record is None
 
 
+def test_rejects_backdated_service_clock_against_observed_validation():
+    freeze_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    observed_at = freeze_at + timedelta(seconds=1)
+
+    with pytest.raises(ValueError, match="anterior a evidencia"):
+        _service(_selection(), now=freeze_at).freeze(
+            utility_panel=_panel(observed_at),
+        )
+
+
+def test_rejects_eligible_freeze_without_temporal_validation_evidence():
+    with pytest.raises(ValueError, match="validationUtilityRows"):
+        _service(_selection()).freeze(utility_panel={})
+
+
+def test_rejects_naive_service_clock():
+    service = RecommendationShadowActionThresholdFreezeService(
+        selection_service=_SelectionService(_selection()),
+        selection_repository=_Repository(),
+        clock=lambda: datetime(2026, 2, 1),
+    )
+
+    with pytest.raises(ValueError, match="zona horaria"):
+        service.freeze(
+            utility_panel=_panel(datetime(2026, 1, 31, tzinfo=timezone.utc))
+        )
+
+
 def test_rejects_selection_that_consumed_future_reserve():
     selection = _selection()
     selection["policy"]["futureReserveConsumed"] = True
 
     with pytest.raises(ValueError, match="reserva futura"):
         _service(selection).freeze(
-            utility_panel={},
-            selected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            utility_panel=_panel(datetime(2026, 1, 31, tzinfo=timezone.utc)),
         )
 
 
@@ -152,8 +194,7 @@ def test_rejects_selection_that_allows_future_refit():
 
     with pytest.raises(ValueError, match="refit"):
         _service(selection).freeze(
-            utility_panel={},
-            selected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            utility_panel=_panel(datetime(2026, 1, 31, tzinfo=timezone.utc)),
         )
 
 
@@ -170,14 +211,12 @@ def test_rejects_production_escape_before_persistence():
         selection[field] = value
         with pytest.raises(ValueError):
             _service(selection).freeze(
-                utility_panel={},
-                selected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                utility_panel=_panel(datetime(2026, 1, 31, tzinfo=timezone.utc)),
             )
 
 
 def test_rejects_repository_that_substitutes_record():
     with pytest.raises(ValueError, match="sustituyó"):
         _service(_selection(), repository=_ReplacingRepository()).freeze(
-            utility_panel={},
-            selected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            utility_panel=_panel(datetime(2026, 1, 31, tzinfo=timezone.utc)),
         )
