@@ -165,6 +165,48 @@ def test_gate_marks_evidence_ready_for_calibration_but_not_for_advice() -> None:
     assert result.production_eligible is False
 
 
+def test_gate_exposes_machine_readable_engine_connectivity_without_mixing_investors() -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(_market_payload(source_providers=["yahoo_finance"])),
+        fundamental_service=_Service(_fundamental_payload()),
+        valuation_service=_Service(
+            _valuation_payload(
+                status="diagnostic_ready",
+                reported_annual_pe=25.0,
+            )
+        ),
+    )
+
+    payload = service.evaluate(symbol="AAPL", as_of=AS_OF).to_api_dict()
+    coverage = payload["analysisCoverage"]
+
+    assert coverage["technical"] == {
+        "connected": True,
+        "sourceBlock": "market",
+        "status": "diagnostic_ready",
+        "evidenceReady": True,
+        "productionEligible": False,
+    }
+    assert coverage["risk"]["connected"] is True
+    assert coverage["risk"]["evidenceReady"] is True
+    assert coverage["fundamentals"]["evidenceReady"] is True
+    assert coverage["valuation"]["evidenceReady"] is True
+    assert coverage["calibration"]["evidenceReady"] is False
+    assert coverage["recommendationCombination"]["evidenceReady"] is False
+    assert coverage["investorActivity"] == {
+        "connected": False,
+        "status": "independent_engine_not_yet_connected",
+        "evidenceReady": False,
+        "includedInAthenaRecommendation": False,
+        "productionEligible": False,
+    }
+    assert payload["policy"]["investorActivity"] == (
+        "independent_parallel_evidence_not_part_of_athena_recommendation"
+    )
+    assert payload["productionEligible"] is False
+    assert payload["recommendationCandidateReady"] is False
+
+
 def test_gate_blocks_partial_fundamentals_and_missing_market_provenance() -> None:
     service = RecommendationEvidenceGateService(
         market_service=_Service(_market_payload()),
