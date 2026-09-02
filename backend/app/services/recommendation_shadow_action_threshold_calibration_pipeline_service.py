@@ -278,6 +278,15 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
     ) -> None:
         if not isinstance(freeze, dict):
             raise ValueError("El freeze debe ser un objeto.")
+        panel_fingerprint = self._sha256(
+            panel.get("utilityPanelFingerprint"), "utilityPanelFingerprint"
+        )
+        freeze_panel_fingerprint = self._sha256(
+            freeze.get("sourceUtilityPanelFingerprint"),
+            "sourceUtilityPanelFingerprint",
+        )
+        if freeze_panel_fingerprint != panel_fingerprint:
+            raise ValueError("El freeze de thresholds no pertenece al panel de utilidad suministrado.")
         if freeze.get("status") != "shadow_action_thresholds_frozen_before_future_confirmation":
             raise ValueError("La selección no pudo congelarse para confirmación futura.")
         if freeze.get("registered") is not True:
@@ -317,6 +326,7 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
             "selectionTimestamp": (
                 "service_clock_immutable_sqlite_boundary" if frozen else "not_created"
             ),
+            "freezeBoundToUtilityPanelFingerprint": frozen,
             "futureReserveConsumed": False,
             "futureReserveMayRefitThresholds": False,
             "futureReserveMayReselectPolicies": False,
