@@ -6,6 +6,8 @@ class MarketQuote {
   final double changePercentage;
   final double? marketCap;
   final DateTime updatedAt;
+  final String? sourceProvider;
+  final DateTime? retrievedAt;
 
   const MarketQuote({
     required this.symbol,
@@ -15,6 +17,8 @@ class MarketQuote {
     required this.changePercentage,
     this.marketCap,
     required this.updatedAt,
+    this.sourceProvider,
+    this.retrievedAt,
   });
 
   bool get isPositive => change > 0;
@@ -32,21 +36,26 @@ class MarketQuote {
       'changePercentage': changePercentage,
       'marketCap': marketCap,
       'updatedAt': updatedAt.toIso8601String(),
+      'sourceProvider': sourceProvider,
+      'retrievedAt': retrievedAt?.toIso8601String(),
     };
   }
 
   factory MarketQuote.fromMap(Map<String, dynamic> map) {
+    final retrievedAtRaw = map['retrievedAt'];
+
     return MarketQuote(
       symbol: map['symbol'] as String,
       companyName: map['companyName'] as String,
       currentPrice: (map['currentPrice'] as num).toDouble(),
       change: (map['change'] as num).toDouble(),
-      changePercentage:
-          (map['changePercentage'] as num).toDouble(),
+      changePercentage: (map['changePercentage'] as num).toDouble(),
       marketCap: (map['marketCap'] as num?)?.toDouble(),
-      updatedAt: DateTime.parse(
-        map['updatedAt'] as String,
-      ),
+      updatedAt: DateTime.parse(map['updatedAt'] as String),
+      sourceProvider: map['sourceProvider']?.toString(),
+      retrievedAt: retrievedAtRaw == null
+          ? null
+          : DateTime.tryParse(retrievedAtRaw.toString()),
     );
   }
 
