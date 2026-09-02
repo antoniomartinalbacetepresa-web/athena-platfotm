@@ -24,6 +24,7 @@ class RecommendationOutcomeEvaluationReport:
     skipped_missing_entry_price: int
     skipped_missing_exit_price: int
     skipped_invalid_price_window: int
+    skipped_missing_benchmark: int
     evaluated: tuple[dict[str, Any], ...]
 
     @property
@@ -33,6 +34,7 @@ class RecommendationOutcomeEvaluationReport:
             + self.skipped_missing_entry_price
             + self.skipped_missing_exit_price
             + self.skipped_invalid_price_window
+            + self.skipped_missing_benchmark
         )
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -46,18 +48,28 @@ class RecommendationOutcomeEvaluationReport:
                 "missingEntryPrice": self.skipped_missing_entry_price,
                 "missingExitPrice": self.skipped_missing_exit_price,
                 "invalidPriceWindow": self.skipped_invalid_price_window,
+                "missingFrozenBenchmark": self.skipped_missing_benchmark,
             },
             "evaluated": [dict(item) for item in self.evaluated],
             "pricePolicy": "raw_close_first_adjusted_close_fallback",
             "temporalWindowPolicy": "entry_before_due_exit_not_after_as_of",
             "knowledgePolicy": "retrieved_at_not_after_evaluation_as_of",
+            "evaluationTimestampPolicy": "persist_actual_knowledge_as_of_not_exit_observation_time",
             "duplicateObservationPolicy": "latest_retrieved_at_before_as_of",
-            "benchmarkStatus": "evaluated_when_explicit_frozen_benchmark_is_resolvable",
+            "benchmarkStatus": "declared_frozen_benchmark_must_resolve_before_outcome_persistence",
+            "benchmarkEvidencePolicy": "exact_observation_and_retrieval_provenance_persisted",
         }
 
 
 class RecommendationOutcomeEvaluationService:
-    """Evaluates due recommendations from persisted PIT prices without backfill leakage."""
+    """Evaluate due recommendations from persisted PIT prices without backfill leakage.
+
+    ``evaluated_at`` represents when the evidence was actually knowable, not merely
+    the timestamp of the selected exit observation. A recommendation that froze a
+    benchmark is persisted only when that benchmark can be resolved atomically with
+    exact observation/retrieval provenance. This prevents partial outcome rows from
+    permanently consuming the unique horizon slot.
+    """
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -83,6 +95,7 @@ class RecommendationOutcomeEvaluationService:
         missing_entry = 0
         missing_exit = 0
         invalid_window = 0
+        missing_benchmark = 0
 
         for due in schedule.due:
             recommendation = self._history.get_recommendation(
@@ -141,26 +154,37 @@ class RecommendationOutcomeEvaluationService:
                 knowledge_cutoff=as_of_utc,
                 entry_price=entry_price,
             )
+            frozen_benchmark_symbol = self._optional_symbol(
+                recommendation.get("benchmark_symbol")
+            )
             benchmark = self._benchmark.calculate(
-                benchmark_symbol=recommendation.get("benchmark_symbol"),
+                benchmark_symbol=frozen_benchmark_symbol,
                 generated_at=generated_at,
                 due_at=due_at,
                 as_of=as_of_utc,
             )
+            if frozen_benchmark_symbol is not None and benchmark.status != "resolved":
+                missing_benchmark += 1
+                continue
+
             benchmark_return = (
                 benchmark.benchmark_return
                 if benchmark.status == "resolved"
                 else None
             )
+            benchmark_evidence = (
+                benchmark.to_api_dict() if benchmark.status == "resolved" else None
+            )
 
             outcome_id = self._history.record_outcome(
                 recommendation_id=due.recommendation_id,
                 horizon_days=due.horizon_days,
-                evaluated_at=exit_time,
+                evaluated_at=as_of_utc,
                 entry_price=entry_price,
                 exit_price=exit_price,
                 source_provider=source_provider,
                 benchmark_return=benchmark_return,
+                benchmark_evidence=benchmark_evidence,
                 max_drawdown=max_drawdown,
                 source_timestamp=datetime.fromisoformat(exit_observation["retrieved_at"]),
             )
@@ -171,6 +195,8 @@ class RecommendationOutcomeEvaluationService:
                     "recommendationId": due.recommendation_id,
                     "symbol": due.symbol,
                     "horizonDays": due.horizon_days,
+                    "dueAt": due_at.isoformat(),
+                    "evaluatedAt": as_of_utc.isoformat(),
                     "entryObservedAt": entry_time.astimezone(timezone.utc).isoformat(),
                     "entryRetrievedAt": str(entry["retrieved_at"]),
                     "exitObservedAt": exit_time.astimezone(timezone.utc).isoformat(),
@@ -182,6 +208,7 @@ class RecommendationOutcomeEvaluationService:
                     "benchmarkStatus": benchmark.status,
                     "benchmarkSymbol": benchmark.benchmark_symbol,
                     "benchmarkReturn": benchmark_return,
+                    "benchmarkEvidence": benchmark_evidence,
                     "excessReturn": (
                         realized_return - benchmark_return
                         if benchmark_return is not None
@@ -197,6 +224,7 @@ class RecommendationOutcomeEvaluationService:
             skipped_missing_entry_price=missing_entry,
             skipped_missing_exit_price=missing_exit,
             skipped_invalid_price_window=invalid_window,
+            skipped_missing_benchmark=missing_benchmark,
             evaluated=tuple(evaluated),
         )
 
@@ -222,6 +250,7 @@ class RecommendationOutcomeEvaluationService:
                         observed_at,
                         COALESCE(close, adjusted_close) AS price,
                         retrieved_at,
+                        source_provider,
                         id,
                         ROW_NUMBER() OVER (
                             PARTITION BY observed_at
@@ -235,7 +264,7 @@ class RecommendationOutcomeEvaluationService:
                       AND COALESCE(close, adjusted_close) IS NOT NULL
                       AND COALESCE(close, adjusted_close) > 0
                 )
-                SELECT observed_at, price, retrieved_at
+                SELECT observed_at, price, retrieved_at, source_provider
                 FROM eligible
                 WHERE row_rank = 1
                 ORDER BY observed_at ASC
@@ -254,6 +283,7 @@ class RecommendationOutcomeEvaluationService:
             "observed_at": str(row["observed_at"]),
             "price": float(row["price"]),
             "retrieved_at": str(row["retrieved_at"]),
+            "source_provider": str(row["source_provider"]),
         }
 
     def _max_drawdown(
@@ -312,6 +342,12 @@ class RecommendationOutcomeEvaluationService:
             if drawdown < max_drawdown:
                 max_drawdown = drawdown
         return max_drawdown
+
+    def _optional_symbol(self, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        return normalized or None
 
     def _aware_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
