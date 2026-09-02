@@ -69,6 +69,23 @@ def _stored(candidate=None):
     }
 
 
+def _benchmark_evidence(*, due_at: str, evaluated_at: str):
+    return {
+        "status": "resolved",
+        "benchmarkSymbol": "SPY",
+        "benchmarkInstrumentId": 44,
+        "entryPrice": 100.0,
+        "exitPrice": 101.0,
+        "benchmarkReturn": 0.01,
+        "entryObservedAt": "2025-06-01T00:00:00+00:00",
+        "exitObservedAt": due_at,
+        "entryRetrievedAt": "2025-06-01T00:01:00+00:00",
+        "exitRetrievedAt": evaluated_at,
+        "entrySourceProvider": "benchmark_test",
+        "exitSourceProvider": "benchmark_test",
+    }
+
+
 def _outcome(horizon, *, excess, evaluated_at, due_at=None):
     due = due_at or evaluated_at
     return {
@@ -78,16 +95,22 @@ def _outcome(horizon, *, excess, evaluated_at, due_at=None):
         "excess_return": excess,
         "benchmark_return": 0.01,
         "realized_return": excess + 0.01,
+        "benchmark_evidence": _benchmark_evidence(
+            due_at=due,
+            evaluated_at=evaluated_at,
+        ),
     }
 
 
-def _service(*, candidate=None, outcomes=None, stored=None):
+def _service(*, candidate=None, outcomes=None, stored=None, snapshot=None):
     return RecommendationShadowLiveCandidateEvaluationService(
         candidate_repository=FakeCandidateRepository(
             _stored(candidate) if stored is None else stored
         ),
         snapshot_repository=FakeSnapshotRepository(
-            {"id": 10},
+            {"id": 10, "benchmark_symbol": "SPY"}
+            if snapshot is None
+            else snapshot,
             [] if outcomes is None else outcomes,
         ),
         candidate_service=FakeCandidateService(),
@@ -116,8 +139,10 @@ def test_evaluates_only_matured_predictions_and_computes_error_metrics():
 
     assert result["status"] == "shadow_live_candidate_outcomes_evaluated"
     assert result["evaluatedHorizonCount"] == 2
+    assert result["frozenBenchmarkSymbol"] == "SPY"
     assert result["horizons"]["7"]["predictionError"] == pytest.approx(0.06)
     assert result["horizons"]["7"]["directionCorrect"] is True
+    assert result["horizons"]["7"]["benchmarkEvidence"]["benchmarkSymbol"] == "SPY"
     assert result["horizons"]["30"]["predictionError"] == pytest.approx(-0.03)
     assert result["horizons"]["30"]["directionCorrect"] is False
     assert result["horizons"]["90"]["status"] == "not_evaluable_no_live_prediction"
@@ -184,6 +209,36 @@ def test_non_finite_realized_excess_return_is_rejected():
     ]
     with pytest.raises(ValueError, match="excess_return debe ser finito"):
         _service(outcomes=outcomes).evaluate(
+            candidate_id=20,
+            as_of=datetime(2025, 6, 10, tzinfo=timezone.utc),
+        )
+
+
+def test_unprovenanced_excess_outcome_is_rejected():
+    outcome = _outcome(
+        7,
+        excess=0.01,
+        evaluated_at="2025-06-09T00:00:00+00:00",
+    )
+    outcome["benchmark_evidence"] = None
+
+    with pytest.raises(ValueError, match="evidencia trazable"):
+        _service(outcomes=[outcome]).evaluate(
+            candidate_id=20,
+            as_of=datetime(2025, 6, 10, tzinfo=timezone.utc),
+        )
+
+
+def test_outcome_from_different_benchmark_is_rejected():
+    outcome = _outcome(
+        7,
+        excess=0.01,
+        evaluated_at="2025-06-09T00:00:00+00:00",
+    )
+    outcome["benchmark_evidence"]["benchmarkSymbol"] = "QQQ"
+
+    with pytest.raises(ValueError, match="otro benchmark"):
+        _service(outcomes=[outcome]).evaluate(
             candidate_id=20,
             as_of=datetime(2025, 6, 10, tzinfo=timezone.utc),
         )
