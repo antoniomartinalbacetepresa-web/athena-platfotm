@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../../../../../core/theme/athena_colors.dart';
-import '../../../../../core/theme/athena_spacing.dart';
-import '../../../../../core/widgets/dashboard_panel.dart';
-import '../../../../recommendations/controllers/recommendation_learning_controller.dart';
-import '../../../../recommendations/di/recommendation_dependencies.dart';
-import '../../../../recommendations/models/recommendation_learning_status.dart';
-import '../../../../recommendations/services/recommendation_learning_status_provider.dart';
+import '../../../../core/theme/athena_colors.dart';
+import '../../../../core/theme/athena_spacing.dart';
+import '../../../../core/widgets/dashboard_panel.dart';
+import '../../../recommendations/controllers/recommendation_learning_controller.dart';
+import '../../../recommendations/di/recommendation_dependencies.dart';
+import '../../../recommendations/models/recommendation_learning_status.dart';
+import '../../../recommendations/services/recommendation_learning_status_provider.dart';
 
 class RecommendationsPanel extends StatefulWidget {
   final RecommendationLearningStatusProvider? learningStatusProvider;
