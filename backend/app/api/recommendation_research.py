@@ -136,10 +136,16 @@ def _assert_holdout_evidence_separation(payload: dict[str, object]) -> None:
             detail="Un holdout sellado debe exponer su multiplicidad experimental.",
         )
     controlled = multiplicity.get("multiplicityControlled")
-    if final_eligible and (not raw_eligible or controlled is not True):
+    lineage_complete = multiplicity.get("firstExposureLineageComplete")
+    if final_eligible and (
+        not raw_eligible or controlled is not True or lineage_complete is not True
+    ):
         raise HTTPException(
             status_code=500,
-            detail="La elegibilidad final del holdout no está respaldada por evidencia válida.",
+            detail=(
+                "La elegibilidad final del holdout no está respaldada por evidencia "
+                "y linaje válidos."
+            ),
         )
 
 
