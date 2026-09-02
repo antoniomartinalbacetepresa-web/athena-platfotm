@@ -22,7 +22,6 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
   final _formKey = GlobalKey<FormState>();
 
   final _symbolController = TextEditingController();
-  final _companyController = TextEditingController();
   final _sharesController = TextEditingController();
   final _averagePriceController = TextEditingController();
 
@@ -48,7 +47,6 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
   @override
   void dispose() {
     _symbolController.dispose();
-    _companyController.dispose();
     _sharesController.dispose();
     _averagePriceController.dispose();
     _marketDependencies?.dispose();
@@ -79,14 +77,16 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
         );
       }
 
+      final verifiedName = quote.companyName.trim();
+
       if (!mounted) {
         return;
       }
 
       Navigator.of(context).pop(
         AddPositionResult(
-          symbol: symbol,
-          companyName: _companyController.text.trim(),
+          symbol: quote.symbol.trim().isEmpty ? symbol : quote.symbol.trim(),
+          companyName: verifiedName.isEmpty ? symbol : verifiedName,
           shares: shares,
           averagePrice: averagePrice,
           currentPrice: currentPrice,
@@ -101,8 +101,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
       setState(() {
         _isSaving = false;
         _quoteError =
-            'No se pudo verificar el precio actual con el backend de ATHENA. '
-            'La posición no se guardará con un precio manual o estimado.';
+            'No se pudo verificar el instrumento y su precio actual con el '
+            'backend de ATHENA. La posición no se guardará con datos '
+            'manuales o estimados.';
       });
     }
   }
@@ -144,18 +145,6 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
                 ),
                 const SizedBox(height: AthenaSpacing.md),
                 _field(
-                  controller: _companyController,
-                  label: 'Empresa',
-                  hint: 'Ej. Microsoft',
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Introduce el nombre de la empresa';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: AthenaSpacing.md),
-                _field(
                   controller: _sharesController,
                   label: 'Número de acciones',
                   hint: 'Ej. 15',
@@ -187,16 +176,17 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(
-                        Icons.cloud_done_outlined,
+                        Icons.verified_outlined,
                         color: AthenaColors.textSecondary,
                         size: 20,
                       ),
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'El precio actual se obtiene del backend de ATHENA al '
-                          'guardar. No se aceptan precios actuales introducidos '
-                          'manualmente.',
+                          'ATHENA verifica el instrumento y obtiene el precio '
+                          'actual desde su backend al guardar. El nombre visible '
+                          'procede del contrato de mercado disponible; no se '
+                          'aceptan identidades ni precios actuales escritos a mano.',
                           style: TextStyle(
                             color: AthenaColors.textSecondary,
                             fontSize: 12,
