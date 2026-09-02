@@ -232,7 +232,7 @@ def test_cycle_fails_closed_if_candidate_assigns_action():
 
 def test_cycle_fails_closed_if_uncertainty_promotes_or_assigns_action():
     for field, value, message in (
-        ("productionEligible", True, "productionEligible=False"),
+        ("productionEligible", True, "habilitar producción"),
         ("recommendationCandidateReady", True, "habilitar recomendaciones"),
         ("actionThresholdCalibrationResearchEligible", True, "promover calibración"),
         ("action", "buy", "asignar action"),
