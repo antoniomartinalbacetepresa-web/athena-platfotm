@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -129,6 +130,7 @@ class RecommendationShadowCalibrationDatasetService:
 
         dataset: list[dict[str, Any]] = []
         rejected_invalid_snapshot = 0
+        rejected_non_finite_target = 0
         for raw in rows:
             row = dict(raw)
             try:
@@ -160,6 +162,18 @@ class RecommendationShadowCalibrationDatasetService:
                 rejected_invalid_snapshot += 1
                 continue
 
+            realized_return = self._required_finite_float(row.get("realized_return"))
+            if realized_return is None:
+                rejected_non_finite_target += 1
+                continue
+            benchmark_return = self._optional_float(row.get("benchmark_return"))
+            excess_return = self._optional_float(row.get("excess_return"))
+            if require_benchmark and (
+                benchmark_return is None or excess_return is None
+            ):
+                rejected_non_finite_target += 1
+                continue
+
             calibration_row = ShadowCalibrationRow(
                 snapshot_id=int(row["snapshot_id"]),
                 instrument_id=int(row["instrument_id"]),
@@ -168,9 +182,9 @@ class RecommendationShadowCalibrationDatasetService:
                 horizon_days=int(row["horizon_days"]),
                 outcome_due_at=str(row["due_at"]),
                 outcome_evaluated_at=str(row["evaluated_at"]),
-                realized_return=float(row["realized_return"]),
-                benchmark_return=self._optional_float(row.get("benchmark_return")),
-                excess_return=self._optional_float(row.get("excess_return")),
+                realized_return=realized_return,
+                benchmark_return=benchmark_return,
+                excess_return=excess_return,
                 technical_score=self._optional_float(market.get("technicalScore")),
                 risk_score=self._optional_float(market.get("riskScore")),
                 return_20d=self._optional_float(market.get("return20d")),
@@ -201,6 +215,7 @@ class RecommendationShadowCalibrationDatasetService:
             "requireBenchmark": require_benchmark,
             "rowCount": len(dataset),
             "rejectedInvalidSnapshotCount": rejected_invalid_snapshot,
+            "rejectedNonFiniteTargetCount": rejected_non_finite_target,
             "rows": dataset,
             "advisoryStatus": "no_advice",
             "policy": {
@@ -209,18 +224,23 @@ class RecommendationShadowCalibrationDatasetService:
                 "featureWeights": "not_assigned",
                 "futureOutcomes": "evaluated_at_not_after_as_of",
                 "outcomeTimingMetadata": "included_for_purged_chronological_splits",
+                "numericIntegrity": "non_finite_values_never_enter_calibration",
                 "schema": "exact_feature_schema_version_required",
                 "trainingUse": "out_of_sample_validation_required_before_advice",
             },
         }
 
+    def _required_finite_float(self, value: object) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+
     def _optional_float(self, value: object) -> float | None:
         if value is None:
             return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+        return self._required_finite_float(value)
 
     def _aware_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
