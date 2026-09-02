@@ -68,6 +68,19 @@ def _result():
     }
 
 
+def _evaluate(service):
+    return service.evaluate(
+        train_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
+        validation_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
+        as_of=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        transaction_cost_bps=1.5,
+        slippage_bps=2.0,
+        reduced_exposure_fraction=0.5,
+        objective_name="objective",
+        objective_version="v1",
+    )
+
+
 def test_pipeline_builds_split_and_contract_internally_before_readiness():
     split = _split()
     contract = _contract()
@@ -90,6 +103,7 @@ def test_pipeline_builds_split_and_contract_internally_before_readiness():
         as_of=as_of,
         transaction_cost_bps=1.5,
         slippage_bps=2.0,
+        reduced_exposure_fraction=0.5,
         objective_name="net_excess_return_after_explicit_costs",
         objective_version="v1",
         symbol="TEST",
@@ -110,6 +124,7 @@ def test_pipeline_builds_split_and_contract_internally_before_readiness():
         {
             "transaction_cost_bps": 1.5,
             "slippage_bps": 2.0,
+            "reduced_exposure_fraction": 0.5,
             "objective_name": "net_excess_return_after_explicit_costs",
             "objective_version": "v1",
         }
@@ -127,17 +142,8 @@ def test_pipeline_rejects_readiness_from_another_split():
         economic_contract_service=_ContractService(_contract()),
         readiness_service=_ReadinessService(result),
     )
-
     with pytest.raises(ValueError, match="split producido"):
-        service.evaluate(
-            train_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
-            validation_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
-            as_of=datetime(2026, 9, 1, tzinfo=timezone.utc),
-            transaction_cost_bps=1.5,
-            slippage_bps=2.0,
-            objective_name="objective",
-            objective_version="v1",
-        )
+        _evaluate(service)
 
 
 def test_pipeline_rejects_readiness_from_another_economic_contract():
@@ -148,17 +154,8 @@ def test_pipeline_rejects_readiness_from_another_economic_contract():
         economic_contract_service=_ContractService(_contract()),
         readiness_service=_ReadinessService(result),
     )
-
     with pytest.raises(ValueError, match="contrato económico"):
-        service.evaluate(
-            train_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
-            validation_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
-            as_of=datetime(2026, 9, 1, tzinfo=timezone.utc),
-            transaction_cost_bps=1.5,
-            slippage_bps=2.0,
-            objective_name="objective",
-            objective_version="v1",
-        )
+        _evaluate(service)
 
 
 @pytest.mark.parametrize(
@@ -181,17 +178,8 @@ def test_pipeline_fails_closed_on_premature_promotion(field, value):
         economic_contract_service=_ContractService(_contract()),
         readiness_service=_ReadinessService(result),
     )
-
     with pytest.raises(ValueError):
-        service.evaluate(
-            train_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
-            validation_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
-            as_of=datetime(2026, 9, 1, tzinfo=timezone.utc),
-            transaction_cost_bps=1.5,
-            slippage_bps=2.0,
-            objective_name="objective",
-            objective_version="v1",
-        )
+        _evaluate(service)
 
 
 def test_pipeline_rejects_future_reserve_consumption():
@@ -202,14 +190,5 @@ def test_pipeline_rejects_future_reserve_consumption():
         economic_contract_service=_ContractService(_contract()),
         readiness_service=_ReadinessService(result),
     )
-
     with pytest.raises(ValueError, match="reserva temporal"):
-        service.evaluate(
-            train_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
-            validation_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
-            as_of=datetime(2026, 9, 1, tzinfo=timezone.utc),
-            transaction_cost_bps=1.5,
-            slippage_bps=2.0,
-            objective_name="objective",
-            objective_version="v1",
-        )
+        _evaluate(service)
