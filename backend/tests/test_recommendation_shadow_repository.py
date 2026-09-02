@@ -27,6 +27,26 @@ def _repository(tmp_path) -> tuple[RecommendationShadowRepository, int]:
     return RecommendationShadowRepository(database=database), instrument_id
 
 
+def _benchmark_evidence(due: datetime) -> dict:
+    entry_observed = CUT + timedelta(hours=1)
+    exit_observed = due + timedelta(minutes=10)
+    return {
+        "status": "resolved",
+        "benchmarkSymbol": "SPY",
+        "benchmarkInstrumentId": 77,
+        "entryPrice": 100.0,
+        "exitPrice": 103.0,
+        "benchmarkReturn": 0.03,
+        "entryObservedAt": entry_observed.isoformat(),
+        "exitObservedAt": exit_observed.isoformat(),
+        "entryRetrievedAt": (entry_observed + timedelta(minutes=1)).isoformat(),
+        "exitRetrievedAt": (exit_observed + timedelta(minutes=1)).isoformat(),
+        "entrySourceProvider": "test_benchmark",
+        "exitSourceProvider": "test_benchmark",
+        "policy": {"retrievalCutoff": "retrieved_at_not_after_evaluation_as_of"},
+    }
+
+
 def test_shadow_snapshot_has_no_advisory_columns_and_preserves_evidence(tmp_path) -> None:
     repository, instrument_id = _repository(tmp_path)
     snapshot_id = repository.create_snapshot(
@@ -84,6 +104,7 @@ def test_shadow_outcome_computes_return_and_enforces_maturity(tmp_path) -> None:
         entry_observed_at=CUT - timedelta(hours=1),
         entry_retrieved_at=CUT - timedelta(minutes=30),
         evidence_snapshot={},
+        benchmark_symbol="SPY",
     )
     due = CUT + timedelta(days=7)
 
@@ -109,8 +130,78 @@ def test_shadow_outcome_computes_return_and_enforces_maturity(tmp_path) -> None:
         exit_retrieved_at=due + timedelta(minutes=30),
         source_provider="test",
         benchmark_return=0.03,
+        benchmark_evidence=_benchmark_evidence(due),
     )
     outcomes = repository.list_outcomes(snapshot_id)
     assert len(outcomes) == 1
     assert outcomes[0]["realized_return"] == pytest.approx(0.10)
+    assert outcomes[0]["benchmark_return"] == pytest.approx(0.03)
     assert outcomes[0]["excess_return"] == pytest.approx(0.07)
+    evidence = outcomes[0]["benchmark_evidence"]
+    assert evidence["benchmarkSymbol"] == "SPY"
+    assert evidence["entrySourceProvider"] == "test_benchmark"
+    assert evidence["exitSourceProvider"] == "test_benchmark"
+
+
+def test_shadow_outcome_rejects_unprovenanced_benchmark_return(tmp_path) -> None:
+    repository, instrument_id = _repository(tmp_path)
+    snapshot_id = repository.create_snapshot(
+        instrument_id=instrument_id,
+        symbol="AAPL",
+        data_cutoff_at=CUT,
+        captured_at=CUT,
+        feature_schema_version="shadow-evidence-v1",
+        evidence_status="evidence_ready_for_calibration",
+        entry_price=200.0,
+        entry_observed_at=CUT - timedelta(hours=1),
+        entry_retrieved_at=CUT - timedelta(minutes=30),
+        evidence_snapshot={},
+        benchmark_symbol="SPY",
+    )
+    due = CUT + timedelta(days=7)
+
+    with pytest.raises(ValueError, match="evidencia trazable"):
+        repository.record_outcome(
+            snapshot_id=snapshot_id,
+            horizon_days=7,
+            due_at=due,
+            evaluated_at=due + timedelta(hours=1),
+            exit_price=220.0,
+            exit_observed_at=due,
+            exit_retrieved_at=due,
+            source_provider="test",
+            benchmark_return=0.03,
+        )
+
+
+def test_shadow_outcome_rejects_evidence_for_different_frozen_benchmark(tmp_path) -> None:
+    repository, instrument_id = _repository(tmp_path)
+    snapshot_id = repository.create_snapshot(
+        instrument_id=instrument_id,
+        symbol="AAPL",
+        data_cutoff_at=CUT,
+        captured_at=CUT,
+        feature_schema_version="shadow-evidence-v1",
+        evidence_status="evidence_ready_for_calibration",
+        entry_price=200.0,
+        entry_observed_at=CUT - timedelta(hours=1),
+        entry_retrieved_at=CUT - timedelta(minutes=30),
+        evidence_snapshot={},
+        benchmark_symbol="SPY",
+    )
+    due = CUT + timedelta(days=7)
+    evidence = _benchmark_evidence(due)
+    evidence["benchmarkSymbol"] = "QQQ"
+
+    with pytest.raises(ValueError, match="otro benchmark"):
+        repository.record_outcome(
+            snapshot_id=snapshot_id,
+            horizon_days=7,
+            due_at=due,
+            evaluated_at=due + timedelta(hours=1),
+            exit_price=220.0,
+            exit_observed_at=due,
+            exit_retrieved_at=due,
+            source_provider="test",
+            benchmark_evidence=evidence,
+        )
