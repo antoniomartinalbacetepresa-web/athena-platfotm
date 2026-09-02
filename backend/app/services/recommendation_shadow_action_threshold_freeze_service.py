@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
-from typing import Any, Protocol
+from datetime import datetime, timezone
+from typing import Any, Callable, Protocol
 
 from app.repositories.recommendation_shadow_action_threshold_selection_repository import (
     RecommendationShadowActionThresholdSelectionRepository,
@@ -33,18 +33,19 @@ class _SelectionRepository(Protocol):
 class RecommendationShadowActionThresholdFreezeService:
     """Select validation policies and commit them before any future confirmation.
 
-    A successful selection is persisted immediately. Repeated calls for the same
-    selection recover the first immutable timestamp instead of allowing the caller
-    to move the future-confirmation boundary after outcomes have become visible.
+    The operational freeze timestamp comes from the service clock, never from the
+    caller. This prevents backdating the selection boundary after validation labels
+    have already been observed. Repeated calls recover the first persisted boundary.
     """
 
-    ARTIFACT_VERSION = "shadow-action-threshold-freeze-v1"
+    ARTIFACT_VERSION = "shadow-action-threshold-freeze-v2"
 
     def __init__(
         self,
         *,
         selection_service: _SelectionService | None = None,
         selection_repository: _SelectionRepository | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._selection_service = (
             selection_service or RecommendationShadowActionThresholdSelectionService()
@@ -53,12 +54,12 @@ class RecommendationShadowActionThresholdFreezeService:
             selection_repository
             or RecommendationShadowActionThresholdSelectionRepository()
         )
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def freeze(
         self,
         *,
         utility_panel: dict[str, Any],
-        selected_at: datetime,
     ) -> dict[str, Any]:
         selection = self._selection_service.select(utility_panel)
         self._assert_shadow_selection(selection)
@@ -81,6 +82,11 @@ class RecommendationShadowActionThresholdFreezeService:
                 "policy": self._policy(),
             }
 
+        selected_at = self._clock_now()
+        self._assert_not_backdated(
+            utility_panel=utility_panel,
+            selected_at=selected_at,
+        )
         record = self._selection_repository.register(
             selection=selection,
             selected_at=selected_at,
@@ -139,6 +145,33 @@ class RecommendationShadowActionThresholdFreezeService:
             "policy": self._policy(),
         }
 
+    def _assert_not_backdated(
+        self,
+        *,
+        utility_panel: dict[str, Any],
+        selected_at: datetime,
+    ) -> None:
+        rows = utility_panel.get("validationUtilityRows")
+        if not isinstance(rows, list) or not rows:
+            raise ValueError(
+                "Un freeze elegible requiere validationUtilityRows para verificar la frontera temporal."
+            )
+        latest_observed: datetime | None = None
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("validationUtilityRows contiene una fila inválida.")
+            evaluated_at = self._parse_aware(
+                row.get("outcomeEvaluatedAt"), "outcomeEvaluatedAt"
+            )
+            if latest_observed is None or evaluated_at > latest_observed:
+                latest_observed = evaluated_at
+        if latest_observed is None:
+            raise ValueError("No se pudo determinar la última evidencia de validation.")
+        if selected_at < latest_observed:
+            raise ValueError(
+                "El reloj de freeze es anterior a evidencia de validation ya observada."
+            )
+
     def _assert_shadow_selection(self, selection: dict[str, Any]) -> None:
         if not isinstance(selection, dict):
             raise ValueError("La selección de thresholds debe ser un objeto.")
@@ -171,7 +204,9 @@ class RecommendationShadowActionThresholdFreezeService:
     def _policy(self) -> dict[str, Any]:
         return {
             "selectionSource": "validation_only_after_train_only_candidate_generation",
-            "firstSelectionBoundary": "sqlite_persisted_immutable",
+            "firstSelectionBoundary": "service_clock_then_sqlite_persisted_immutable",
+            "callerSuppliedSelectionTimestampAccepted": False,
+            "freezeTimestampMustNotPrecedeObservedValidationEvidence": True,
             "futureEvidenceBeforeSelectedAtMayBeUsed": False,
             "futureReserveMayRefitThresholds": False,
             "futureReserveMayReselectPolicies": False,
@@ -179,6 +214,22 @@ class RecommendationShadowActionThresholdFreezeService:
             "automaticProductionPromotion": False,
             "automaticTrading": False,
         }
+
+    def _clock_now(self) -> datetime:
+        value = self._clock()
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("El reloj de freeze debe devolver datetime con zona horaria.")
+        return value.astimezone(timezone.utc)
+
+    def _parse_aware(self, value: object, field: str) -> datetime:
+        raw = str(value or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} debe ser ISO-8601 válido.") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return parsed.astimezone(timezone.utc)
 
     def _sha256(self, value: object, field: str) -> str:
         normalized = str(value or "").strip().lower()
