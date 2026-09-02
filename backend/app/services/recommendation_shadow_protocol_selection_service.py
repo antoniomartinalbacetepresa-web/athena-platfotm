@@ -18,8 +18,9 @@ class RecommendationShadowProtocolSelectionService:
 
     The modal validation-selected lambda is used. Ties are resolved toward the
     larger lambda (stronger regularization) as a deterministic conservative
-    rule. The result remains shadow research evidence and can never assign an
-    investment action or become production eligible.
+    rule. The exact walk-forward evidence is fingerprinted so a later freeze
+    can prove the lambda came from the same evidence that passed the research
+    gate. The result remains shadow research evidence and never assigns actions.
     """
 
     SELECTION_VERSION = "shadow-ridge-protocol-selection-v1"
@@ -47,14 +48,23 @@ class RecommendationShadowProtocolSelectionService:
         if reported_horizon != int(horizon_days):
             raise ValueError("El horizonte de la evidencia walk-forward no coincide.")
 
+        source_fingerprint = self._fingerprint(walk_forward_evidence)
         folds = walk_forward_evidence.get("folds")
         if not isinstance(folds, list):
             raise ValueError("walk_forward_evidence.folds debe ser una lista.")
 
         selections: list[dict[str, Any]] = []
+        seen_fold_indexes: set[int] = set()
         for position, fold in enumerate(folds):
             if not isinstance(fold, dict):
                 raise ValueError(f"folds[{position}] debe ser un objeto.")
+            fold_index = self._non_negative_int(
+                fold.get("foldIndex", position), f"folds[{position}].foldIndex"
+            )
+            if fold_index in seen_fold_indexes:
+                raise ValueError("La evidencia walk-forward contiene foldIndex duplicado.")
+            seen_fold_indexes.add(fold_index)
+
             evaluation = fold.get("evaluation")
             if not isinstance(evaluation, dict):
                 raise ValueError(f"folds[{position}].evaluation debe ser un objeto.")
@@ -92,19 +102,24 @@ class RecommendationShadowProtocolSelectionService:
 
             selections.append(
                 {
-                    "foldIndex": self._non_negative_int(
-                        fold.get("foldIndex", position), f"folds[{position}].foldIndex"
-                    ),
+                    "foldIndex": fold_index,
                     "ridgeLambda": ridge_lambda,
                     "selectionCriterion": "minimum_validation_mse",
                 }
             )
+
+        reported_evaluated = walk_forward_evidence.get("evaluatedFoldCount")
+        if reported_evaluated is not None and self._non_negative_int(
+            reported_evaluated, "walk_forward_evidence.evaluatedFoldCount"
+        ) != len(selections):
+            raise ValueError("evaluatedFoldCount no coincide con las selecciones utilizables.")
 
         if len(selections) < self._minimum_evaluated_folds:
             return {
                 "status": "insufficient_protocol_selection_evidence",
                 "selectionVersion": self.SELECTION_VERSION,
                 "horizonDays": int(horizon_days),
+                "sourceWalkForwardFingerprint": source_fingerprint,
                 "evaluatedFoldSelectionCount": len(selections),
                 "minimumEvaluatedFolds": self._minimum_evaluated_folds,
                 "foldSelections": selections,
@@ -125,6 +140,7 @@ class RecommendationShadowProtocolSelectionService:
         core = {
             "selectionVersion": self.SELECTION_VERSION,
             "horizonDays": int(horizon_days),
+            "sourceWalkForwardFingerprint": source_fingerprint,
             "selectionRule": "modal_validation_selected_lambda_stronger_regularization_on_tie",
             "selectedRidgeLambda": selected_lambda,
             "evaluatedFoldSelectionCount": len(selections),
@@ -160,6 +176,9 @@ class RecommendationShadowProtocolSelectionService:
         if selection.get("testMetricsUsedForSelection") is not False:
             raise ValueError("La selección no puede utilizar métricas de test.")
 
+        source_fingerprint = selection.get("sourceWalkForwardFingerprint")
+        if not isinstance(source_fingerprint, str) or len(source_fingerprint) != 64:
+            raise ValueError("sourceWalkForwardFingerprint no es válido.")
         horizon_days = self._positive_int(selection.get("horizonDays"), "horizonDays")
         selected_lambda = self._finite_non_negative(
             selection.get("selectedRidgeLambda"), "selectedRidgeLambda"
@@ -169,16 +188,21 @@ class RecommendationShadowProtocolSelectionService:
             raise ValueError("La selección no conserva suficientes folds.")
 
         normalized = []
+        seen_fold_indexes: set[int] = set()
         for position, item in enumerate(fold_selections):
             if not isinstance(item, dict):
                 raise ValueError("foldSelections contiene un elemento inválido.")
             if item.get("selectionCriterion") != "minimum_validation_mse":
                 raise ValueError("foldSelections contiene una selección no basada en validation.")
+            fold_index = self._non_negative_int(
+                item.get("foldIndex"), f"foldSelections[{position}].foldIndex"
+            )
+            if fold_index in seen_fold_indexes:
+                raise ValueError("foldSelections contiene foldIndex duplicado.")
+            seen_fold_indexes.add(fold_index)
             normalized.append(
                 {
-                    "foldIndex": self._non_negative_int(
-                        item.get("foldIndex"), f"foldSelections[{position}].foldIndex"
-                    ),
+                    "foldIndex": fold_index,
                     "ridgeLambda": self._finite_non_negative(
                         item.get("ridgeLambda"), f"foldSelections[{position}].ridgeLambda"
                     ),
@@ -199,6 +223,7 @@ class RecommendationShadowProtocolSelectionService:
         core = {
             "selectionVersion": self.SELECTION_VERSION,
             "horizonDays": horizon_days,
+            "sourceWalkForwardFingerprint": source_fingerprint,
             "selectionRule": selection.get("selectionRule"),
             "selectedRidgeLambda": selected_lambda,
             "evaluatedFoldSelectionCount": len(normalized),
@@ -258,6 +283,7 @@ class RecommendationShadowProtocolSelectionService:
     def _policy(self) -> dict[str, Any]:
         return {
             "lambdaEvidence": "validation_selected_lambda_per_walk_forward_fold_only",
+            "sourceWalkForwardEvidenceFingerprintRequired": True,
             "foldTestMetricsUsedForLambdaSelection": False,
             "tieBreak": "stronger_regularization",
             "actions": "not_assigned",
