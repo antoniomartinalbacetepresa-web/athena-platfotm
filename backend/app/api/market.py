@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.fx_quote_service import FxQuoteService
 from app.services.market_weighting_readiness_service import (
     MarketWeightingReadinessService,
 )
@@ -15,6 +16,7 @@ router = APIRouter(
 )
 
 market_service = YahooMarketService()
+fx_quote_service = FxQuoteService(market_service=market_service)
 market_universe_service = PersistedMarketUniverseService()
 market_weighting_readiness_service = MarketWeightingReadinessService()
 
@@ -45,6 +47,33 @@ def get_quote(
     return {
         "data": quote,
     }
+
+
+@router.get("/fx/quote")
+def get_fx_quote(
+    base_currency: str = Query(..., min_length=3, max_length=3, alias="base"),
+    quote_currency: str = Query(..., min_length=3, max_length=3, alias="quote"),
+) -> dict[str, object]:
+    """Return a current FX rate with source and temporal provenance.
+
+    This endpoint is intentionally current-only. Its result must not be
+    backdated for historical portfolio or recommendation evaluation.
+    """
+
+    try:
+        payload = fx_quote_service.get_current_rate(
+            base_currency=base_currency,
+            quote_currency=quote_currency,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo obtener una conversión FX trazable.",
+        ) from exc
+
+    return {"data": payload}
 
 
 @router.get("/history")
