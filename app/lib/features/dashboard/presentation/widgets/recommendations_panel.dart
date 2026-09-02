@@ -68,15 +68,18 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
             padding: const EdgeInsets.all(AthenaSpacing.lg),
             child: Row(
               children: [
-                const Text(
-                  'RECOMENDACIONES ATHENA',
-                  style: TextStyle(
-                    color: AthenaColors.text,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+                const Expanded(
+                  child: Text(
+                    'RECOMENDACIONES ATHENA',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AthenaColors.text,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: AthenaSpacing.md),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -103,10 +106,7 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(AthenaSpacing.lg),
-              child: _buildBody(),
-            ),
+            child: _buildBody(),
           ),
         ],
       ),
@@ -132,13 +132,16 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
     if (_controller.error != null) {
       return const Center(
-        child: Text(
-          'No se pudo consultar el estado del motor de recomendaciones.\n'
-          'ATHENA no mostrará señales de inversión sin validación.',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: AthenaColors.textSecondary,
-            fontSize: 15,
+        child: Padding(
+          padding: EdgeInsets.all(AthenaSpacing.lg),
+          child: Text(
+            'No se pudo consultar el estado del motor de recomendaciones.\n'
+            'ATHENA no mostrará señales de inversión sin validación.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 15,
+            ),
           ),
         ),
       );
@@ -147,9 +150,12 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
     final status = _controller.status;
     if (status == null) {
       return const Center(
-        child: Text(
-          'El motor de recomendaciones todavía no está disponible.',
-          style: TextStyle(color: AthenaColors.textSecondary),
+        child: Padding(
+          padding: EdgeInsets.all(AthenaSpacing.lg),
+          child: Text(
+            'El motor de recomendaciones todavía no está disponible.',
+            style: TextStyle(color: AthenaColors.textSecondary),
+          ),
         ),
       );
     }
@@ -162,53 +168,56 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
     final dueCount = _int(status.evaluationSchedule['dueCount']) ?? 0;
     final driftStatus = status.drift?['status']?.toString() ?? 'sin muestra';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'ATHENA todavía no publica recomendaciones activas.',
-          style: TextStyle(
-            color: AthenaColors.text,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: AthenaSpacing.sm),
-        const Text(
-          'Las señales COMPRAR, MANTENER, REDUCIR o VENDER aparecerán aquí '
-          'únicamente cuando procedan del motor real y puedan conservar su '
-          'evidencia point-in-time para ser evaluadas después.',
-          style: TextStyle(
-            color: AthenaColors.textSecondary,
-            fontSize: 14,
-            height: 1.4,
-          ),
-        ),
-        const SizedBox(height: AthenaSpacing.lg),
-        Wrap(
-          spacing: AthenaSpacing.md,
-          runSpacing: AthenaSpacing.md,
-          children: [
-            _metric('Resultados evaluados', '$sampleCount'),
-            _metric('Evaluaciones pendientes', '$dueCount'),
-            _metric('Deriva del modelo', driftStatus.toUpperCase()),
-            _metric(
-              'Cambios automáticos',
-              status.automaticModelMutation ? 'ACTIVOS' : 'BLOQUEADOS',
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AthenaSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'ATHENA todavía no publica recomendaciones activas.',
+            style: TextStyle(
+              color: AthenaColors.text,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
             ),
-          ],
-        ),
-        const Spacer(),
-        const Text(
-          'Estado actual: diagnóstico y aprendizaje. Ninguna calibración se '
-          'aplica automáticamente.',
-          style: TextStyle(
-            color: AthenaColors.warning,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
           ),
-        ),
-      ],
+          const SizedBox(height: AthenaSpacing.sm),
+          const Text(
+            'Las señales COMPRAR, MANTENER, REDUCIR o VENDER aparecerán aquí '
+            'únicamente cuando procedan del motor real y puedan conservar su '
+            'evidencia point-in-time para ser evaluadas después.',
+            style: TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: AthenaSpacing.lg),
+          Wrap(
+            spacing: AthenaSpacing.md,
+            runSpacing: AthenaSpacing.md,
+            children: [
+              _metric('Resultados evaluados', '$sampleCount'),
+              _metric('Evaluaciones pendientes', '$dueCount'),
+              _metric('Deriva del modelo', driftStatus.toUpperCase()),
+              _metric(
+                'Cambios automáticos',
+                status.automaticModelMutation ? 'ACTIVOS' : 'BLOQUEADOS',
+              ),
+            ],
+          ),
+          const SizedBox(height: AthenaSpacing.lg),
+          const Text(
+            'Estado actual: diagnóstico y aprendizaje. Ninguna calibración se '
+            'aplica automáticamente.',
+            style: TextStyle(
+              color: AthenaColors.warning,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
