@@ -10,6 +10,25 @@ from app.repositories.recommendation_history_repository import (
 from app.services.recommendation_drift_service import RecommendationDriftService
 
 
+def _benchmark_evidence(
+    *, generated_at: datetime, due_at: datetime, benchmark_return: float
+) -> dict[str, object]:
+    return {
+        "status": "resolved",
+        "benchmarkSymbol": "SPY",
+        "benchmarkInstrumentId": 999,
+        "entryPrice": 100.0,
+        "exitPrice": 100.0 * (1.0 + benchmark_return),
+        "benchmarkReturn": benchmark_return,
+        "entryObservedAt": generated_at.isoformat(),
+        "exitObservedAt": due_at.isoformat(),
+        "entryRetrievedAt": generated_at.isoformat(),
+        "exitRetrievedAt": due_at.isoformat(),
+        "entrySourceProvider": "test_benchmark",
+        "exitSourceProvider": "test_benchmark",
+    }
+
+
 def _seed(
     database: AthenaDatabase,
     *,
@@ -21,6 +40,7 @@ def _seed(
     history = RecommendationHistoryRepository(database=database)
     recommendation_id = history.create_recommendation(
         symbol=f"S{index}",
+        benchmark_symbol="SPY",
         action="buy",
         score=75,
         conviction=0.8,
@@ -33,13 +53,19 @@ def _seed(
     )
     realized_return = 0.10 if success else -0.10
     benchmark_return = realized_return - excess_return
+    due_at = generated_at + timedelta(days=30)
     history.record_outcome(
         recommendation_id=recommendation_id,
         horizon_days=30,
-        evaluated_at=generated_at + timedelta(days=30),
+        evaluated_at=due_at,
         entry_price=100.0,
         exit_price=100.0 * (1.0 + realized_return),
         benchmark_return=benchmark_return,
+        benchmark_evidence=_benchmark_evidence(
+            generated_at=generated_at,
+            due_at=due_at,
+            benchmark_return=benchmark_return,
+        ),
         source_provider="test",
     )
 
