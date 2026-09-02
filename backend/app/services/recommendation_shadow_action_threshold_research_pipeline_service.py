@@ -32,6 +32,7 @@ class _EconomicContractService(Protocol):
         *,
         transaction_cost_bps: float,
         slippage_bps: float,
+        reduced_exposure_fraction: float,
         objective_name: str,
         objective_version: str,
     ) -> dict[str, Any]: ...
@@ -49,10 +50,9 @@ class _ReadinessService(Protocol):
 class RecommendationShadowActionThresholdResearchPipelineService:
     """Connect live PIT rows to threshold-research readiness without fitting actions.
 
-    Split rows are produced internally from persisted live evidence; callers may
-    choose temporal boundaries and explicitly precommitted cost assumptions, but
-    cannot inject train/validation rows or action thresholds. The resulting
-    artifact remains diagnostic and no-advice.
+    Split rows are produced internally from persisted live evidence. Economic
+    assumptions are explicit caller inputs and become part of the immutable
+    contract fingerprint; no train/validation rows or thresholds can be injected.
     """
 
     def __init__(
@@ -78,6 +78,7 @@ class RecommendationShadowActionThresholdResearchPipelineService:
         as_of: datetime,
         transaction_cost_bps: float,
         slippage_bps: float,
+        reduced_exposure_fraction: float,
         objective_name: str,
         objective_version: str,
         symbol: str | None = None,
@@ -93,6 +94,7 @@ class RecommendationShadowActionThresholdResearchPipelineService:
         contract = self._economic_contract_service.build(
             transaction_cost_bps=transaction_cost_bps,
             slippage_bps=slippage_bps,
+            reduced_exposure_fraction=reduced_exposure_fraction,
             objective_name=objective_name,
             objective_version=objective_version,
         )
