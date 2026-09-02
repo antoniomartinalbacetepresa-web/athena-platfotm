@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_shadow_repository import RecommendationShadowRepository
 from app.services.recommendation_shadow_capture_service import (
     RecommendationShadowCaptureService,
 )
@@ -84,6 +85,7 @@ class RecommendationShadowCalibrationDatasetService:
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
+        self._shadow_repository = RecommendationShadowRepository(database=self._database)
 
     def build(
         self,
@@ -95,7 +97,7 @@ class RecommendationShadowCalibrationDatasetService:
         cutoff = self._aware_utc(as_of)
         if horizon_days is not None and horizon_days <= 0:
             raise ValueError("horizon_days debe ser positivo.")
-        self._database.initialize()
+        self._shadow_repository.initialize()
 
         query = """
             SELECT
