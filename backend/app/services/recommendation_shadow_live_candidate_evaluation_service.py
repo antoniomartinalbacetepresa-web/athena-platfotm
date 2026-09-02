@@ -16,7 +16,12 @@ from app.services.recommendation_shadow_live_candidate_service import (
 
 
 class RecommendationShadowLiveCandidateEvaluationService:
-    """Evaluate persisted continuous predictions using only matured PIT outcomes."""
+    """Evaluate persisted continuous predictions using only matured PIT outcomes.
+
+    Excess-return predictions are scored only against outcomes whose benchmark
+    leg retains the exact frozen-symbol observation provenance. A legacy scalar
+    excess return without that evidence is not an admissible target.
+    """
 
     def __init__(
         self,
@@ -48,6 +53,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
         snapshot = self._snapshot_repository.get_snapshot(snapshot_id)
         if snapshot is None:
             raise ValueError("El snapshot PIT asociado al candidato ya no existe.")
+        frozen_benchmark_symbol = self._optional_symbol(snapshot.get("benchmark_symbol"))
 
         candidate_as_of = self._parse_aware(candidate.get("asOf"), "candidate.asOf")
         if cutoff < candidate_as_of:
@@ -113,6 +119,12 @@ class RecommendationShadowLiveCandidateEvaluationService:
             due_at = self._parse_aware(outcome.get("due_at"), "outcome.due_at")
             if evaluated_at < due_at:
                 raise ValueError("Un outcome fue evaluado antes de su vencimiento.")
+            benchmark_evidence = self._validated_benchmark_evidence(
+                outcome,
+                frozen_symbol=frozen_benchmark_symbol,
+                due_at=due_at,
+                evaluated_at=evaluated_at,
+            )
             realized = self._required_finite(outcome.get("excess_return"), "outcome.excess_return")
             error = expected - realized
             if not math.isfinite(error):
@@ -133,6 +145,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
                 "outcomeEvaluatedAt": evaluated_at.isoformat(),
                 "benchmarkReturn": self._optional_finite(outcome.get("benchmark_return")),
                 "realizedReturn": self._optional_finite(outcome.get("realized_return")),
+                "benchmarkEvidence": benchmark_evidence,
             }
 
         evaluated_count = len(errors)
@@ -157,6 +170,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
             "symbol": candidate.get("symbol"),
             "candidateAsOf": candidate_as_of.isoformat(),
             "asOf": cutoff.isoformat(),
+            "frozenBenchmarkSymbol": frozen_benchmark_symbol,
             "evaluatedHorizonCount": evaluated_count,
             "metrics": metrics,
             "horizons": horizon_results,
@@ -166,11 +180,84 @@ class RecommendationShadowLiveCandidateEvaluationService:
             "policy": {
                 "lookAhead": "outcome_evaluated_at_must_not_exceed_as_of",
                 "target": "realized_excess_return_vs_frozen_snapshot_benchmark",
+                "targetProvenance": "exact_persisted_benchmark_observations_required",
                 "predictions": "immutable_persisted_live_candidate",
                 "actions": "not_evaluated_not_assigned",
                 "automaticModelMutation": False,
                 "automaticProductionPromotion": False,
             },
+        }
+
+    def _validated_benchmark_evidence(
+        self,
+        outcome: dict[str, Any],
+        *,
+        frozen_symbol: str | None,
+        due_at: datetime,
+        evaluated_at: datetime,
+    ) -> dict[str, Any]:
+        if frozen_symbol is None:
+            raise ValueError(
+                "Un candidato de exceso de rentabilidad requiere benchmark congelado."
+            )
+        evidence = outcome.get("benchmark_evidence")
+        if not isinstance(evidence, dict) or evidence.get("status") != "resolved":
+            raise ValueError(
+                "El outcome carece de evidencia trazable del benchmark congelado."
+            )
+        symbol = self._optional_symbol(evidence.get("benchmarkSymbol"))
+        if symbol != frozen_symbol:
+            raise ValueError("El outcome usa evidencia de otro benchmark.")
+        instrument_id = evidence.get("benchmarkInstrumentId")
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise ValueError("La evidencia del benchmark carece de instrumento válido.")
+        entry_price = self._required_finite(evidence.get("entryPrice"), "benchmark.entryPrice")
+        exit_price = self._required_finite(evidence.get("exitPrice"), "benchmark.exitPrice")
+        if entry_price <= 0 or exit_price <= 0:
+            raise ValueError("Los precios preservados del benchmark deben ser positivos.")
+        recomputed = (exit_price / entry_price) - 1.0
+        evidence_return = self._required_finite(
+            evidence.get("benchmarkReturn"), "benchmark.benchmarkReturn"
+        )
+        stored_return = self._required_finite(
+            outcome.get("benchmark_return"), "outcome.benchmark_return"
+        )
+        if not math.isclose(recomputed, evidence_return, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("La evidencia del benchmark no reproduce su rentabilidad.")
+        if not math.isclose(stored_return, evidence_return, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("La rentabilidad benchmark persistida no coincide con su evidencia.")
+
+        exit_observed = self._parse_aware(
+            evidence.get("exitObservedAt"), "benchmark.exitObservedAt"
+        )
+        entry_retrieved = self._parse_aware(
+            evidence.get("entryRetrievedAt"), "benchmark.entryRetrievedAt"
+        )
+        exit_retrieved = self._parse_aware(
+            evidence.get("exitRetrievedAt"), "benchmark.exitRetrievedAt"
+        )
+        if exit_observed < due_at or exit_observed > evaluated_at:
+            raise ValueError("La salida del benchmark está fuera de la ventana del outcome.")
+        if entry_retrieved > evaluated_at or exit_retrieved > evaluated_at:
+            raise ValueError("La evidencia benchmark fue conocida después de evaluated_at.")
+        entry_observed = self._parse_aware(
+            evidence.get("entryObservedAt"), "benchmark.entryObservedAt"
+        )
+        entry_provider = str(evidence.get("entrySourceProvider") or "").strip()
+        exit_provider = str(evidence.get("exitSourceProvider") or "").strip()
+        if not entry_provider or not exit_provider:
+            raise ValueError("La evidencia benchmark carece de provenance de proveedor.")
+        return {
+            "benchmarkSymbol": frozen_symbol,
+            "benchmarkInstrumentId": instrument_id,
+            "entryPrice": entry_price,
+            "exitPrice": exit_price,
+            "entryObservedAt": entry_observed.isoformat(),
+            "exitObservedAt": exit_observed.isoformat(),
+            "entryRetrievedAt": entry_retrieved.isoformat(),
+            "exitRetrievedAt": exit_retrieved.isoformat(),
+            "entrySourceProvider": entry_provider,
+            "exitSourceProvider": exit_provider,
         }
 
     def _assert_shadow(self, candidate: dict[str, Any]) -> None:
@@ -180,6 +267,12 @@ class RecommendationShadowLiveCandidateEvaluationService:
             raise ValueError("El candidato evaluado debe mantener no_advice.")
         if candidate.get("recommendationCandidateReady") is not False:
             raise ValueError("El candidato evaluado no puede habilitar recomendación.")
+
+    def _optional_symbol(self, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        return normalized or None
 
     def _optional_finite(self, value: object) -> float | None:
         if value is None:
