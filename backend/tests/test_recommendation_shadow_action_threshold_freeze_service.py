@@ -10,6 +10,9 @@ from app.services.recommendation_shadow_action_threshold_freeze_service import (
 )
 
 
+PANEL_FINGERPRINT = "b" * 64
+
+
 class _SelectionService:
     def __init__(self, selection):
         self.selection = selection
@@ -60,8 +63,9 @@ def _policy():
     }
 
 
-def _selection(*, eligible=True):
+def _selection(*, eligible=True, panel_fingerprint=PANEL_FINGERPRINT):
     return {
+        "sourceUtilityPanelFingerprint": panel_fingerprint,
         "selectionFingerprint": "a" * 64,
         "futureReserveConfirmationEligible": eligible,
         "advisoryStatus": "no_advice",
@@ -76,12 +80,13 @@ def _selection(*, eligible=True):
     }
 
 
-def _panel(evaluated_at):
-    return {
-        "validationUtilityRows": [
+def _panel(evaluated_at=None, *, panel_fingerprint=PANEL_FINGERPRINT):
+    result = {"utilityPanelFingerprint": panel_fingerprint}
+    if evaluated_at is not None:
+        result["validationUtilityRows"] = [
             {"outcomeEvaluatedAt": evaluated_at.isoformat()}
         ]
-    }
+    return result
 
 
 def _service(selection, repository=None, *, now=None):
@@ -101,7 +106,8 @@ def test_freezes_complete_selection_before_future_confirmation():
     )
 
     assert result["status"] == "shadow_action_thresholds_frozen_before_future_confirmation"
-    assert result["artifactVersion"] == "shadow-action-threshold-freeze-v2"
+    assert result["artifactVersion"] == "shadow-action-threshold-freeze-v3"
+    assert result["sourceUtilityPanelFingerprint"] == PANEL_FINGERPRINT
     assert result["registered"] is True
     assert result["selectedAt"] == selected_at.isoformat()
     assert result["futureReserveConfirmationEligible"] is True
@@ -113,6 +119,7 @@ def test_freezes_complete_selection_before_future_confirmation():
     assert result["action"] is None
     assert result["score"] is None
     assert result["conviction"] is None
+    assert result["policy"]["selectionBoundToUtilityPanelFingerprint"] is True
     assert result["policy"]["callerSuppliedSelectionTimestampAccepted"] is False
     assert result["policy"]["futureEvidenceBeforeSelectedAtMayBeUsed"] is False
     assert result["policy"]["futureReserveMayRefitThresholds"] is False
@@ -141,13 +148,40 @@ def test_repeated_freeze_cannot_move_first_selection_boundary():
 def test_insufficient_selection_is_not_registered_or_clock_gated():
     repo = _Repository()
     result = _service(_selection(eligible=False), repository=repo).freeze(
-        utility_panel={},
+        utility_panel=_panel(),
     )
 
     assert result["status"] == "shadow_action_threshold_freeze_insufficient"
+    assert result["sourceUtilityPanelFingerprint"] == PANEL_FINGERPRINT
     assert result["registered"] is False
     assert result["futureReserveConfirmationEligible"] is False
+    assert result["actionThresholdCalibrationResearchEligible"] is False
+    assert result["actionThresholds"] is None
     assert repo.record is None
+
+
+def test_rejects_selection_from_different_utility_panel():
+    selection = _selection(panel_fingerprint="c" * 64)
+
+    with pytest.raises(ValueError, match="no pertenece al panel"):
+        _service(selection).freeze(
+            utility_panel=_panel(datetime(2026, 1, 31, tzinfo=timezone.utc)),
+        )
+
+
+def test_rejects_missing_utility_panel_fingerprint_before_selection_freeze():
+    with pytest.raises(ValueError, match="utilityPanelFingerprint"):
+        _service(_selection()).freeze(
+            utility_panel={
+                "validationUtilityRows": [
+                    {
+                        "outcomeEvaluatedAt": datetime(
+                            2026, 1, 31, tzinfo=timezone.utc
+                        ).isoformat()
+                    }
+                ]
+            },
+        )
 
 
 def test_rejects_backdated_service_clock_against_observed_validation():
@@ -162,7 +196,7 @@ def test_rejects_backdated_service_clock_against_observed_validation():
 
 def test_rejects_eligible_freeze_without_temporal_validation_evidence():
     with pytest.raises(ValueError, match="validationUtilityRows"):
-        _service(_selection()).freeze(utility_panel={})
+        _service(_selection()).freeze(utility_panel=_panel())
 
 
 def test_rejects_naive_service_clock():
@@ -203,6 +237,7 @@ def test_rejects_production_escape_before_persistence():
         ("productionEligible", True),
         ("recommendationCandidateReady", True),
         ("actionThresholdCalibrationResearchEligible", True),
+        ("actionThresholds", {"buy": 0.1}),
         ("action", "buy"),
         ("score", 0.7),
         ("conviction", 0.7),
