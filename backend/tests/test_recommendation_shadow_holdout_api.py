@@ -4,7 +4,7 @@ from app.api import recommendation_research
 from app.main import app
 
 
-class FakeHoldoutPipelineService:
+class FakeHoldoutSealService:
     def __init__(
         self,
         *,
@@ -19,10 +19,11 @@ class FakeHoldoutPipelineService:
         self.actions = actions
         self.calls = []
 
-    def evaluate_latest_cohort(self, **kwargs):
+    def evaluate_and_seal(self, **kwargs):
         self.calls.append(kwargs)
         return {
-            "status": "shadow_holdout_pipeline_evaluated",
+            "status": "shadow_independent_holdout_sealed",
+            "holdoutSealed": True,
             "actionThresholdCalibrationResearchEligible": False,
             "advisoryStatus": self.advisory_status,
             "productionEligible": self.production_eligible,
@@ -34,8 +35,8 @@ class FakeHoldoutPipelineService:
 
 
 def test_holdout_endpoint_runs_default_horizons_and_preserves_shadow_contract(monkeypatch):
-    fake = FakeHoldoutPipelineService()
-    monkeypatch.setattr(recommendation_research, "holdout_pipeline_service", fake)
+    fake = FakeHoldoutSealService()
+    monkeypatch.setattr(recommendation_research, "holdout_seal_service", fake)
     client = TestClient(app)
 
     response = client.get(
@@ -51,8 +52,8 @@ def test_holdout_endpoint_runs_default_horizons_and_preserves_shadow_contract(mo
 
 
 def test_holdout_endpoint_rejects_invalid_input_before_calling_service(monkeypatch):
-    fake = FakeHoldoutPipelineService()
-    monkeypatch.setattr(recommendation_research, "holdout_pipeline_service", fake)
+    fake = FakeHoldoutSealService()
+    monkeypatch.setattr(recommendation_research, "holdout_seal_service", fake)
     client = TestClient(app)
 
     for params in (
@@ -75,12 +76,12 @@ def test_holdout_endpoint_fails_closed_on_production_advice_or_policy_violation(
     client = TestClient(app)
 
     for fake in (
-        FakeHoldoutPipelineService(production_eligible=True),
-        FakeHoldoutPipelineService(advisory_status="buy"),
-        FakeHoldoutPipelineService(automatic_promotion=True),
-        FakeHoldoutPipelineService(actions="buy"),
+        FakeHoldoutSealService(production_eligible=True),
+        FakeHoldoutSealService(advisory_status="buy"),
+        FakeHoldoutSealService(automatic_promotion=True),
+        FakeHoldoutSealService(actions="buy"),
     ):
-        monkeypatch.setattr(recommendation_research, "holdout_pipeline_service", fake)
+        monkeypatch.setattr(recommendation_research, "holdout_seal_service", fake)
         response = client.get(
             "/api/v1/recommendations/learning/shadow-holdout-readiness"
         )
@@ -90,11 +91,11 @@ def test_holdout_endpoint_fails_closed_on_production_advice_or_policy_violation(
 
 def test_holdout_endpoint_maps_service_validation_to_400(monkeypatch):
     class RejectingService:
-        def evaluate_latest_cohort(self, **kwargs):
+        def evaluate_and_seal(self, **kwargs):
             raise ValueError("cohorte inconsistente")
 
     monkeypatch.setattr(
-        recommendation_research, "holdout_pipeline_service", RejectingService()
+        recommendation_research, "holdout_seal_service", RejectingService()
     )
     response = TestClient(app).get(
         "/api/v1/recommendations/learning/shadow-holdout-readiness"
