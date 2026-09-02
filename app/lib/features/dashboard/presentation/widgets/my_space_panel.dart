@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_radius.dart';
+import '../../../market/di/market_dependencies.dart';
 import '../../../portfolio/models/portfolio.dart';
 import '../../../portfolio/services/portfolio_service.dart';
 
@@ -14,25 +15,51 @@ class MySpacePanel extends StatefulWidget {
 
 class _MySpacePanelState extends State<MySpacePanel> {
   final PortfolioService _portfolioService = PortfolioService();
+  late final MarketDependencies _marketDependencies;
 
   Portfolio? _portfolio;
   bool _isLoading = true;
   bool _hasLoadError = false;
+  List<String> _staleSymbols = const [];
 
   @override
   void initState() {
     super.initState();
+    _marketDependencies = MarketDependencies.create();
     _loadPortfolio();
+  }
+
+  @override
+  void dispose() {
+    _marketDependencies.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPortfolio() async {
     try {
       await _portfolioService.loadPortfolio();
+
+      var staleSymbols = const <String>[];
+      final portfolio = _portfolioService.portfolio;
+      if (portfolio != null && portfolio.positions.isNotEmpty) {
+        try {
+          final report = await _portfolioService.refreshCurrentPrices(
+            marketRepository: _marketDependencies.repository,
+          );
+          staleSymbols = report.failedSymbols;
+        } catch (_) {
+          staleSymbols = portfolio.positions
+              .map((position) => position.symbol)
+              .toList(growable: false);
+        }
+      }
+
       if (!mounted) {
         return;
       }
       setState(() {
         _portfolio = _portfolioService.portfolio;
+        _staleSymbols = staleSymbols;
         _isLoading = false;
         _hasLoadError = false;
       });
@@ -42,6 +69,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
       }
       setState(() {
         _portfolio = null;
+        _staleSymbols = const [];
         _isLoading = false;
         _hasLoadError = true;
       });
@@ -137,6 +165,10 @@ class _MySpacePanelState extends State<MySpacePanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_staleSymbols.isNotEmpty) ...[
+            _priceWarning(_staleSymbols),
+            const SizedBox(height: 10),
+          ],
           _row(
             'Valor de cartera',
             _formatCurrency(accountValue),
@@ -156,13 +188,13 @@ class _MySpacePanelState extends State<MySpacePanel> {
           ),
           _divider(),
           _row(
-            'Liquidez estimada',
+            'Capital no asignado',
             availableCapital == null
                 ? 'No disponible'
                 : _formatCurrency(availableCapital),
             availableCapital == null
                 ? 'Falta capital de referencia'
-                : 'Capital no asignado',
+                : 'Referencia menos coste invertido',
             AthenaColors.text,
           ),
           _divider(),
@@ -186,6 +218,30 @@ class _MySpacePanelState extends State<MySpacePanel> {
             AthenaColors.textSecondary,
           ),
         ],
+      ),
+    );
+  }
+
+  static Widget _priceWarning(List<String> symbols) {
+    final label = symbols.length == 1
+        ? 'Precio sin actualizar: ${symbols.single}'
+        : '${symbols.length} precios sin actualizar';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: AthenaColors.cardSecondary,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AthenaColors.border),
+      ),
+      child: Text(
+        '$label. Se conserva el último valor guardado y no se sustituye por una estimación.',
+        style: const TextStyle(
+          color: AthenaColors.textSecondary,
+          fontSize: 10,
+          height: 1.35,
+        ),
       ),
     );
   }
