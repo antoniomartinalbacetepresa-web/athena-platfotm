@@ -8,8 +8,9 @@ import 'market_data_provider.dart';
 /// Proveedor de datos de mercado procedentes del backend de ATHENA TYCHE.
 ///
 /// Flutter no conoce ni expone claves de proveedores externos. El backend sí
-/// puede declarar la fuente real utilizada y el instante de recuperación para
-/// conservar provenance sin acoplar la aplicación cliente al proveedor.
+/// puede declarar la fuente real utilizada, identidad básica del listing y el
+/// instante de recuperación para conservar provenance sin acoplar la aplicación
+/// cliente al proveedor.
 class AthenaBackendMarketDataProvider implements MarketDataProvider {
   static const String _providerId = 'athena_backend';
 
@@ -31,17 +32,14 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     ).replace(queryParameters: {'symbol': normalizedSymbol});
 
     final response = await client.get(uri);
-
     _validateResponse(response);
 
     final decoded = _decodeObject(response.body);
-
     final data = decoded['data'];
 
     if (data == null) {
       return null;
     }
-
     if (data is! Map) {
       throw const FormatException(
         'La respuesta del backend no contiene una cotización válida.',
@@ -61,13 +59,11 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     DateTime? to,
   }) async {
     final normalizedSymbol = _normalizeSymbol(symbol);
-
     final queryParameters = <String, String>{'symbol': normalizedSymbol};
 
     if (from != null) {
       queryParameters['from'] = _formatDate(from);
     }
-
     if (to != null) {
       queryParameters['to'] = _formatDate(to);
     }
@@ -77,17 +73,14 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     ).replace(queryParameters: queryParameters);
 
     final response = await client.get(uri);
-
     _validateResponse(response);
 
     final decoded = _decodeObject(response.body);
-
     final data = decoded['data'];
 
     if (data == null) {
       return const [];
     }
-
     if (data is! List) {
       throw const FormatException(
         'La respuesta histórica del backend no contiene una lista válida.',
@@ -95,12 +88,10 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     }
 
     final result = <MarketDataPoint>[];
-
     for (final item in data) {
       if (item is! Map) {
         continue;
       }
-
       result.add(
         _mapPoint(
           data: Map<String, dynamic>.from(item),
@@ -108,7 +99,6 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
         ),
       );
     }
-
     return result;
   }
 
@@ -120,7 +110,8 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final retrievedAt = _parseOptionalTimestamp(data['retrievedAt']);
 
     final symbol = data['symbol']?.toString().trim().toUpperCase();
-    final sourceProvider = data['sourceProvider']?.toString().trim();
+    final sourceProvider = _optionalText(data['sourceProvider']);
+    final currency = _optionalText(data['currency'])?.toUpperCase();
 
     return MarketDataPoint(
       symbol: symbol == null || symbol.isEmpty ? fallbackSymbol : symbol,
@@ -133,16 +124,18 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       volume: _parseDouble(data['volume']),
       change: _parseDouble(data['change']),
       changePercentage: _parseDouble(data['changePercentage']),
+      currency: currency,
+      exchange: _optionalText(data['exchange']),
+      quoteType: _optionalText(data['quoteType']),
+      exchangeTimezone: _optionalText(data['exchangeTimezone']),
       providerId: providerId,
-      sourceProvider:
-          sourceProvider == null || sourceProvider.isEmpty ? null : sourceProvider,
+      sourceProvider: sourceProvider,
       retrievedAt: retrievedAt,
     );
   }
 
   String _normalizeSymbol(String symbol) {
     final normalized = symbol.trim().toUpperCase();
-
     if (normalized.isEmpty) {
       throw ArgumentError.value(
         symbol,
@@ -150,7 +143,6 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
         'El símbolo no puede estar vacío.',
       );
     }
-
     return normalized;
   }
 
@@ -165,13 +157,11 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
   Map<String, dynamic> _decodeObject(String body) {
     final decoded = jsonDecode(body);
-
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException(
         'La respuesta del backend de ATHENA TYCHE no es un objeto JSON válido.',
       );
     }
-
     return decoded;
   }
 
@@ -179,27 +169,30 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     if (value == null) {
       return null;
     }
-
     if (value is num) {
       return value.toDouble();
     }
-
     return double.tryParse(value.toString());
+  }
+
+  String? _optionalText(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
   }
 
   DateTime _parseTimestamp(dynamic value) {
     if (value == null) {
       throw const FormatException('El backend no proporcionó fecha/hora.');
     }
-
     final parsed = DateTime.tryParse(value.toString());
-
     if (parsed == null) {
       throw FormatException(
         'Fecha/hora inválida recibida del backend: $value',
       );
     }
-
     return parsed;
   }
 
@@ -207,14 +200,12 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     if (value == null) {
       return null;
     }
-
     final parsed = DateTime.tryParse(value.toString());
     if (parsed == null) {
       throw FormatException(
         'Fecha/hora de recuperación inválida recibida del backend: $value',
       );
     }
-
     return parsed;
   }
 
@@ -222,7 +213,6 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final year = value.year.toString().padLeft(4, '0');
     final month = value.month.toString().padLeft(2, '0');
     final day = value.day.toString().padLeft(2, '0');
-
     return '$year-$month-$day';
   }
 
