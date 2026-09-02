@@ -41,6 +41,9 @@ class RecommendationShadowHoldoutSealRepository:
                     research_gate_fingerprint TEXT NOT NULL,
                     research_cutoff TEXT NOT NULL,
                     first_attempted_at TEXT NOT NULL,
+                    first_pipeline_fingerprint TEXT,
+                    first_pipeline_json TEXT,
+                    lineage_status TEXT NOT NULL DEFAULT 'captured_at_first_exposure',
                     created_at TEXT NOT NULL,
                     UNIQUE(experiment_family, research_gate_fingerprint, research_cutoff)
                 );
@@ -49,6 +52,7 @@ class RecommendationShadowHoldoutSealRepository:
                 ON athena_recommendation_shadow_holdout_attempts(experiment_family);
                 """
             )
+            self._migrate_attempt_columns(connection)
             connection.execute(
                 """
                 INSERT OR IGNORE INTO athena_recommendation_shadow_holdout_attempts (
@@ -56,31 +60,75 @@ class RecommendationShadowHoldoutSealRepository:
                     research_gate_fingerprint,
                     research_cutoff,
                     first_attempted_at,
+                    first_pipeline_fingerprint,
+                    first_pipeline_json,
+                    lineage_status,
                     created_at
                 )
-                SELECT ?, research_gate_fingerprint, research_cutoff, sealed_at, created_at
+                SELECT ?, research_gate_fingerprint, research_cutoff, sealed_at,
+                       pipeline_fingerprint, pipeline_json, 'recovered_from_immutable_seal',
+                       created_at
                 FROM athena_recommendation_shadow_holdout_seals
                 """,
                 (self.EXPERIMENT_FAMILY,),
+            )
+            connection.execute(
+                """
+                UPDATE athena_recommendation_shadow_holdout_attempts
+                SET first_pipeline_fingerprint = (
+                        SELECT s.pipeline_fingerprint
+                        FROM athena_recommendation_shadow_holdout_seals s
+                        WHERE s.research_gate_fingerprint =
+                              athena_recommendation_shadow_holdout_attempts.research_gate_fingerprint
+                          AND s.research_cutoff =
+                              athena_recommendation_shadow_holdout_attempts.research_cutoff
+                    ),
+                    first_pipeline_json = (
+                        SELECT s.pipeline_json
+                        FROM athena_recommendation_shadow_holdout_seals s
+                        WHERE s.research_gate_fingerprint =
+                              athena_recommendation_shadow_holdout_attempts.research_gate_fingerprint
+                          AND s.research_cutoff =
+                              athena_recommendation_shadow_holdout_attempts.research_cutoff
+                    ),
+                    lineage_status = 'recovered_from_immutable_seal'
+                WHERE first_pipeline_json IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM athena_recommendation_shadow_holdout_seals s
+                      WHERE s.research_gate_fingerprint =
+                            athena_recommendation_shadow_holdout_attempts.research_gate_fingerprint
+                        AND s.research_cutoff =
+                            athena_recommendation_shadow_holdout_attempts.research_cutoff
+                        AND s.sealed_at =
+                            athena_recommendation_shadow_holdout_attempts.first_attempted_at
+                  )
+                """
+            )
+            connection.execute(
+                """
+                UPDATE athena_recommendation_shadow_holdout_attempts
+                SET lineage_status = 'legacy_exposure_payload_unavailable'
+                WHERE first_pipeline_json IS NULL
+                  AND lineage_status = 'captured_at_first_exposure'
+                """
             )
 
     def register_attempt(
         self,
         *,
-        research_gate_fingerprint: str,
-        research_cutoff: str,
+        pipeline: dict[str, Any],
         attempted_at: datetime,
     ) -> dict[str, Any]:
-        """Register one distinct research cohort as exposed to independent holdout.
-
-        Repeated evaluations of the same cohort remain one experiment. Distinct
-        research-gate/cutoff pairs are separate experiments and therefore count
-        toward multiple-testing risk.
-        """
+        """Register exactly what was first exposed for one independent holdout cohort."""
         self.initialize()
-        gate = self._sha256(research_gate_fingerprint, "research_gate_fingerprint")
-        cutoff = self._aware_iso(research_cutoff, "research_cutoff")
+        gate = self._sha256(
+            pipeline.get("researchGateFingerprint"), "researchGateFingerprint"
+        )
+        cutoff = self._aware_iso(pipeline.get("researchCutoff"), "researchCutoff")
         attempted = self._aware_datetime(attempted_at, "attempted_at").isoformat()
+        serialized = self._serialize(pipeline)
+        fingerprint = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         created = datetime.now(timezone.utc).isoformat()
         with self._database.connect() as connection:
             connection.execute(
@@ -90,10 +138,21 @@ class RecommendationShadowHoldoutSealRepository:
                     research_gate_fingerprint,
                     research_cutoff,
                     first_attempted_at,
+                    first_pipeline_fingerprint,
+                    first_pipeline_json,
+                    lineage_status,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'captured_at_first_exposure', ?)
                 """,
-                (self.EXPERIMENT_FAMILY, gate, cutoff, attempted, created),
+                (
+                    self.EXPERIMENT_FAMILY,
+                    gate,
+                    cutoff,
+                    attempted,
+                    fingerprint,
+                    serialized,
+                    created,
+                ),
             )
             row = connection.execute(
                 """
@@ -105,31 +164,39 @@ class RecommendationShadowHoldoutSealRepository:
                 """,
                 (self.EXPERIMENT_FAMILY, gate, cutoff),
             ).fetchone()
-        if row is None:
+        result = self._attempt_row(row)
+        if result is None:
             raise RuntimeError("No se pudo recuperar el intento holdout registrado.")
-        return dict(row)
+        return result
 
     def multiplicity_summary(self) -> dict[str, Any]:
         self.initialize()
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT research_gate_fingerprint, research_cutoff, first_attempted_at
+                SELECT id, research_gate_fingerprint, research_cutoff,
+                       first_attempted_at, first_pipeline_fingerprint,
+                       first_pipeline_json, lineage_status, created_at
                 FROM athena_recommendation_shadow_holdout_attempts
                 WHERE experiment_family = ?
                 ORDER BY first_attempted_at ASC, id ASC
                 """,
                 (self.EXPERIMENT_FAMILY,),
             ).fetchall()
-        experiments = [dict(row) for row in rows]
-        count = len(experiments)
+        experiments = [self._attempt_row(row) for row in rows]
+        clean = [experiment for experiment in experiments if experiment is not None]
+        count = len(clean)
+        complete_lineage = all(
+            experiment.get("first_pipeline_fingerprint") is not None for experiment in clean
+        )
         return {
             "experimentFamily": self.EXPERIMENT_FAMILY,
             "distinctHoldoutExperimentCount": count,
             "multiplicityPresent": count > 1,
             "multiplicityControlled": count <= 1,
             "correctionMethod": "not_required" if count <= 1 else "not_yet_implemented",
-            "experiments": experiments,
+            "firstExposureLineageComplete": complete_lineage,
+            "experiments": clean,
         }
 
     def get(
@@ -159,13 +226,7 @@ class RecommendationShadowHoldoutSealRepository:
         )
         cutoff = self._aware_iso(pipeline.get("researchCutoff"), "researchCutoff")
         sealed = self._aware_datetime(sealed_at, "sealed_at").isoformat()
-        serialized = json.dumps(
-            pipeline,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
+        serialized = self._serialize(pipeline)
         fingerprint = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         created = datetime.now(timezone.utc).isoformat()
 
@@ -196,6 +257,40 @@ class RecommendationShadowHoldoutSealRepository:
             raise RuntimeError("No se pudo recuperar el holdout sellado.")
         return result
 
+    def _migrate_attempt_columns(self, connection: Any) -> None:
+        columns = {
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA table_info(athena_recommendation_shadow_holdout_attempts)"
+            ).fetchall()
+        }
+        additions = {
+            "first_pipeline_fingerprint": "TEXT",
+            "first_pipeline_json": "TEXT",
+            "lineage_status": "TEXT NOT NULL DEFAULT 'captured_at_first_exposure'",
+        }
+        for column, declaration in additions.items():
+            if column not in columns:
+                connection.execute(
+                    f"ALTER TABLE athena_recommendation_shadow_holdout_attempts "
+                    f"ADD COLUMN {column} {declaration}"
+                )
+
+    def _attempt_row(self, row: Any) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        payload = result.pop("first_pipeline_json", None)
+        fingerprint = result.get("first_pipeline_fingerprint")
+        if payload is None:
+            result["firstPipeline"] = None
+            return result
+        actual = hashlib.sha256(str(payload).encode("utf-8")).hexdigest()
+        if actual != fingerprint:
+            raise ValueError("La primera exposición holdout no supera la verificación de integridad.")
+        result["firstPipeline"] = json.loads(str(payload))
+        return result
+
     def _row(self, row: Any) -> dict[str, Any] | None:
         if row is None:
             return None
@@ -206,6 +301,15 @@ class RecommendationShadowHoldoutSealRepository:
             raise ValueError("El holdout sellado no supera la verificación de integridad.")
         result["pipeline"] = json.loads(pipeline_json)
         return result
+
+    def _serialize(self, payload: dict[str, Any]) -> str:
+        return json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
 
     def _sha256(self, value: object, field: str) -> str:
         normalized = str(value or "").strip().lower()
