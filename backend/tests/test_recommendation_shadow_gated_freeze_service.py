@@ -15,6 +15,7 @@ from app.services.recommendation_shadow_protocol_selection_service import (
 class FakeHoldoutService:
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.validated_models: list[dict] = []
 
     def freeze(self, **kwargs):
         self.calls.append(kwargs)
@@ -28,6 +29,12 @@ class FakeHoldoutService:
             "advisoryStatus": "no_advice",
             "productionEligible": False,
         }
+
+    def _validated_model(self, model):
+        self.validated_models.append(model)
+        if model.get("tampered") is True:
+            raise ValueError("El artefacto congelado fue modificado tras su creación.")
+        return model
 
 
 def _gate(*, eligible: bool = True, passing_30: bool = True, source_fingerprint=None):
@@ -182,6 +189,7 @@ def test_gated_freeze_uses_only_research_derived_lambda_and_binds_fingerprints()
     assert first["productionEligible"] is False
     assert first["advisoryStatus"] == "no_advice"
     service.validate_bundle(first)
+    assert holdout.validated_models == [first["frozenModel"]]
 
 
 def test_freeze_rejects_protocol_selection_from_different_walk_forward():
@@ -253,6 +261,21 @@ def test_bundle_validation_detects_bundle_tampering():
     bundle["ridgeLambda"] = 10.0
 
     with pytest.raises(ValueError, match="bundle gated freeze fue modificado"):
+        service.validate_bundle(bundle)
+
+
+def test_bundle_validation_revalidates_frozen_model_integrity():
+    holdout = FakeHoldoutService()
+    service = RecommendationShadowGatedFreezeService(holdout_service=holdout)
+    bundle = service.freeze(
+        research_gate=_gate(),
+        protocol_selection=_selection(),
+        research_cutoff=datetime(2025, 7, 1, tzinfo=timezone.utc),
+        horizon_days=30,
+    )
+    bundle["frozenModel"]["tampered"] = True
+
+    with pytest.raises(ValueError, match="artefacto congelado fue modificado"):
         service.validate_bundle(bundle)
 
 
