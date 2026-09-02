@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'portfolio_position.dart';
 
 class Portfolio {
@@ -40,6 +42,32 @@ class Portfolio {
 
     return (profitLoss / investedValue) * 100;
   }
+
+  /// Parte del capital de referencia que todavía no está representada por el
+  /// coste declarado de las posiciones existentes.
+  ///
+  /// Nunca es negativa: si el coste invertido supera la referencia, el exceso
+  /// se expone mediante [referenceCapitalExcess] en lugar de ocultarlo.
+  double get referenceCapitalRemaining {
+    if (initialCapital <= 0) {
+      return 0;
+    }
+    return math.max(0, initialCapital - investedValue).toDouble();
+  }
+
+  /// Coste declarado de posiciones que excede el capital de referencia.
+  ///
+  /// Este valor es informativo. No implica deuda, efectivo negativo ni margen:
+  /// únicamente evita presentar falsamente un "capital no asignado = 0" cuando
+  /// la cartera existente rebasa la referencia elegida por el usuario.
+  double get referenceCapitalExcess {
+    if (initialCapital <= 0) {
+      return 0;
+    }
+    return math.max(0, investedValue - initialCapital).toDouble();
+  }
+
+  bool get isOverReferenceCapital => referenceCapitalExcess > 0;
 
   Portfolio copyWith({
     String? id,
