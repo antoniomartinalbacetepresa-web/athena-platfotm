@@ -188,6 +188,90 @@ void main() {
       expect(service.portfolio!.positions.single.currentPrice, 95);
     });
 
+    test('rejects refreshed prices without source provenance', () async {
+      final repository = FakePortfolioRepository();
+      final service = PortfolioService(repository: repository);
+      await service.createPortfolio(
+        id: 'p3',
+        name: 'Mi cartera',
+        initialCapital: 5000,
+      );
+      await service.addPosition(
+        const PortfolioPosition(
+          symbol: 'NOPROV',
+          companyName: 'No provenance',
+          shares: 1,
+          averagePrice: 100,
+          currentPrice: 101,
+        ),
+      );
+
+      final observedAt = DateTime.utc(2026, 9, 2, 16, 45);
+      final report = await service.refreshCurrentPrices(
+        marketRepository: FakeMarketRepository(
+          quotes: {
+            'NOPROV': MarketQuote(
+              symbol: 'NOPROV',
+              companyName: 'No provenance',
+              currentPrice: 120,
+              change: 1,
+              changePercentage: 0.8,
+              updatedAt: observedAt,
+              sourceProvider: null,
+              retrievedAt: observedAt.add(const Duration(seconds: 2)),
+            ),
+          },
+        ),
+      );
+
+      expect(report.hasFailures, isTrue);
+      expect(report.updatedPositions, 0);
+      expect(report.failedSymbols, ['NOPROV']);
+      expect(service.portfolio!.positions.single.currentPrice, 101);
+    });
+
+    test('rejects retrieval timestamps earlier than market observation', () async {
+      final repository = FakePortfolioRepository();
+      final service = PortfolioService(repository: repository);
+      await service.createPortfolio(
+        id: 'p4',
+        name: 'Mi cartera',
+        initialCapital: 5000,
+      );
+      await service.addPosition(
+        const PortfolioPosition(
+          symbol: 'TIME',
+          companyName: 'Temporal integrity',
+          shares: 1,
+          averagePrice: 100,
+          currentPrice: 101,
+        ),
+      );
+
+      final observedAt = DateTime.utc(2026, 9, 2, 16, 45);
+      final report = await service.refreshCurrentPrices(
+        marketRepository: FakeMarketRepository(
+          quotes: {
+            'TIME': MarketQuote(
+              symbol: 'TIME',
+              companyName: 'Temporal integrity',
+              currentPrice: 120,
+              change: 1,
+              changePercentage: 0.8,
+              updatedAt: observedAt,
+              sourceProvider: 'yahoo',
+              retrievedAt: observedAt.subtract(const Duration(seconds: 1)),
+            ),
+          },
+        ),
+      );
+
+      expect(report.hasFailures, isTrue);
+      expect(report.updatedPositions, 0);
+      expect(report.failedSymbols, ['TIME']);
+      expect(service.portfolio!.positions.single.currentPrice, 101);
+    });
+
     test('loads legacy positions without quote provenance', () {
       final position = PortfolioPosition.fromMap({
         'symbol': 'LEGACY',
