@@ -5,6 +5,10 @@ class MarketQuote {
   final double change;
   final double changePercentage;
   final double? marketCap;
+  final String? currency;
+  final String? exchange;
+  final String? quoteType;
+  final String? exchangeTimezone;
   final DateTime updatedAt;
   final String? sourceProvider;
   final DateTime? retrievedAt;
@@ -16,6 +20,10 @@ class MarketQuote {
     required this.change,
     required this.changePercentage,
     this.marketCap,
+    this.currency,
+    this.exchange,
+    this.quoteType,
+    this.exchangeTimezone,
     required this.updatedAt,
     this.sourceProvider,
     this.retrievedAt,
@@ -35,6 +43,10 @@ class MarketQuote {
       'change': change,
       'changePercentage': changePercentage,
       'marketCap': marketCap,
+      'currency': currency,
+      'exchange': exchange,
+      'quoteType': quoteType,
+      'exchangeTimezone': exchangeTimezone,
       'updatedAt': updatedAt.toIso8601String(),
       'sourceProvider': sourceProvider,
       'retrievedAt': retrievedAt?.toIso8601String(),
@@ -51,6 +63,10 @@ class MarketQuote {
       change: (map['change'] as num).toDouble(),
       changePercentage: (map['changePercentage'] as num).toDouble(),
       marketCap: (map['marketCap'] as num?)?.toDouble(),
+      currency: map['currency']?.toString(),
+      exchange: map['exchange']?.toString(),
+      quoteType: map['quoteType']?.toString(),
+      exchangeTimezone: map['exchangeTimezone']?.toString(),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
       sourceProvider: map['sourceProvider']?.toString(),
       retrievedAt: retrievedAtRaw == null
