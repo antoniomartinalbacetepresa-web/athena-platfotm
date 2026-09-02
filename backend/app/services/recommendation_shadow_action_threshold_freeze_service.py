@@ -36,9 +36,11 @@ class RecommendationShadowActionThresholdFreezeService:
     The operational freeze timestamp comes from the service clock, never from the
     caller. This prevents backdating the selection boundary after validation labels
     have already been observed. Repeated calls recover the first persisted boundary.
+    The selected policy is also cryptographically bound to the exact utility panel
+    supplied to this freeze, preventing cross-panel substitution.
     """
 
-    ARTIFACT_VERSION = "shadow-action-threshold-freeze-v2"
+    ARTIFACT_VERSION = "shadow-action-threshold-freeze-v3"
 
     def __init__(
         self,
@@ -61,13 +63,20 @@ class RecommendationShadowActionThresholdFreezeService:
         *,
         utility_panel: dict[str, Any],
     ) -> dict[str, Any]:
+        panel_fingerprint = self._sha256(
+            utility_panel.get("utilityPanelFingerprint"), "utilityPanelFingerprint"
+        )
         selection = self._selection_service.select(utility_panel)
-        self._assert_shadow_selection(selection)
+        self._assert_shadow_selection(
+            selection,
+            expected_panel_fingerprint=panel_fingerprint,
+        )
 
         if selection.get("futureReserveConfirmationEligible") is not True:
             return {
                 "status": "shadow_action_threshold_freeze_insufficient",
                 "artifactVersion": self.ARTIFACT_VERSION,
+                "sourceUtilityPanelFingerprint": panel_fingerprint,
                 "selectionFingerprint": selection.get("selectionFingerprint"),
                 "registered": False,
                 "selectedAt": None,
@@ -76,6 +85,8 @@ class RecommendationShadowActionThresholdFreezeService:
                 "advisoryStatus": "no_advice",
                 "productionEligible": False,
                 "recommendationCandidateReady": False,
+                "actionThresholdCalibrationResearchEligible": False,
+                "actionThresholds": None,
                 "action": None,
                 "score": None,
                 "conviction": None,
@@ -104,6 +115,8 @@ class RecommendationShadowActionThresholdFreezeService:
             raise ValueError("El registro persistido carece de selección válida.")
         if persisted_selection.get("selectionFingerprint") != selection_fingerprint:
             raise ValueError("La selección persistida cambió su fingerprint.")
+        if persisted_selection.get("sourceUtilityPanelFingerprint") != panel_fingerprint:
+            raise ValueError("La selección persistida cambió de panel de utilidad.")
 
         reloaded = self._selection_repository.get(
             selection_fingerprint=selection_fingerprint
@@ -118,9 +131,15 @@ class RecommendationShadowActionThresholdFreezeService:
             raise ValueError("La selección cambió después de persistirse.")
         if reloaded.get("selected_at") != record.get("selected_at"):
             raise ValueError("La frontera temporal cambió después de persistirse.")
+        reloaded_selection = reloaded.get("selection")
+        if not isinstance(reloaded_selection, dict):
+            raise ValueError("La selección recargada carece de payload válido.")
+        if reloaded_selection.get("sourceUtilityPanelFingerprint") != panel_fingerprint:
+            raise ValueError("La selección recargada ya no pertenece al panel congelado.")
 
         core = {
             "artifactVersion": self.ARTIFACT_VERSION,
+            "sourceUtilityPanelFingerprint": panel_fingerprint,
             "selectionFingerprint": selection_fingerprint,
             "registrationFingerprint": self._sha256(
                 record.get("registration_fingerprint"),
@@ -172,9 +191,20 @@ class RecommendationShadowActionThresholdFreezeService:
                 "El reloj de freeze es anterior a evidencia de validation ya observada."
             )
 
-    def _assert_shadow_selection(self, selection: dict[str, Any]) -> None:
+    def _assert_shadow_selection(
+        self,
+        selection: dict[str, Any],
+        *,
+        expected_panel_fingerprint: str,
+    ) -> None:
         if not isinstance(selection, dict):
             raise ValueError("La selección de thresholds debe ser un objeto.")
+        source_panel = self._sha256(
+            selection.get("sourceUtilityPanelFingerprint"),
+            "sourceUtilityPanelFingerprint",
+        )
+        if source_panel != expected_panel_fingerprint:
+            raise ValueError("La selección de thresholds no pertenece al panel suministrado.")
         if selection.get("advisoryStatus") != "no_advice":
             raise ValueError("La selección debe mantener advisoryStatus=no_advice.")
         for field in (
@@ -204,6 +234,7 @@ class RecommendationShadowActionThresholdFreezeService:
     def _policy(self) -> dict[str, Any]:
         return {
             "selectionSource": "validation_only_after_train_only_candidate_generation",
+            "selectionBoundToUtilityPanelFingerprint": True,
             "firstSelectionBoundary": "service_clock_then_sqlite_persisted_immutable",
             "callerSuppliedSelectionTimestampAccepted": False,
             "freezeTimestampMustNotPrecedeObservedValidationEvidence": True,
