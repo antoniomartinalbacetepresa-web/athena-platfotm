@@ -317,12 +317,12 @@ class RecommendationValuationSignalService:
                   AND metric IN ({placeholders})
                   AND UPPER(COALESCE(source_version, '')) LIKE '10-K|%'
                 ORDER BY
+                    COALESCE(effective_at, '') DESC,
                     CASE metric
                         WHEN ? THEN 0
                         WHEN ? THEN 1
                         ELSE 2
                     END,
-                    COALESCE(effective_at, '') DESC,
                     available_at DESC,
                     id DESC
                 """,
