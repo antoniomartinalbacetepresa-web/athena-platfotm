@@ -56,7 +56,8 @@ class RecommendationOutcomeEvaluationReport:
             "knowledgePolicy": "retrieved_at_not_after_evaluation_as_of",
             "evaluationTimestampPolicy": "persist_actual_knowledge_as_of_not_exit_observation_time",
             "duplicateObservationPolicy": "latest_retrieved_at_before_as_of",
-            "benchmarkStatus": "declared_frozen_benchmark_must_resolve_before_outcome_persistence",
+            "benchmarkStatus": "evaluated_when_explicit_frozen_benchmark_is_resolvable",
+            "benchmarkPersistencePolicy": "declared_frozen_benchmark_must_resolve_before_outcome_persistence",
             "benchmarkEvidencePolicy": "exact_observation_and_retrieval_provenance_persisted",
         }
 
