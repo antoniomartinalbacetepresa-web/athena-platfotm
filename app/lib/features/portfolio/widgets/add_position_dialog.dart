@@ -104,6 +104,17 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
         );
       }
 
+      final priceCurrency = quote.currency?.trim().toUpperCase();
+      if (priceCurrency == null ||
+          priceCurrency.length != 3 ||
+          !RegExp(r'^[A-Z]{3}$').hasMatch(priceCurrency)) {
+        throw StateError(
+          'La cotización no incluye una moneda ISO verificable.',
+        );
+      }
+
+      final exchange = _optionalText(quote.exchange);
+      final quoteType = _optionalText(quote.quoteType);
       final verifiedName = quote.companyName.trim();
 
       if (!mounted) {
@@ -117,6 +128,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
           shares: shares,
           averagePrice: averagePrice,
           currentPrice: currentPrice,
+          priceCurrency: priceCurrency,
+          exchange: exchange,
+          quoteType: quoteType,
           currentPriceUpdatedAt: quote.updatedAt,
           currentPriceSourceProvider: sourceProvider,
           currentPriceRetrievedAt: retrievedAt,
@@ -130,9 +144,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
       setState(() {
         _isSaving = false;
         _quoteError =
-            'No se pudo verificar el instrumento, el precio y su procedencia '
-            'con el backend de ATHENA. La posición no se guardará con datos '
-            'manuales, estimados o sin trazabilidad.';
+            'No se pudo verificar el instrumento, el precio, la moneda y su '
+            'procedencia con el backend de ATHENA. La posición no se guardará '
+            'con datos manuales, estimados o sin trazabilidad.';
       });
     }
   }
@@ -213,9 +227,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
                       Expanded(
                         child: Text(
                           'ATHENA verifica el instrumento, obtiene el precio '
-                          'actual desde su backend y exige procedencia temporal '
-                          'trazable antes de guardar. No se aceptan identidades '
-                          'ni precios actuales escritos a mano.',
+                          'actual y su moneda desde el backend y exige procedencia '
+                          'temporal trazable antes de guardar. No se aceptan '
+                          'identidades ni precios actuales escritos a mano.',
                           style: TextStyle(
                             color: AthenaColors.textSecondary,
                             fontSize: 12,
@@ -314,6 +328,11 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
   double _parseNumber(String value) {
     return double.parse(value.trim().replaceAll(',', '.'));
   }
+
+  String? _optionalText(String? value) {
+    final text = value?.trim();
+    return text == null || text.isEmpty ? null : text;
+  }
 }
 
 class AddPositionResult {
@@ -322,6 +341,9 @@ class AddPositionResult {
   final double shares;
   final double averagePrice;
   final double currentPrice;
+  final String priceCurrency;
+  final String? exchange;
+  final String? quoteType;
   final DateTime currentPriceUpdatedAt;
   final String currentPriceSourceProvider;
   final DateTime currentPriceRetrievedAt;
@@ -332,6 +354,9 @@ class AddPositionResult {
     required this.shares,
     required this.averagePrice,
     required this.currentPrice,
+    required this.priceCurrency,
+    this.exchange,
+    this.quoteType,
     required this.currentPriceUpdatedAt,
     required this.currentPriceSourceProvider,
     required this.currentPriceRetrievedAt,
