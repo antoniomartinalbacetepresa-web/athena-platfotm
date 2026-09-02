@@ -22,9 +22,23 @@ def _contract():
     )
 
 
+def _refingerprint(service, artifact):
+    core = {
+        key: artifact[key]
+        for key in (
+            "artifactVersion",
+            "portfolioModel",
+            "positionStates",
+            "actions",
+            "economicObjective",
+            "constraints",
+        )
+    }
+    artifact["economicContractFingerprint"] = service._fingerprint(core)
+
+
 def test_build_creates_long_only_no_advice_contract_without_thresholds():
     artifact = _contract()
-
     assert artifact["portfolioModel"] == "long_only_single_asset_exposure"
     assert artifact["positionStates"] == ["flat", "long"]
     assert artifact["actions"]["buy"]["allowedFrom"] == ["flat", "long"]
@@ -43,7 +57,6 @@ def test_build_creates_long_only_no_advice_contract_without_thresholds():
 
 def test_build_requires_explicit_cost_and_slippage_assumptions():
     artifact = _contract()
-
     objective = artifact["economicObjective"]
     assert objective["transactionCostBps"] == pytest.approx(1.5)
     assert objective["slippageBps"] == pytest.approx(2.0)
@@ -71,7 +84,6 @@ def test_build_rejects_invalid_explicit_cost_inputs(field, value):
         "objective_version": "v1",
     }
     kwargs[field] = value
-
     with pytest.raises(ValueError):
         _service().build(**kwargs)
 
@@ -85,7 +97,6 @@ def test_build_rejects_missing_objective_identity(field):
         "objective_version": "v1",
     }
     kwargs[field] = "  "
-
     with pytest.raises(ValueError):
         _service().build(**kwargs)
 
@@ -98,29 +109,43 @@ def test_validate_accepts_exact_immutable_artifact():
 def test_validate_detects_semantic_tampering_even_when_only_one_field_changes():
     artifact = _contract()
     artifact["actions"]["sell"]["allowedFrom"] = ["flat", "long"]
-
     with pytest.raises(ValueError, match="fingerprint"):
         _service().validate(artifact)
+
+
+def test_validate_rejects_rehashed_action_meaning_tampering():
+    service = _service()
+    artifact = _contract()
+    artifact["actions"]["sell"]["meaning"] = "open_short_position"
+    _refingerprint(service, artifact)
+    with pytest.raises(ValueError, match="semántica exacta"):
+        service.validate(artifact)
+
+
+def test_validate_rejects_rehashed_trade_requirement_tampering():
+    service = _service()
+    artifact = _contract()
+    artifact["actions"]["hold"]["requiresTrade"] = True
+    _refingerprint(service, artifact)
+    with pytest.raises(ValueError, match="semántica exacta"):
+        service.validate(artifact)
 
 
 def test_validate_rejects_attempt_to_enable_trading_even_if_refingerprinted():
     service = _service()
     artifact = _contract()
     artifact["constraints"]["automaticTrading"] = True
-    core = {
-        key: artifact[key]
-        for key in (
-            "artifactVersion",
-            "portfolioModel",
-            "positionStates",
-            "actions",
-            "economicObjective",
-            "constraints",
-        )
-    }
-    artifact["economicContractFingerprint"] = service._fingerprint(core)
-
+    _refingerprint(service, artifact)
     with pytest.raises(ValueError, match="capacidad prohibida"):
+        service.validate(artifact)
+
+
+def test_validate_rejects_unexpected_objective_fields_even_if_refingerprinted():
+    service = _service()
+    artifact = _contract()
+    artifact["economicObjective"]["hiddenPenalty"] = -100.0
+    _refingerprint(service, artifact)
+    with pytest.raises(ValueError, match="campos no permitidos"):
         service.validate(artifact)
 
 
@@ -139,7 +164,6 @@ def test_validate_rejects_attempt_to_enable_trading_even_if_refingerprinted():
 def test_validate_fails_closed_on_promotion_or_calibration_payload(field, value):
     artifact = _contract()
     artifact[field] = value
-
     with pytest.raises(ValueError):
         _service().validate(artifact)
 
@@ -164,6 +188,5 @@ def test_fingerprint_is_deterministic_and_changes_with_precommitted_costs():
         objective_name="net_excess_return_after_explicit_costs",
         objective_version="v1",
     )
-
     assert first["economicContractFingerprint"] == second["economicContractFingerprint"]
     assert first["economicContractFingerprint"] != different["economicContractFingerprint"]
