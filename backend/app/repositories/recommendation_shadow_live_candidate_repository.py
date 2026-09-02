@@ -162,6 +162,26 @@ class RecommendationShadowLiveCandidateRepository:
             ).fetchall()
         return [item for row in rows if (item := self._row(row)) is not None]
 
+    def list_all(self) -> list[dict[str, Any]]:
+        """Return every persisted shadow-live candidate in deterministic order.
+
+        Longitudinal research needs the immutable artifacts, not an SQL-derived
+        interpretation of their contents. Filtering by symbol, horizon and
+        as-of therefore happens after each artifact has been revalidated by the
+        service that owns its schema and fingerprint contract.
+        """
+
+        self.initialize()
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM athena_recommendation_shadow_live_candidates
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [item for row in rows if (item := self._row(row)) is not None]
+
     def _row(self, row: object) -> dict[str, Any] | None:
         if row is None:
             return None
