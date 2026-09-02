@@ -77,6 +77,7 @@ def test_repository_persists_and_reloads_candidate_json(tmp_path):
     assert loaded["artifact"] == artifact
     assert repository.get_by_fingerprint("c" * 64)["id"] == candidate_id
     assert repository.list_for_snapshot(snapshot_id)[0]["id"] == candidate_id
+    assert repository.list_all()[0]["id"] == candidate_id
 
 
 def test_repository_is_idempotent_for_identical_fingerprint_and_content(tmp_path):
@@ -96,6 +97,7 @@ def test_repository_is_idempotent_for_identical_fingerprint_and_content(tmp_path
 
     assert first == second
     assert len(repository.list_for_snapshot(snapshot_id)) == 1
+    assert len(repository.list_all()) == 1
 
 
 def test_repository_rejects_same_fingerprint_with_different_content(tmp_path):
