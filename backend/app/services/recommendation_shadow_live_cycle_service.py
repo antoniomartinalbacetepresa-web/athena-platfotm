@@ -12,14 +12,18 @@ from app.services.recommendation_shadow_live_candidate_pipeline_service import (
 from app.services.recommendation_shadow_live_candidate_store_service import (
     RecommendationShadowLiveCandidateStoreService,
 )
+from app.services.recommendation_shadow_live_uncertainty_service import (
+    RecommendationShadowLiveUncertaintyService,
+)
 
 
 class RecommendationShadowLiveCycleService:
-    """Connect PIT evidence capture -> confirmed inference -> shadow persistence.
+    """Connect PIT evidence -> confirmed inference -> persistence -> uncertainty.
 
-    This is the first end-to-end live candidate cycle, deliberately remaining
-    outside the production recommendation table. The captured PIT snapshot is
-    the immutable anchor used later for 7/30/90/180/365-day outcome evaluation.
+    The captured PIT snapshot is the immutable anchor used later for
+    7/30/90/180/365-day outcome evaluation. Empirical uncertainty is computed
+    only after persistence and reconstructs what was knowable at the candidate's
+    own ``asOf`` from earlier forward residuals of the exact same frozen model.
     """
 
     def __init__(
@@ -28,12 +32,16 @@ class RecommendationShadowLiveCycleService:
         capture_service: RecommendationShadowCaptureService | None = None,
         candidate_pipeline: RecommendationShadowLiveCandidatePipelineService | None = None,
         store_service: RecommendationShadowLiveCandidateStoreService | None = None,
+        uncertainty_service: RecommendationShadowLiveUncertaintyService | None = None,
     ) -> None:
         self._capture_service = capture_service or RecommendationShadowCaptureService()
         self._candidate_pipeline = (
             candidate_pipeline or RecommendationShadowLiveCandidatePipelineService()
         )
         self._store_service = store_service or RecommendationShadowLiveCandidateStoreService()
+        self._uncertainty_service = (
+            uncertainty_service or RecommendationShadowLiveUncertaintyService()
+        )
 
     def run(
         self,
@@ -97,11 +105,19 @@ class RecommendationShadowLiveCycleService:
         self._assert_shadow_candidate(persisted, "candidate_persistence")
         if persisted.get("status") != "shadow_live_candidate_persisted":
             raise RuntimeError("El store shadow no confirmó la persistencia del candidato.")
+        candidate_id = persisted.get("candidateId")
+        if not isinstance(candidate_id, int) or candidate_id <= 0:
+            raise RuntimeError("El store shadow no devolvió candidateId válido.")
+
+        uncertainty = self._uncertainty_service.evaluate(candidate_id=candidate_id)
+        self._assert_uncertainty_shadow(uncertainty)
+        if uncertainty.get("candidateFingerprint") != persisted.get("candidateFingerprint"):
+            raise RuntimeError("La incertidumbre shadow cambió el candidato persistido.")
 
         return {
             "status": "shadow_live_cycle_persisted",
             "snapshotId": snapshot_id,
-            "candidateId": persisted.get("candidateId"),
+            "candidateId": candidate_id,
             "candidateFingerprint": persisted.get("candidateFingerprint"),
             "confirmationEvidenceFingerprint": persisted.get(
                 "confirmationEvidenceFingerprint"
@@ -111,12 +127,17 @@ class RecommendationShadowLiveCycleService:
             "benchmarkSymbol": normalized_benchmark,
             "inferredHorizonCount": candidate.get("inferredHorizonCount"),
             "candidate": candidate,
+            "uncertainty": uncertainty,
+            "empiricalUncertaintyHorizonCount": uncertainty.get(
+                "calibratedHorizonCount", 0
+            ),
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "recommendationCandidateReady": False,
             "policy": {
-                "flow": "pit_capture_then_confirmed_frozen_model_inference_then_shadow_persistence",
+                "flow": "pit_capture_then_confirmed_frozen_model_inference_then_shadow_persistence_then_ex_ante_uncertainty",
                 "outcomes": "measured_later_from_same_pit_snapshot",
+                "uncertainty": "prior_non_overlapping_forward_residuals_same_frozen_model_only",
                 "action": "not_assigned",
                 "score": "not_calibrated",
                 "conviction": "not_calibrated",
@@ -143,3 +164,16 @@ class RecommendationShadowLiveCycleService:
             raise ValueError(f"{stage} no puede publicar score no calibrado.")
         if payload.get("conviction") is not None:
             raise ValueError(f"{stage} no puede publicar conviction no calibrada.")
+
+    def _assert_uncertainty_shadow(self, payload: dict[str, Any]) -> None:
+        self._assert_no_advice(payload, "uncertainty")
+        if payload.get("productionEligible") is not False:
+            raise ValueError("uncertainty debe declarar productionEligible=False.")
+        if payload.get("recommendationCandidateReady") is not False:
+            raise ValueError("uncertainty no puede habilitar recomendaciones.")
+        if payload.get("actionThresholdCalibrationResearchEligible") is not False:
+            raise ValueError("uncertainty no puede promover calibración de acciones.")
+        if payload.get("action") is not None:
+            raise ValueError("uncertainty no puede asignar action.")
+        if payload.get("conviction") is not None:
+            raise ValueError("uncertainty no puede publicar convicción.")
