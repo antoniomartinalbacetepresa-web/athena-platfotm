@@ -30,7 +30,9 @@ class FakeHoldoutService:
         }
 
 
-def _gate(*, eligible: bool = True, passing_30: bool = True):
+def _gate(*, eligible: bool = True, passing_30: bool = True, source_fingerprint=None):
+    if source_fingerprint is None:
+        source_fingerprint = _selection()["sourceWalkForwardFingerprint"]
     return {
         "status": (
             "shadow_candidate_may_enter_action_calibration_research"
@@ -47,18 +49,21 @@ def _gate(*, eligible: bool = True, passing_30: bool = True):
                 "horizonDays": 7,
                 "evaluated": True,
                 "passesResearchGate": True,
+                "sourceWalkForwardFingerprint": "unused-7",
                 "reasons": [],
             },
             "30": {
                 "horizonDays": 30,
                 "evaluated": True,
                 "passesResearchGate": passing_30,
+                "sourceWalkForwardFingerprint": source_fingerprint,
                 "reasons": [] if passing_30 else ["baseline_win_rate_below_research_threshold"],
             },
             "90": {
                 "horizonDays": 90,
                 "evaluated": True,
                 "passesResearchGate": eligible,
+                "sourceWalkForwardFingerprint": "unused-90",
                 "reasons": [],
             },
         },
@@ -81,6 +86,9 @@ def _walk_forward(lambdas=(1.0, 1.0, 10.0)):
     return {
         "status": "shadow_walk_forward_evaluated",
         "horizonDays": 30,
+        "foldCount": len(lambdas),
+        "evaluatedFoldCount": len(lambdas),
+        "blockedFoldCount": 0,
         "folds": [
             {
                 "foldIndex": index,
@@ -147,13 +155,13 @@ def test_gated_freeze_uses_only_research_derived_lambda_and_binds_fingerprints()
     selection = _selection()
 
     first = service.freeze(
-        research_gate=_gate(),
+        research_gate=_gate(source_fingerprint=selection["sourceWalkForwardFingerprint"]),
         protocol_selection=selection,
         research_cutoff=cutoff,
         horizon_days=30,
     )
     second = service.freeze(
-        research_gate=_gate(),
+        research_gate=_gate(source_fingerprint=selection["sourceWalkForwardFingerprint"]),
         protocol_selection=selection,
         research_cutoff=cutoff,
         horizon_days=30,
@@ -163,6 +171,7 @@ def test_gated_freeze_uses_only_research_derived_lambda_and_binds_fingerprints()
     assert first["bundleVersion"] == "shadow-gated-freeze-v2"
     assert first["ridgeLambda"] == selection["selectedRidgeLambda"] == 1.0
     assert holdout.calls[0]["ridge_lambda"] == 1.0
+    assert first["sourceWalkForwardFingerprint"] == selection["sourceWalkForwardFingerprint"]
     assert first["researchGateFingerprint"] == second["researchGateFingerprint"]
     assert first["protocolSelectionFingerprint"] == second["protocolSelectionFingerprint"]
     assert first["bundleFingerprint"] == second["bundleFingerprint"]
@@ -173,6 +182,22 @@ def test_gated_freeze_uses_only_research_derived_lambda_and_binds_fingerprints()
     assert first["productionEligible"] is False
     assert first["advisoryStatus"] == "no_advice"
     service.validate_bundle(first)
+
+
+def test_freeze_rejects_protocol_selection_from_different_walk_forward():
+    holdout = FakeHoldoutService()
+    service = RecommendationShadowGatedFreezeService(holdout_service=holdout)
+    selection = _selection()
+
+    with pytest.raises(ValueError, match="no procede"):
+        service.freeze(
+            research_gate=_gate(source_fingerprint="different-walk-forward"),
+            protocol_selection=selection,
+            research_cutoff=datetime(2025, 7, 1, tzinfo=timezone.utc),
+            horizon_days=30,
+        )
+
+    assert holdout.calls == []
 
 
 def test_freeze_rejects_protocol_selection_for_another_horizon():
