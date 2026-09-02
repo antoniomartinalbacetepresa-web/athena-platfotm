@@ -9,7 +9,9 @@ from app.database.athena_database import AthenaDatabase
 
 
 class RecommendationShadowHoldoutSealRepository:
-    """Persist the first sufficiently mature holdout result for each research cohort."""
+    """Persist immutable holdout seals and the lineage of holdout experiments."""
+
+    EXPERIMENT_FAMILY = "shadow-ridge-excess-return-v1"
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -32,8 +34,103 @@ class RecommendationShadowHoldoutSealRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_shadow_holdout_seal_cutoff
                 ON athena_recommendation_shadow_holdout_seals(research_cutoff);
+
+                CREATE TABLE IF NOT EXISTS athena_recommendation_shadow_holdout_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    experiment_family TEXT NOT NULL,
+                    research_gate_fingerprint TEXT NOT NULL,
+                    research_cutoff TEXT NOT NULL,
+                    first_attempted_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(experiment_family, research_gate_fingerprint, research_cutoff)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_shadow_holdout_attempt_family
+                ON athena_recommendation_shadow_holdout_attempts(experiment_family);
                 """
             )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO athena_recommendation_shadow_holdout_attempts (
+                    experiment_family,
+                    research_gate_fingerprint,
+                    research_cutoff,
+                    first_attempted_at,
+                    created_at
+                )
+                SELECT ?, research_gate_fingerprint, research_cutoff, sealed_at, created_at
+                FROM athena_recommendation_shadow_holdout_seals
+                """,
+                (self.EXPERIMENT_FAMILY,),
+            )
+
+    def register_attempt(
+        self,
+        *,
+        research_gate_fingerprint: str,
+        research_cutoff: str,
+        attempted_at: datetime,
+    ) -> dict[str, Any]:
+        """Register one distinct research cohort as exposed to independent holdout.
+
+        Repeated evaluations of the same cohort remain one experiment. Distinct
+        research-gate/cutoff pairs are separate experiments and therefore count
+        toward multiple-testing risk.
+        """
+        self.initialize()
+        gate = self._sha256(research_gate_fingerprint, "research_gate_fingerprint")
+        cutoff = self._aware_iso(research_cutoff, "research_cutoff")
+        attempted = self._aware_datetime(attempted_at, "attempted_at").isoformat()
+        created = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO athena_recommendation_shadow_holdout_attempts (
+                    experiment_family,
+                    research_gate_fingerprint,
+                    research_cutoff,
+                    first_attempted_at,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (self.EXPERIMENT_FAMILY, gate, cutoff, attempted, created),
+            )
+            row = connection.execute(
+                """
+                SELECT *
+                FROM athena_recommendation_shadow_holdout_attempts
+                WHERE experiment_family = ?
+                  AND research_gate_fingerprint = ?
+                  AND research_cutoff = ?
+                """,
+                (self.EXPERIMENT_FAMILY, gate, cutoff),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("No se pudo recuperar el intento holdout registrado.")
+        return dict(row)
+
+    def multiplicity_summary(self) -> dict[str, Any]:
+        self.initialize()
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT research_gate_fingerprint, research_cutoff, first_attempted_at
+                FROM athena_recommendation_shadow_holdout_attempts
+                WHERE experiment_family = ?
+                ORDER BY first_attempted_at ASC, id ASC
+                """,
+                (self.EXPERIMENT_FAMILY,),
+            ).fetchall()
+        experiments = [dict(row) for row in rows]
+        count = len(experiments)
+        return {
+            "experimentFamily": self.EXPERIMENT_FAMILY,
+            "distinctHoldoutExperimentCount": count,
+            "multiplicityPresent": count > 1,
+            "multiplicityControlled": count <= 1,
+            "correctionMethod": "not_required" if count <= 1 else "not_yet_implemented",
+            "experiments": experiments,
+        }
 
     def get(
         self,
