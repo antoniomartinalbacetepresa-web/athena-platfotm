@@ -4,6 +4,9 @@ import copy
 
 import pytest
 
+from app.services.recommendation_shadow_action_threshold_candidate_service import (
+    RecommendationShadowActionThresholdCandidateService,
+)
 from app.services.recommendation_shadow_action_threshold_selection_service import (
     RecommendationShadowActionThresholdSelectionService,
 )
@@ -103,6 +106,9 @@ def _panel(*, validation_source_rows: int = 12):
 def _service(**kwargs):
     return RecommendationShadowActionThresholdSelectionService(
         panel_validator=_IdentityPanelValidator(),
+        candidate_service=RecommendationShadowActionThresholdCandidateService(
+            panel_validator=_IdentityPanelValidator()
+        ),
         **kwargs,
     )
 
