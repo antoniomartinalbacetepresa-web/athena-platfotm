@@ -145,6 +145,74 @@ class RecommendationShadowActionCalibrationUtilityPanelService:
             },
         }
 
+    def validate_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(artifact, dict):
+            raise ValueError("El panel de utilidad debe ser un objeto.")
+        if artifact.get("artifactVersion") != self.ARTIFACT_VERSION:
+            raise ValueError("Versión de panel de utilidad no soportada.")
+        fingerprint = self._sha256(
+            artifact.get("utilityPanelFingerprint"), "utilityPanelFingerprint"
+        )
+        core_keys = (
+            "artifactVersion",
+            "sourceSplitFingerprint",
+            "economicContractFingerprint",
+            "positionStates",
+            "requestedHorizons",
+            "trainSourceRowCount",
+            "validationSourceRowCount",
+            "trainUtilityRowCount",
+            "validationUtilityRowCount",
+            "sourceReservedFutureRowCount",
+            "trainUtilityRows",
+            "validationUtilityRows",
+        )
+        core = {key: artifact.get(key) for key in core_keys}
+        if self._fingerprint(core) != fingerprint:
+            raise ValueError("El panel de utilidad fue modificado tras su creación.")
+        if artifact.get("labelSemantics") != (
+            "matured_outcome_state_counterfactuals_not_observed_portfolio_history"
+        ):
+            raise ValueError("La semántica de etiquetas del panel fue alterada.")
+        if artifact.get("advisoryStatus") != "no_advice":
+            raise ValueError("El panel debe permanecer en no_advice.")
+        for field in (
+            "productionEligible",
+            "recommendationCandidateReady",
+            "actionThresholdCalibrationResearchEligible",
+        ):
+            if artifact.get(field) is not False:
+                raise ValueError(f"{field} debe permanecer deshabilitado.")
+        for field in ("actionThresholds", "action", "score", "conviction"):
+            if artifact.get(field) is not None:
+                raise ValueError(f"{field} no puede estar definido en el panel.")
+        policy = artifact.get("policy")
+        if not isinstance(policy, dict):
+            raise ValueError("El panel carece de policy válida.")
+        required = {
+            "portfolioHistoryFabricated": False,
+            "allContractStatesEvaluatedPerMaturedRow": True,
+            "futureReserveConsumed": False,
+            "thresholdFitting": "not_performed",
+            "automaticProductionPromotion": False,
+            "automaticTrading": False,
+        }
+        if policy != required:
+            raise ValueError("La policy del panel fue alterada.")
+        train_rows = self._rows(artifact.get("trainUtilityRows"), "trainUtilityRows")
+        validation_rows = self._rows(
+            artifact.get("validationUtilityRows"), "validationUtilityRows"
+        )
+        if artifact.get("trainUtilityRowCount") != len(train_rows):
+            raise ValueError("trainUtilityRowCount no coincide con las filas.")
+        if artifact.get("validationUtilityRowCount") != len(validation_rows):
+            raise ValueError("validationUtilityRowCount no coincide con las filas.")
+        if any(row.get("partition") != "train" for row in train_rows):
+            raise ValueError("trainUtilityRows contiene otra partición.")
+        if any(row.get("partition") != "validation" for row in validation_rows):
+            raise ValueError("validationUtilityRows contiene otra partición.")
+        return artifact
+
     def _partition_panel(
         self,
         *,
