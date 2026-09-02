@@ -62,6 +62,9 @@ class PortfolioService {
         refreshed.add(
           position.copyWith(
             currentPrice: quote.currentPrice,
+            priceCurrency: _normalizedOptional(quote.currency),
+            exchange: _normalizedOptional(quote.exchange),
+            quoteType: _normalizedOptional(quote.quoteType),
             currentPriceUpdatedAt: quote.updatedAt,
             currentPriceSourceProvider: quote.sourceProvider!.trim(),
             currentPriceRetrievedAt: quote.retrievedAt,
@@ -117,6 +120,14 @@ class PortfolioService {
         'La recuperación no puede preceder a la observación de mercado.',
       );
     }
+  }
+
+  String? _normalizedOptional(String? value) {
+    final normalized = value?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
   }
 
   Future<void> createPortfolio({
