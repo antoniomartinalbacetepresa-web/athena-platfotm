@@ -7,10 +7,9 @@ import 'market_data_provider.dart';
 
 /// Proveedor de datos de mercado procedentes del backend de ATHENA TYCHE.
 ///
-/// Flutter no conoce qué fuentes externas utiliza el backend.
-/// Yahoo, SEC, FRED u otros proveedores quedan aislados en el servidor.
-///
-/// Este proveedor no almacena ni envía claves API de proveedores externos.
+/// Flutter no conoce ni expone claves de proveedores externos. El backend sí
+/// puede declarar la fuente real utilizada y el instante de recuperación para
+/// conservar provenance sin acoplar la aplicación cliente al proveedor.
 class AthenaBackendMarketDataProvider implements MarketDataProvider {
   static const String _providerId = 'athena_backend';
 
@@ -18,7 +17,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
   final http.Client client;
 
   AthenaBackendMarketDataProvider({required this.baseUrl, http.Client? client})
-    : client = client ?? http.Client();
+      : client = client ?? http.Client();
 
   @override
   String get providerId => _providerId;
@@ -45,8 +44,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
     if (data is! Map) {
       throw const FormatException(
-        'La respuesta del backend no contiene '
-        'una cotización válida.',
+        'La respuesta del backend no contiene una cotización válida.',
       );
     }
 
@@ -92,8 +90,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
     if (data is! List) {
       throw const FormatException(
-        'La respuesta histórica del backend '
-        'no contiene una lista válida.',
+        'La respuesta histórica del backend no contiene una lista válida.',
       );
     }
 
@@ -120,8 +117,10 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     required String fallbackSymbol,
   }) {
     final timestamp = _parseTimestamp(data['timestamp']);
+    final retrievedAt = _parseOptionalTimestamp(data['retrievedAt']);
 
     final symbol = data['symbol']?.toString().trim().toUpperCase();
+    final sourceProvider = data['sourceProvider']?.toString().trim();
 
     return MarketDataPoint(
       symbol: symbol == null || symbol.isEmpty ? fallbackSymbol : symbol,
@@ -135,6 +134,9 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       change: _parseDouble(data['change']),
       changePercentage: _parseDouble(data['changePercentage']),
       providerId: providerId,
+      sourceProvider:
+          sourceProvider == null || sourceProvider.isEmpty ? null : sourceProvider,
+      retrievedAt: retrievedAt,
     );
   }
 
@@ -155,8 +157,8 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
   void _validateResponse(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
-        'El backend de ATHENA TYCHE respondió '
-        'con código HTTP ${response.statusCode}.',
+        'El backend de ATHENA TYCHE respondió con código HTTP '
+        '${response.statusCode}.',
       );
     }
   }
@@ -166,8 +168,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException(
-        'La respuesta del backend de ATHENA TYCHE '
-        'no es un objeto JSON válido.',
+        'La respuesta del backend de ATHENA TYCHE no es un objeto JSON válido.',
       );
     }
 
@@ -195,8 +196,22 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
     if (parsed == null) {
       throw FormatException(
-        'Fecha/hora inválida recibida '
-        'del backend: $value',
+        'Fecha/hora inválida recibida del backend: $value',
+      );
+    }
+
+    return parsed;
+  }
+
+  DateTime? _parseOptionalTimestamp(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+
+    final parsed = DateTime.tryParse(value.toString());
+    if (parsed == null) {
+      throw FormatException(
+        'Fecha/hora de recuperación inválida recibida del backend: $value',
       );
     }
 
@@ -205,9 +220,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
   String _formatDate(DateTime value) {
     final year = value.year.toString().padLeft(4, '0');
-
     final month = value.month.toString().padLeft(2, '0');
-
     final day = value.day.toString().padLeft(2, '0');
 
     return '$year-$month-$day';
