@@ -8,10 +8,9 @@ import 'package:app/features/market/data/providers/athena_backend_market_data_pr
 
 void main() {
   group('AthenaBackendMarketDataProvider', () {
-    test('obtiene una cotización normalizada desde el backend', () async {
+    test('obtiene una cotización normalizada con provenance', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/market/quote');
-
         expect(request.url.queryParameters['symbol'], 'AAPL');
 
         return http.Response(
@@ -19,6 +18,8 @@ void main() {
             'data': {
               'symbol': 'AAPL',
               'timestamp': '2026-08-29T15:30:00Z',
+              'retrievedAt': '2026-08-29T15:30:02Z',
+              'sourceProvider': 'yahoo',
               'open': 230.0,
               'high': 235.0,
               'low': 228.0,
@@ -52,16 +53,18 @@ void main() {
       expect(quote.change, 4.5);
       expect(quote.changePercentage, 1.96);
       expect(quote.providerId, 'athena_backend');
+      expect(quote.sourceProvider, 'yahoo');
+      expect(
+        quote.retrievedAt,
+        DateTime.parse('2026-08-29T15:30:02Z'),
+      );
     });
 
-    test('obtiene histórico y envía correctamente el periodo', () async {
+    test('obtiene histórico y conserva provenance', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/market/history');
-
         expect(request.url.queryParameters['symbol'], 'MSFT');
-
         expect(request.url.queryParameters['from'], '2026-01-01');
-
         expect(request.url.queryParameters['to'], '2026-08-29');
 
         return http.Response(
@@ -70,6 +73,8 @@ void main() {
               {
                 'symbol': 'MSFT',
                 'timestamp': '2026-08-28T00:00:00Z',
+                'retrievedAt': '2026-08-30T10:00:00Z',
+                'sourceProvider': 'yahoo',
                 'open': 500.0,
                 'high': 510.0,
                 'low': 495.0,
@@ -80,6 +85,8 @@ void main() {
               {
                 'symbol': 'MSFT',
                 'timestamp': '2026-08-29T00:00:00Z',
+                'retrievedAt': '2026-08-30T10:00:00Z',
+                'sourceProvider': 'yahoo',
                 'open': 508.0,
                 'high': 515.0,
                 'low': 505.0,
@@ -105,14 +112,63 @@ void main() {
       );
 
       expect(history.length, 2);
-
       expect(history.first.symbol, 'MSFT');
-
       expect(history.first.close, 508.0);
-
       expect(history.last.close, 512.0);
-
       expect(history.last.providerId, 'athena_backend');
+      expect(history.last.sourceProvider, 'yahoo');
+      expect(
+        history.last.retrievedAt,
+        DateTime.parse('2026-08-30T10:00:00Z'),
+      );
+    });
+
+    test('mantiene compatibilidad si provenance no está disponible', () async {
+      final client = MockClient((_) async {
+        return http.Response(
+          jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-08-29T15:30:00Z',
+              'close': 234.5,
+            },
+          }),
+          200,
+        );
+      });
+
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+
+      final quote = await provider.getQuote('AAPL');
+
+      expect(quote, isNotNull);
+      expect(quote!.sourceProvider, isNull);
+      expect(quote.retrievedAt, isNull);
+    });
+
+    test('rechaza retrievedAt inválido cuando el backend lo declara', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': {
+                'symbol': 'AAPL',
+                'timestamp': '2026-08-29T15:30:00Z',
+                'retrievedAt': 'no-es-fecha',
+                'sourceProvider': 'yahoo',
+                'close': 234.5,
+              },
+            }),
+            200,
+          ),
+        ),
+      );
+
+      expect(() => provider.getQuote('AAPL'), throwsFormatException);
     });
 
     test('devuelve null cuando el backend no dispone de cotización', () async {
