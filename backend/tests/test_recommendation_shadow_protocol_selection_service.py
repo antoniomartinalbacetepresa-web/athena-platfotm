@@ -32,6 +32,9 @@ def _walk_forward(lambdas=(1.0, 1.0, 10.0, 1.0)):
     return {
         "status": "shadow_walk_forward_evaluated",
         "horizonDays": 30,
+        "foldCount": len(lambdas),
+        "evaluatedFoldCount": len(lambdas),
+        "blockedFoldCount": 0,
         "folds": [
             {
                 "foldIndex": index,
@@ -56,12 +59,13 @@ def test_selects_modal_validation_lambda_without_using_test_metrics():
     assert result["evaluatedFoldSelectionCount"] == 4
     assert result["selectionSupportRatio"] == pytest.approx(0.75)
     assert result["testMetricsUsedForSelection"] is False
+    assert len(result["sourceWalkForwardFingerprint"]) == 64
     assert result["productionEligible"] is False
     assert result["advisoryStatus"] == "no_advice"
     service.validate_selection(result)
 
 
-def test_selection_is_unchanged_when_test_metrics_are_rewritten():
+def test_test_metrics_do_not_change_lambda_but_do_change_evidence_identity():
     service = RecommendationShadowProtocolSelectionService()
     first_evidence = _walk_forward()
     second_evidence = copy.deepcopy(first_evidence)
@@ -75,7 +79,8 @@ def test_selection_is_unchanged_when_test_metrics_are_rewritten():
     second = service.select(walk_forward_evidence=second_evidence, horizon_days=30)
 
     assert first["selectedRidgeLambda"] == second["selectedRidgeLambda"] == 1.0
-    assert first["selectionFingerprint"] == second["selectionFingerprint"]
+    assert first["sourceWalkForwardFingerprint"] != second["sourceWalkForwardFingerprint"]
+    assert first["selectionFingerprint"] != second["selectionFingerprint"]
 
 
 def test_tie_breaks_toward_stronger_regularization_deterministically():
@@ -108,6 +113,24 @@ def test_validate_selection_detects_selected_lambda_tampering():
 
     with pytest.raises(ValueError, match="regla determinista"):
         service.validate_selection(result)
+
+
+def test_rejects_duplicate_fold_indexes():
+    service = RecommendationShadowProtocolSelectionService()
+    evidence = _walk_forward()
+    evidence["folds"][1]["foldIndex"] = evidence["folds"][0]["foldIndex"]
+
+    with pytest.raises(ValueError, match="duplicado"):
+        service.select(walk_forward_evidence=evidence, horizon_days=30)
+
+
+def test_rejects_reported_evaluated_fold_count_mismatch():
+    service = RecommendationShadowProtocolSelectionService()
+    evidence = _walk_forward()
+    evidence["evaluatedFoldCount"] = 99
+
+    with pytest.raises(ValueError, match="evaluatedFoldCount"):
+        service.select(walk_forward_evidence=evidence, horizon_days=30)
 
 
 def test_rejects_horizon_mismatch_and_non_shadow_evidence():
