@@ -15,8 +15,10 @@ class RecommendationShadowHoldoutSealService:
     """Seal the first sufficiently mature independent holdout for a cohort.
 
     Once a cohort has enough independent horizons to be judged, its first result
-    is immutable. Later calls return that stored result instead of allowing the
-    same cohort to be re-tested until market evolution makes it look favourable.
+    is immutable. Every distinct cohort that reaches independent holdout is also
+    registered as an experiment. Until a formal multiple-testing correction is
+    implemented, more than one attempted cohort revokes downstream threshold-
+    calibration eligibility even when an individual raw holdout gate passes.
     """
 
     def __init__(
@@ -53,6 +55,13 @@ class RecommendationShadowHoldoutSealService:
         research_cutoff = self._required_text(
             pipeline.get("researchCutoff"), "researchCutoff"
         )
+
+        self._repository.register_attempt(
+            research_gate_fingerprint=gate_fingerprint,
+            research_cutoff=research_cutoff,
+            attempted_at=cutoff,
+        )
+
         existing = self._repository.get(
             research_gate_fingerprint=gate_fingerprint,
             research_cutoff=research_cutoff,
@@ -82,6 +91,7 @@ class RecommendationShadowHoldoutSealService:
                 "sealReason": "insufficient_mature_horizons_to_seal",
                 "evaluatedHorizonCount": evaluated,
                 "minimumEvaluatedHorizonsToSeal": minimum,
+                "experimentMultiplicity": self._repository.multiplicity_summary(),
             }
 
         sealed = self._repository.seal(pipeline=pipeline, sealed_at=cutoff)
@@ -96,6 +106,12 @@ class RecommendationShadowHoldoutSealService:
         if not isinstance(gate, dict):
             raise ValueError("El pipeline sellado no contiene holdoutGate.")
         self._assert_shadow(gate, "sealed_holdout_gate")
+
+        multiplicity = self._repository.multiplicity_summary()
+        raw_eligible = gate.get("actionThresholdCalibrationResearchEligible") is True
+        multiplicity_controlled = multiplicity.get("multiplicityControlled") is True
+        final_eligible = raw_eligible and multiplicity_controlled
+
         return {
             "status": "shadow_independent_holdout_sealed",
             "holdoutSealed": True,
@@ -106,15 +122,18 @@ class RecommendationShadowHoldoutSealService:
             "researchGateFingerprint": record["research_gate_fingerprint"],
             "researchCutoff": record["research_cutoff"],
             "holdoutGate": gate,
-            "actionThresholdCalibrationResearchEligible": gate.get(
-                "actionThresholdCalibrationResearchEligible"
-            ) is True,
+            "rawHoldoutGateEligible": raw_eligible,
+            "experimentMultiplicity": multiplicity,
+            "actionThresholdCalibrationResearchEligible": final_eligible,
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "policy": {
                 "firstSufficientHoldoutResultIsImmutable": True,
                 "repeatUntilPass": False,
                 "sameCohortRetestForPromotion": False,
+                "distinctHoldoutCohortsTracked": True,
+                "multipleExperimentSelectionBlocked": True,
+                "uncorrectedMultiplicityMayPromote": False,
                 "thresholdsCanBeFitOnThisHoldout": False,
                 "actions": "not_assigned",
                 "automaticProductionPromotion": False,
