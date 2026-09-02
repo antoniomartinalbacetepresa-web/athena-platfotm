@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from statistics import mean
 from typing import Any
@@ -37,6 +38,10 @@ class RecommendationPerformanceReport:
             "byAction": {key: dict(value) for key, value in self.by_action.items()},
             "convictionBuckets": [dict(bucket) for bucket in self.conviction_buckets],
             "holdAccuracyStatus": "not_defined_without_validated_tolerance_band",
+            "benchmarkPolicy": (
+                "excess_return_requires_persisted_frozen_benchmark_provenance; "
+                "legacy_scalar_excess_is_excluded"
+            ),
             "warning": (
                 "La precisión direccional sólo se calcula para buy, sell y reduce. "
                 "Hold se excluye hasta definir una banda de neutralidad validada."
@@ -64,6 +69,8 @@ class RecommendationPerformanceService:
         model_version: str | None = None,
         horizon_days: int | None = None,
     ) -> RecommendationPerformanceReport:
+        # This also performs the additive outcome-schema migration before we query
+        # benchmark_evidence_json on long-lived local SQLite databases.
         self._history.initialize()
         if horizon_days is not None and horizon_days <= 0:
             raise ValueError("horizon_days debe ser mayor que 0.")
@@ -92,10 +99,12 @@ class RecommendationPerformanceService:
                     r.action,
                     r.conviction,
                     r.model_version,
+                    r.benchmark_symbol,
                     o.horizon_days,
                     o.realized_return,
                     o.benchmark_return,
-                    o.excess_return
+                    o.excess_return,
+                    o.benchmark_evidence_json
                 FROM athena_recommendation_outcomes o
                 JOIN athena_recommendations r ON r.id = o.recommendation_id
                 {where}
@@ -105,11 +114,13 @@ class RecommendationPerformanceService:
             ).fetchall()
 
         observations = [dict(row) for row in rows]
+        for row in observations:
+            row["benchmark_provenanced"] = self._has_benchmark_provenance(row)
         realized = [float(row["realized_return"]) for row in observations]
         excess = [
             float(row["excess_return"])
             for row in observations
-            if row["excess_return"] is not None
+            if row["excess_return"] is not None and row["benchmark_provenanced"]
         ]
 
         by_action = {
@@ -184,7 +195,7 @@ class RecommendationPerformanceService:
         excess = [
             float(row["excess_return"])
             for row in rows
-            if row["excess_return"] is not None
+            if row["excess_return"] is not None and row.get("benchmark_provenanced") is True
         ]
         directional_accuracy: float | None = None
         success_count: int | None = None
@@ -199,6 +210,32 @@ class RecommendationPerformanceService:
             "directionalSuccessCount": success_count,
             "directionalAccuracy": directional_accuracy,
         }
+
+    def _has_benchmark_provenance(self, row: dict[str, Any]) -> bool:
+        if row.get("benchmark_return") is None or row.get("excess_return") is None:
+            return False
+        raw = row.get("benchmark_evidence_json")
+        if raw is None:
+            return False
+        try:
+            evidence = json.loads(str(raw))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(evidence, dict) or evidence.get("status") != "resolved":
+            return False
+        frozen_symbol = str(row.get("benchmark_symbol") or "").strip().upper()
+        evidence_symbol = str(evidence.get("benchmarkSymbol") or "").strip().upper()
+        return bool(
+            frozen_symbol
+            and frozen_symbol == evidence_symbol
+            and evidence.get("benchmarkInstrumentId") is not None
+            and evidence.get("entryObservedAt")
+            and evidence.get("exitObservedAt")
+            and evidence.get("entryRetrievedAt")
+            and evidence.get("exitRetrievedAt")
+            and evidence.get("entrySourceProvider")
+            and evidence.get("exitSourceProvider")
+        )
 
     def _is_directional_success(self, row: dict[str, Any]) -> bool:
         action = str(row["action"])
