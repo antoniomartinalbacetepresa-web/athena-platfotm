@@ -4,6 +4,7 @@ class PortfolioPosition {
   final double shares;
   final double averagePrice;
   final double currentPrice;
+  final DateTime? currentPriceUpdatedAt;
 
   const PortfolioPosition({
     required this.symbol,
@@ -11,6 +12,7 @@ class PortfolioPosition {
     required this.shares,
     required this.averagePrice,
     required this.currentPrice,
+    this.currentPriceUpdatedAt,
   });
 
   double get investedValue {
@@ -33,9 +35,24 @@ class PortfolioPosition {
     return (profitLoss / investedValue) * 100;
   }
 
-  // ============================================================
-  // MAP
-  // ============================================================
+  PortfolioPosition copyWith({
+    String? symbol,
+    String? companyName,
+    double? shares,
+    double? averagePrice,
+    double? currentPrice,
+    DateTime? currentPriceUpdatedAt,
+  }) {
+    return PortfolioPosition(
+      symbol: symbol ?? this.symbol,
+      companyName: companyName ?? this.companyName,
+      shares: shares ?? this.shares,
+      averagePrice: averagePrice ?? this.averagePrice,
+      currentPrice: currentPrice ?? this.currentPrice,
+      currentPriceUpdatedAt:
+          currentPriceUpdatedAt ?? this.currentPriceUpdatedAt,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -44,32 +61,30 @@ class PortfolioPosition {
       'shares': shares,
       'averagePrice': averagePrice,
       'currentPrice': currentPrice,
+      'currentPriceUpdatedAt': currentPriceUpdatedAt?.toIso8601String(),
     };
   }
 
-  factory PortfolioPosition.fromMap(
-    Map<String, dynamic> map,
-  ) {
+  factory PortfolioPosition.fromMap(Map<String, dynamic> map) {
+    final updatedAtRaw = map['currentPriceUpdatedAt'];
+
     return PortfolioPosition(
       symbol: map['symbol'] as String,
       companyName: map['companyName'] as String,
       shares: (map['shares'] as num).toDouble(),
       averagePrice: (map['averagePrice'] as num).toDouble(),
       currentPrice: (map['currentPrice'] as num).toDouble(),
+      currentPriceUpdatedAt: updatedAtRaw == null
+          ? null
+          : DateTime.tryParse(updatedAtRaw.toString()),
     );
   }
-
-  // ============================================================
-  // JSON
-  // ============================================================
 
   Map<String, dynamic> toJson() {
     return toMap();
   }
 
-  factory PortfolioPosition.fromJson(
-    Map<String, dynamic> json,
-  ) {
+  factory PortfolioPosition.fromJson(Map<String, dynamic> json) {
     return PortfolioPosition.fromMap(json);
   }
 }
