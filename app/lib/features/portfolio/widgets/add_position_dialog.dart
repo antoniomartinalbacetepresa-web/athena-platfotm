@@ -77,6 +77,33 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
         );
       }
 
+      final verifiedSymbol = quote.symbol.trim().toUpperCase();
+      if (verifiedSymbol.isEmpty || verifiedSymbol != symbol) {
+        throw StateError(
+          'La cotización verificada no corresponde al instrumento solicitado.',
+        );
+      }
+
+      final sourceProvider = quote.sourceProvider?.trim();
+      if (sourceProvider == null || sourceProvider.isEmpty) {
+        throw StateError(
+          'La cotización no incluye un proveedor de origen verificable.',
+        );
+      }
+
+      final retrievedAt = quote.retrievedAt;
+      if (retrievedAt == null) {
+        throw StateError(
+          'La cotización no incluye un timestamp de recuperación.',
+        );
+      }
+
+      if (retrievedAt.isBefore(quote.updatedAt)) {
+        throw StateError(
+          'La recuperación no puede preceder a la observación de mercado.',
+        );
+      }
+
       final verifiedName = quote.companyName.trim();
 
       if (!mounted) {
@@ -85,14 +112,14 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
 
       Navigator.of(context).pop(
         AddPositionResult(
-          symbol: quote.symbol.trim().isEmpty ? symbol : quote.symbol.trim(),
+          symbol: verifiedSymbol,
           companyName: verifiedName.isEmpty ? symbol : verifiedName,
           shares: shares,
           averagePrice: averagePrice,
           currentPrice: currentPrice,
           currentPriceUpdatedAt: quote.updatedAt,
-          currentPriceSourceProvider: quote.sourceProvider,
-          currentPriceRetrievedAt: quote.retrievedAt,
+          currentPriceSourceProvider: sourceProvider,
+          currentPriceRetrievedAt: retrievedAt,
         ),
       );
     } catch (_) {
@@ -103,9 +130,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
       setState(() {
         _isSaving = false;
         _quoteError =
-            'No se pudo verificar el instrumento y su precio actual con el '
-            'backend de ATHENA. La posición no se guardará con datos '
-            'manuales o estimados.';
+            'No se pudo verificar el instrumento, el precio y su procedencia '
+            'con el backend de ATHENA. La posición no se guardará con datos '
+            'manuales, estimados o sin trazabilidad.';
       });
     }
   }
@@ -185,10 +212,10 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'ATHENA verifica el instrumento y obtiene el precio '
-                          'actual desde su backend al guardar. El nombre visible '
-                          'procede del contrato de mercado disponible; no se '
-                          'aceptan identidades ni precios actuales escritos a mano.',
+                          'ATHENA verifica el instrumento, obtiene el precio '
+                          'actual desde su backend y exige procedencia temporal '
+                          'trazable antes de guardar. No se aceptan identidades '
+                          'ni precios actuales escritos a mano.',
                           style: TextStyle(
                             color: AthenaColors.textSecondary,
                             fontSize: 12,
@@ -296,8 +323,8 @@ class AddPositionResult {
   final double averagePrice;
   final double currentPrice;
   final DateTime currentPriceUpdatedAt;
-  final String? currentPriceSourceProvider;
-  final DateTime? currentPriceRetrievedAt;
+  final String currentPriceSourceProvider;
+  final DateTime currentPriceRetrievedAt;
 
   const AddPositionResult({
     required this.symbol,
@@ -306,7 +333,7 @@ class AddPositionResult {
     required this.averagePrice,
     required this.currentPrice,
     required this.currentPriceUpdatedAt,
-    this.currentPriceSourceProvider,
-    this.currentPriceRetrievedAt,
+    required this.currentPriceSourceProvider,
+    required this.currentPriceRetrievedAt,
   });
 }
