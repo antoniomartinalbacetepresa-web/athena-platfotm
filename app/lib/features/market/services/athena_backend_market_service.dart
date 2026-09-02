@@ -30,6 +30,8 @@ class AthenaBackendMarketService implements MarketService {
       change: point.change ?? 0,
       changePercentage: point.changePercentage ?? 0,
       updatedAt: point.timestamp,
+      sourceProvider: point.sourceProvider,
+      retrievedAt: point.retrievedAt,
     );
   }
 }
