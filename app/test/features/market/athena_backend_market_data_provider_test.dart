@@ -8,7 +8,7 @@ import 'package:app/features/market/data/providers/athena_backend_market_data_pr
 
 void main() {
   group('AthenaBackendMarketDataProvider', () {
-    test('obtiene una cotización normalizada con provenance', () async {
+    test('obtiene una cotización normalizada con provenance e identidad básica', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/market/quote');
         expect(request.url.queryParameters['symbol'], 'AAPL');
@@ -20,6 +20,10 @@ void main() {
               'timestamp': '2026-08-29T15:30:00Z',
               'retrievedAt': '2026-08-29T15:30:02Z',
               'sourceProvider': 'yahoo',
+              'currency': 'usd',
+              'exchange': 'NMS',
+              'quoteType': 'EQUITY',
+              'exchangeTimezone': 'America/New_York',
               'open': 230.0,
               'high': 235.0,
               'low': 228.0,
@@ -52,6 +56,10 @@ void main() {
       expect(quote.volume, 50000000);
       expect(quote.change, 4.5);
       expect(quote.changePercentage, 1.96);
+      expect(quote.currency, 'USD');
+      expect(quote.exchange, 'NMS');
+      expect(quote.quoteType, 'EQUITY');
+      expect(quote.exchangeTimezone, 'America/New_York');
       expect(quote.providerId, 'athena_backend');
       expect(quote.sourceProvider, 'yahoo');
       expect(
@@ -147,6 +155,7 @@ void main() {
       expect(quote, isNotNull);
       expect(quote!.sourceProvider, isNull);
       expect(quote.retrievedAt, isNull);
+      expect(quote.currency, isNull);
     });
 
     test('rechaza retrievedAt inválido cuando el backend lo declara', () async {
