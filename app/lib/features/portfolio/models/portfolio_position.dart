@@ -4,6 +4,9 @@ class PortfolioPosition {
   final double shares;
   final double averagePrice;
   final double currentPrice;
+  final String? priceCurrency;
+  final String? exchange;
+  final String? quoteType;
   final DateTime? currentPriceUpdatedAt;
   final String? currentPriceSourceProvider;
   final DateTime? currentPriceRetrievedAt;
@@ -14,6 +17,9 @@ class PortfolioPosition {
     required this.shares,
     required this.averagePrice,
     required this.currentPrice,
+    this.priceCurrency,
+    this.exchange,
+    this.quoteType,
     this.currentPriceUpdatedAt,
     this.currentPriceSourceProvider,
     this.currentPriceRetrievedAt,
@@ -45,6 +51,9 @@ class PortfolioPosition {
     double? shares,
     double? averagePrice,
     double? currentPrice,
+    String? priceCurrency,
+    String? exchange,
+    String? quoteType,
     DateTime? currentPriceUpdatedAt,
     String? currentPriceSourceProvider,
     DateTime? currentPriceRetrievedAt,
@@ -55,6 +64,9 @@ class PortfolioPosition {
       shares: shares ?? this.shares,
       averagePrice: averagePrice ?? this.averagePrice,
       currentPrice: currentPrice ?? this.currentPrice,
+      priceCurrency: priceCurrency ?? this.priceCurrency,
+      exchange: exchange ?? this.exchange,
+      quoteType: quoteType ?? this.quoteType,
       currentPriceUpdatedAt:
           currentPriceUpdatedAt ?? this.currentPriceUpdatedAt,
       currentPriceSourceProvider:
@@ -71,6 +83,9 @@ class PortfolioPosition {
       'shares': shares,
       'averagePrice': averagePrice,
       'currentPrice': currentPrice,
+      'priceCurrency': priceCurrency,
+      'exchange': exchange,
+      'quoteType': quoteType,
       'currentPriceUpdatedAt': currentPriceUpdatedAt?.toIso8601String(),
       'currentPriceSourceProvider': currentPriceSourceProvider,
       'currentPriceRetrievedAt': currentPriceRetrievedAt?.toIso8601String(),
@@ -87,6 +102,9 @@ class PortfolioPosition {
       shares: (map['shares'] as num).toDouble(),
       averagePrice: (map['averagePrice'] as num).toDouble(),
       currentPrice: (map['currentPrice'] as num).toDouble(),
+      priceCurrency: map['priceCurrency']?.toString(),
+      exchange: map['exchange']?.toString(),
+      quoteType: map['quoteType']?.toString(),
       currentPriceUpdatedAt: updatedAtRaw == null
           ? null
           : DateTime.tryParse(updatedAtRaw.toString()),
