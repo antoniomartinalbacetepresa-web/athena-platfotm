@@ -1,3 +1,4 @@
+import '../../market/models/market_quote.dart';
 import '../../market/repositories/market_repository.dart';
 import '../models/portfolio.dart';
 import '../models/portfolio_position.dart';
@@ -86,23 +87,22 @@ class PortfolioService {
     );
   }
 
-  void _validateRefreshQuote(dynamic quote) {
+  void _validateRefreshQuote(MarketQuote quote) {
     if (!quote.currentPrice.isFinite || quote.currentPrice <= 0) {
       throw StateError('Cotización actual inválida.');
     }
 
-    final sourceProvider = quote.sourceProvider?.toString().trim();
+    final sourceProvider = quote.sourceProvider?.trim();
     if (sourceProvider == null || sourceProvider.isEmpty) {
       throw StateError('Cotización sin proveedor de origen verificable.');
     }
 
-    final retrievedAt = quote.retrievedAt as DateTime?;
+    final retrievedAt = quote.retrievedAt;
     if (retrievedAt == null) {
       throw StateError('Cotización sin timestamp de recuperación.');
     }
 
-    final updatedAt = quote.updatedAt as DateTime;
-    if (retrievedAt.isBefore(updatedAt)) {
+    if (retrievedAt.isBefore(quote.updatedAt)) {
       throw StateError(
         'La recuperación no puede preceder a la observación de mercado.',
       );
