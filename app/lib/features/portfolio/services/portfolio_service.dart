@@ -24,6 +24,14 @@ class PortfolioService {
     required String name,
     required double initialCapital,
   }) async {
+    if (!initialCapital.isFinite || initialCapital < 0) {
+      throw ArgumentError.value(
+        initialCapital,
+        'initialCapital',
+        'El capital de referencia debe ser finito y no negativo.',
+      );
+    }
+
     _portfolio = Portfolio(
       id: id,
       name: name,
@@ -32,6 +40,28 @@ class PortfolioService {
       createdAt: DateTime.now(),
     );
 
+    await _repository.savePortfolio(_portfolio!);
+  }
+
+  Future<void> updateReferenceCapital(double referenceCapital) async {
+    if (!referenceCapital.isFinite || referenceCapital < 0) {
+      throw ArgumentError.value(
+        referenceCapital,
+        'referenceCapital',
+        'El capital de referencia debe ser finito y no negativo.',
+      );
+    }
+
+    if (_portfolio == null) {
+      await createPortfolio(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        name: 'Mi cartera',
+        initialCapital: referenceCapital,
+      );
+      return;
+    }
+
+    _portfolio = _portfolio!.copyWith(initialCapital: referenceCapital);
     await _repository.savePortfolio(_portfolio!);
   }
 
