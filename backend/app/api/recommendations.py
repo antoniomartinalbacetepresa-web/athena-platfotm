@@ -16,6 +16,9 @@ from app.services.recommendation_learning_status_service import (
 from app.services.recommendation_market_signal_service import (
     RecommendationMarketSignalService,
 )
+from app.services.recommendation_shadow_temporal_split_service import (
+    RecommendationShadowTemporalSplitService,
+)
 from app.services.recommendation_valuation_signal_service import (
     RecommendationValuationSignalService,
 )
@@ -31,6 +34,7 @@ market_signal_service = RecommendationMarketSignalService()
 fundamental_signal_service = RecommendationFundamentalSignalService()
 valuation_signal_service = RecommendationValuationSignalService()
 evidence_gate_service = RecommendationEvidenceGateService()
+temporal_split_service = RecommendationShadowTemporalSplitService()
 
 
 def _effective_as_of(as_of: datetime | None) -> datetime:
@@ -239,6 +243,52 @@ def get_evidence_gate_diagnostic(
         "data": payload,
         "advisoryStatus": "diagnostic_only",
     }
+
+
+@router.get("/learning/shadow-temporal-split")
+def get_shadow_temporal_split(
+    train_end: datetime = Query(..., alias="trainEnd"),
+    validation_end: datetime = Query(..., alias="validationEnd"),
+    as_of: datetime | None = Query(None),
+    horizon_days: int | None = Query(None, ge=1, alias="horizonDays"),
+    require_benchmark: bool = Query(True, alias="requireBenchmark"),
+) -> dict[str, object]:
+    """Expose calibration partitions while preserving a strict no-advice contract."""
+
+    effective_as_of = _effective_as_of(as_of)
+    try:
+        payload = temporal_split_service.build(
+            as_of=effective_as_of,
+            train_end=train_end,
+            validation_end=validation_end,
+            horizon_days=horizon_days,
+            require_benchmark=require_benchmark,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir el split temporal de calibración de ATHENA.",
+        ) from exc
+
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="El split temporal devolvió una política inválida.",
+        )
+    if payload.get("advisoryStatus") != "no_advice":
+        raise HTTPException(
+            status_code=500,
+            detail="El split temporal violó el contrato no-advice de ATHENA.",
+        )
+    if policy.get("productionEligibility") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="El split temporal no puede habilitar producción.",
+        )
+    return {"data": payload}
 
 
 @router.get("/learning/status")
