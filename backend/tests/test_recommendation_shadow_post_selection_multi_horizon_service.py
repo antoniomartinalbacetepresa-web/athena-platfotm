@@ -102,7 +102,7 @@ def test_three_confirmed_horizons_can_pass_research_confirmation_protocol():
     assert service.validate_artifact(payload) == payload
 
 
-def test_weak_confirmed_horizon_counts_as_failure_not_missing_evidence():
+def test_one_weak_confirmed_horizon_is_counted_as_failure_but_two_of_three_can_pass():
     horizons = [7, 30, 90]
     results = {
         "model-7": _confirmed(7),
@@ -119,9 +119,31 @@ def test_weak_confirmed_horizon_counts_as_failure_not_missing_evidence():
 
     assert payload["confirmedHorizonCount"] == 3
     assert payload["passingHorizonCount"] == 2
-    assert payload["postSelectionProtocolEvidenceReady"] is False
+    assert payload["postSelectionProtocolEvidenceReady"] is True
     assert payload["horizons"]["30"]["confirmed"] is True
     assert payload["horizons"]["30"]["passesConfirmationProtocol"] is False
+    assert payload["thresholds"]["minimumPassingHorizons"] == 2
+
+
+def test_only_one_of_three_passing_fails_confirmation_protocol():
+    horizons = [7, 30, 90]
+    results = {
+        "model-7": _confirmed(7),
+        "model-30": _confirmed(30, improvement=-0.05),
+        "model-90": _confirmed(90, sign_accuracy=0.40),
+    }
+    service = _service(results)
+
+    payload = service.evaluate(
+        gated_bundles=[_bundle(horizon) for horizon in horizons],
+        horizons=horizons,
+        as_of=datetime(2025, 6, 1, tzinfo=timezone.utc),
+    )
+
+    assert payload["confirmedHorizonCount"] == 3
+    assert payload["passingHorizonCount"] == 1
+    assert payload["postSelectionProtocolEvidenceReady"] is False
+    assert "sign_accuracy_below_protocol_floor" in payload["horizons"]["90"]["reasons"]
 
 
 def test_missing_or_unregistered_horizon_cannot_inflate_pass_ratio():
@@ -135,7 +157,11 @@ def test_missing_or_unregistered_horizon_cannot_inflate_pass_ratio():
             "productionEligible": False,
         },
     }
-    service = _service(results, minimum_confirmed_horizons=2)
+    service = _service(
+        results,
+        minimum_confirmed_horizons=2,
+        minimum_passing_horizons=1,
+    )
 
     payload = service.evaluate(
         gated_bundles=[_bundle(7), _bundle(30)],
@@ -169,7 +195,11 @@ def test_tampered_confirmation_artifact_is_rejected():
 def test_non_shadow_confirmation_fails_closed():
     result = _confirmed(7)
     result["productionEligible"] = True
-    service = _service({"model-7": result}, minimum_confirmed_horizons=1)
+    service = _service(
+        {"model-7": result},
+        minimum_confirmed_horizons=1,
+        minimum_passing_horizons=1,
+    )
 
     with pytest.raises(ValueError, match="productionEligible=False"):
         service.evaluate(
@@ -188,3 +218,8 @@ def test_duplicate_horizons_are_rejected():
             horizons=[30, 30],
             as_of=datetime(2025, 6, 1, tzinfo=timezone.utc),
         )
+
+
+def test_passing_horizon_minimum_cannot_exceed_confirmed_minimum():
+    with pytest.raises(ValueError, match="no puede superar"):
+        _service({}, minimum_confirmed_horizons=2, minimum_passing_horizons=3)
