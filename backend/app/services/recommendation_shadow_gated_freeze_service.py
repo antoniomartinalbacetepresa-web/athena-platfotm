@@ -192,6 +192,9 @@ class RecommendationShadowGatedFreezeService:
         if not isinstance(frozen, dict):
             raise ValueError("El bundle no contiene frozenModel válido.")
         self._assert_shadow(frozen, "frozen_model")
+        validated_frozen = self._holdout_service._validated_model(frozen)
+        if validated_frozen is not frozen and validated_frozen != frozen:
+            raise ValueError("La validación del modelo congelado alteró el artefacto.")
         if frozen.get("fingerprint") != bundle.get("modelFingerprint"):
             raise ValueError("El fingerprint del modelo no coincide con el bundle.")
 
