@@ -13,7 +13,13 @@ from app.services.recommendation_benchmark_return_service import (
 
 
 class RecommendationShadowOutcomeService:
-    """Evaluate calibration-only snapshots without creating advisory labels."""
+    """Evaluate calibration-only snapshots without creating advisory labels.
+
+    A snapshot that declared a benchmark is not persisted as evaluated until the
+    matching frozen benchmark can also be resolved with traceable PIT evidence.
+    This prevents a partial asset-only outcome from permanently occupying the
+    unique horizon slot and later being mistaken for excess-return evidence.
+    """
 
     DEFAULT_HORIZONS = (7, 30, 90, 180, 365)
 
@@ -39,6 +45,7 @@ class RecommendationShadowOutcomeService:
 
         cutoff = self._parse_aware(snapshot["data_cutoff_at"], "data_cutoff_at")
         instrument_id = int(snapshot["instrument_id"])
+        frozen_benchmark_symbol = self._optional_symbol(snapshot.get("benchmark_symbol"))
         existing = {
             int(row["horizon_days"])
             for row in self._repository.list_outcomes(snapshot_id)
@@ -46,6 +53,7 @@ class RecommendationShadowOutcomeService:
         evaluated: list[dict[str, Any]] = []
         pending: list[int] = []
         missing_price: list[int] = []
+        missing_benchmark: list[dict[str, Any]] = []
 
         for horizon in normalized_horizons:
             if horizon in existing:
@@ -64,13 +72,26 @@ class RecommendationShadowOutcomeService:
                 continue
 
             benchmark = self._benchmark.calculate(
-                benchmark_symbol=snapshot.get("benchmark_symbol"),
+                benchmark_symbol=frozen_benchmark_symbol,
                 generated_at=cutoff,
                 due_at=due_at,
                 as_of=effective_as_of,
             )
+            if frozen_benchmark_symbol is not None and benchmark.status != "resolved":
+                missing_benchmark.append(
+                    {
+                        "horizonDays": horizon,
+                        "benchmarkSymbol": frozen_benchmark_symbol,
+                        "benchmarkStatus": benchmark.status,
+                    }
+                )
+                continue
+
             benchmark_return = (
                 benchmark.benchmark_return if benchmark.status == "resolved" else None
+            )
+            benchmark_evidence = (
+                benchmark.to_api_dict() if benchmark.status == "resolved" else None
             )
             exit_observed_at = self._parse_aware(
                 exit_observation["observed_at"],
@@ -90,6 +111,7 @@ class RecommendationShadowOutcomeService:
                 exit_retrieved_at=exit_retrieved_at,
                 source_provider=str(exit_observation["source_provider"]),
                 benchmark_return=benchmark_return,
+                benchmark_evidence=benchmark_evidence,
             )
             entry_price = float(snapshot["entry_price"])
             exit_price = float(exit_observation["price"])
@@ -108,6 +130,7 @@ class RecommendationShadowOutcomeService:
                     "benchmarkStatus": benchmark.status,
                     "benchmarkSymbol": benchmark.benchmark_symbol,
                     "benchmarkReturn": benchmark_return,
+                    "benchmarkEvidence": benchmark_evidence,
                     "excessReturn": (
                         realized_return - benchmark_return
                         if benchmark_return is not None
@@ -124,6 +147,7 @@ class RecommendationShadowOutcomeService:
             "evaluated": evaluated,
             "pendingHorizons": pending,
             "missingPriceHorizons": missing_price,
+            "missingBenchmarkHorizons": missing_benchmark,
             "alreadyEvaluatedHorizons": sorted(existing),
             "advisoryStatus": "no_advice",
             "policy": {
@@ -132,6 +156,8 @@ class RecommendationShadowOutcomeService:
                 "retrievalCutoff": "retrieved_at_not_after_evaluation_as_of",
                 "duplicateObservation": "latest_retrieved_at_before_as_of",
                 "benchmark": "explicit_frozen_symbol_only",
+                "benchmarkEvidence": "resolved_and_persisted_atomically_with_outcome",
+                "partialOutcomeWithoutFrozenBenchmark": "not_persisted",
             },
         }
 
@@ -184,6 +210,12 @@ class RecommendationShadowOutcomeService:
         if not normalized or any(value <= 0 for value in normalized):
             raise ValueError("Los horizontes deben ser enteros positivos.")
         return normalized
+
+    def _optional_symbol(self, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        return normalized or None
 
     def _parse_aware(self, value: object, field: str) -> datetime:
         try:
