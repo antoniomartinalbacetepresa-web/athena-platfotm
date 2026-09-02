@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.services.recommendation_shadow_frozen_candidate_store_service import (
+    RecommendationShadowFrozenCandidateStoreService,
+)
 from app.services.recommendation_shadow_gated_freeze_service import (
     RecommendationShadowGatedFreezeService,
 )
@@ -15,13 +18,12 @@ from app.services.recommendation_shadow_research_pipeline_service import (
 
 
 class RecommendationShadowPreHoldoutPipelineService:
-    """Prepare research-gated frozen candidates for future independent holdout.
+    """Prepare and persist research-gated candidates for independent holdout.
 
-    This orchestration removes manual assembly between research evaluation and
-    model freezing. A horizon is frozen only when the global research gate and
-    that exact horizon pass, protocol selection succeeds from the same
-    walk-forward evidence, and the gated-freeze service validates all
-    fingerprints. No output from this pipeline is investment advice.
+    A horizon is persisted only when the global research gate and that exact
+    horizon pass, protocol selection succeeds from the same walk-forward
+    evidence, gated freeze validates every binding, and the frozen-candidate
+    store revalidates the bundle before writing it to shadow-only storage.
     """
 
     def __init__(
@@ -30,6 +32,7 @@ class RecommendationShadowPreHoldoutPipelineService:
         research_pipeline_service: RecommendationShadowResearchPipelineService | None = None,
         protocol_selection_service: RecommendationShadowProtocolSelectionService | None = None,
         gated_freeze_service: RecommendationShadowGatedFreezeService | None = None,
+        frozen_candidate_store_service: RecommendationShadowFrozenCandidateStoreService | None = None,
     ) -> None:
         self._research_pipeline_service = (
             research_pipeline_service or RecommendationShadowResearchPipelineService()
@@ -39,6 +42,12 @@ class RecommendationShadowPreHoldoutPipelineService:
         )
         self._gated_freeze_service = gated_freeze_service or RecommendationShadowGatedFreezeService(
             protocol_selection_service=self._protocol_selection_service
+        )
+        self._frozen_candidate_store_service = (
+            frozen_candidate_store_service
+            or RecommendationShadowFrozenCandidateStoreService(
+                gated_freeze_service=self._gated_freeze_service
+            )
         )
 
     def prepare(
@@ -79,12 +88,14 @@ class RecommendationShadowPreHoldoutPipelineService:
                 "preparedHorizonCount": 0,
                 "blockedHorizons": [],
                 "frozenCandidates": {},
+                "persistedCandidates": {},
                 "advisoryStatus": "no_advice",
                 "productionEligible": False,
                 "policy": self._policy(),
             }
 
         frozen_candidates: dict[str, dict[str, Any]] = {}
+        persisted_candidates: dict[str, dict[str, Any]] = {}
         blocked_horizons: list[dict[str, Any]] = []
         for key, gate_horizon in gate_horizons.items():
             if not isinstance(gate_horizon, dict):
@@ -136,11 +147,20 @@ class RecommendationShadowPreHoldoutPipelineService:
                     }
                 )
                 continue
+
+            persisted = self._frozen_candidate_store_service.persist(bundle=frozen)
+            self._assert_shadow(persisted, f"frozen_candidate_store_{horizon_days}")
+            if persisted.get("status") != "shadow_frozen_candidate_persisted":
+                raise RuntimeError(
+                    f"El horizonte {horizon_days} se congeló pero no quedó persistido."
+                )
+
             frozen_candidates[str(horizon_days)] = frozen
+            persisted_candidates[str(horizon_days)] = persisted
 
         return {
             "status": (
-                "shadow_pre_holdout_candidates_frozen"
+                "shadow_pre_holdout_candidates_frozen_and_persisted"
                 if frozen_candidates
                 else "shadow_pre_holdout_no_candidate_frozen"
             ),
@@ -149,6 +169,7 @@ class RecommendationShadowPreHoldoutPipelineService:
             "preparedHorizonCount": len(frozen_candidates),
             "blockedHorizons": blocked_horizons,
             "frozenCandidates": frozen_candidates,
+            "persistedCandidates": persisted_candidates,
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "policy": self._policy(),
@@ -174,12 +195,13 @@ class RecommendationShadowPreHoldoutPipelineService:
         return {
             "sequence": (
                 "research_pipeline_then_validation_only_protocol_selection_"
-                "then_same_evidence_gated_freeze"
+                "then_same_evidence_gated_freeze_then_validated_shadow_persistence"
             ),
             "globalResearchGateRequired": True,
             "perHorizonResearchGateRequired": True,
             "manualLambdaSelection": False,
             "sameWalkForwardEvidenceRequired": True,
+            "validatedPersistenceRequired": True,
             "holdoutEvidenceUsed": False,
             "actions": "not_assigned",
             "automaticModelMutation": False,
