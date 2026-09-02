@@ -55,6 +55,26 @@ def _evidence() -> dict[str, object]:
     }
 
 
+def _benchmark_evidence(due: datetime, benchmark_return: float) -> dict[str, object]:
+    entry_observed = CUT + timedelta(hours=1)
+    exit_observed = due + timedelta(hours=1)
+    return {
+        "status": "resolved",
+        "benchmarkSymbol": "SPY",
+        "benchmarkInstrumentId": 999,
+        "entryPrice": 100.0,
+        "exitPrice": 100.0 * (1.0 + benchmark_return),
+        "benchmarkReturn": benchmark_return,
+        "entryObservedAt": entry_observed.isoformat(),
+        "exitObservedAt": exit_observed.isoformat(),
+        "entryRetrievedAt": (entry_observed + timedelta(minutes=1)).isoformat(),
+        "exitRetrievedAt": (exit_observed + timedelta(minutes=1)).isoformat(),
+        "entrySourceProvider": "test_benchmark",
+        "exitSourceProvider": "test_benchmark",
+        "policy": {"retrievalCutoff": "retrieved_at_not_after_evaluation_as_of"},
+    }
+
+
 def _create_matured_snapshot(
     repository: RecommendationShadowRepository,
     *,
@@ -86,6 +106,11 @@ def _create_matured_snapshot(
         exit_retrieved_at=due + timedelta(hours=1, minutes=5),
         source_provider="test",
         benchmark_return=benchmark_return,
+        benchmark_evidence=(
+            _benchmark_evidence(due, benchmark_return)
+            if benchmark_return is not None
+            else None
+        ),
     )
     return snapshot_id
 
