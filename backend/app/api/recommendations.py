@@ -47,6 +47,15 @@ def _effective_as_of(as_of: datetime | None) -> datetime:
     return value
 
 
+def _aware_boundary(value: datetime, field: str) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} debe incluir zona horaria.",
+        )
+    return value
+
+
 def _diagnostic_payload_or_fail(
     diagnostic: object,
     *,
@@ -256,11 +265,13 @@ def get_shadow_temporal_split(
     """Expose calibration partitions while preserving a strict no-advice contract."""
 
     effective_as_of = _effective_as_of(as_of)
+    effective_train_end = _aware_boundary(train_end, "trainEnd")
+    effective_validation_end = _aware_boundary(validation_end, "validationEnd")
     try:
         payload = temporal_split_service.build(
             as_of=effective_as_of,
-            train_end=train_end,
-            validation_end=validation_end,
+            train_end=effective_train_end,
+            validation_end=effective_validation_end,
             horizon_days=horizon_days,
             require_benchmark=require_benchmark,
         )
