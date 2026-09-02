@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from typing import Any
 
@@ -116,6 +118,7 @@ class RecommendationShadowResearchGateService:
             "policy": {
                 "passingMeaning": "eligible_only_for_next_research_stage",
                 "testEvidenceAfterGate": "consumed_for_candidate_selection",
+                "walkForwardEvidenceFingerprintRequiredForFreeze": True,
                 "freshUntouchedHoldoutBeforeProduction": True,
                 "actions": "not_assigned",
                 "automaticModelMutation": False,
@@ -168,6 +171,7 @@ class RecommendationShadowResearchGateService:
         if not 0.0 <= median_sign_accuracy <= 1.0:
             raise ValueError("medianSignAccuracy debe estar entre 0 y 1.")
 
+        source_fingerprint = self._fingerprint(evidence)
         reasons: list[str] = []
         if evaluated_folds < self._minimum_evaluated_folds_per_horizon:
             reasons.append("insufficient_evaluated_folds_for_research_gate")
@@ -184,6 +188,7 @@ class RecommendationShadowResearchGateService:
             "horizonDays": self._safe_horizon(horizon),
             "evaluated": True,
             "passesResearchGate": not reasons,
+            "sourceWalkForwardFingerprint": source_fingerprint,
             "foldCount": fold_count,
             "evaluatedFoldCount": evaluated_folds,
             "blockedFoldCount": blocked_folds,
@@ -229,3 +234,12 @@ class RecommendationShadowResearchGateService:
         if not math.isfinite(parsed):
             raise ValueError(f"{field} debe ser finito.")
         return parsed
+
+    def _fingerprint(self, payload: dict[str, Any]) -> str:
+        serialized = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
