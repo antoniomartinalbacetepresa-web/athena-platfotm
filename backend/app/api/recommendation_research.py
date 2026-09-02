@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.services.recommendation_shadow_holdout_pipeline_service import (
-    RecommendationShadowHoldoutPipelineService,
+from app.services.recommendation_shadow_holdout_seal_service import (
+    RecommendationShadowHoldoutSealService,
 )
 from app.services.recommendation_shadow_research_pipeline_service import (
     RecommendationShadowResearchPipelineService,
@@ -18,7 +18,7 @@ router = APIRouter(
 )
 
 research_pipeline_service = RecommendationShadowResearchPipelineService()
-holdout_pipeline_service = RecommendationShadowHoldoutPipelineService()
+holdout_seal_service = RecommendationShadowHoldoutSealService()
 
 
 def _effective_as_of(value: datetime | None) -> datetime:
@@ -73,17 +73,17 @@ def _assert_holdout_policy(payload: dict[str, object]) -> None:
     if not isinstance(policy, dict):
         raise HTTPException(
             status_code=500,
-            detail="El pipeline holdout devolvió una política inválida.",
+            detail="El holdout shadow devolvió una política inválida.",
         )
     if policy.get("automaticProductionPromotion") is not False:
         raise HTTPException(
             status_code=500,
-            detail="El pipeline holdout no puede habilitar promoción automática.",
+            detail="El holdout shadow no puede habilitar promoción automática.",
         )
     if policy.get("actions") != "not_assigned":
         raise HTTPException(
             status_code=500,
-            detail="El pipeline holdout no puede asignar acciones de inversión.",
+            detail="El holdout shadow no puede asignar acciones de inversión.",
         )
 
 
@@ -119,12 +119,12 @@ def get_shadow_holdout_readiness(
     as_of: datetime | None = Query(None),
     horizons: str = Query("7,30,90,180,365"),
 ) -> dict[str, object]:
-    """Evaluate persisted frozen candidates on fresh holdout evidence only."""
+    """Evaluate and immutably seal the first sufficiently mature holdout result."""
 
     effective_as_of = _effective_as_of(as_of)
     effective_horizons = _parse_horizons(horizons)
     try:
-        payload = holdout_pipeline_service.evaluate_latest_cohort(
+        payload = holdout_seal_service.evaluate_and_seal(
             as_of=effective_as_of,
             horizons=effective_horizons,
         )
