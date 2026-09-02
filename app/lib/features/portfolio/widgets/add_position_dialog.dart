@@ -91,6 +91,8 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
           averagePrice: averagePrice,
           currentPrice: currentPrice,
           currentPriceUpdatedAt: quote.updatedAt,
+          currentPriceSourceProvider: quote.sourceProvider,
+          currentPriceRetrievedAt: quote.retrievedAt,
         ),
       );
     } catch (_) {
@@ -294,6 +296,8 @@ class AddPositionResult {
   final double averagePrice;
   final double currentPrice;
   final DateTime currentPriceUpdatedAt;
+  final String? currentPriceSourceProvider;
+  final DateTime? currentPriceRetrievedAt;
 
   const AddPositionResult({
     required this.symbol,
@@ -302,5 +306,7 @@ class AddPositionResult {
     required this.averagePrice,
     required this.currentPrice,
     required this.currentPriceUpdatedAt,
+    this.currentPriceSourceProvider,
+    this.currentPriceRetrievedAt,
   });
 }
