@@ -34,11 +34,18 @@ class RecommendationShadowPostSelectionMultiHorizonService:
         gated_freeze_service: RecommendationShadowGatedFreezeService | None = None,
         post_selection_pipeline: RecommendationShadowPostSelectionPipelineService | None = None,
         minimum_confirmed_horizons: int = 3,
+        minimum_passing_horizons: int = 2,
         minimum_pass_ratio: float = 2.0 / 3.0,
         minimum_sign_accuracy: float = 0.50,
     ) -> None:
         if minimum_confirmed_horizons <= 0:
             raise ValueError("minimum_confirmed_horizons debe ser positivo.")
+        if minimum_passing_horizons <= 0:
+            raise ValueError("minimum_passing_horizons debe ser positivo.")
+        if minimum_passing_horizons > minimum_confirmed_horizons:
+            raise ValueError(
+                "minimum_passing_horizons no puede superar minimum_confirmed_horizons."
+            )
         if not (0.0 < minimum_pass_ratio <= 1.0):
             raise ValueError("minimum_pass_ratio debe estar en (0, 1].")
         if not (0.0 <= minimum_sign_accuracy <= 1.0):
@@ -50,6 +57,7 @@ class RecommendationShadowPostSelectionMultiHorizonService:
             post_selection_pipeline or RecommendationShadowPostSelectionPipelineService()
         )
         self._minimum_confirmed_horizons = int(minimum_confirmed_horizons)
+        self._minimum_passing_horizons = int(minimum_passing_horizons)
         self._minimum_pass_ratio = float(minimum_pass_ratio)
         self._minimum_sign_accuracy = float(minimum_sign_accuracy)
 
@@ -152,12 +160,10 @@ class RecommendationShadowPostSelectionMultiHorizonService:
                 "beatsZeroBaselineOnMse": result.get("beatsZeroBaselineOnMse"),
             }
 
-        pass_ratio = (
-            passing_count / confirmed_count if confirmed_count > 0 else 0.0
-        )
+        pass_ratio = passing_count / confirmed_count if confirmed_count > 0 else 0.0
         protocol_ready = (
             confirmed_count >= self._minimum_confirmed_horizons
-            and passing_count >= self._minimum_confirmed_horizons
+            and passing_count >= self._minimum_passing_horizons
             and pass_ratio >= self._minimum_pass_ratio
         )
 
@@ -172,13 +178,7 @@ class RecommendationShadowPostSelectionMultiHorizonService:
             "confirmationPassRatio": pass_ratio,
             "postSelectionProtocolEvidenceReady": protocol_ready,
             "horizons": horizon_results,
-            "thresholds": {
-                "minimumConfirmedHorizons": self._minimum_confirmed_horizons,
-                "minimumPassRatio": self._minimum_pass_ratio,
-                "minimumSignAccuracy": self._minimum_sign_accuracy,
-                "relativeMseImprovement": "strictly_positive",
-                "beatsZeroExcessMseBaseline": True,
-            },
+            "thresholds": self._thresholds(),
         }
         fingerprint = self._fingerprint(core)
         return {
@@ -219,10 +219,14 @@ class RecommendationShadowPostSelectionMultiHorizonService:
             raise ValueError("La evidencia de confirmación multi-horizonte fue modificada.")
         self._validated_horizons(core["requestedHorizons"])
         self._aware_utc(self._parse_datetime(core["asOf"], "asOf"), "asOf")
-        self._aware_utc(
-            self._parse_datetime(core["researchCutoff"], "researchCutoff"),
-            "researchCutoff",
-        )
+        research_cutoff = core["researchCutoff"]
+        if research_cutoff is not None:
+            self._aware_utc(
+                self._parse_datetime(research_cutoff, "researchCutoff"),
+                "researchCutoff",
+            )
+        if core["thresholds"] != self._thresholds():
+            raise ValueError("Los thresholds de confirmación no coinciden con el protocolo.")
         return artifact
 
     def _validated_bundles(
@@ -246,15 +250,11 @@ class RecommendationShadowPostSelectionMultiHorizonService:
             raise ValueError("horizons debe contener al menos un horizonte.")
         values: list[int] = []
         for raw in horizons:
-            if isinstance(raw, bool):
+            if isinstance(raw, bool) or not isinstance(raw, int):
                 raise ValueError("Los horizontes deben ser enteros positivos.")
-            try:
-                value = int(raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Los horizontes deben ser enteros positivos.") from exc
-            if value <= 0 or value != raw:
+            if raw <= 0:
                 raise ValueError("Los horizontes deben ser enteros positivos.")
-            values.append(value)
+            values.append(raw)
         if len(set(values)) != len(values):
             raise ValueError("Los horizontes no pueden repetirse.")
         return tuple(values)
@@ -282,13 +282,7 @@ class RecommendationShadowPostSelectionMultiHorizonService:
                 }
                 for horizon in requested_horizons
             },
-            "thresholds": {
-                "minimumConfirmedHorizons": self._minimum_confirmed_horizons,
-                "minimumPassRatio": self._minimum_pass_ratio,
-                "minimumSignAccuracy": self._minimum_sign_accuracy,
-                "relativeMseImprovement": "strictly_positive",
-                "beatsZeroExcessMseBaseline": True,
-            },
+            "thresholds": self._thresholds(),
         }
         return {
             "status": "shadow_post_selection_multi_horizon_not_confirmed",
@@ -297,6 +291,16 @@ class RecommendationShadowPostSelectionMultiHorizonService:
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "policy": self._policy(),
+        }
+
+    def _thresholds(self) -> dict[str, Any]:
+        return {
+            "minimumConfirmedHorizons": self._minimum_confirmed_horizons,
+            "minimumPassingHorizons": self._minimum_passing_horizons,
+            "minimumPassRatio": self._minimum_pass_ratio,
+            "minimumSignAccuracy": self._minimum_sign_accuracy,
+            "relativeMseImprovement": "strictly_positive",
+            "beatsZeroExcessMseBaseline": True,
         }
 
     def _policy(self) -> dict[str, Any]:
