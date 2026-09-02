@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_radius.dart';
 import '../../../../core/theme/athena_spacing.dart';
+import '../../../market/di/market_dependencies.dart';
 import '../../models/portfolio.dart';
 import '../../models/portfolio_position.dart';
 import '../../services/portfolio_service.dart';
@@ -18,29 +19,57 @@ class PortfolioPage extends StatefulWidget {
 
 class _PortfolioPageState extends State<PortfolioPage> {
   final PortfolioService _portfolioService = PortfolioService();
+  late final MarketDependencies _marketDependencies;
 
   List<PortfolioPosition> _positions = [];
   bool _isLoading = true;
+  bool _isRefreshingPrices = false;
   String? _loadError;
+  String? _priceRefreshMessage;
 
   Portfolio? get _portfolio => _portfolioService.portfolio;
 
   @override
   void initState() {
     super.initState();
+    _marketDependencies = MarketDependencies.create();
     _loadPortfolio();
+  }
+
+  @override
+  void dispose() {
+    _marketDependencies.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPortfolio() async {
     try {
       await _portfolioService.loadPortfolio();
+
+      String? refreshMessage;
+      final portfolio = _portfolio;
+      if (portfolio != null && portfolio.positions.isNotEmpty) {
+        try {
+          final report = await _portfolioService.refreshCurrentPrices(
+            marketRepository: _marketDependencies.repository,
+          );
+          refreshMessage = _refreshMessageFor(report);
+        } catch (_) {
+          refreshMessage =
+              'La cartera se ha cargado, pero no se pudieron actualizar las '
+              'cotizaciones. Se conservan los últimos precios persistidos.';
+        }
+      }
+
       if (!mounted) {
         return;
       }
+
       setState(() {
         _positions = _portfolio?.positions ?? [];
         _isLoading = false;
         _loadError = null;
+        _priceRefreshMessage = refreshMessage;
       });
     } catch (_) {
       if (!mounted) {
@@ -50,8 +79,56 @@ class _PortfolioPageState extends State<PortfolioPage> {
         _positions = [];
         _isLoading = false;
         _loadError = 'No se pudo cargar la cartera guardada.';
+        _priceRefreshMessage = null;
       });
     }
+  }
+
+  Future<void> _refreshPrices() async {
+    if (_isRefreshingPrices || _positions.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isRefreshingPrices = true;
+      _priceRefreshMessage = null;
+    });
+
+    try {
+      final report = await _portfolioService.refreshCurrentPrices(
+        marketRepository: _marketDependencies.repository,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _positions = _portfolio?.positions ?? [];
+        _isRefreshingPrices = false;
+        _priceRefreshMessage = _refreshMessageFor(report);
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _positions = _portfolio?.positions ?? [];
+        _isRefreshingPrices = false;
+        _priceRefreshMessage =
+            'No se pudieron actualizar las cotizaciones. Se conservan los '
+            'últimos precios persistidos; ATHENA no los sustituye por estimaciones.';
+      });
+    }
+  }
+
+  String? _refreshMessageFor(PortfolioPriceRefreshReport report) {
+    if (report.totalPositions == 0 || report.isComplete) {
+      return null;
+    }
+
+    final failed = report.failedSymbols.join(', ');
+    return 'Cotizaciones actualizadas: ${report.updatedPositions} de '
+        '${report.totalPositions}. Sin actualización verificable: $failed. '
+        'Se mantiene el último precio conocido para esos símbolos.';
   }
 
   Future<void> _setReferenceCapital() async {
@@ -75,9 +152,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         _positions = _portfolio?.positions ?? [];
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Capital de referencia actualizado.'),
-        ),
+        const SnackBar(content: Text('Capital de referencia actualizado.')),
       );
     } catch (_) {
       if (!mounted) {
@@ -107,6 +182,9 @@ class _PortfolioPageState extends State<PortfolioPage> {
       shares: result.shares,
       averagePrice: result.averagePrice,
       currentPrice: result.currentPrice,
+      currentPriceUpdatedAt: result.currentPriceUpdatedAt,
+      currentPriceSourceProvider: result.currentPriceSourceProvider,
+      currentPriceRetrievedAt: result.currentPriceRetrievedAt,
     );
 
     try {
@@ -124,11 +202,12 @@ class _PortfolioPageState extends State<PortfolioPage> {
       }
       setState(() {
         _positions = _portfolio?.positions ?? [];
+        _priceRefreshMessage = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${position.companyName} se ha añadido a tu cartera.',
+            '${position.companyName} se ha añadido con cotización trazable.',
           ),
         ),
       );
@@ -137,9 +216,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo guardar la posición.'),
-        ),
+        const SnackBar(content: Text('No se pudo guardar la posición.')),
       );
     }
   }
@@ -191,9 +268,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo guardar el cambio.'),
-        ),
+        const SnackBar(content: Text('No se pudo guardar el cambio.')),
       );
     }
   }
@@ -225,8 +300,12 @@ class _PortfolioPageState extends State<PortfolioPage> {
                   _buildHeader(),
                   const SizedBox(height: AthenaSpacing.lg),
                   if (_loadError != null) ...[
-                    _errorBanner(_loadError!),
-                    const SizedBox(height: AthenaSpacing.lg),
+                    _statusBanner(_loadError!, isError: true),
+                    const SizedBox(height: AthenaSpacing.md),
+                  ],
+                  if (_priceRefreshMessage != null) ...[
+                    _statusBanner(_priceRefreshMessage!),
+                    const SizedBox(height: AthenaSpacing.md),
                   ],
                   _buildSummary(
                     totalInvested: totalInvested,
@@ -316,26 +395,66 @@ class _PortfolioPageState extends State<PortfolioPage> {
   }
 
   Widget _buildPositionsHeader() {
-    return Wrap(
-      spacing: AthenaSpacing.md,
-      runSpacing: AthenaSpacing.sm,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      alignment: WrapAlignment.spaceBetween,
-      children: [
-        const Text(
-          'POSICIONES',
-          style: TextStyle(
-            color: AthenaColors.text,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        ElevatedButton.icon(
-          onPressed: _addPosition,
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('Añadir posición'),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final actions = Wrap(
+          spacing: AthenaSpacing.sm,
+          runSpacing: AthenaSpacing.sm,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _positions.isEmpty || _isRefreshingPrices
+                  ? null
+                  : _refreshPrices,
+              icon: _isRefreshingPrices
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Actualizar precios'),
+            ),
+            ElevatedButton.icon(
+              onPressed: _addPosition,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Añadir posición'),
+            ),
+          ],
+        );
+
+        if (constraints.maxWidth < 620) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'POSICIONES',
+                style: TextStyle(
+                  color: AthenaColors.text,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: AthenaSpacing.md),
+              actions,
+            ],
+          );
+        }
+
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'POSICIONES',
+              style: TextStyle(
+                color: AthenaColors.text,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            actions,
+          ],
+        );
+      },
     );
   }
 
@@ -354,14 +473,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
             ? const Color(0xFFFF5C5C)
             : AthenaColors.text;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AthenaSpacing.lg),
-      decoration: BoxDecoration(
-        color: AthenaColors.card,
-        borderRadius: BorderRadius.circular(AthenaRadius.lg),
-        border: Border.all(color: AthenaColors.border),
-      ),
+    return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -428,14 +540,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
     required double referenceCapital,
     required double? unallocatedCapital,
   }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AthenaSpacing.lg),
-      decoration: BoxDecoration(
-        color: AthenaColors.card,
-        borderRadius: BorderRadius.circular(AthenaRadius.lg),
-        border: Border.all(color: AthenaColors.border),
-      ),
+    return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -458,12 +563,11 @@ class _PortfolioPageState extends State<PortfolioPage> {
           const SizedBox(height: 12),
           Text(
             hasReferenceCapital
-                ? 'Capital de referencia disponible: '
-                    '${_formatCurrency(referenceCapital)}. '
+                ? 'Capital de referencia: ${_formatCurrency(referenceCapital)}. '
                     'Capital actualmente no asignado: '
                     '${_formatCurrency(unallocatedCapital ?? 0)}.'
-                : 'Define primero un capital de referencia para que la futura '
-                    'planificación pueda expresar importes y porcentajes reales.',
+                : 'Define un capital de referencia para que una futura '
+                    'planificación validada pueda expresarse en euros y porcentajes.',
             style: const TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 13,
@@ -475,7 +579,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
             'ATHENA no propone todavía importes por activo porque el motor de '
             'recomendaciones sigue en validación. La asignación sólo se '
             'habilitará con recomendaciones reales, trazables y elegibles para '
-            'producción; hasta entonces no se inventan pesos, retornos ni '
+            'producción. Hasta entonces no se inventan pesos, retornos ni '
             'expectativas.',
             style: TextStyle(
               color: AthenaColors.textSecondary,
@@ -492,6 +596,19 @@ class _PortfolioPageState extends State<PortfolioPage> {
     return _PositionWithDelete(
       position: position,
       onDelete: () => _removePosition(position),
+    );
+  }
+
+  Widget _card({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AthenaSpacing.lg),
+      decoration: BoxDecoration(
+        color: AthenaColors.card,
+        borderRadius: BorderRadius.circular(AthenaRadius.lg),
+        border: Border.all(color: AthenaColors.border),
+      ),
+      child: child,
     );
   }
 
@@ -536,20 +653,23 @@ class _PortfolioPageState extends State<PortfolioPage> {
     );
   }
 
-  static Widget _errorBanner(String message) {
+  static Widget _statusBanner(String message, {bool isError = false}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AthenaSpacing.md),
       decoration: BoxDecoration(
         color: AthenaColors.card,
         borderRadius: BorderRadius.circular(AthenaRadius.md),
-        border: Border.all(color: const Color(0xFFFF5C5C)),
+        border: Border.all(
+          color: isError ? const Color(0xFFFF5C5C) : AthenaColors.border,
+        ),
       ),
       child: Text(
-        '$message No se muestran datos sustitutivos.',
+        isError ? '$message No se muestran datos sustitutivos.' : message,
         style: const TextStyle(
           color: AthenaColors.textSecondary,
           fontSize: 13,
+          height: 1.35,
         ),
       ),
     );
@@ -586,9 +706,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
     );
   }
 
-  static String _formatCurrency(num value) {
-    return '${value.toStringAsFixed(2)} €';
-  }
+  static String _formatCurrency(num value) => '${value.toStringAsFixed(2)} €';
 
   static String _formatSignedCurrency(num value) {
     return '${value > 0 ? '+' : ''}${value.toStringAsFixed(2)} €';
@@ -627,6 +745,17 @@ class _PositionWithDelete extends StatelessWidget {
     required this.position,
     required this.onDelete,
   });
+
+  bool get _hasCompleteProvenance {
+    final provider = position.currentPriceSourceProvider?.trim();
+    final updatedAt = position.currentPriceUpdatedAt;
+    final retrievedAt = position.currentPriceRetrievedAt;
+    return provider != null &&
+        provider.isNotEmpty &&
+        updatedAt != null &&
+        retrievedAt != null &&
+        !retrievedAt.isBefore(updatedAt);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -667,6 +796,8 @@ class _PositionWithDelete extends StatelessWidget {
                     ),
                   ],
                 ),
+                const SizedBox(height: AthenaSpacing.md),
+                _provenance(),
                 Align(
                   alignment: Alignment.centerRight,
                   child: IconButton(
@@ -682,28 +813,34 @@ class _PositionWithDelete extends StatelessWidget {
             );
           }
 
-          return Row(
+          return Column(
             children: [
-              Expanded(child: _identity()),
-              _valueColumn('Invertido', _format(position.investedValue)),
-              const SizedBox(width: 28),
-              _valueColumn('Valor actual', _format(position.currentValue)),
-              const SizedBox(width: 28),
-              _valueColumn(
-                'Resultado',
-                '${position.profitLoss > 0 ? '+' : ''}'
-                '${position.profitLoss.toStringAsFixed(2)} €',
-                valueColor: profitColor,
+              Row(
+                children: [
+                  Expanded(child: _identity()),
+                  _valueColumn('Invertido', _format(position.investedValue)),
+                  const SizedBox(width: 28),
+                  _valueColumn('Valor actual', _format(position.currentValue)),
+                  const SizedBox(width: 28),
+                  _valueColumn(
+                    'Resultado',
+                    '${position.profitLoss > 0 ? '+' : ''}'
+                    '${position.profitLoss.toStringAsFixed(2)} €',
+                    valueColor: profitColor,
+                  ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    tooltip: 'Eliminar',
+                    onPressed: onDelete,
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: AthenaColors.textSecondary,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              IconButton(
-                tooltip: 'Eliminar',
-                onPressed: onDelete,
-                icon: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: AthenaColors.textSecondary,
-                ),
-              ),
+              const SizedBox(height: AthenaSpacing.sm),
+              Align(alignment: Alignment.centerLeft, child: _provenance()),
             ],
           );
         },
@@ -762,6 +899,33 @@ class _PositionWithDelete extends StatelessWidget {
     );
   }
 
+  Widget _provenance() {
+    if (!_hasCompleteProvenance) {
+      return const Text(
+        'Precio persistido sin provenance completa · actualizar antes de usar '
+        'esta posición como evidencia.',
+        style: TextStyle(
+          color: Color(0xFFFFB86B),
+          fontSize: 11,
+          height: 1.3,
+        ),
+      );
+    }
+
+    final provider = position.currentPriceSourceProvider!.trim();
+    final updatedAt = position.currentPriceUpdatedAt!.toLocal();
+    final retrievedAt = position.currentPriceRetrievedAt!.toLocal();
+    return Text(
+      'Precio: $provider · observado ${_formatDateTime(updatedAt)} · '
+      'recuperado ${_formatDateTime(retrievedAt)}',
+      style: const TextStyle(
+        color: AthenaColors.textSecondary,
+        fontSize: 11,
+        height: 1.3,
+      ),
+    );
+  }
+
   static Widget _valueColumn(
     String title,
     String value, {
@@ -802,5 +966,11 @@ class _PositionWithDelete extends StatelessWidget {
       return value.toInt().toString();
     }
     return value.toStringAsFixed(4).replaceFirst(RegExp(r'0+$'), '');
+  }
+
+  static String _formatDateTime(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} '
+        '${two(value.hour)}:${two(value.minute)}';
   }
 }
