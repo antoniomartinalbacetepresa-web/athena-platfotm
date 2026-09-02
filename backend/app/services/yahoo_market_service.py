@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -7,8 +7,11 @@ import yfinance as yf
 
 
 class YahooMarketService:
+    PROVIDER_ID = "yahoo"
+
     def get_quote(self, symbol: str) -> dict[str, Any] | None:
         normalized_symbol = self._normalize_symbol(symbol)
+        retrieved_at = datetime.now(timezone.utc)
 
         ticker = yf.Ticker(normalized_symbol)
 
@@ -74,49 +77,34 @@ class YahooMarketService:
 
             latest = history.iloc[-1]
 
-            current_price = self._to_float(
-                latest.get("Close")
-            )
+            current_price = self._to_float(latest.get("Close"))
 
             open_price = (
                 open_price
                 if open_price is not None
-                else self._to_float(
-                    latest.get("Open")
-                )
+                else self._to_float(latest.get("Open"))
             )
 
             day_high = (
                 day_high
                 if day_high is not None
-                else self._to_float(
-                    latest.get("High")
-                )
+                else self._to_float(latest.get("High"))
             )
 
             day_low = (
                 day_low
                 if day_low is not None
-                else self._to_float(
-                    latest.get("Low")
-                )
+                else self._to_float(latest.get("Low"))
             )
 
             volume = (
                 volume
                 if volume is not None
-                else self._to_float(
-                    latest.get("Volume")
-                )
+                else self._to_float(latest.get("Volume"))
             )
 
-            if (
-                previous_close is None
-                and len(history.index) >= 2
-            ):
-                previous_close = self._to_float(
-                    history.iloc[-2].get("Close")
-                )
+            if previous_close is None and len(history.index) >= 2:
+                previous_close = self._to_float(history.iloc[-2].get("Close"))
 
         if current_price is None:
             return None
@@ -128,15 +116,13 @@ class YahooMarketService:
             change = current_price - previous_close
 
             if previous_close != 0:
-                change_percentage = (
-                    change / previous_close
-                ) * 100
+                change_percentage = (change / previous_close) * 100
 
         return {
             "symbol": normalized_symbol,
-            "timestamp": datetime.now(
-                timezone.utc
-            ).isoformat(),
+            "timestamp": retrieved_at.isoformat(),
+            "retrievedAt": retrieved_at.isoformat(),
+            "sourceProvider": self.PROVIDER_ID,
             "open": open_price,
             "high": day_high,
             "low": day_low,
@@ -155,22 +141,12 @@ class YahooMarketService:
     ) -> list[dict[str, Any]]:
         normalized_symbol = self._normalize_symbol(symbol)
 
-        parsed_from_date = self._parse_date(
-            from_date
-        )
+        parsed_from_date = self._parse_date(from_date)
+        parsed_to_date = self._parse_date(to_date)
 
-        parsed_to_date = self._parse_date(
-            to_date
-        )
+        self._validate_date_range(parsed_from_date, parsed_to_date)
 
-        self._validate_date_range(
-            parsed_from_date,
-            parsed_to_date,
-        )
-
-        yahoo_end_date = self._inclusive_to_exclusive_date(
-            to_date
-        )
+        yahoo_end_date = self._inclusive_to_exclusive_date(to_date)
 
         ticker = yf.Ticker(normalized_symbol)
 
@@ -185,27 +161,19 @@ class YahooMarketService:
         if history.empty:
             return []
 
+        retrieved_at = datetime.now(timezone.utc).isoformat()
         result: list[dict[str, Any]] = []
 
         for index, row in history.iterrows():
             timestamp = index.to_pydatetime()
 
             if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(
-                    tzinfo=timezone.utc
-                )
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
             else:
-                timestamp = timestamp.astimezone(
-                    timezone.utc
-                )
+                timestamp = timestamp.astimezone(timezone.utc)
 
-            close_price = self._to_float(
-                row.get("Close")
-            )
-
-            adjusted_close = self._to_float(
-                row.get("Adj Close")
-            )
+            close_price = self._to_float(row.get("Close"))
+            adjusted_close = self._to_float(row.get("Adj Close"))
 
             if adjusted_close is None:
                 adjusted_close = close_price
@@ -214,20 +182,14 @@ class YahooMarketService:
                 {
                     "symbol": normalized_symbol,
                     "timestamp": timestamp.isoformat(),
-                    "open": self._to_float(
-                        row.get("Open")
-                    ),
-                    "high": self._to_float(
-                        row.get("High")
-                    ),
-                    "low": self._to_float(
-                        row.get("Low")
-                    ),
+                    "retrievedAt": retrieved_at,
+                    "sourceProvider": self.PROVIDER_ID,
+                    "open": self._to_float(row.get("Open")),
+                    "high": self._to_float(row.get("High")),
+                    "low": self._to_float(row.get("Low")),
                     "close": close_price,
                     "adjustedClose": adjusted_close,
-                    "volume": self._to_float(
-                        row.get("Volume")
-                    ),
+                    "volume": self._to_float(row.get("Volume")),
                     "change": None,
                     "changePercentage": None,
                 }
@@ -248,22 +210,15 @@ class YahooMarketService:
 
         return fast_info.get(legacy_key)
 
-    def _parse_date(
-        self,
-        value: str | None,
-    ) -> date | None:
+    def _parse_date(self, value: str | None) -> date | None:
         if value is None:
             return None
 
         try:
-            return datetime.strptime(
-                value,
-                "%Y-%m-%d",
-            ).date()
+            return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError as exc:
             raise ValueError(
-                "La fecha debe tener formato YYYY-MM-DD "
-                "y ser una fecha válida."
+                "La fecha debe tener formato YYYY-MM-DD y ser una fecha válida."
             ) from exc
 
     def _validate_date_range(
@@ -271,46 +226,28 @@ class YahooMarketService:
         from_date: date | None,
         to_date: date | None,
     ) -> None:
-        if (
-            from_date is not None
-            and to_date is not None
-            and from_date > to_date
-        ):
+        if from_date is not None and to_date is not None and from_date > to_date:
             raise ValueError(
-                "La fecha inicial no puede ser posterior "
-                "a la fecha final."
+                "La fecha inicial no puede ser posterior a la fecha final."
             )
 
-    def _inclusive_to_exclusive_date(
-        self,
-        value: str | None,
-    ) -> str | None:
+    def _inclusive_to_exclusive_date(self, value: str | None) -> str | None:
         parsed = self._parse_date(value)
 
         if parsed is None:
             return None
 
-        return (
-            parsed + timedelta(days=1)
-        ).isoformat()
+        return (parsed + timedelta(days=1)).isoformat()
 
-    def _normalize_symbol(
-        self,
-        symbol: str,
-    ) -> str:
+    def _normalize_symbol(self, symbol: str) -> str:
         normalized = symbol.strip().upper()
 
         if not normalized:
-            raise ValueError(
-                "El símbolo no puede estar vacío."
-            )
+            raise ValueError("El símbolo no puede estar vacío.")
 
         return normalized
 
-    def _to_float(
-        self,
-        value: Any,
-    ) -> float | None:
+    def _to_float(self, value: Any) -> float | None:
         if value is None:
             return None
 
