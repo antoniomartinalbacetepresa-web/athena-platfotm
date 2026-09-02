@@ -57,7 +57,7 @@ class PortfolioService {
     for (final position in portfolio.positions) {
       try {
         final quote = await marketRepository.getQuote(position.symbol);
-        _validateRefreshQuote(quote);
+        _validateRefreshQuote(quote, expectedSymbol: position.symbol);
 
         refreshed.add(
           position.copyWith(
@@ -87,7 +87,17 @@ class PortfolioService {
     );
   }
 
-  void _validateRefreshQuote(MarketQuote quote) {
+  void _validateRefreshQuote(
+    MarketQuote quote, {
+    required String expectedSymbol,
+  }) {
+    final normalizedExpectedSymbol = expectedSymbol.trim().toUpperCase();
+    final normalizedQuoteSymbol = quote.symbol.trim().toUpperCase();
+    if (normalizedExpectedSymbol.isEmpty ||
+        normalizedQuoteSymbol != normalizedExpectedSymbol) {
+      throw StateError('La cotización no corresponde a la posición solicitada.');
+    }
+
     if (!quote.currentPrice.isFinite || quote.currentPrice <= 0) {
       throw StateError('Cotización actual inválida.');
     }
@@ -156,14 +166,88 @@ class PortfolioService {
   }
 
   Future<void> addPosition(PortfolioPosition position) async {
-    if (_portfolio == null) {
+    final portfolio = _portfolio;
+    if (portfolio == null) {
       throw StateError('No existe una cartera.');
     }
 
-    final updatedPositions = [..._portfolio!.positions, position];
+    final verifiedPosition = _validateNewPosition(position);
+    final normalizedSymbol = verifiedPosition.symbol;
+    final alreadyExists = portfolio.positions.any(
+      (existing) => existing.symbol.trim().toUpperCase() == normalizedSymbol,
+    );
+    if (alreadyExists) {
+      throw StateError(
+        'Ya existe una posición para $normalizedSymbol. '
+        'ATHENA no duplica exposición sin una operación explícita de ajuste.',
+      );
+    }
 
-    _portfolio = _portfolio!.copyWith(positions: updatedPositions);
+    final updatedPositions = [...portfolio.positions, verifiedPosition];
+
+    _portfolio = portfolio.copyWith(positions: updatedPositions);
     await _repository.savePortfolio(_portfolio!);
+  }
+
+  PortfolioPosition _validateNewPosition(PortfolioPosition position) {
+    final symbol = position.symbol.trim().toUpperCase();
+    if (symbol.isEmpty) {
+      throw ArgumentError.value(position.symbol, 'symbol', 'Ticker vacío.');
+    }
+
+    final companyName = position.companyName.trim();
+    if (companyName.isEmpty) {
+      throw ArgumentError.value(
+        position.companyName,
+        'companyName',
+        'La identidad visible del instrumento no puede estar vacía.',
+      );
+    }
+
+    if (!position.shares.isFinite || position.shares <= 0) {
+      throw ArgumentError.value(
+        position.shares,
+        'shares',
+        'El número de acciones debe ser finito y mayor que cero.',
+      );
+    }
+    if (!position.averagePrice.isFinite || position.averagePrice <= 0) {
+      throw ArgumentError.value(
+        position.averagePrice,
+        'averagePrice',
+        'El precio medio debe ser finito y mayor que cero.',
+      );
+    }
+    if (!position.currentPrice.isFinite || position.currentPrice <= 0) {
+      throw ArgumentError.value(
+        position.currentPrice,
+        'currentPrice',
+        'El precio actual debe ser finito y mayor que cero.',
+      );
+    }
+
+    final updatedAt = position.currentPriceUpdatedAt;
+    final sourceProvider = position.currentPriceSourceProvider?.trim();
+    final retrievedAt = position.currentPriceRetrievedAt;
+    if (updatedAt == null ||
+        sourceProvider == null ||
+        sourceProvider.isEmpty ||
+        retrievedAt == null) {
+      throw StateError(
+        'Una posición nueva requiere provenance completa de su cotización.',
+      );
+    }
+    if (retrievedAt.isBefore(updatedAt)) {
+      throw StateError(
+        'La recuperación de la cotización no puede preceder a su observación.',
+      );
+    }
+
+    return position.copyWith(
+      symbol: symbol,
+      companyName: companyName,
+      currentPriceSourceProvider: sourceProvider,
+    );
   }
 
   Future<void> removePosition(String symbol) async {
@@ -171,8 +255,12 @@ class PortfolioService {
       throw StateError('No existe una cartera.');
     }
 
+    final normalizedSymbol = symbol.trim().toUpperCase();
     final updatedPositions = _portfolio!.positions
-        .where((position) => position.symbol != symbol)
+        .where(
+          (position) =>
+              position.symbol.trim().toUpperCase() != normalizedSymbol,
+        )
         .toList();
 
     _portfolio = _portfolio!.copyWith(positions: updatedPositions);
