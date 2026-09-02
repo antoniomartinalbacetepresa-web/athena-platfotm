@@ -49,6 +49,16 @@ class FakeUncertaintyService:
         return dict(self.payload)
 
 
+class FakeUncertaintyStoreService:
+    def __init__(self, payload=None):
+        self.payload = payload or _sealed_uncertainty()
+        self.calls = []
+
+    def store(self, **kwargs):
+        self.calls.append(kwargs)
+        return dict(self.payload)
+
+
 def _capture():
     return {
         "status": "captured_for_calibration",
@@ -91,6 +101,7 @@ def _persisted():
 
 def _uncertainty():
     return {
+        "artifactVersion": "shadow-live-uncertainty-v1",
         "status": "shadow_live_empirical_uncertainty_pending",
         "candidateId": 20,
         "candidateFingerprint": "c" * 64,
@@ -101,30 +112,67 @@ def _uncertainty():
         "actionThresholdCalibrationResearchEligible": False,
         "action": None,
         "conviction": None,
+        "policy": {
+            "cutoff": "candidate_as_of_not_request_time",
+            "automaticModelMutation": False,
+            "automaticProductionPromotion": False,
+            "automaticTrading": False,
+        },
     }
 
 
-def _service(*, capture=None, candidate=None, persisted=None, uncertainty=None):
+def _sealed_uncertainty():
+    return {
+        "status": "shadow_live_uncertainty_persisted",
+        "uncertaintyId": 30,
+        "candidateId": 20,
+        "candidateFingerprint": "c" * 64,
+        "uncertaintyFingerprint": "e" * 64,
+        "artifactVersion": "shadow-live-uncertainty-v1",
+        "calibratedHorizonCount": 0,
+        "advisoryStatus": "no_advice",
+        "productionEligible": False,
+        "recommendationCandidateReady": False,
+        "actionThresholdCalibrationResearchEligible": False,
+        "action": None,
+        "conviction": None,
+    }
+
+
+def _service(
+    *,
+    capture=None,
+    candidate=None,
+    persisted=None,
+    uncertainty=None,
+    sealed_uncertainty=None,
+):
     uncertainty_service = FakeUncertaintyService(uncertainty or _uncertainty())
+    uncertainty_store = FakeUncertaintyStoreService(
+        sealed_uncertainty or _sealed_uncertainty()
+    )
     service = RecommendationShadowLiveCycleService(
         capture_service=FakeCaptureService(capture or _capture()),
         candidate_pipeline=FakeCandidatePipeline(candidate or _candidate()),
         store_service=FakeStoreService(persisted or _persisted()),
         uncertainty_service=uncertainty_service,
+        uncertainty_store_service=uncertainty_store,
     )
-    return service, uncertainty_service
+    return service, uncertainty_service, uncertainty_store
 
 
-def test_cycle_connects_capture_inference_persistence_and_uncertainty():
+def test_cycle_connects_capture_inference_persistence_uncertainty_and_seal():
     capture = FakeCaptureService(_capture())
     candidate = FakeCandidatePipeline(_candidate())
     store = FakeStoreService(_persisted())
     uncertainty = FakeUncertaintyService()
+    uncertainty_store = FakeUncertaintyStoreService()
     service = RecommendationShadowLiveCycleService(
         capture_service=capture,
         candidate_pipeline=candidate,
         store_service=store,
         uncertainty_service=uncertainty,
+        uncertainty_store_service=uncertainty_store,
     )
     as_of = datetime(2025, 6, 1, tzinfo=timezone.utc)
     bundles = [{"bundleFingerprint": "bundle"}]
@@ -140,6 +188,8 @@ def test_cycle_connects_capture_inference_persistence_and_uncertainty():
     assert result["status"] == "shadow_live_cycle_persisted"
     assert result["snapshotId"] == 10
     assert result["candidateId"] == 20
+    assert result["uncertaintyId"] == 30
+    assert result["uncertaintyFingerprint"] == "e" * 64
     assert result["benchmarkSymbol"] == "SPY"
     assert result["productionEligible"] is False
     assert result["recommendationCandidateReady"] is False
@@ -150,6 +200,9 @@ def test_cycle_connects_capture_inference_persistence_and_uncertainty():
     assert store.calls[0]["snapshot_id"] == 10
     assert store.calls[0]["candidate"] == _candidate()
     assert uncertainty.calls == [{"candidate_id": 20}]
+    assert uncertainty_store.calls == [
+        {"candidate_id": 20, "uncertainty": _uncertainty()}
+    ]
 
 
 def test_cycle_stops_after_pit_capture_block():
@@ -165,11 +218,13 @@ def test_cycle_stops_after_pit_capture_block():
     candidate = FakeCandidatePipeline(_candidate())
     store = FakeStoreService(_persisted())
     uncertainty = FakeUncertaintyService()
+    uncertainty_store = FakeUncertaintyStoreService()
     service = RecommendationShadowLiveCycleService(
         capture_service=capture,
         candidate_pipeline=candidate,
         store_service=store,
         uncertainty_service=uncertainty,
+        uncertainty_store_service=uncertainty_store,
     )
 
     result = service.run(
@@ -185,6 +240,7 @@ def test_cycle_stops_after_pit_capture_block():
     assert candidate.calls == []
     assert store.calls == []
     assert uncertainty.calls == []
+    assert uncertainty_store.calls == []
 
 
 def test_cycle_keeps_snapshot_when_confirmed_inference_is_not_ready():
@@ -194,11 +250,13 @@ def test_cycle_keeps_snapshot_when_confirmed_inference_is_not_ready():
     candidate = FakeCandidatePipeline(blocked_candidate)
     store = FakeStoreService(_persisted())
     uncertainty = FakeUncertaintyService()
+    uncertainty_store = FakeUncertaintyStoreService()
     service = RecommendationShadowLiveCycleService(
         capture_service=FakeCaptureService(_capture()),
         candidate_pipeline=candidate,
         store_service=store,
         uncertainty_service=uncertainty,
+        uncertainty_store_service=uncertainty_store,
     )
 
     result = service.run(
@@ -213,12 +271,13 @@ def test_cycle_keeps_snapshot_when_confirmed_inference_is_not_ready():
     assert result["snapshotId"] == 10
     assert store.calls == []
     assert uncertainty.calls == []
+    assert uncertainty_store.calls == []
 
 
 def test_cycle_fails_closed_if_candidate_assigns_action():
     candidate = _candidate()
     candidate["action"] = "buy"
-    service, uncertainty = _service(candidate=candidate)
+    service, uncertainty, uncertainty_store = _service(candidate=candidate)
 
     with pytest.raises(ValueError, match="action"):
         service.run(
@@ -228,6 +287,7 @@ def test_cycle_fails_closed_if_candidate_assigns_action():
             benchmark_symbol="SPY",
         )
     assert uncertainty.calls == []
+    assert uncertainty_store.calls == []
 
 
 def test_cycle_fails_closed_if_uncertainty_promotes_or_assigns_action():
@@ -240,7 +300,9 @@ def test_cycle_fails_closed_if_uncertainty_promotes_or_assigns_action():
     ):
         uncertainty = _uncertainty()
         uncertainty[field] = value
-        service, fake_uncertainty = _service(uncertainty=uncertainty)
+        service, fake_uncertainty, uncertainty_store = _service(
+            uncertainty=uncertainty
+        )
         with pytest.raises(ValueError, match=message):
             service.run(
                 symbol="TEST",
@@ -249,12 +311,13 @@ def test_cycle_fails_closed_if_uncertainty_promotes_or_assigns_action():
                 benchmark_symbol="SPY",
             )
         assert fake_uncertainty.calls == [{"candidate_id": 20}]
+        assert uncertainty_store.calls == []
 
 
 def test_cycle_fails_closed_if_uncertainty_changes_candidate_identity():
     uncertainty = _uncertainty()
     uncertainty["candidateFingerprint"] = "e" * 64
-    service, _ = _service(uncertainty=uncertainty)
+    service, _, uncertainty_store = _service(uncertainty=uncertainty)
 
     with pytest.raises(RuntimeError, match="cambió el candidato"):
         service.run(
@@ -263,10 +326,28 @@ def test_cycle_fails_closed_if_uncertainty_changes_candidate_identity():
             gated_bundles=[],
             benchmark_symbol="SPY",
         )
+    assert uncertainty_store.calls == []
+
+
+def test_cycle_fails_closed_if_uncertainty_seal_changes_candidate_identity():
+    sealed = _sealed_uncertainty()
+    sealed["candidateFingerprint"] = "f" * 64
+    service, _, uncertainty_store = _service(sealed_uncertainty=sealed)
+
+    with pytest.raises(RuntimeError, match="sello de incertidumbre"):
+        service.run(
+            symbol="TEST",
+            as_of=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            gated_bundles=[],
+            benchmark_symbol="SPY",
+        )
+    assert uncertainty_store.calls == [
+        {"candidate_id": 20, "uncertainty": _uncertainty()}
+    ]
 
 
 def test_cycle_requires_explicit_benchmark_symbol():
-    service, uncertainty = _service()
+    service, uncertainty, uncertainty_store = _service()
 
     with pytest.raises(ValueError, match="benchmark_symbol"):
         service.run(
@@ -276,3 +357,4 @@ def test_cycle_requires_explicit_benchmark_symbol():
             benchmark_symbol="",
         )
     assert uncertainty.calls == []
+    assert uncertainty_store.calls == []
