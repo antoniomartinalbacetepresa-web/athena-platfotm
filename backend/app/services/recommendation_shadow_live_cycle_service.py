@@ -15,15 +15,18 @@ from app.services.recommendation_shadow_live_candidate_store_service import (
 from app.services.recommendation_shadow_live_uncertainty_service import (
     RecommendationShadowLiveUncertaintyService,
 )
+from app.services.recommendation_shadow_live_uncertainty_store_service import (
+    RecommendationShadowLiveUncertaintyStoreService,
+)
 
 
 class RecommendationShadowLiveCycleService:
     """Connect PIT evidence -> confirmed inference -> persistence -> uncertainty.
 
-    The captured PIT snapshot is the immutable anchor used later for
-    7/30/90/180/365-day outcome evaluation. Empirical uncertainty is computed
-    only after persistence and reconstructs what was knowable at the candidate's
-    own ``asOf`` from earlier forward residuals of the exact same frozen model.
+    The PIT snapshot anchors later outcome evaluation. Empirical uncertainty is
+    reconstructed at the candidate's own ``asOf`` from earlier residuals of the
+    exact same frozen model and is then immediately sealed. Re-running ATHENA
+    later cannot silently replace the scenarios that existed at inference time.
     """
 
     def __init__(
@@ -33,6 +36,7 @@ class RecommendationShadowLiveCycleService:
         candidate_pipeline: RecommendationShadowLiveCandidatePipelineService | None = None,
         store_service: RecommendationShadowLiveCandidateStoreService | None = None,
         uncertainty_service: RecommendationShadowLiveUncertaintyService | None = None,
+        uncertainty_store_service: RecommendationShadowLiveUncertaintyStoreService | None = None,
     ) -> None:
         self._capture_service = capture_service or RecommendationShadowCaptureService()
         self._candidate_pipeline = (
@@ -41,6 +45,9 @@ class RecommendationShadowLiveCycleService:
         self._store_service = store_service or RecommendationShadowLiveCandidateStoreService()
         self._uncertainty_service = (
             uncertainty_service or RecommendationShadowLiveUncertaintyService()
+        )
+        self._uncertainty_store_service = (
+            uncertainty_store_service or RecommendationShadowLiveUncertaintyStoreService()
         )
 
     def run(
@@ -113,6 +120,18 @@ class RecommendationShadowLiveCycleService:
         self._assert_uncertainty_shadow(uncertainty)
         if uncertainty.get("candidateFingerprint") != persisted.get("candidateFingerprint"):
             raise RuntimeError("La incertidumbre shadow cambió el candidato persistido.")
+        sealed_uncertainty = self._uncertainty_store_service.store(
+            candidate_id=candidate_id,
+            uncertainty=uncertainty,
+        )
+        self._assert_uncertainty_shadow(sealed_uncertainty)
+        if sealed_uncertainty.get("candidateFingerprint") != persisted.get(
+            "candidateFingerprint"
+        ):
+            raise RuntimeError("El sello de incertidumbre cambió el candidato persistido.")
+        uncertainty_id = sealed_uncertainty.get("uncertaintyId")
+        if not isinstance(uncertainty_id, int) or uncertainty_id <= 0:
+            raise RuntimeError("El store de incertidumbre no devolvió uncertaintyId válido.")
 
         return {
             "status": "shadow_live_cycle_persisted",
@@ -122,6 +141,8 @@ class RecommendationShadowLiveCycleService:
             "confirmationEvidenceFingerprint": persisted.get(
                 "confirmationEvidenceFingerprint"
             ),
+            "uncertaintyId": uncertainty_id,
+            "uncertaintyFingerprint": sealed_uncertainty.get("uncertaintyFingerprint"),
             "symbol": candidate.get("symbol"),
             "asOf": candidate.get("asOf"),
             "benchmarkSymbol": normalized_benchmark,
@@ -135,9 +156,10 @@ class RecommendationShadowLiveCycleService:
             "productionEligible": False,
             "recommendationCandidateReady": False,
             "policy": {
-                "flow": "pit_capture_then_confirmed_frozen_model_inference_then_shadow_persistence_then_ex_ante_uncertainty",
+                "flow": "pit_capture_then_confirmed_frozen_model_inference_then_candidate_persistence_then_ex_ante_uncertainty_then_immutable_uncertainty_seal",
                 "outcomes": "measured_later_from_same_pit_snapshot",
                 "uncertainty": "prior_non_overlapping_forward_residuals_same_frozen_model_only",
+                "uncertaintyPersistence": "first_candidate_artifact_is_immutable_sha256_sealed",
                 "action": "not_assigned",
                 "score": "not_calibrated",
                 "conviction": "not_calibrated",
