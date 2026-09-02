@@ -13,6 +13,7 @@ class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
 
   static const double _leftColumnWidth = 280;
+  static const double _desktopBreakpoint = 1080;
 
   @override
   Widget build(BuildContext context) {
@@ -22,9 +23,7 @@ class DashboardPage extends StatelessWidget {
         child: Column(
           children: [
             const DashboardHeader(),
-
             const SizedBox(height: AthenaSpacing.md),
-
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(
@@ -33,71 +32,83 @@ class DashboardPage extends StatelessWidget {
                   AthenaSpacing.md,
                   AthenaSpacing.lg,
                 ),
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 430,
-                      child: Row(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.stretch,
-                        children: [
-                          const SizedBox(
-                            width: _leftColumnWidth,
-                            child: MySpacePanel(),
-                          ),
-
-                          const SizedBox(
-                            width: AthenaSpacing.md,
-                          ),
-
-                          const Expanded(
-                            child: RecommendationsPanel(),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: AthenaSpacing.md,
-                    ),
-
-                    SizedBox(
-                      height: 400,
-                      child: Row(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.stretch,
-                        children: [
-                          const SizedBox(
-                            width: _leftColumnWidth,
-                            child: AthenaScorePanel(),
-                          ),
-
-                          const SizedBox(
-                            width: AthenaSpacing.md,
-                          ),
-
-                          const Expanded(
-                            child: MarketPanel(),
-                          ),
-
-                          const SizedBox(
-                            width: AthenaSpacing.md,
-                          ),
-
-                          const Expanded(
-                            flex: 2,
-                            child: NewsPanel(),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (constraints.maxWidth < _desktopBreakpoint) {
+                      return const _CompactDashboard();
+                    }
+                    return const _DesktopDashboard();
+                  },
                 ),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DesktopDashboard extends StatelessWidget {
+  const _DesktopDashboard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        SizedBox(
+          height: 430,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: DashboardPage._leftColumnWidth,
+                child: MySpacePanel(),
+              ),
+              SizedBox(width: AthenaSpacing.md),
+              Expanded(child: RecommendationsPanel()),
+            ],
+          ),
+        ),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(
+          height: 400,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: DashboardPage._leftColumnWidth,
+                child: AthenaScorePanel(),
+              ),
+              SizedBox(width: AthenaSpacing.md),
+              Expanded(child: MarketPanel()),
+              SizedBox(width: AthenaSpacing.md),
+              Expanded(flex: 2, child: NewsPanel()),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CompactDashboard extends StatelessWidget {
+  const _CompactDashboard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        SizedBox(height: 360, child: MySpacePanel()),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(height: 430, child: RecommendationsPanel()),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(height: 360, child: AthenaScorePanel()),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(height: 430, child: MarketPanel()),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(height: 300, child: NewsPanel()),
+      ],
     );
   }
 }
