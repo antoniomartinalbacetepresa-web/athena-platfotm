@@ -76,7 +76,7 @@ class PortfolioAllocationPlanService {
       );
     }
 
-    final boundedWeight = totalWeight.clamp(0.0, 1.0);
+    final boundedWeight = totalWeight.clamp(0.0, 1.0).toDouble();
     final allocatedAmount = referenceCapital * boundedWeight;
     final cashReserveAmount = referenceCapital - allocatedAmount;
 
@@ -85,7 +85,7 @@ class PortfolioAllocationPlanService {
       lines: List.unmodifiable(lines),
       allocatedAmount: allocatedAmount,
       cashReserveAmount: cashReserveAmount,
-      cashReserveWeight: 1 - boundedWeight,
+      cashReserveWeight: 1.0 - boundedWeight,
     );
   }
 }
