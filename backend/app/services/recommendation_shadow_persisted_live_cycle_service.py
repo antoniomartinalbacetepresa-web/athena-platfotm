@@ -9,6 +9,9 @@ from app.repositories.recommendation_shadow_frozen_candidate_repository import (
 from app.services.recommendation_shadow_gated_freeze_service import (
     RecommendationShadowGatedFreezeService,
 )
+from app.services.recommendation_shadow_live_cycle_attestation_service import (
+    RecommendationShadowLiveCycleAttestationService,
+)
 from app.services.recommendation_shadow_live_cycle_service import (
     RecommendationShadowLiveCycleService,
 )
@@ -19,8 +22,9 @@ class RecommendationShadowPersistedLiveCycleService:
 
     A caller supplies only bundle fingerprints. The corresponding immutable
     bundle JSON is loaded from SQLite and revalidated before any current PIT
-    evidence is captured or any prediction is produced. This keeps self-consistent
-    caller-built JSON from being mistaken for stored research provenance.
+    evidence is captured or any prediction is produced. Successful persisted
+    cycles receive a separate immutable provenance attestation, so later action
+    calibration can exclude candidates that bypassed this trusted entry point.
     """
 
     def __init__(
@@ -29,6 +33,7 @@ class RecommendationShadowPersistedLiveCycleService:
         frozen_repository: RecommendationShadowFrozenCandidateRepository | None = None,
         gated_freeze_service: RecommendationShadowGatedFreezeService | None = None,
         live_cycle_service: RecommendationShadowLiveCycleService | None = None,
+        attestation_service: RecommendationShadowLiveCycleAttestationService | None = None,
     ) -> None:
         self._frozen_repository = (
             frozen_repository or RecommendationShadowFrozenCandidateRepository()
@@ -37,6 +42,9 @@ class RecommendationShadowPersistedLiveCycleService:
             gated_freeze_service or RecommendationShadowGatedFreezeService()
         )
         self._live_cycle_service = live_cycle_service or RecommendationShadowLiveCycleService()
+        self._attestation_service = (
+            attestation_service or RecommendationShadowLiveCycleAttestationService()
+        )
 
     def run(
         self,
@@ -84,7 +92,7 @@ class RecommendationShadowPersistedLiveCycleService:
             horizons=horizons,
         )
         self._assert_cycle_shadow(result)
-        return {
+        trusted_result = {
             **result,
             "frozenCandidateSource": "sqlite_persisted_and_revalidated",
             "bundleFingerprints": fingerprints,
@@ -93,6 +101,30 @@ class RecommendationShadowPersistedLiveCycleService:
                 "callerSuppliedFrozenBundleJsonTrusted": False,
                 "frozenBundleLookup": "exact_persisted_sha256_fingerprint",
                 "frozenBundleIntegrity": "gated_freeze_revalidated_after_load",
+            },
+        }
+        if trusted_result.get("status") != "shadow_live_cycle_persisted":
+            return trusted_result
+
+        attestation = self._attestation_service.attest_and_store(
+            cycle_result=trusted_result
+        )
+        self._assert_attestation_shadow(attestation)
+        if attestation.get("candidateId") != trusted_result.get("candidateId"):
+            raise RuntimeError("La atestación live cambió candidateId.")
+        if attestation.get("candidateFingerprint") != trusted_result.get(
+            "candidateFingerprint"
+        ):
+            raise RuntimeError("La atestación live cambió candidateFingerprint.")
+        return {
+            **trusted_result,
+            "liveCycleAttestationId": attestation.get("attestationId"),
+            "liveCycleAttestationFingerprint": attestation.get(
+                "attestationFingerprint"
+            ),
+            "policy": {
+                **dict(trusted_result.get("policy") or {}),
+                "trustedLiveCycleAttestation": "immutable_sha256_sealed_v1",
             },
         }
 
@@ -122,3 +154,11 @@ class RecommendationShadowPersistedLiveCycleService:
             raise ValueError("El ciclo live debe mantener advisoryStatus=no_advice.")
         if payload.get("recommendationCandidateReady") is not False:
             raise ValueError("El ciclo live no puede habilitar recomendaciones.")
+
+    def _assert_attestation_shadow(self, payload: dict[str, Any]) -> None:
+        if payload.get("productionEligible") is not False:
+            raise ValueError("La atestación live debe mantener productionEligible=False.")
+        if payload.get("advisoryStatus") != "no_advice":
+            raise ValueError("La atestación live debe mantener advisoryStatus=no_advice.")
+        if payload.get("recommendationCandidateReady") is not False:
+            raise ValueError("La atestación live no puede habilitar recomendaciones.")
