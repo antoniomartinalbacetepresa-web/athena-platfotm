@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.recommendation_shadow_holdout_pipeline_service import (
+    RecommendationShadowHoldoutPipelineService,
+)
 from app.services.recommendation_shadow_research_pipeline_service import (
     RecommendationShadowResearchPipelineService,
 )
@@ -15,6 +18,7 @@ router = APIRouter(
 )
 
 research_pipeline_service = RecommendationShadowResearchPipelineService()
+holdout_pipeline_service = RecommendationShadowHoldoutPipelineService()
 
 
 def _effective_as_of(value: datetime | None) -> datetime:
@@ -42,6 +46,47 @@ def _parse_horizons(value: str) -> tuple[int, ...]:
     return horizons
 
 
+def _assert_shadow_contract(payload: dict[str, object]) -> None:
+    if payload.get("advisoryStatus") != "no_advice":
+        raise HTTPException(
+            status_code=500,
+            detail="El pipeline shadow violó el contrato no-advice de ATHENA.",
+        )
+    if payload.get("productionEligible") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="El pipeline shadow no puede habilitar producción.",
+        )
+
+
+def _assert_research_policy(payload: dict[str, object]) -> None:
+    policy = payload.get("policy")
+    if not isinstance(policy, dict) or policy.get("productionEligibility") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="El pipeline shadow devolvió una política de producción inválida.",
+        )
+
+
+def _assert_holdout_policy(payload: dict[str, object]) -> None:
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="El pipeline holdout devolvió una política inválida.",
+        )
+    if policy.get("automaticProductionPromotion") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="El pipeline holdout no puede habilitar promoción automática.",
+        )
+    if policy.get("actions") != "not_assigned":
+        raise HTTPException(
+            status_code=500,
+            detail="El pipeline holdout no puede asignar acciones de inversión.",
+        )
+
+
 @router.get("/shadow-research-readiness")
 def get_shadow_research_readiness(
     as_of: datetime | None = Query(None),
@@ -64,20 +109,33 @@ def get_shadow_research_readiness(
             detail="No se pudo evaluar la preparación shadow de ATHENA.",
         ) from exc
 
-    if payload.get("advisoryStatus") != "no_advice":
+    _assert_shadow_contract(payload)
+    _assert_research_policy(payload)
+    return {"data": payload}
+
+
+@router.get("/shadow-holdout-readiness")
+def get_shadow_holdout_readiness(
+    as_of: datetime | None = Query(None),
+    horizons: str = Query("7,30,90,180,365"),
+) -> dict[str, object]:
+    """Evaluate persisted frozen candidates on fresh holdout evidence only."""
+
+    effective_as_of = _effective_as_of(as_of)
+    effective_horizons = _parse_horizons(horizons)
+    try:
+        payload = holdout_pipeline_service.evaluate_latest_cohort(
+            as_of=effective_as_of,
+            horizons=effective_horizons,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail="El pipeline shadow violó el contrato no-advice de ATHENA.",
-        )
-    if payload.get("productionEligible") is not False:
-        raise HTTPException(
-            status_code=500,
-            detail="El pipeline shadow no puede habilitar producción.",
-        )
-    policy = payload.get("policy")
-    if not isinstance(policy, dict) or policy.get("productionEligibility") is not False:
-        raise HTTPException(
-            status_code=500,
-            detail="El pipeline shadow devolvió una política de producción inválida.",
-        )
+            detail="No se pudo evaluar el holdout shadow de ATHENA.",
+        ) from exc
+
+    _assert_shadow_contract(payload)
+    _assert_holdout_policy(payload)
     return {"data": payload}
