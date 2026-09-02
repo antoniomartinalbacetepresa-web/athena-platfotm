@@ -12,6 +12,25 @@ from app.services.recommendation_performance_service import (
 )
 
 
+def _benchmark_evidence(
+    *, generated: datetime, due: datetime, benchmark_return: float
+) -> dict[str, object]:
+    return {
+        "status": "resolved",
+        "benchmarkSymbol": "SPY",
+        "benchmarkInstrumentId": 999,
+        "entryPrice": 100.0,
+        "exitPrice": 100.0 * (1.0 + benchmark_return),
+        "benchmarkReturn": benchmark_return,
+        "entryObservedAt": generated.isoformat(),
+        "exitObservedAt": due.isoformat(),
+        "entryRetrievedAt": generated.isoformat(),
+        "exitRetrievedAt": due.isoformat(),
+        "entrySourceProvider": "test_benchmark",
+        "exitSourceProvider": "test_benchmark",
+    }
+
+
 def _seed(
     database: AthenaDatabase,
     *,
@@ -27,6 +46,7 @@ def _seed(
     generated = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     recommendation_id = history.create_recommendation(
         symbol=f"{action}-{conviction}",
+        benchmark_symbol="SPY" if benchmark is not None else None,
         action=action,
         score=70,
         conviction=conviction,
@@ -37,13 +57,23 @@ def _seed(
         rationale={},
         input_snapshot={},
     )
+    due = generated + timedelta(days=horizon)
     history.record_outcome(
         recommendation_id=recommendation_id,
         horizon_days=horizon,
-        evaluated_at=generated + timedelta(days=horizon),
+        evaluated_at=due,
         entry_price=entry,
         exit_price=exit,
         benchmark_return=benchmark,
+        benchmark_evidence=(
+            _benchmark_evidence(
+                generated=generated,
+                due=due,
+                benchmark_return=benchmark,
+            )
+            if benchmark is not None
+            else None
+        ),
         source_provider="test",
     )
 
@@ -74,6 +104,7 @@ def test_performance_measures_direction_without_inventing_hold_accuracy(
     assert api["holdAccuracyStatus"] == (
         "not_defined_without_validated_tolerance_band"
     )
+    assert "legacy_scalar_excess_is_excluded" in api["benchmarkPolicy"]
 
 
 def test_performance_filters_model_version_and_horizon(tmp_path: Path) -> None:
