@@ -11,6 +11,26 @@ from app.services.recommendation_shadow_calibration_dataset_service import (
 CUT = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc)
 
 
+def _benchmark_evidence(due: datetime) -> dict[str, object]:
+    entry_observed = CUT + timedelta(hours=1)
+    exit_observed = due
+    return {
+        "status": "resolved",
+        "benchmarkSymbol": "SPY",
+        "benchmarkInstrumentId": 999,
+        "entryPrice": 100.0,
+        "exitPrice": 103.0,
+        "benchmarkReturn": 0.03,
+        "entryObservedAt": entry_observed.isoformat(),
+        "exitObservedAt": exit_observed.isoformat(),
+        "entryRetrievedAt": (entry_observed + timedelta(minutes=1)).isoformat(),
+        "exitRetrievedAt": exit_observed.isoformat(),
+        "entrySourceProvider": "test_benchmark",
+        "exitSourceProvider": "test_benchmark",
+        "policy": {"retrievalCutoff": "retrieved_at_not_after_evaluation_as_of"},
+    }
+
+
 def _setup_row(tmp_path, *, feature_value=0.08):
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
@@ -59,6 +79,7 @@ def _setup_row(tmp_path, *, feature_value=0.08):
         exit_retrieved_at=due,
         source_provider="test",
         benchmark_return=0.03,
+        benchmark_evidence=_benchmark_evidence(due),
     )
     return database, snapshot_id
 
