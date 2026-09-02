@@ -16,7 +16,15 @@ class FakeHoldoutSealService:
         return self.payload
 
 
-def _payload(*, raw=True, final=False, count=2, controlled=False, correction="not_yet_implemented"):
+def _payload(
+    *,
+    raw=True,
+    final=False,
+    count=2,
+    controlled=False,
+    correction="not_yet_implemented",
+    lineage_complete=True,
+):
     return {
         "status": "shadow_independent_holdout_sealed",
         "holdoutSealed": True,
@@ -28,6 +36,7 @@ def _payload(*, raw=True, final=False, count=2, controlled=False, correction="no
             "multiplicityPresent": count > 1,
             "multiplicityControlled": controlled,
             "correctionMethod": correction,
+            "firstExposureLineageComplete": lineage_complete,
             "experiments": [],
         },
         "advisoryStatus": "no_advice",
@@ -91,6 +100,28 @@ def test_api_fails_closed_if_final_eligibility_is_not_backed_by_raw_holdout(monk
     assert "elegibilidad final" in response.json()["detail"].lower()
 
 
+def test_api_fails_closed_if_first_exposure_lineage_is_incomplete(monkeypatch):
+    fake = FakeHoldoutSealService(
+        _payload(
+            raw=True,
+            final=True,
+            count=1,
+            controlled=True,
+            correction="not_required",
+            lineage_complete=False,
+        )
+    )
+    monkeypatch.setattr(recommendation_research, "holdout_seal_service", fake)
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/recommendations/learning/shadow-holdout-readiness"
+    )
+
+    assert response.status_code == 500
+    assert "linaje" in response.json()["detail"].lower()
+
+
 def test_api_accepts_single_controlled_experiment_when_raw_gate_passes(monkeypatch):
     fake = FakeHoldoutSealService(
         _payload(
@@ -99,6 +130,7 @@ def test_api_accepts_single_controlled_experiment_when_raw_gate_passes(monkeypat
             count=1,
             controlled=True,
             correction="not_required",
+            lineage_complete=True,
         )
     )
     monkeypatch.setattr(recommendation_research, "holdout_seal_service", fake)
