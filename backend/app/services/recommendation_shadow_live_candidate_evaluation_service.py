@@ -31,12 +31,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
         self._snapshot_repository = snapshot_repository or RecommendationShadowRepository()
         self._candidate_service = candidate_service or RecommendationShadowLiveCandidateService()
 
-    def evaluate(
-        self,
-        *,
-        candidate_id: int,
-        as_of: datetime,
-    ) -> dict[str, Any]:
+    def evaluate(self, *, candidate_id: int, as_of: datetime) -> dict[str, Any]:
         cutoff = self._aware_utc(as_of, "as_of")
         stored = self._candidate_repository.get(candidate_id)
         if stored is None:
@@ -57,6 +52,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
         candidate_as_of = self._parse_aware(candidate.get("asOf"), "candidate.asOf")
         if cutoff < candidate_as_of:
             raise ValueError("as_of no puede ser anterior al candidato persistido.")
+
         outcomes = self._snapshot_repository.list_outcomes(snapshot_id)
         outcome_by_horizon: dict[int, dict[str, Any]] = {}
         for outcome in outcomes:
@@ -73,10 +69,21 @@ class RecommendationShadowLiveCandidateEvaluationService:
         expected_horizons = candidate.get("horizons")
         if not isinstance(expected_horizons, dict):
             raise ValueError("El candidato carece de horizontes de inferencia.")
+        seen_candidate_horizons: set[int] = set()
         for key, inference in expected_horizons.items():
             if not isinstance(inference, dict):
                 raise ValueError("Un horizonte del candidato tiene formato inválido.")
-            horizon = int(inference.get("horizonDays", key))
+            try:
+                key_horizon = int(key)
+                horizon = int(inference.get("horizonDays"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Un horizonte del candidato no es entero.") from exc
+            if horizon <= 0 or key_horizon != horizon:
+                raise ValueError("La identidad de horizonte del candidato es inconsistente.")
+            if horizon in seen_candidate_horizons:
+                raise ValueError("El candidato contiene un horizonte duplicado.")
+            seen_candidate_horizons.add(horizon)
+
             expected = self._optional_finite(inference.get("expectedExcessReturn"))
             if expected is None:
                 horizon_results[str(horizon)] = {
@@ -94,9 +101,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
                     "expectedExcessReturn": expected,
                 }
                 continue
-            evaluated_at = self._parse_aware(
-                outcome.get("evaluated_at"), "outcome.evaluated_at"
-            )
+            evaluated_at = self._parse_aware(outcome.get("evaluated_at"), "outcome.evaluated_at")
             if evaluated_at > cutoff:
                 horizon_results[str(horizon)] = {
                     "horizonDays": horizon,
@@ -108,9 +113,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
             due_at = self._parse_aware(outcome.get("due_at"), "outcome.due_at")
             if evaluated_at < due_at:
                 raise ValueError("Un outcome fue evaluado antes de su vencimiento.")
-            realized = self._required_finite(
-                outcome.get("excess_return"), "outcome.excess_return"
-            )
+            realized = self._required_finite(outcome.get("excess_return"), "outcome.excess_return")
             error = expected - realized
             if not math.isfinite(error):
                 raise ValueError("El error de predicción no es finito.")
