@@ -103,6 +103,25 @@ class FakeGatedFreeze:
             "status": "shadow_research_gated_model_frozen",
             "horizonDays": horizon,
             "ridgeLambda": kwargs["protocol_selection"]["selectedRidgeLambda"],
+            "bundleFingerprint": f"bundle-{horizon}",
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+        }
+
+
+class FakeStore:
+    def __init__(self):
+        self.calls = []
+
+    def persist(self, **kwargs):
+        self.calls.append(kwargs)
+        bundle = kwargs["bundle"]
+        horizon = bundle["horizonDays"]
+        return {
+            "status": "shadow_frozen_candidate_persisted",
+            "artifactId": horizon,
+            "bundleFingerprint": bundle["bundleFingerprint"],
+            "horizonDays": horizon,
             "advisoryStatus": "no_advice",
             "productionEligible": False,
         }
@@ -117,15 +136,21 @@ def _raw_walk_forward(horizon):
     }
 
 
-def test_research_gate_failure_prevents_all_selection_and_freezing():
-    research = FakeResearchPipeline(eligible=False)
-    selector = FakeSelector()
+def _service(*, eligible=True, blocked_horizon=None):
+    selector = FakeSelector(blocked_horizon=blocked_horizon)
     freezer = FakeGatedFreeze()
+    store = FakeStore()
     service = RecommendationShadowPreHoldoutPipelineService(
-        research_pipeline_service=research,
+        research_pipeline_service=FakeResearchPipeline(eligible=eligible),
         protocol_selection_service=selector,
         gated_freeze_service=freezer,
+        frozen_candidate_store_service=store,
     )
+    return service, selector, freezer, store
+
+
+def test_research_gate_failure_prevents_all_selection_freezing_and_persistence():
+    service, selector, freezer, store = _service(eligible=False)
 
     result = service.prepare(
         as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -136,40 +161,32 @@ def test_research_gate_failure_prevents_all_selection_and_freezing():
     assert result["preparedHorizonCount"] == 0
     assert selector.calls == []
     assert freezer.calls == []
+    assert store.calls == []
     assert result["productionEligible"] is False
 
 
-def test_only_passing_horizons_are_selected_and_frozen():
-    selector = FakeSelector()
-    freezer = FakeGatedFreeze()
-    service = RecommendationShadowPreHoldoutPipelineService(
-        research_pipeline_service=FakeResearchPipeline(eligible=True),
-        protocol_selection_service=selector,
-        gated_freeze_service=freezer,
-    )
+def test_only_passing_horizons_are_selected_frozen_and_persisted():
+    service, selector, freezer, store = _service(eligible=True)
     cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     result = service.prepare(as_of=cutoff, horizons=(7, 30, 90))
 
-    assert result["status"] == "shadow_pre_holdout_candidates_frozen"
+    assert result["status"] == "shadow_pre_holdout_candidates_frozen_and_persisted"
     assert result["preparedHorizonCount"] == 2
     assert set(result["frozenCandidates"]) == {"7", "30"}
+    assert set(result["persistedCandidates"]) == {"7", "30"}
     assert [call["horizon_days"] for call in selector.calls] == [7, 30]
     assert [call["horizon_days"] for call in freezer.calls] == [7, 30]
     assert all(call["research_cutoff"] == cutoff for call in freezer.calls)
+    assert [call["bundle"]["horizonDays"] for call in store.calls] == [7, 30]
     assert result["policy"]["manualLambdaSelection"] is False
+    assert result["policy"]["validatedPersistenceRequired"] is True
     assert result["policy"]["holdoutEvidenceUsed"] is False
     assert result["productionEligible"] is False
 
 
-def test_protocol_selection_failure_blocks_only_that_horizon():
-    selector = FakeSelector(blocked_horizon=30)
-    freezer = FakeGatedFreeze()
-    service = RecommendationShadowPreHoldoutPipelineService(
-        research_pipeline_service=FakeResearchPipeline(eligible=True),
-        protocol_selection_service=selector,
-        gated_freeze_service=freezer,
-    )
+def test_protocol_selection_failure_blocks_only_that_horizon_and_never_stores_it():
+    service, selector, freezer, store = _service(eligible=True, blocked_horizon=30)
 
     result = service.prepare(
         as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -178,6 +195,7 @@ def test_protocol_selection_failure_blocks_only_that_horizon():
 
     assert result["preparedHorizonCount"] == 1
     assert set(result["frozenCandidates"]) == {"7"}
+    assert set(result["persistedCandidates"]) == {"7"}
     assert result["blockedHorizons"] == [
         {
             "horizonDays": 30,
@@ -185,6 +203,7 @@ def test_protocol_selection_failure_blocks_only_that_horizon():
         }
     ]
     assert [call["horizon_days"] for call in freezer.calls] == [7]
+    assert [call["bundle"]["horizonDays"] for call in store.calls] == [7]
 
 
 def test_pipeline_rejects_any_intermediate_production_promotion():
@@ -201,6 +220,7 @@ def test_pipeline_rejects_any_intermediate_production_promotion():
         research_pipeline_service=research,
         protocol_selection_service=FakeSelector(),
         gated_freeze_service=FakeGatedFreeze(),
+        frozen_candidate_store_service=FakeStore(),
     )
 
     with pytest.raises(ValueError, match="productionEligible"):
