@@ -154,12 +154,12 @@ class _MySpacePanelState extends State<MySpacePanel> {
     final current = portfolio.currentValue;
     final profitLoss = portfolio.profitLoss;
     final hasReferenceCapital = portfolio.initialCapital > 0;
-    final availableCapital = hasReferenceCapital
-        ? (portfolio.initialCapital - invested).clamp(0.0, double.infinity)
+    final remainingReference = hasReferenceCapital
+        ? portfolio.referenceCapitalRemaining
         : null;
-    final accountValue = availableCapital == null
-        ? current
-        : current + availableCapital;
+    final referenceExcess = hasReferenceCapital
+        ? portfolio.referenceCapitalExcess
+        : null;
 
     return SingleChildScrollView(
       child: Column(
@@ -170,8 +170,8 @@ class _MySpacePanelState extends State<MySpacePanel> {
             const SizedBox(height: 10),
           ],
           _row(
-            'Valor de cartera',
-            _formatCurrency(accountValue),
+            'Valor actual posiciones',
+            _formatCurrency(current),
             '${portfolio.positions.length} posiciones',
             AthenaColors.text,
           ),
@@ -187,16 +187,24 @@ class _MySpacePanelState extends State<MySpacePanel> {
             AthenaColors.text,
           ),
           _divider(),
-          _row(
-            'Capital no asignado',
-            availableCapital == null
-                ? 'No disponible'
-                : _formatCurrency(availableCapital),
-            availableCapital == null
-                ? 'Falta capital de referencia'
-                : 'Referencia menos coste invertido',
-            AthenaColors.text,
-          ),
+          if (hasReferenceCapital && portfolio.isOverReferenceCapital)
+            _row(
+              'Exceso sobre referencia',
+              _formatCurrency(referenceExcess ?? 0),
+              'Coste invertido por encima de la referencia',
+              const Color(0xFFFFB86B),
+            )
+          else
+            _row(
+              'Referencia sin utilizar',
+              remainingReference == null
+                  ? 'No disponible'
+                  : _formatCurrency(remainingReference),
+              remainingReference == null
+                  ? 'Falta capital de referencia'
+                  : 'Referencia menos coste invertido',
+              AthenaColors.text,
+            ),
           _divider(),
           _row(
             'Resultado no realizado',
