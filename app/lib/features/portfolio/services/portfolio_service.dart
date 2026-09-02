@@ -56,15 +56,13 @@ class PortfolioService {
     for (final position in portfolio.positions) {
       try {
         final quote = await marketRepository.getQuote(position.symbol);
-        if (!quote.currentPrice.isFinite || quote.currentPrice <= 0) {
-          throw StateError('Cotización actual inválida.');
-        }
+        _validateRefreshQuote(quote);
 
         refreshed.add(
           position.copyWith(
             currentPrice: quote.currentPrice,
             currentPriceUpdatedAt: quote.updatedAt,
-            currentPriceSourceProvider: quote.sourceProvider,
+            currentPriceSourceProvider: quote.sourceProvider!.trim(),
             currentPriceRetrievedAt: quote.retrievedAt,
           ),
         );
@@ -86,6 +84,29 @@ class PortfolioService {
       updatedPositions: updatedCount,
       failedSymbols: List.unmodifiable(failedSymbols),
     );
+  }
+
+  void _validateRefreshQuote(dynamic quote) {
+    if (!quote.currentPrice.isFinite || quote.currentPrice <= 0) {
+      throw StateError('Cotización actual inválida.');
+    }
+
+    final sourceProvider = quote.sourceProvider?.toString().trim();
+    if (sourceProvider == null || sourceProvider.isEmpty) {
+      throw StateError('Cotización sin proveedor de origen verificable.');
+    }
+
+    final retrievedAt = quote.retrievedAt as DateTime?;
+    if (retrievedAt == null) {
+      throw StateError('Cotización sin timestamp de recuperación.');
+    }
+
+    final updatedAt = quote.updatedAt as DateTime;
+    if (retrievedAt.isBefore(updatedAt)) {
+      throw StateError(
+        'La recuperación no puede preceder a la observación de mercado.',
+      );
+    }
   }
 
   Future<void> createPortfolio({
