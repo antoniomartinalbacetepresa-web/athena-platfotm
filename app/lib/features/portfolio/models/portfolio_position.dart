@@ -5,6 +5,8 @@ class PortfolioPosition {
   final double averagePrice;
   final double currentPrice;
   final DateTime? currentPriceUpdatedAt;
+  final String? currentPriceSourceProvider;
+  final DateTime? currentPriceRetrievedAt;
 
   const PortfolioPosition({
     required this.symbol,
@@ -13,6 +15,8 @@ class PortfolioPosition {
     required this.averagePrice,
     required this.currentPrice,
     this.currentPriceUpdatedAt,
+    this.currentPriceSourceProvider,
+    this.currentPriceRetrievedAt,
   });
 
   double get investedValue {
@@ -42,6 +46,8 @@ class PortfolioPosition {
     double? averagePrice,
     double? currentPrice,
     DateTime? currentPriceUpdatedAt,
+    String? currentPriceSourceProvider,
+    DateTime? currentPriceRetrievedAt,
   }) {
     return PortfolioPosition(
       symbol: symbol ?? this.symbol,
@@ -51,6 +57,10 @@ class PortfolioPosition {
       currentPrice: currentPrice ?? this.currentPrice,
       currentPriceUpdatedAt:
           currentPriceUpdatedAt ?? this.currentPriceUpdatedAt,
+      currentPriceSourceProvider:
+          currentPriceSourceProvider ?? this.currentPriceSourceProvider,
+      currentPriceRetrievedAt:
+          currentPriceRetrievedAt ?? this.currentPriceRetrievedAt,
     );
   }
 
@@ -62,11 +72,14 @@ class PortfolioPosition {
       'averagePrice': averagePrice,
       'currentPrice': currentPrice,
       'currentPriceUpdatedAt': currentPriceUpdatedAt?.toIso8601String(),
+      'currentPriceSourceProvider': currentPriceSourceProvider,
+      'currentPriceRetrievedAt': currentPriceRetrievedAt?.toIso8601String(),
     };
   }
 
   factory PortfolioPosition.fromMap(Map<String, dynamic> map) {
     final updatedAtRaw = map['currentPriceUpdatedAt'];
+    final retrievedAtRaw = map['currentPriceRetrievedAt'];
 
     return PortfolioPosition(
       symbol: map['symbol'] as String,
@@ -77,6 +90,11 @@ class PortfolioPosition {
       currentPriceUpdatedAt: updatedAtRaw == null
           ? null
           : DateTime.tryParse(updatedAtRaw.toString()),
+      currentPriceSourceProvider:
+          map['currentPriceSourceProvider']?.toString(),
+      currentPriceRetrievedAt: retrievedAtRaw == null
+          ? null
+          : DateTime.tryParse(retrievedAtRaw.toString()),
     );
   }
 
