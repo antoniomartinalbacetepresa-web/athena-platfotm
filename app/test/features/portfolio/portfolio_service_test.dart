@@ -107,7 +107,7 @@ void main() {
   });
 
   group('PortfolioService market refresh', () {
-    test('refreshes and persists current price with quote timestamp', () async {
+    test('refreshes and persists price, timestamp and source provenance', () async {
       final repository = FakePortfolioRepository();
       final service = PortfolioService(repository: repository);
       await service.createPortfolio(
@@ -126,6 +126,7 @@ void main() {
       );
 
       final updatedAt = DateTime.utc(2026, 9, 2, 16, 45);
+      final retrievedAt = DateTime.utc(2026, 9, 2, 16, 45, 2);
       final report = await service.refreshCurrentPrices(
         marketRepository: FakeMarketRepository(
           quotes: {
@@ -136,6 +137,8 @@ void main() {
               change: 1,
               changePercentage: 0.8,
               updatedAt: updatedAt,
+              sourceProvider: 'yahoo',
+              retrievedAt: retrievedAt,
             ),
           },
         ),
@@ -144,12 +147,17 @@ void main() {
       expect(report.isComplete, isTrue);
       expect(report.updatedPositions, 1);
       expect(report.failedSymbols, isEmpty);
-      expect(service.portfolio!.positions.single.currentPrice, 125);
-      expect(
-        service.portfolio!.positions.single.currentPriceUpdatedAt,
-        updatedAt,
-      );
-      expect(repository.stored!.positions.single.currentPrice, 125);
+
+      final position = service.portfolio!.positions.single;
+      expect(position.currentPrice, 125);
+      expect(position.currentPriceUpdatedAt, updatedAt);
+      expect(position.currentPriceSourceProvider, 'yahoo');
+      expect(position.currentPriceRetrievedAt, retrievedAt);
+
+      final persisted = repository.stored!.positions.single;
+      expect(persisted.currentPrice, 125);
+      expect(persisted.currentPriceSourceProvider, 'yahoo');
+      expect(persisted.currentPriceRetrievedAt, retrievedAt);
     });
 
     test('preserves last known price and reports symbols that fail', () async {
@@ -180,7 +188,7 @@ void main() {
       expect(service.portfolio!.positions.single.currentPrice, 95);
     });
 
-    test('loads legacy positions without quote timestamp', () {
+    test('loads legacy positions without quote provenance', () {
       final position = PortfolioPosition.fromMap({
         'symbol': 'LEGACY',
         'companyName': 'Legacy',
@@ -190,6 +198,30 @@ void main() {
       });
 
       expect(position.currentPriceUpdatedAt, isNull);
+      expect(position.currentPriceSourceProvider, isNull);
+      expect(position.currentPriceRetrievedAt, isNull);
+    });
+
+    test('round-trips persisted quote provenance', () {
+      final updatedAt = DateTime.utc(2026, 9, 2, 16, 45);
+      final retrievedAt = DateTime.utc(2026, 9, 2, 16, 45, 3);
+
+      final original = PortfolioPosition(
+        symbol: 'MSFT',
+        companyName: 'Microsoft',
+        shares: 3,
+        averagePrice: 400,
+        currentPrice: 420,
+        currentPriceUpdatedAt: updatedAt,
+        currentPriceSourceProvider: 'yahoo',
+        currentPriceRetrievedAt: retrievedAt,
+      );
+
+      final restored = PortfolioPosition.fromMap(original.toMap());
+
+      expect(restored.currentPriceUpdatedAt, updatedAt);
+      expect(restored.currentPriceSourceProvider, 'yahoo');
+      expect(restored.currentPriceRetrievedAt, retrievedAt);
     });
   });
 }
