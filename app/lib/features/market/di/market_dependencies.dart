@@ -1,4 +1,5 @@
 import '../data/config/market_provider_settings.dart';
+import '../data/datasources/athena_backend_fx_data_source.dart';
 import '../data/datasources/athena_backend_market_universe_data_source.dart';
 import '../data/providers/athena_backend_market_data_provider.dart';
 import '../repositories/market_context_repository.dart';
@@ -34,6 +35,7 @@ class MarketDependencies {
 
   final AthenaBackendMarketDataProvider? backendMarketProvider;
   final AthenaBackendMarketUniverseDataSource? backendUniverseDataSource;
+  final AthenaBackendFxDataSource? backendFxDataSource;
 
   const MarketDependencies({
     required this.repository,
@@ -42,6 +44,7 @@ class MarketDependencies {
     required this.globalMarketDataService,
     this.backendMarketProvider,
     this.backendUniverseDataSource,
+    this.backendFxDataSource,
   });
 
   factory MarketDependencies.create({
@@ -58,6 +61,7 @@ class MarketDependencies {
     late final MarketUniverseRepository marketUniverseRepository;
     AthenaBackendMarketDataProvider? backendMarketProvider;
     AthenaBackendMarketUniverseDataSource? backendUniverseDataSource;
+    AthenaBackendFxDataSource? backendFxDataSource;
 
     switch (effectiveSettings.market.providerId) {
       case 'mock_market':
@@ -78,6 +82,9 @@ class MarketDependencies {
           baseUrl: baseUrl,
         );
         backendUniverseDataSource = AthenaBackendMarketUniverseDataSource(
+          baseUrl: baseUrl,
+        );
+        backendFxDataSource = AthenaBackendFxDataSource(
           baseUrl: baseUrl,
         );
 
@@ -123,11 +130,13 @@ class MarketDependencies {
       globalMarketDataService: globalMarketDataService,
       backendMarketProvider: backendMarketProvider,
       backendUniverseDataSource: backendUniverseDataSource,
+      backendFxDataSource: backendFxDataSource,
     );
   }
 
   void dispose() {
     backendMarketProvider?.dispose();
     backendUniverseDataSource?.dispose();
+    backendFxDataSource?.dispose();
   }
 }
