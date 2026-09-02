@@ -12,6 +12,9 @@ from app.services.recommendation_shadow_live_candidate_pipeline_service import (
 from app.services.recommendation_shadow_live_candidate_store_service import (
     RecommendationShadowLiveCandidateStoreService,
 )
+from app.services.recommendation_shadow_live_decision_research_service import (
+    RecommendationShadowLiveDecisionResearchService,
+)
 from app.services.recommendation_shadow_live_uncertainty_service import (
     RecommendationShadowLiveUncertaintyService,
 )
@@ -21,12 +24,13 @@ from app.services.recommendation_shadow_live_uncertainty_store_service import (
 
 
 class RecommendationShadowLiveCycleService:
-    """Connect PIT evidence -> confirmed inference -> persistence -> uncertainty.
+    """Connect PIT evidence -> confirmed inference -> persistence -> uncertainty -> decision research.
 
     The PIT snapshot anchors later outcome evaluation. Empirical uncertainty is
     reconstructed at the candidate's own ``asOf`` from earlier residuals of the
-    exact same frozen model and is then immediately sealed. Re-running ATHENA
-    later cannot silently replace the scenarios that existed at inference time.
+    exact same frozen model and is then immediately sealed. Decision research is
+    built only after that immutable seal exists, so re-running ATHENA later cannot
+    silently replace the scenarios that existed at inference time.
     """
 
     def __init__(
@@ -37,6 +41,7 @@ class RecommendationShadowLiveCycleService:
         store_service: RecommendationShadowLiveCandidateStoreService | None = None,
         uncertainty_service: RecommendationShadowLiveUncertaintyService | None = None,
         uncertainty_store_service: RecommendationShadowLiveUncertaintyStoreService | None = None,
+        decision_research_service: RecommendationShadowLiveDecisionResearchService | None = None,
     ) -> None:
         self._capture_service = capture_service or RecommendationShadowCaptureService()
         self._candidate_pipeline = (
@@ -48,6 +53,9 @@ class RecommendationShadowLiveCycleService:
         )
         self._uncertainty_store_service = (
             uncertainty_store_service or RecommendationShadowLiveUncertaintyStoreService()
+        )
+        self._decision_research_service = (
+            decision_research_service or RecommendationShadowLiveDecisionResearchService()
         )
 
     def run(
@@ -133,6 +141,17 @@ class RecommendationShadowLiveCycleService:
         if not isinstance(uncertainty_id, int) or uncertainty_id <= 0:
             raise RuntimeError("El store de incertidumbre no devolvió uncertaintyId válido.")
 
+        decision_research = self._decision_research_service.build(candidate_id=candidate_id)
+        self._assert_decision_research_shadow(decision_research)
+        if decision_research.get("candidateFingerprint") != persisted.get(
+            "candidateFingerprint"
+        ):
+            raise RuntimeError("Decision research cambió el candidato persistido.")
+        if decision_research.get("uncertaintyFingerprint") != sealed_uncertainty.get(
+            "uncertaintyFingerprint"
+        ):
+            raise RuntimeError("Decision research no usa la incertidumbre sellada del candidato.")
+
         return {
             "status": "shadow_live_cycle_persisted",
             "snapshotId": snapshot_id,
@@ -143,6 +162,9 @@ class RecommendationShadowLiveCycleService:
             ),
             "uncertaintyId": uncertainty_id,
             "uncertaintyFingerprint": sealed_uncertainty.get("uncertaintyFingerprint"),
+            "decisionResearchFingerprint": decision_research.get(
+                "decisionResearchFingerprint"
+            ),
             "symbol": candidate.get("symbol"),
             "asOf": candidate.get("asOf"),
             "benchmarkSymbol": normalized_benchmark,
@@ -152,14 +174,19 @@ class RecommendationShadowLiveCycleService:
             "empiricalUncertaintyHorizonCount": uncertainty.get(
                 "calibratedHorizonCount", 0
             ),
+            "decisionResearch": decision_research,
+            "decisionResearchReadyHorizonCount": decision_research.get(
+                "researchReadyHorizonCount", 0
+            ),
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "recommendationCandidateReady": False,
             "policy": {
-                "flow": "pit_capture_then_confirmed_frozen_model_inference_then_candidate_persistence_then_ex_ante_uncertainty_then_immutable_uncertainty_seal",
+                "flow": "pit_capture_then_confirmed_frozen_model_inference_then_candidate_persistence_then_ex_ante_uncertainty_then_immutable_uncertainty_seal_then_decision_research",
                 "outcomes": "measured_later_from_same_pit_snapshot",
                 "uncertainty": "prior_non_overlapping_forward_residuals_same_frozen_model_only",
                 "uncertaintyPersistence": "first_candidate_artifact_is_immutable_sha256_sealed",
+                "decisionResearch": "derived_only_from_persisted_candidate_and_sealed_ex_ante_uncertainty",
                 "action": "not_assigned",
                 "score": "not_calibrated",
                 "conviction": "not_calibrated",
@@ -199,3 +226,18 @@ class RecommendationShadowLiveCycleService:
             raise ValueError("uncertainty no puede asignar action.")
         if payload.get("conviction") is not None:
             raise ValueError("uncertainty no puede publicar convicción.")
+
+    def _assert_decision_research_shadow(self, payload: dict[str, Any]) -> None:
+        self._assert_no_advice(payload, "decision_research")
+        if payload.get("productionEligible") is not False:
+            raise ValueError("decision_research debe declarar productionEligible=False.")
+        if payload.get("recommendationCandidateReady") is not False:
+            raise ValueError("decision_research no puede habilitar recomendaciones.")
+        if payload.get("actionThresholdCalibrationResearchEligible") is not False:
+            raise ValueError("decision_research no puede promover calibración de acciones.")
+        if payload.get("action") is not None:
+            raise ValueError("decision_research no puede asignar action.")
+        if payload.get("score") is not None:
+            raise ValueError("decision_research no puede publicar score no calibrado.")
+        if payload.get("conviction") is not None:
+            raise ValueError("decision_research no puede publicar convicción no calibrada.")
