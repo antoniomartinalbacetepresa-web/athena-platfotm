@@ -64,6 +64,8 @@ class PortfolioService {
           position.copyWith(
             currentPrice: quote.currentPrice,
             currentPriceUpdatedAt: quote.updatedAt,
+            currentPriceSourceProvider: quote.sourceProvider,
+            currentPriceRetrievedAt: quote.retrievedAt,
           ),
         );
         updatedCount += 1;
