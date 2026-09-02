@@ -17,6 +17,10 @@ class RecommendationBenchmarkReturnResult:
     benchmark_return: float | None
     entry_observed_at: str | None
     exit_observed_at: str | None
+    entry_retrieved_at: str | None = None
+    exit_retrieved_at: str | None = None
+    entry_source_provider: str | None = None
+    exit_source_provider: str | None = None
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -28,7 +32,14 @@ class RecommendationBenchmarkReturnResult:
             "benchmarkReturn": self.benchmark_return,
             "entryObservedAt": self.entry_observed_at,
             "exitObservedAt": self.exit_observed_at,
+            "entryRetrievedAt": self.entry_retrieved_at,
+            "exitRetrievedAt": self.exit_retrieved_at,
+            "entrySourceProvider": self.entry_source_provider,
+            "exitSourceProvider": self.exit_source_provider,
             "policy": {
+                "benchmarkIdentity": "explicit_frozen_symbol_resolved_to_single_active_instrument",
+                "entry": "first_observation_at_or_after_generation",
+                "exit": "first_observation_at_or_after_due",
                 "retrievalCutoff": "retrieved_at_not_after_evaluation_as_of",
                 "duplicateObservation": "latest_retrieved_at_before_as_of",
             },
@@ -36,7 +47,12 @@ class RecommendationBenchmarkReturnResult:
 
 
 class RecommendationBenchmarkReturnService:
-    """Calculates benchmark returns only from an explicit frozen benchmark."""
+    """Calculate benchmark returns only from an explicit frozen benchmark.
+
+    The result carries the exact observations used for both legs. This is outcome
+    evidence, not a model input: historical observations may be reconstructed later,
+    but neither leg may use a record retrieved after the evaluation ``as_of``.
+    """
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -105,6 +121,10 @@ class RecommendationBenchmarkReturnService:
             benchmark_return=(exit_price / entry_price) - 1.0,
             entry_observed_at=str(entry["observed_at"]),
             exit_observed_at=str(exit_observation["observed_at"]),
+            entry_retrieved_at=str(entry["retrieved_at"]),
+            exit_retrieved_at=str(exit_observation["retrieved_at"]),
+            entry_source_provider=str(entry["source_provider"]),
+            exit_source_provider=str(exit_observation["source_provider"]),
         )
 
     def _active_instrument_ids(self, symbol: str) -> tuple[int, ...]:
@@ -137,6 +157,7 @@ class RecommendationBenchmarkReturnService:
                     SELECT
                         observed_at,
                         COALESCE(close, adjusted_close) AS price,
+                        source_provider,
                         retrieved_at,
                         id,
                         ROW_NUMBER() OVER (
@@ -151,7 +172,7 @@ class RecommendationBenchmarkReturnService:
                       AND COALESCE(close, adjusted_close) IS NOT NULL
                       AND COALESCE(close, adjusted_close) > 0
                 )
-                SELECT observed_at, price, retrieved_at
+                SELECT observed_at, price, source_provider, retrieved_at
                 FROM eligible
                 WHERE row_rank = 1
                 ORDER BY observed_at ASC
@@ -169,6 +190,7 @@ class RecommendationBenchmarkReturnService:
         return {
             "observed_at": str(row["observed_at"]),
             "price": float(row["price"]),
+            "source_provider": str(row["source_provider"]),
             "retrieved_at": str(row["retrieved_at"]),
         }
 
@@ -187,6 +209,10 @@ class RecommendationBenchmarkReturnService:
             benchmark_return=None,
             entry_observed_at=None,
             exit_observed_at=None,
+            entry_retrieved_at=None,
+            exit_retrieved_at=None,
+            entry_source_provider=None,
+            exit_source_provider=None,
         )
 
     def _optional_symbol(self, value: str | None) -> str | None:
