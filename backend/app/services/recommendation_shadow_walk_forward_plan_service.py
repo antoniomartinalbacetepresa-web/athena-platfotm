@@ -226,7 +226,7 @@ class RecommendationShadowWalkForwardPlanService:
         accumulated = 0
         for index in range(start_index, len(grouped)):
             accumulated += grouped[index][1]
-            if accumulated >= minimum_rows_through_end:
+            if index > start_index and accumulated >= minimum_rows_through_end:
                 return index
         return None
 
