@@ -18,6 +18,8 @@ class ShadowCalibrationRow:
     symbol: str
     data_cutoff_at: str
     horizon_days: int
+    outcome_due_at: str
+    outcome_evaluated_at: str
     realized_return: float
     benchmark_return: float | None
     excess_return: float | None
@@ -40,6 +42,8 @@ class ShadowCalibrationRow:
             "symbol": self.symbol,
             "dataCutoffAt": self.data_cutoff_at,
             "horizonDays": self.horizon_days,
+            "outcomeDueAt": self.outcome_due_at,
+            "outcomeEvaluatedAt": self.outcome_evaluated_at,
             "target": {
                 "realizedReturn": self.realized_return,
                 "benchmarkReturn": self.benchmark_return,
@@ -95,6 +99,7 @@ class RecommendationShadowCalibrationDatasetService:
                 s.feature_schema_version,
                 s.evidence_snapshot_json,
                 o.horizon_days,
+                o.due_at,
                 o.evaluated_at,
                 o.realized_return,
                 o.benchmark_return,
@@ -117,8 +122,6 @@ class RecommendationShadowCalibrationDatasetService:
             with self._database.connect() as connection:
                 rows = connection.execute(query, parameters).fetchall()
         except Exception as exc:
-            # A fresh database may not have shadow tables yet. This is an empty
-            # calibration dataset, not an operational failure.
             if "no such table: athena_recommendation_shadow" in str(exc).lower():
                 rows = []
             else:
@@ -163,6 +166,8 @@ class RecommendationShadowCalibrationDatasetService:
                 symbol=str(row["symbol"]),
                 data_cutoff_at=str(row["data_cutoff_at"]),
                 horizon_days=int(row["horizon_days"]),
+                outcome_due_at=str(row["due_at"]),
+                outcome_evaluated_at=str(row["evaluated_at"]),
                 realized_return=float(row["realized_return"]),
                 benchmark_return=self._optional_float(row.get("benchmark_return")),
                 excess_return=self._optional_float(row.get("excess_return")),
@@ -203,6 +208,7 @@ class RecommendationShadowCalibrationDatasetService:
                 "actions": "not_assigned",
                 "featureWeights": "not_assigned",
                 "futureOutcomes": "evaluated_at_not_after_as_of",
+                "outcomeTimingMetadata": "included_for_purged_chronological_splits",
                 "schema": "exact_feature_schema_version_required",
                 "trainingUse": "out_of_sample_validation_required_before_advice",
             },
