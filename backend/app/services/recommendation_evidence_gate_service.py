@@ -58,6 +58,7 @@ class RecommendationEvidenceGate:
             "market": self.market,
             "fundamentals": self.fundamentals,
             "valuation": self.valuation,
+            "analysisCoverage": self._analysis_coverage(),
             "productionEligible": self.production_eligible,
             "reason": self.reason,
             "policy": {
@@ -68,6 +69,69 @@ class RecommendationEvidenceGate:
                 "qualityThreshold": "not_assumed_until_empirically_calibrated",
                 "valuation": "pit_reported_annual_pe_required_for_initial_gate",
                 "calibration": "out_of_sample_validation_required",
+                "investorActivity": (
+                    "independent_parallel_evidence_not_part_of_athena_recommendation"
+                ),
+            },
+        }
+
+    def _analysis_coverage(self) -> dict[str, Any]:
+        market_status = self.market.get("status")
+        fundamental_status = self.fundamentals.get("status")
+        valuation_status = self.valuation.get("status")
+        return {
+            "technical": {
+                "connected": True,
+                "sourceBlock": "market",
+                "status": market_status,
+                "evidenceReady": self.market_evidence_ready,
+                "productionEligible": False,
+            },
+            "risk": {
+                "connected": True,
+                "sourceBlock": "market",
+                "status": market_status,
+                "evidenceReady": self.market_evidence_ready,
+                "productionEligible": False,
+            },
+            "fundamentals": {
+                "connected": True,
+                "sourceBlock": "fundamentals",
+                "status": fundamental_status,
+                "evidenceReady": self.fundamental_evidence_ready,
+                "productionEligible": False,
+            },
+            "valuation": {
+                "connected": True,
+                "sourceBlock": "valuation",
+                "status": valuation_status,
+                "evidenceReady": self.valuation_ready,
+                "productionEligible": False,
+            },
+            "calibration": {
+                "connected": True,
+                "status": (
+                    "validated" if self.calibration_ready else "not_validated"
+                ),
+                "evidenceReady": self.calibration_ready,
+                "productionEligible": False,
+            },
+            "recommendationCombination": {
+                "connected": True,
+                "status": (
+                    "candidate_ready"
+                    if self.recommendation_candidate_ready
+                    else "blocked_until_calibration"
+                ),
+                "evidenceReady": self.recommendation_candidate_ready,
+                "productionEligible": False,
+            },
+            "investorActivity": {
+                "connected": False,
+                "status": "independent_engine_not_yet_connected",
+                "evidenceReady": False,
+                "includedInAthenaRecommendation": False,
+                "productionEligible": False,
             },
         }
 
