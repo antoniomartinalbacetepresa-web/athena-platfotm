@@ -3,26 +3,47 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/athena_colors.dart';
 import '../../../core/theme/athena_radius.dart';
 import '../../../core/theme/athena_spacing.dart';
+import '../../market/di/market_dependencies.dart';
+import '../../market/repositories/market_repository.dart';
 
 class AddPositionDialog extends StatefulWidget {
+  final MarketRepository? marketRepository;
+
   const AddPositionDialog({
     super.key,
+    this.marketRepository,
   });
 
   @override
-  State<AddPositionDialog> createState() =>
-      _AddPositionDialogState();
+  State<AddPositionDialog> createState() => _AddPositionDialogState();
 }
 
-class _AddPositionDialogState
-    extends State<AddPositionDialog> {
+class _AddPositionDialogState extends State<AddPositionDialog> {
   final _formKey = GlobalKey<FormState>();
 
   final _symbolController = TextEditingController();
   final _companyController = TextEditingController();
   final _sharesController = TextEditingController();
   final _averagePriceController = TextEditingController();
-  final _currentPriceController = TextEditingController();
+
+  MarketDependencies? _marketDependencies;
+  late final MarketRepository _marketRepository;
+
+  bool _isSaving = false;
+  String? _quoteError;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final injectedRepository = widget.marketRepository;
+    if (injectedRepository != null) {
+      _marketRepository = injectedRepository;
+    } else {
+      _marketDependencies = MarketDependencies.create();
+      _marketRepository = _marketDependencies!.repository;
+    }
+  }
 
   @override
   void dispose() {
@@ -30,42 +51,60 @@ class _AddPositionDialogState
     _companyController.dispose();
     _sharesController.dispose();
     _averagePriceController.dispose();
-    _currentPriceController.dispose();
+    _marketDependencies?.dispose();
     super.dispose();
   }
 
-  void _save() {
-    if (!_formKey.currentState!.validate()) {
+  Future<void> _save() async {
+    if (_isSaving || !_formKey.currentState!.validate()) {
       return;
     }
 
-    final shares = double.parse(
-      _sharesController.text.trim().replaceAll(',', '.'),
-    );
+    final symbol = _symbolController.text.trim().toUpperCase();
+    final shares = _parseNumber(_sharesController.text);
+    final averagePrice = _parseNumber(_averagePriceController.text);
 
-    final averagePrice = double.parse(
-      _averagePriceController.text
-          .trim()
-          .replaceAll(',', '.'),
-    );
+    setState(() {
+      _isSaving = true;
+      _quoteError = null;
+    });
 
-    final currentPrice = double.parse(
-      _currentPriceController.text
-          .trim()
-          .replaceAll(',', '.'),
-    );
+    try {
+      final quote = await _marketRepository.getQuote(symbol);
+      final currentPrice = quote.currentPrice;
 
-    Navigator.of(context).pop(
-      AddPositionResult(
-        symbol: _symbolController.text
-            .trim()
-            .toUpperCase(),
-        companyName: _companyController.text.trim(),
-        shares: shares,
-        averagePrice: averagePrice,
-        currentPrice: currentPrice,
-      ),
-    );
+      if (!currentPrice.isFinite || currentPrice <= 0) {
+        throw StateError(
+          'La fuente de mercado no devolvió un precio actual válido.',
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pop(
+        AddPositionResult(
+          symbol: symbol,
+          companyName: _companyController.text.trim(),
+          shares: shares,
+          averagePrice: averagePrice,
+          currentPrice: currentPrice,
+          currentPriceUpdatedAt: quote.updatedAt,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isSaving = false;
+        _quoteError =
+            'No se pudo verificar el precio actual con el backend de ATHENA. '
+            'La posición no se guardará con un precio manual o estimado.';
+      });
+    }
   }
 
   @override
@@ -73,9 +112,7 @@ class _AddPositionDialogState
     return AlertDialog(
       backgroundColor: AthenaColors.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(
-          AthenaRadius.lg,
-        ),
+        borderRadius: BorderRadius.circular(AthenaRadius.lg),
       ),
       title: const Text(
         'Añadir posición',
@@ -92,83 +129,95 @@ class _AddPositionDialogState
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _field(
                   controller: _symbolController,
                   label: 'Ticker',
                   hint: 'Ej. MSFT',
                   validator: (value) {
-                    if (value == null ||
-                        value.trim().isEmpty) {
+                    if (value == null || value.trim().isEmpty) {
                       return 'Introduce el ticker';
                     }
-
                     return null;
                   },
                 ),
-
-                const SizedBox(
-                  height: AthenaSpacing.md,
-                ),
-
+                const SizedBox(height: AthenaSpacing.md),
                 _field(
                   controller: _companyController,
                   label: 'Empresa',
                   hint: 'Ej. Microsoft',
                   validator: (value) {
-                    if (value == null ||
-                        value.trim().isEmpty) {
+                    if (value == null || value.trim().isEmpty) {
                       return 'Introduce el nombre de la empresa';
                     }
-
                     return null;
                   },
                 ),
-
-                const SizedBox(
-                  height: AthenaSpacing.md,
-                ),
-
+                const SizedBox(height: AthenaSpacing.md),
                 _field(
                   controller: _sharesController,
                   label: 'Número de acciones',
                   hint: 'Ej. 15',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(
+                  keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
                   validator: _validateNumber,
                 ),
-
-                const SizedBox(
-                  height: AthenaSpacing.md,
-                ),
-
+                const SizedBox(height: AthenaSpacing.md),
                 _field(
                   controller: _averagePriceController,
                   label: 'Precio medio de compra',
                   hint: 'Ej. 350',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(
+                  keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
                   validator: _validateNumber,
                 ),
-
-                const SizedBox(
-                  height: AthenaSpacing.md,
-                ),
-
-                _field(
-                  controller: _currentPriceController,
-                  label: 'Precio actual',
-                  hint: 'Ej. 420',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(
-                    decimal: true,
+                const SizedBox(height: AthenaSpacing.md),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AthenaSpacing.md),
+                  decoration: BoxDecoration(
+                    color: AthenaColors.cardSecondary,
+                    borderRadius: BorderRadius.circular(AthenaRadius.md),
+                    border: Border.all(color: AthenaColors.border),
                   ),
-                  validator: _validateNumber,
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.cloud_done_outlined,
+                        color: AthenaColors.textSecondary,
+                        size: 20,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'El precio actual se obtiene del backend de ATHENA al '
+                          'guardar. No se aceptan precios actuales introducidos '
+                          'manualmente.',
+                          style: TextStyle(
+                            color: AthenaColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+                if (_quoteError != null) ...[
+                  const SizedBox(height: AthenaSpacing.md),
+                  Text(
+                    _quoteError!,
+                    style: const TextStyle(
+                      color: Color(0xFFFF6B6B),
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -182,18 +231,18 @@ class _AddPositionDialogState
       ),
       actions: [
         TextButton(
-          onPressed: () {
-            Navigator.of(context).pop();
-          },
-          child: const Text(
-            'Cancelar',
-          ),
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
         ),
         ElevatedButton(
-          onPressed: _save,
-          child: const Text(
-            'Guardar posición',
-          ),
+          onPressed: _isSaving ? null : _save,
+          child: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Guardar posición'),
         ),
       ],
     );
@@ -208,26 +257,19 @@ class _AddPositionDialogState
   }) {
     return TextFormField(
       controller: controller,
+      enabled: !_isSaving,
       keyboardType: keyboardType,
-      style: const TextStyle(
-        color: AthenaColors.text,
-      ),
+      style: const TextStyle(color: AthenaColors.text),
       validator: validator,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        labelStyle: const TextStyle(
-          color: AthenaColors.textSecondary,
-        ),
-        hintStyle: const TextStyle(
-          color: AthenaColors.textSecondary,
-        ),
+        labelStyle: const TextStyle(color: AthenaColors.textSecondary),
+        hintStyle: const TextStyle(color: AthenaColors.textSecondary),
         filled: true,
         fillColor: AthenaColors.background,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.all(
-            Radius.circular(AthenaRadius.md),
-          ),
+          borderRadius: BorderRadius.all(Radius.circular(AthenaRadius.md)),
         ),
       ),
     );
@@ -238,11 +280,8 @@ class _AddPositionDialogState
       return 'Introduce un valor';
     }
 
-    final number = double.tryParse(
-      value.trim().replaceAll(',', '.'),
-    );
-
-    if (number == null) {
+    final number = double.tryParse(value.trim().replaceAll(',', '.'));
+    if (number == null || !number.isFinite) {
       return 'Introduce un número válido';
     }
 
@@ -252,6 +291,10 @@ class _AddPositionDialogState
 
     return null;
   }
+
+  double _parseNumber(String value) {
+    return double.parse(value.trim().replaceAll(',', '.'));
+  }
 }
 
 class AddPositionResult {
@@ -260,6 +303,7 @@ class AddPositionResult {
   final double shares;
   final double averagePrice;
   final double currentPrice;
+  final DateTime currentPriceUpdatedAt;
 
   const AddPositionResult({
     required this.symbol,
@@ -267,5 +311,6 @@ class AddPositionResult {
     required this.shares,
     required this.averagePrice,
     required this.currentPrice,
+    required this.currentPriceUpdatedAt,
   });
 }
