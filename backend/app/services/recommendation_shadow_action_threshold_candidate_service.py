@@ -18,11 +18,9 @@ class _PanelValidator(Protocol):
 class RecommendationShadowActionThresholdCandidateService:
     """Generate state-conditional threshold candidates from TRAIN signal only.
 
-    Candidate cut points are derived solely from the distribution of
-    ``expectedExcessReturn`` in train rows. Realized train utility and every
-    validation field are deliberately ignored. A later service must select among
-    these pre-generated policies using validation only; this service never selects
-    or promotes one.
+    Cut points come only from ``expectedExcessReturn`` in train. Realized train
+    utility and every validation field are ignored. The state expansion is checked
+    for exact completeness and signal consistency before a grid is generated.
     """
 
     ARTIFACT_VERSION = "shadow-action-threshold-candidates-v1"
@@ -49,8 +47,7 @@ class RecommendationShadowActionThresholdCandidateService:
         train_rows = self._rows(utility_panel.get("trainUtilityRows"), "trainUtilityRows")
         requested = self._horizons(utility_panel.get("requestedHorizons"))
 
-        unique_signal_by_horizon: dict[int, set[float]] = defaultdict(set)
-        seen_source_row: set[tuple[int, int]] = set()
+        source_rows: dict[tuple[int, int], dict[str, Any]] = {}
         for row in train_rows:
             candidate_id = self._positive_int(row.get("candidateId"), "candidateId")
             horizon = self._positive_int(row.get("horizonDays"), "horizonDays")
@@ -60,13 +57,29 @@ class RecommendationShadowActionThresholdCandidateService:
             if state not in self.STATES:
                 raise ValueError("trainUtilityRows contiene un estado no permitido.")
             signal = self._finite(row.get("expectedExcessReturn"), "expectedExcessReturn")
-            source_identity = (candidate_id, horizon)
-            # Each source row is repeated once per state. Signal collection is
-            # de-duplicated by candidate/horizon so state expansion cannot distort
-            # the train-derived grid.
-            if source_identity not in seen_source_row:
-                unique_signal_by_horizon[horizon].add(signal)
-                seen_source_row.add(source_identity)
+            identity = (candidate_id, horizon)
+            existing = source_rows.get(identity)
+            if existing is None:
+                source_rows[identity] = {"signal": signal, "states": {state}}
+            else:
+                if existing["signal"] != signal:
+                    raise ValueError(
+                        "La expansión por estados contiene señales inconsistentes para la misma fila fuente."
+                    )
+                if state in existing["states"]:
+                    raise ValueError("La expansión por estados contiene un estado duplicado.")
+                existing["states"].add(state)
+
+        expected_states = set(self.STATES)
+        for identity, payload in source_rows.items():
+            if payload["states"] != expected_states:
+                raise ValueError(
+                    f"La fila fuente {identity} no contiene exactamente todos los estados económicos."
+                )
+
+        unique_signal_by_horizon: dict[int, set[float]] = defaultdict(set)
+        for (_, horizon), payload in source_rows.items():
+            unique_signal_by_horizon[horizon].add(payload["signal"])
 
         horizon_payloads: dict[str, Any] = {}
         total_candidates = 0
@@ -90,10 +103,7 @@ class RecommendationShadowActionThresholdCandidateService:
                             self._policy(
                                 horizon=horizon,
                                 state="reduced_long",
-                                thresholds={
-                                    "sellAtOrBelow": low,
-                                    "buyAtOrAbove": high,
-                                },
+                                thresholds={"sellAtOrBelow": low, "buyAtOrAbove": high},
                                 rule=(
                                     "sell_if_signal_lte_sell_threshold_buy_if_signal_gte_"
                                     "buy_threshold_else_hold"
@@ -104,10 +114,7 @@ class RecommendationShadowActionThresholdCandidateService:
                             self._policy(
                                 horizon=horizon,
                                 state="full_long",
-                                thresholds={
-                                    "sellAtOrBelow": low,
-                                    "reduceAtOrBelow": high,
-                                },
+                                thresholds={"sellAtOrBelow": low, "reduceAtOrBelow": high},
                                 rule=(
                                     "sell_if_signal_lte_sell_threshold_reduce_if_signal_lte_"
                                     "reduce_threshold_else_hold"
