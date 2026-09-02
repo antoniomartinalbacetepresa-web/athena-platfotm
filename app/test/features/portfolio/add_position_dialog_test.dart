@@ -24,7 +24,7 @@ class FakeMarketRepository implements MarketRepository {
 
 void main() {
   testWidgets(
-    'obtiene el precio actual del backend y no permite introducirlo manualmente',
+    'obtiene identidad y precio actual del backend sin campos manuales',
     (tester) async {
       final repository = FakeMarketRepository();
       AddPositionResult? result;
@@ -53,18 +53,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Precio actual'), findsNothing);
+      expect(find.text('Empresa'), findsNothing);
       expect(
-        find.textContaining('El precio actual se obtiene del backend de ATHENA'),
+        find.textContaining('ATHENA verifica el instrumento'),
         findsOneWidget,
       );
 
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Ticker'),
         'msft',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Empresa'),
-        'Microsoft',
       );
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Número de acciones'),
@@ -81,6 +78,7 @@ void main() {
       expect(repository.requestedSymbol, 'MSFT');
       expect(result, isNotNull);
       expect(result!.symbol, 'MSFT');
+      expect(result!.companyName, 'Verified company');
       expect(result!.currentPrice, 432.10);
       expect(result!.currentPriceUpdatedAt, DateTime.utc(2026, 9, 2, 16, 30));
     },
