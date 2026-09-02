@@ -7,6 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app.services.recommendation_shadow_holdout_seal_service import (
     RecommendationShadowHoldoutSealService,
 )
+from app.services.recommendation_shadow_live_decision_research_service import (
+    RecommendationShadowLiveDecisionResearchService,
+)
 from app.services.recommendation_shadow_live_longitudinal_service import (
     RecommendationShadowLiveLongitudinalService,
 )
@@ -23,6 +26,7 @@ router = APIRouter(
 research_pipeline_service = RecommendationShadowResearchPipelineService()
 holdout_seal_service = RecommendationShadowHoldoutSealService()
 live_longitudinal_service = RecommendationShadowLiveLongitudinalService()
+live_decision_research_service = RecommendationShadowLiveDecisionResearchService()
 
 
 def _effective_as_of(value: datetime | None) -> datetime:
@@ -199,6 +203,55 @@ def _assert_longitudinal_policy(payload: dict[str, object]) -> None:
         )
 
 
+def _assert_decision_research_policy(payload: dict[str, object]) -> None:
+    if payload.get("recommendationCandidateReady") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede habilitar recomendaciones.",
+        )
+    if payload.get("actionThresholdCalibrationResearchEligible") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede promover calibración automáticamente.",
+        )
+    if payload.get("action") is not None:
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede asignar acciones.",
+        )
+    if payload.get("score") is not None or payload.get("conviction") is not None:
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede publicar score o convicción sin calibrar.",
+        )
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research devolvió una política inválida.",
+        )
+    if policy.get("actionThresholds") != "not_fit":
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede utilizar umbrales de acción no validados.",
+        )
+    if policy.get("score") != "not_calibrated" or policy.get("conviction") != "not_calibrated":
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede declarar score o convicción calibrados.",
+        )
+    if policy.get("automaticProductionPromotion") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede promover producción automáticamente.",
+        )
+    if policy.get("automaticTrading") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Decision research no puede habilitar trading automático.",
+        )
+
+
 @router.get("/shadow-research-readiness")
 def get_shadow_research_readiness(
     as_of: datetime | None = Query(None),
@@ -280,4 +333,25 @@ def get_shadow_live_longitudinal(
 
     _assert_shadow_contract(payload)
     _assert_longitudinal_policy(payload)
+    return {"data": payload}
+
+
+@router.get("/shadow-live-decision-research")
+def get_shadow_live_decision_research(
+    candidate_id: int = Query(..., gt=0),
+) -> dict[str, object]:
+    """Expose immutable live decision diagnostics without advice or action thresholds."""
+
+    try:
+        payload = live_decision_research_service.build(candidate_id=candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir decision research shadow de ATHENA.",
+        ) from exc
+
+    _assert_shadow_contract(payload)
+    _assert_decision_research_policy(payload)
     return {"data": payload}
