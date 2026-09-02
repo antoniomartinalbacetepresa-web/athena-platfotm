@@ -122,7 +122,7 @@ def test_walk_forward_blocks_when_too_few_folds_are_evaluable() -> None:
 
 def test_walk_forward_requires_strictly_increasing_test_boundaries() -> None:
     folds = _folds()
-    folds[2]["as_of"] = folds[1]["as_of"]
+    folds[2] = _fold(_dt(2024, 6, 1), _dt(2024, 9, 1), folds[1]["as_of"])
     service = RecommendationShadowWalkForwardService(
         candidate_service=FakeCandidateService([]),
     )
