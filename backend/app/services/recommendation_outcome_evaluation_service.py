@@ -56,6 +56,7 @@ class RecommendationOutcomeEvaluationReport:
             "knowledgePolicy": "retrieved_at_not_after_evaluation_as_of",
             "evaluationTimestampPolicy": "persist_actual_knowledge_as_of_not_exit_observation_time",
             "duplicateObservationPolicy": "latest_retrieved_at_before_as_of",
+            "outcomeSourcePolicy": "persist_exact_exit_observation_provider_and_retrieval_timestamp",
             "benchmarkStatus": "evaluated_when_explicit_frozen_benchmark_is_resolvable",
             "benchmarkPersistencePolicy": "declared_frozen_benchmark_must_resolve_before_outcome_persistence",
             "benchmarkEvidencePolicy": "exact_observation_and_retrieval_provenance_persisted",
@@ -68,8 +69,8 @@ class RecommendationOutcomeEvaluationService:
     ``evaluated_at`` represents when the evidence was actually knowable, not merely
     the timestamp of the selected exit observation. A recommendation that froze a
     benchmark is persisted only when that benchmark can be resolved atomically with
-    exact observation/retrieval provenance. This prevents partial outcome rows from
-    permanently consuming the unique horizon slot.
+    exact observation/retrieval provenance. Outcome provenance is taken from the
+    exact persisted exit observation; callers cannot relabel that market evidence.
     """
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
@@ -88,6 +89,10 @@ class RecommendationOutcomeEvaluationService:
         as_of: datetime,
         source_provider: str = "athena_market_observations",
     ) -> RecommendationOutcomeEvaluationReport:
+        # ``source_provider`` is retained for backwards compatibility with existing
+        # callers. It intentionally does not override evidence provenance: the
+        # persisted outcome must identify the provider of the selected exit row.
+        _ = source_provider
         as_of_utc = self._aware_utc(as_of)
         schedule = self._schedule.get_report(as_of=as_of_utc)
 
@@ -176,6 +181,14 @@ class RecommendationOutcomeEvaluationService:
             benchmark_evidence = (
                 benchmark.to_api_dict() if benchmark.status == "resolved" else None
             )
+            exit_provider = str(exit_observation["source_provider"]).strip()
+            if not exit_provider:
+                raise ValueError(
+                    "La observación de salida seleccionada carece de source_provider."
+                )
+            exit_retrieved_at = datetime.fromisoformat(
+                str(exit_observation["retrieved_at"])
+            )
 
             outcome_id = self._history.record_outcome(
                 recommendation_id=due.recommendation_id,
@@ -183,11 +196,11 @@ class RecommendationOutcomeEvaluationService:
                 evaluated_at=as_of_utc,
                 entry_price=entry_price,
                 exit_price=exit_price,
-                source_provider=source_provider,
+                source_provider=exit_provider,
                 benchmark_return=benchmark_return,
                 benchmark_evidence=benchmark_evidence,
                 max_drawdown=max_drawdown,
-                source_timestamp=datetime.fromisoformat(exit_observation["retrieved_at"]),
+                source_timestamp=exit_retrieved_at,
             )
             realized_return = (exit_price / entry_price) - 1.0
             evaluated.append(
@@ -200,8 +213,10 @@ class RecommendationOutcomeEvaluationService:
                     "evaluatedAt": as_of_utc.isoformat(),
                     "entryObservedAt": entry_time.astimezone(timezone.utc).isoformat(),
                     "entryRetrievedAt": str(entry["retrieved_at"]),
+                    "entrySourceProvider": str(entry["source_provider"]),
                     "exitObservedAt": exit_time.astimezone(timezone.utc).isoformat(),
                     "exitRetrievedAt": str(exit_observation["retrieved_at"]),
+                    "exitSourceProvider": exit_provider,
                     "entryPrice": entry_price,
                     "exitPrice": exit_price,
                     "realizedReturn": realized_return,
