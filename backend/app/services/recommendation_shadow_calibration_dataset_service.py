@@ -72,6 +72,12 @@ class RecommendationShadowCalibrationDatasetService:
     The service intentionally emits continuous realized/excess returns, not
     BUY/HOLD/REDUCE/SELL labels. Action thresholds and feature weights must be
     learned and validated out of sample rather than encoded by intuition.
+
+    Benchmark-adjusted targets are accepted only when the exact benchmark
+    observations used to compute them were persisted. Legacy rows that contain
+    only a scalar benchmark return can still contribute their realized asset
+    return, but their benchmark/excess targets are suppressed rather than
+    silently trusted.
     """
 
     FEATURE_SCHEMA_VERSION = RecommendationShadowCaptureService.FEATURE_SCHEMA_VERSION
@@ -97,6 +103,7 @@ class RecommendationShadowCalibrationDatasetService:
                 s.instrument_id,
                 s.symbol,
                 s.data_cutoff_at,
+                s.benchmark_symbol,
                 s.feature_schema_version,
                 s.evidence_snapshot_json,
                 o.horizon_days,
@@ -104,7 +111,8 @@ class RecommendationShadowCalibrationDatasetService:
                 o.evaluated_at,
                 o.realized_return,
                 o.benchmark_return,
-                o.excess_return
+                o.excess_return,
+                o.benchmark_evidence_json
             FROM athena_recommendation_shadow_snapshots s
             JOIN athena_recommendation_shadow_outcomes o
               ON o.snapshot_id = s.id
@@ -131,6 +139,8 @@ class RecommendationShadowCalibrationDatasetService:
         dataset: list[dict[str, Any]] = []
         rejected_invalid_snapshot = 0
         rejected_non_finite_target = 0
+        rejected_unprovenanced_benchmark = 0
+        suppressed_unprovenanced_benchmark = 0
         for raw in rows:
             row = dict(raw)
             try:
@@ -168,6 +178,17 @@ class RecommendationShadowCalibrationDatasetService:
                 continue
             benchmark_return = self._optional_float(row.get("benchmark_return"))
             excess_return = self._optional_float(row.get("excess_return"))
+            has_benchmark_target = benchmark_return is not None or excess_return is not None
+            benchmark_provenanced = self._benchmark_evidence_matches(row)
+
+            if has_benchmark_target and not benchmark_provenanced:
+                if require_benchmark:
+                    rejected_unprovenanced_benchmark += 1
+                    continue
+                benchmark_return = None
+                excess_return = None
+                suppressed_unprovenanced_benchmark += 1
+
             if require_benchmark and (
                 benchmark_return is None or excess_return is None
             ):
@@ -216,6 +237,8 @@ class RecommendationShadowCalibrationDatasetService:
             "rowCount": len(dataset),
             "rejectedInvalidSnapshotCount": rejected_invalid_snapshot,
             "rejectedNonFiniteTargetCount": rejected_non_finite_target,
+            "rejectedUnprovenancedBenchmarkCount": rejected_unprovenanced_benchmark,
+            "suppressedUnprovenancedBenchmarkCount": suppressed_unprovenanced_benchmark,
             "rows": dataset,
             "advisoryStatus": "no_advice",
             "policy": {
@@ -224,11 +247,64 @@ class RecommendationShadowCalibrationDatasetService:
                 "featureWeights": "not_assigned",
                 "futureOutcomes": "evaluated_at_not_after_as_of",
                 "outcomeTimingMetadata": "included_for_purged_chronological_splits",
+                "benchmarkTargets": "exact_persisted_observation_provenance_required",
+                "legacyBenchmarkScalars": "suppressed_from_calibration",
                 "numericIntegrity": "non_finite_values_never_enter_calibration",
                 "schema": "exact_feature_schema_version_required",
                 "trainingUse": "out_of_sample_validation_required_before_advice",
             },
         }
+
+    def _benchmark_evidence_matches(self, row: dict[str, Any]) -> bool:
+        benchmark_return = self._optional_float(row.get("benchmark_return"))
+        excess_return = self._optional_float(row.get("excess_return"))
+        if benchmark_return is None and excess_return is None:
+            return False
+        raw = row.get("benchmark_evidence_json")
+        if raw is None:
+            return False
+        try:
+            evidence = json.loads(str(raw))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(evidence, dict) or evidence.get("status") != "resolved":
+            return False
+        frozen_symbol = str(row.get("benchmark_symbol") or "").strip().upper()
+        evidence_symbol = str(evidence.get("benchmarkSymbol") or "").strip().upper()
+        if not frozen_symbol or evidence_symbol != frozen_symbol:
+            return False
+        entry_price = self._required_finite_float(evidence.get("entryPrice"))
+        exit_price = self._required_finite_float(evidence.get("exitPrice"))
+        evidence_return = self._required_finite_float(evidence.get("benchmarkReturn"))
+        if (
+            entry_price is None
+            or exit_price is None
+            or entry_price <= 0
+            or exit_price <= 0
+            or evidence_return is None
+            or benchmark_return is None
+        ):
+            return False
+        recomputed = (exit_price / entry_price) - 1.0
+        if not math.isclose(
+            recomputed, evidence_return, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            return False
+        if not math.isclose(
+            benchmark_return, evidence_return, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            return False
+        return all(
+            str(evidence.get(field) or "").strip()
+            for field in (
+                "entryObservedAt",
+                "exitObservedAt",
+                "entryRetrievedAt",
+                "exitRetrievedAt",
+                "entrySourceProvider",
+                "exitSourceProvider",
+            )
+        )
 
     def _required_finite_float(self, value: object) -> float | None:
         try:
