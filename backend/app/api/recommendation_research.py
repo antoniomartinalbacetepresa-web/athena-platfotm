@@ -86,6 +86,62 @@ def _assert_holdout_policy(payload: dict[str, object]) -> None:
             detail="El holdout shadow no puede asignar acciones de inversión.",
         )
 
+    multiplicity = payload.get("experimentMultiplicity")
+    if isinstance(multiplicity, dict):
+        experiment_count = multiplicity.get("distinctHoldoutExperimentCount")
+        controlled = multiplicity.get("multiplicityControlled")
+        correction = multiplicity.get("correctionMethod")
+        try:
+            parsed_count = int(experiment_count)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="El holdout shadow devolvió multiplicidad inválida.",
+            ) from exc
+        if parsed_count < 0:
+            raise HTTPException(
+                status_code=500,
+                detail="El holdout shadow devolvió multiplicidad inválida.",
+            )
+        if parsed_count > 1 and controlled is not False:
+            raise HTTPException(
+                status_code=500,
+                detail="La API no puede declarar controlada una multiplicidad sin evidencia.",
+            )
+        if parsed_count > 1 and correction == "not_yet_implemented" and payload.get(
+            "actionThresholdCalibrationResearchEligible"
+        ) is not False:
+            raise HTTPException(
+                status_code=500,
+                detail="La API no puede promover un holdout con multiplicidad no corregida.",
+            )
+
+
+def _assert_holdout_evidence_separation(payload: dict[str, object]) -> None:
+    """Keep raw holdout evidence distinct from downstream promotion eligibility."""
+    if "rawHoldoutGateEligible" not in payload:
+        return
+    raw_eligible = payload.get("rawHoldoutGateEligible")
+    final_eligible = payload.get("actionThresholdCalibrationResearchEligible")
+    if not isinstance(raw_eligible, bool) or not isinstance(final_eligible, bool):
+        raise HTTPException(
+            status_code=500,
+            detail="El holdout shadow devolvió elegibilidad no booleana.",
+        )
+
+    multiplicity = payload.get("experimentMultiplicity")
+    if not isinstance(multiplicity, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="Un holdout sellado debe exponer su multiplicidad experimental.",
+        )
+    controlled = multiplicity.get("multiplicityControlled")
+    if final_eligible and (not raw_eligible or controlled is not True):
+        raise HTTPException(
+            status_code=500,
+            detail="La elegibilidad final del holdout no está respaldada por evidencia válida.",
+        )
+
 
 @router.get("/shadow-research-readiness")
 def get_shadow_research_readiness(
@@ -138,4 +194,5 @@ def get_shadow_holdout_readiness(
 
     _assert_shadow_contract(payload)
     _assert_holdout_policy(payload)
+    _assert_holdout_evidence_separation(payload)
     return {"data": payload}
