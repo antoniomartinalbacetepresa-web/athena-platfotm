@@ -7,6 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app.services.recommendation_shadow_holdout_seal_service import (
     RecommendationShadowHoldoutSealService,
 )
+from app.services.recommendation_shadow_live_longitudinal_service import (
+    RecommendationShadowLiveLongitudinalService,
+)
 from app.services.recommendation_shadow_research_pipeline_service import (
     RecommendationShadowResearchPipelineService,
 )
@@ -19,6 +22,7 @@ router = APIRouter(
 
 research_pipeline_service = RecommendationShadowResearchPipelineService()
 holdout_seal_service = RecommendationShadowHoldoutSealService()
+live_longitudinal_service = RecommendationShadowLiveLongitudinalService()
 
 
 def _effective_as_of(value: datetime | None) -> datetime:
@@ -149,6 +153,52 @@ def _assert_holdout_evidence_separation(payload: dict[str, object]) -> None:
         )
 
 
+def _assert_longitudinal_policy(payload: dict[str, object]) -> None:
+    if payload.get("recommendationCandidateReady") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede habilitar recomendaciones.",
+        )
+    if payload.get("actionThresholdCalibrationResearchEligible") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede promover calibración automáticamente.",
+        )
+    if payload.get("action") is not None:
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede asignar acciones.",
+        )
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal devolvió una política inválida.",
+        )
+    if policy.get("modelVersionPooling") != (
+        "forbidden_metrics_partitioned_by_frozen_model_fingerprint"
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede mezclar versiones de modelo.",
+        )
+    if policy.get("automaticModelMutation") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede mutar modelos automáticamente.",
+        )
+    if policy.get("automaticProductionPromotion") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede promover producción automáticamente.",
+        )
+    if policy.get("automaticTrading") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La medición longitudinal no puede habilitar trading automático.",
+        )
+
+
 @router.get("/shadow-research-readiness")
 def get_shadow_research_readiness(
     as_of: datetime | None = Query(None),
@@ -201,4 +251,33 @@ def get_shadow_holdout_readiness(
     _assert_shadow_contract(payload)
     _assert_holdout_policy(payload)
     _assert_holdout_evidence_separation(payload)
+    return {"data": payload}
+
+
+@router.get("/shadow-live-longitudinal")
+def get_shadow_live_longitudinal(
+    symbol: str | None = Query(None),
+    as_of: datetime | None = Query(None),
+    horizons: str = Query("7,30,90,180,365"),
+) -> dict[str, object]:
+    """Measure matured live-shadow predictions without fitting decision rules."""
+
+    effective_as_of = _effective_as_of(as_of)
+    effective_horizons = _parse_horizons(horizons)
+    try:
+        payload = live_longitudinal_service.evaluate(
+            as_of=effective_as_of,
+            symbol=symbol,
+            horizons=effective_horizons,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo medir la evidencia longitudinal shadow de ATHENA.",
+        ) from exc
+
+    _assert_shadow_contract(payload)
+    _assert_longitudinal_policy(payload)
     return {"data": payload}
