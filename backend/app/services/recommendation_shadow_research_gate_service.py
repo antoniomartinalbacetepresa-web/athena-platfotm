@@ -18,6 +18,7 @@ class RecommendationShadowResearchGateService:
         *,
         minimum_evaluated_horizons: int = 3,
         minimum_passing_horizons: int = 2,
+        minimum_evaluated_folds_per_horizon: int = 3,
         minimum_horizon_pass_ratio: float = 2.0 / 3.0,
         minimum_fold_baseline_win_rate: float = 2.0 / 3.0,
         minimum_median_relative_mse_improvement: float = 0.0,
@@ -26,6 +27,8 @@ class RecommendationShadowResearchGateService:
     ) -> None:
         if minimum_evaluated_horizons <= 0 or minimum_passing_horizons <= 0:
             raise ValueError("Los mínimos de horizontes deben ser positivos.")
+        if minimum_evaluated_folds_per_horizon < 2:
+            raise ValueError("minimum_evaluated_folds_per_horizon debe ser al menos 2.")
         if minimum_passing_horizons > minimum_evaluated_horizons:
             raise ValueError(
                 "minimum_passing_horizons no puede superar minimum_evaluated_horizons."
@@ -43,6 +46,9 @@ class RecommendationShadowResearchGateService:
 
         self._minimum_evaluated_horizons = int(minimum_evaluated_horizons)
         self._minimum_passing_horizons = int(minimum_passing_horizons)
+        self._minimum_evaluated_folds_per_horizon = int(
+            minimum_evaluated_folds_per_horizon
+        )
         self._minimum_horizon_pass_ratio = float(minimum_horizon_pass_ratio)
         self._minimum_fold_baseline_win_rate = float(minimum_fold_baseline_win_rate)
         self._minimum_median_relative_mse_improvement = float(
@@ -163,6 +169,8 @@ class RecommendationShadowResearchGateService:
             raise ValueError("medianSignAccuracy debe estar entre 0 y 1.")
 
         reasons: list[str] = []
+        if evaluated_folds < self._minimum_evaluated_folds_per_horizon:
+            reasons.append("insufficient_evaluated_folds_for_research_gate")
         if baseline_win_rate < self._minimum_fold_baseline_win_rate:
             reasons.append("baseline_win_rate_below_research_threshold")
         if median_improvement <= self._minimum_median_relative_mse_improvement:
@@ -190,6 +198,7 @@ class RecommendationShadowResearchGateService:
         return {
             "minimumEvaluatedHorizons": self._minimum_evaluated_horizons,
             "minimumPassingHorizons": self._minimum_passing_horizons,
+            "minimumEvaluatedFoldsPerHorizon": self._minimum_evaluated_folds_per_horizon,
             "minimumHorizonPassRatio": self._minimum_horizon_pass_ratio,
             "minimumFoldBaselineWinRate": self._minimum_fold_baseline_win_rate,
             "minimumMedianRelativeMseImprovement": self._minimum_median_relative_mse_improvement,
