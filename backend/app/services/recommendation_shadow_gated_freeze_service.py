@@ -18,9 +18,10 @@ class RecommendationShadowGatedFreezeService:
 
     The research gate validates a candidate protocol/family across walk-forward
     folds. The final research-era refit is therefore not the exact model from a
-    single fold. Crucially, the refit's ridge lambda may no longer be supplied
-    manually: it must come from a fingerprinted protocol-selection artifact
-    derived only from validation-selected lambdas across research folds.
+    single fold. The ridge lambda may not be supplied manually: it must come
+    from a fingerprinted protocol-selection artifact derived from validation
+    selections, and that artifact must identify the exact walk-forward evidence
+    that passed the corresponding research-gate horizon.
     """
 
     BUNDLE_VERSION = "shadow-gated-freeze-v2"
@@ -67,8 +68,19 @@ class RecommendationShadowGatedFreezeService:
         selection_horizon = int(validated_selection.get("horizonDays", -1))
         if selection_horizon != int(horizon_days):
             raise ValueError("La protocol selection no corresponde al horizonte solicitado.")
-        ridge_lambda = float(validated_selection["selectedRidgeLambda"])
 
+        gate_source_fingerprint = horizon.get("sourceWalkForwardFingerprint")
+        selection_source_fingerprint = validated_selection.get(
+            "sourceWalkForwardFingerprint"
+        )
+        if not isinstance(gate_source_fingerprint, str) or not gate_source_fingerprint:
+            raise ValueError("La research gate no identifica su evidencia walk-forward fuente.")
+        if gate_source_fingerprint != selection_source_fingerprint:
+            raise ValueError(
+                "La protocol selection no procede del walk-forward que superó la research gate."
+            )
+
+        ridge_lambda = float(validated_selection["selectedRidgeLambda"])
         gate_fingerprint = self._fingerprint(gate_core)
         selection_fingerprint = validated_selection.get("selectionFingerprint")
         if not isinstance(selection_fingerprint, str) or not selection_fingerprint:
@@ -86,6 +98,7 @@ class RecommendationShadowGatedFreezeService:
                 "reason": frozen.get("status", "freeze_failed"),
                 "researchGateFingerprint": gate_fingerprint,
                 "protocolSelectionFingerprint": selection_fingerprint,
+                "sourceWalkForwardFingerprint": gate_source_fingerprint,
                 "horizonDays": int(horizon_days),
                 "advisoryStatus": "no_advice",
                 "productionEligible": False,
@@ -106,6 +119,7 @@ class RecommendationShadowGatedFreezeService:
             "bundleVersion": self.BUNDLE_VERSION,
             "researchGateFingerprint": gate_fingerprint,
             "protocolSelectionFingerprint": selection_fingerprint,
+            "sourceWalkForwardFingerprint": gate_source_fingerprint,
             "researchGateStatus": gate_core["status"],
             "horizonDays": int(horizon_days),
             "researchCutoff": cutoff.isoformat(),
@@ -130,6 +144,7 @@ class RecommendationShadowGatedFreezeService:
             "policy": {
                 "gatePassRequired": True,
                 "passingHorizonRequired": True,
+                "sameWalkForwardEvidenceRequired": True,
                 "researchDerivedLambdaRequired": True,
                 "manualPostResearchLambdaSelection": False,
                 "foldTestMetricsMaySelectLambda": False,
@@ -160,6 +175,19 @@ class RecommendationShadowGatedFreezeService:
         ):
             raise ValueError("La protocol selection no coincide con el bundle.")
 
+        horizon_key = str(int(bundle.get("horizonDays", -1)))
+        gate_horizon = gate_core["horizons"].get(horizon_key)
+        if not isinstance(gate_horizon, dict):
+            raise ValueError("El horizonte del bundle no existe en la research gate.")
+        gate_source_fingerprint = gate_horizon.get("sourceWalkForwardFingerprint")
+        selection_source_fingerprint = validated_selection.get(
+            "sourceWalkForwardFingerprint"
+        )
+        if gate_source_fingerprint != selection_source_fingerprint:
+            raise ValueError("Gate y protocol selection ya no comparten walk-forward fuente.")
+        if gate_source_fingerprint != bundle.get("sourceWalkForwardFingerprint"):
+            raise ValueError("El walk-forward fuente no coincide con el bundle.")
+
         frozen = bundle.get("frozenModel")
         if not isinstance(frozen, dict):
             raise ValueError("El bundle no contiene frozenModel válido.")
@@ -171,6 +199,7 @@ class RecommendationShadowGatedFreezeService:
             "bundleVersion",
             "researchGateFingerprint",
             "protocolSelectionFingerprint",
+            "sourceWalkForwardFingerprint",
             "researchGateStatus",
             "horizonDays",
             "researchCutoff",
