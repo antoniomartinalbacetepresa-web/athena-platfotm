@@ -10,38 +10,17 @@ from typing import Any
 class RecommendationShadowActionEconomicContractService:
     """Build and validate immutable economic semantics for shadow action research.
 
-    Cost and slippage values deliberately have no defaults: they must come from an
-    explicitly precommitted research protocol. This service does not fit action
-    thresholds, assign advice, promote models or enable execution.
+    Every quantity that affects economic utility is explicit: transaction cost,
+    slippage and the reduced-position exposure fraction have no defaults. This
+    service defines long-only state transitions but does not fit thresholds,
+    publish advice, promote models or enable execution.
     """
 
-    ARTIFACT_VERSION = "shadow-action-economic-contract-v1"
-    PORTFOLIO_MODEL = "long_only_single_asset_exposure"
-    POSITION_STATES = ("flat", "long")
+    ARTIFACT_VERSION = "shadow-action-economic-contract-v2"
+    PORTFOLIO_MODEL = "long_only_single_asset_target_exposure"
+    POSITION_STATES = ("flat", "reduced_long", "full_long")
     ACTIONS = ("buy", "hold", "reduce", "sell")
-    _ACTION_SEMANTICS = {
-        "buy": {
-            "meaning": "initiate_or_increase_long_exposure",
-            "allowedFrom": ["flat", "long"],
-            "requiresTrade": True,
-        },
-        "hold": {
-            "meaning": "keep_current_exposure_unchanged",
-            "allowedFrom": ["flat", "long"],
-            "requiresTrade": False,
-        },
-        "reduce": {
-            "meaning": "decrease_long_exposure_without_fully_exiting",
-            "allowedFrom": ["long"],
-            "requiresTrade": True,
-        },
-        "sell": {
-            "meaning": "exit_long_exposure_to_flat",
-            "allowedFrom": ["long"],
-            "requiresTrade": True,
-        },
-    }
-    _ROUND_TRIP_TREATMENT = "apply_explicit_costs_to_each_executed_trade_leg"
+    _ROUND_TRIP_TREATMENT = "apply_explicit_costs_pro_rata_to_absolute_exposure_change"
     _COST_SOURCE = "caller_precommitted_research_protocol"
 
     def build(
@@ -49,6 +28,7 @@ class RecommendationShadowActionEconomicContractService:
         *,
         transaction_cost_bps: float,
         slippage_bps: float,
+        reduced_exposure_fraction: float,
         objective_name: str,
         objective_version: str,
     ) -> dict[str, Any]:
@@ -56,13 +36,21 @@ class RecommendationShadowActionEconomicContractService:
             transaction_cost_bps, "transaction_cost_bps"
         )
         slippage = self._nonnegative_finite(slippage_bps, "slippage_bps")
+        reduced_exposure = self._open_unit_interval(
+            reduced_exposure_fraction, "reduced_exposure_fraction"
+        )
         objective = self._nonempty(objective_name, "objective_name")
         version = self._nonempty(objective_version, "objective_version")
+        action_semantics = self._action_semantics(reduced_exposure)
         core = {
             "artifactVersion": self.ARTIFACT_VERSION,
             "portfolioModel": self.PORTFOLIO_MODEL,
-            "positionStates": list(self.POSITION_STATES),
-            "actions": deepcopy(self._ACTION_SEMANTICS),
+            "positionStates": {
+                "flat": {"targetExposureFraction": 0.0},
+                "reduced_long": {"targetExposureFraction": reduced_exposure},
+                "full_long": {"targetExposureFraction": 1.0},
+            },
+            "actions": action_semantics,
             "economicObjective": {
                 "name": objective,
                 "version": version,
@@ -114,9 +102,24 @@ class RecommendationShadowActionEconomicContractService:
             raise ValueError("Versión de contrato económico no soportada.")
         if artifact.get("portfolioModel") != self.PORTFOLIO_MODEL:
             raise ValueError("El modelo de cartera del contrato no está permitido.")
-        if artifact.get("positionStates") != list(self.POSITION_STATES):
+
+        states = artifact.get("positionStates")
+        if not isinstance(states, dict) or tuple(states.keys()) != self.POSITION_STATES:
             raise ValueError("Los estados de posición del contrato fueron alterados.")
-        if artifact.get("actions") != self._ACTION_SEMANTICS:
+        if states.get("flat") != {"targetExposureFraction": 0.0}:
+            raise ValueError("El estado flat fue alterado.")
+        if states.get("full_long") != {"targetExposureFraction": 1.0}:
+            raise ValueError("El estado full_long fue alterado.")
+        reduced_payload = states.get("reduced_long")
+        if not isinstance(reduced_payload, dict) or set(reduced_payload) != {
+            "targetExposureFraction"
+        }:
+            raise ValueError("El estado reduced_long fue alterado.")
+        reduced_exposure = self._open_unit_interval(
+            reduced_payload.get("targetExposureFraction"),
+            "positionStates.reduced_long.targetExposureFraction",
+        )
+        if artifact.get("actions") != self._action_semantics(reduced_exposure):
             raise ValueError("La semántica exacta de acciones fue alterada.")
 
         objective = artifact.get("economicObjective")
@@ -173,6 +176,38 @@ class RecommendationShadowActionEconomicContractService:
             raise ValueError("El contrato económico debe permanecer en no_advice.")
         return artifact
 
+    def _action_semantics(self, reduced_exposure: float) -> dict[str, Any]:
+        return {
+            "buy": {
+                "meaning": "move_to_full_long_target_exposure",
+                "allowedFrom": ["flat", "reduced_long"],
+                "targetState": "full_long",
+                "targetExposureFraction": 1.0,
+                "requiresTrade": True,
+            },
+            "hold": {
+                "meaning": "keep_current_target_exposure_unchanged",
+                "allowedFrom": list(self.POSITION_STATES),
+                "targetState": "unchanged",
+                "targetExposureFraction": "unchanged",
+                "requiresTrade": False,
+            },
+            "reduce": {
+                "meaning": "move_from_full_long_to_reduced_long_target_exposure",
+                "allowedFrom": ["full_long"],
+                "targetState": "reduced_long",
+                "targetExposureFraction": reduced_exposure,
+                "requiresTrade": True,
+            },
+            "sell": {
+                "meaning": "exit_any_long_target_exposure_to_flat",
+                "allowedFrom": ["reduced_long", "full_long"],
+                "targetState": "flat",
+                "targetExposureFraction": 0.0,
+                "requiresTrade": True,
+            },
+        }
+
     def _nonnegative_finite(self, value: object, field: str) -> float:
         if isinstance(value, bool):
             raise ValueError(f"{field} debe ser un número finito no negativo.")
@@ -182,6 +217,12 @@ class RecommendationShadowActionEconomicContractService:
             raise ValueError(f"{field} debe ser un número finito no negativo.") from exc
         if not math.isfinite(result) or result < 0.0:
             raise ValueError(f"{field} debe ser un número finito no negativo.")
+        return result
+
+    def _open_unit_interval(self, value: object, field: str) -> float:
+        result = self._nonnegative_finite(value, field)
+        if result <= 0.0 or result >= 1.0:
+            raise ValueError(f"{field} debe estar estrictamente entre 0 y 1.")
         return result
 
     def _nonempty(self, value: object, field: str) -> str:
