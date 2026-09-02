@@ -13,6 +13,7 @@ CANDIDATE_FP = "c" * 64
 ATTESTATION_FP = "a" * 64
 DECISION_FP = "d" * 64
 UNCERTAINTY_FP = "e" * 64
+_DEFAULT = object()
 
 
 class FakeCandidateRepository:
@@ -24,8 +25,8 @@ class FakeCandidateRepository:
 
 
 class FakeAttestationService:
-    def __init__(self, payload=None):
-        self.payload = _attestation() if payload is None else payload
+    def __init__(self, payload=_DEFAULT):
+        self.payload = _attestation() if payload is _DEFAULT else payload
         self.calls = []
 
     def get_for_candidate(self, *, candidate_id):
@@ -54,10 +55,7 @@ class FakeEvaluationService:
 
 
 def _candidate_row():
-    return {
-        "id": 20,
-        "candidate_fingerprint": CANDIDATE_FP,
-    }
+    return {"id": 20, "candidate_fingerprint": CANDIDATE_FP}
 
 
 def _attestation():
@@ -97,11 +95,7 @@ def _decision():
                 "researchStrength": 1.5,
                 "conservativeResearchStrength": -0.25,
                 "riskAdjustedResearchStrength": 1.125,
-                "uncertainty": {
-                    "rmse": 0.04,
-                    "mae": 0.03,
-                    "observationCount": 24,
-                },
+                "uncertainty": {"rmse": 0.04, "mae": 0.03, "observationCount": 24},
                 "scenarios": {
                     "lowerEmpiricalExcessReturn": -0.01,
                     "medianEmpiricalExcessReturn": 0.05,
@@ -160,10 +154,8 @@ def _evaluation(status="evaluated"):
     }
 
 
-def _service(*, attestation=None, decision=None, evaluation=None):
-    attestation_service = FakeAttestationService(
-        _attestation() if attestation is None else attestation
-    )
+def _service(*, attestation=_DEFAULT, decision=None, evaluation=None):
+    attestation_service = FakeAttestationService(attestation)
     decision_service = FakeDecisionService(decision or _decision())
     evaluation_service = FakeEvaluationService(evaluation or _evaluation())
     service = RecommendationShadowActionCalibrationDatasetService(
@@ -177,9 +169,9 @@ def _service(*, attestation=None, decision=None, evaluation=None):
 
 def test_dataset_admits_only_attested_ex_ante_inputs_with_matured_pit_outcome():
     service, _, _, _ = _service()
-    cutoff = datetime(2026, 8, 1, tzinfo=timezone.utc)
-
-    result = service.build(as_of=cutoff, horizons=[30])
+    result = service.build(
+        as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
+    )
 
     assert result["status"] == "shadow_action_calibration_dataset_available"
     assert result["datasetVersion"] == "shadow-action-calibration-v2"
@@ -201,19 +193,9 @@ def test_dataset_admits_only_attested_ex_ante_inputs_with_matured_pit_outcome():
 
 
 def test_dataset_excludes_unattested_legacy_candidate_before_decision_or_outcome_access():
-    attestation_service = FakeAttestationService(payload=None)
-    decision_service = FakeDecisionService()
-    evaluation_service = FakeEvaluationService()
-    service = RecommendationShadowActionCalibrationDatasetService(
-        candidate_repository=FakeCandidateRepository(),
-        attestation_service=attestation_service,
-        decision_research_service=decision_service,
-        evaluation_service=evaluation_service,
-    )
-
+    service, _, decision_service, evaluation_service = _service(attestation=None)
     result = service.build(
-        as_of=datetime(2026, 8, 1, tzinfo=timezone.utc),
-        horizons=[30],
+        as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
     )
 
     assert result["status"] == "shadow_action_calibration_dataset_pending"
@@ -230,18 +212,15 @@ def test_dataset_fails_closed_if_attestation_and_decision_fingerprints_diverge()
 
     with pytest.raises(ValueError, match="decision research"):
         service.build(
-            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc),
-            horizons=[30],
+            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
         )
     assert evaluation_service.calls == []
 
 
 def test_dataset_keeps_unmatured_outcome_out_of_labels():
     service, _, _, _ = _service(evaluation=_evaluation(status="pending"))
-
     result = service.build(
-        as_of=datetime(2026, 6, 20, tzinfo=timezone.utc),
-        horizons=[30],
+        as_of=datetime(2026, 6, 20, tzinfo=timezone.utc), horizons=[30]
     )
 
     assert result["rowCount"] == 0
@@ -255,8 +234,7 @@ def test_dataset_rejects_outcome_evaluated_after_requested_cutoff():
 
     with pytest.raises(ValueError, match="futuro"):
         service.build(
-            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc),
-            horizons=[30],
+            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
         )
 
 
@@ -267,6 +245,5 @@ def test_dataset_rejects_non_finite_live_features():
 
     with pytest.raises(ValueError, match="finito"):
         service.build(
-            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc),
-            horizons=[30],
+            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
         )
