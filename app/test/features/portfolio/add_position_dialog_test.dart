@@ -18,6 +18,9 @@ class FakeMarketRepository implements MarketRepository {
       currentPrice: 432.10,
       change: 1.0,
       changePercentage: 0.2,
+      currency: 'usd',
+      exchange: 'NMS',
+      quoteType: 'EQUITY',
       updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
       sourceProvider: 'yahoo',
       retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
@@ -81,22 +84,9 @@ Future<AddPositionResult?> openAndSubmit(
 
 void main() {
   testWidgets(
-    'obtiene identidad precio y provenance sin campos manuales',
+    'obtiene identidad precio moneda listing y provenance sin campos manuales',
     (tester) async {
       final repository = FakeMarketRepository();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: ElevatedButton(
-                onPressed: () {},
-                child: const Text('placeholder'),
-              ),
-            ),
-          ),
-        ),
-      );
 
       final result = await openAndSubmit(tester, repository);
 
@@ -107,6 +97,9 @@ void main() {
       expect(result!.symbol, 'MSFT');
       expect(result.companyName, 'Verified company');
       expect(result.currentPrice, 432.10);
+      expect(result.priceCurrency, 'USD');
+      expect(result.exchange, 'NMS');
+      expect(result.quoteType, 'EQUITY');
       expect(result.currentPriceUpdatedAt, DateTime.utc(2026, 9, 2, 16, 30));
       expect(result.currentPriceSourceProvider, 'yahoo');
       expect(result.currentPriceRetrievedAt, DateTime.utc(2026, 9, 2, 16, 31));
@@ -121,6 +114,7 @@ void main() {
         currentPrice: 432.10,
         change: 1.0,
         changePercentage: 0.2,
+        currency: 'USD',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
       ),
@@ -140,6 +134,7 @@ void main() {
         currentPrice: 432.10,
         change: 1.0,
         changePercentage: 0.2,
+        currency: 'USD',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         sourceProvider: 'yahoo',
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 29),
@@ -160,6 +155,48 @@ void main() {
         currentPrice: 200,
         change: 1,
         changePercentage: 0.5,
+        currency: 'USD',
+        updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
+        sourceProvider: 'yahoo',
+        retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
+      ),
+    );
+
+    final result = await openAndSubmit(tester, repository);
+
+    expect(result, isNull);
+    expect(find.textContaining('sin trazabilidad'), findsOneWidget);
+  });
+
+  testWidgets('rechaza cotización sin moneda verificable', (tester) async {
+    final repository = FakeMarketRepository(
+      quote: MarketQuote(
+        symbol: 'MSFT',
+        companyName: 'Verified company',
+        currentPrice: 432.10,
+        change: 1,
+        changePercentage: 0.2,
+        updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
+        sourceProvider: 'yahoo',
+        retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
+      ),
+    );
+
+    final result = await openAndSubmit(tester, repository);
+
+    expect(result, isNull);
+    expect(find.textContaining('sin trazabilidad'), findsOneWidget);
+  });
+
+  testWidgets('rechaza código de moneda no ISO de tres letras', (tester) async {
+    final repository = FakeMarketRepository(
+      quote: MarketQuote(
+        symbol: 'MSFT',
+        companyName: 'Verified company',
+        currentPrice: 432.10,
+        change: 1,
+        changePercentage: 0.2,
+        currency: r'US$',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         sourceProvider: 'yahoo',
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
