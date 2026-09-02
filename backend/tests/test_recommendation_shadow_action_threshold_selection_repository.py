@@ -9,6 +9,9 @@ from app.database.athena_database import AthenaDatabase
 from app.repositories.recommendation_shadow_action_threshold_selection_repository import (
     RecommendationShadowActionThresholdSelectionRepository,
 )
+from app.services.recommendation_shadow_action_threshold_candidate_service import (
+    RecommendationShadowActionThresholdCandidateService,
+)
 from app.services.recommendation_shadow_action_threshold_selection_service import (
     RecommendationShadowActionThresholdSelectionService,
 )
@@ -82,7 +85,10 @@ def _selection():
         "validationUtilityRows": validation,
     }
     return RecommendationShadowActionThresholdSelectionService(
-        panel_validator=_IdentityPanelValidator()
+        panel_validator=_IdentityPanelValidator(),
+        candidate_service=RecommendationShadowActionThresholdCandidateService(
+            panel_validator=_IdentityPanelValidator()
+        ),
     ).select(panel)
 
 
