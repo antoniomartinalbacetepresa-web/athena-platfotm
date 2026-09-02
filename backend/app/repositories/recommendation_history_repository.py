@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -77,6 +78,7 @@ class RecommendationHistoryRepository:
                     realized_return REAL NOT NULL,
                     benchmark_return REAL,
                     excess_return REAL,
+                    benchmark_evidence_json TEXT,
                     max_drawdown REAL,
                     source_provider TEXT NOT NULL,
                     source_timestamp TEXT,
@@ -93,15 +95,26 @@ class RecommendationHistoryRepository:
                 """
             )
 
-            columns = {
+            recommendation_columns = {
                 str(row["name"])
                 for row in connection.execute(
                     "PRAGMA table_info(athena_recommendations)"
                 ).fetchall()
             }
-            if "benchmark_symbol" not in columns:
+            if "benchmark_symbol" not in recommendation_columns:
                 connection.execute(
                     "ALTER TABLE athena_recommendations ADD COLUMN benchmark_symbol TEXT"
+                )
+            outcome_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(athena_recommendation_outcomes)"
+                ).fetchall()
+            }
+            if "benchmark_evidence_json" not in outcome_columns:
+                connection.execute(
+                    "ALTER TABLE athena_recommendation_outcomes "
+                    "ADD COLUMN benchmark_evidence_json TEXT"
                 )
 
     def create_recommendation(
@@ -201,6 +214,7 @@ class RecommendationHistoryRepository:
         exit_price: float,
         source_provider: str,
         benchmark_return: float | None = None,
+        benchmark_evidence: dict[str, Any] | None = None,
         max_drawdown: float | None = None,
         source_timestamp: datetime | None = None,
     ) -> int:
@@ -209,8 +223,8 @@ class RecommendationHistoryRepository:
             raise ValueError("recommendation_id debe ser positivo.")
         if horizon_days <= 0:
             raise ValueError("horizon_days debe ser mayor que 0.")
-        if entry_price <= 0 or exit_price <= 0:
-            raise ValueError("entry_price y exit_price deben ser positivos.")
+        normalized_entry_price = self._positive_finite(entry_price, "entry_price")
+        normalized_exit_price = self._positive_finite(exit_price, "exit_price")
 
         evaluated_at_utc = self._aware_utc(evaluated_at, "evaluated_at")
         evaluated = evaluated_at_utc.isoformat()
@@ -224,7 +238,7 @@ class RecommendationHistoryRepository:
         with self._database.connect() as connection:
             recommendation = connection.execute(
                 """
-                SELECT generated_at
+                SELECT generated_at, benchmark_symbol
                 FROM athena_recommendations
                 WHERE id = ?
                 """,
@@ -243,11 +257,45 @@ class RecommendationHistoryRepository:
                     "evaluated_at no puede ser anterior al vencimiento del horizonte."
                 )
 
-            realized_return = (float(exit_price) / float(entry_price)) - 1.0
+            frozen_benchmark = self._optional_symbol(recommendation["benchmark_symbol"])
+            normalized_benchmark_evidence: dict[str, Any] | None = None
+            resolved_benchmark_return: float | None = None
+            if benchmark_evidence is not None:
+                normalized_benchmark_evidence, resolved_benchmark_return = (
+                    self._validate_benchmark_evidence(
+                        benchmark_evidence,
+                        frozen_symbol=frozen_benchmark,
+                        generated_at=generated_at_utc,
+                        due_at=due_at,
+                        evaluated_at=evaluated_at_utc,
+                    )
+                )
+                if benchmark_return is not None:
+                    supplied = self._finite(benchmark_return, "benchmark_return")
+                    if not math.isclose(
+                        supplied,
+                        resolved_benchmark_return,
+                        rel_tol=1e-12,
+                        abs_tol=1e-12,
+                    ):
+                        raise ValueError(
+                            "benchmark_return no coincide con la evidencia del benchmark."
+                        )
+            elif benchmark_return is not None:
+                raise ValueError(
+                    "benchmark_return requiere evidencia trazable del benchmark congelado."
+                )
+
+            realized_return = (normalized_exit_price / normalized_entry_price) - 1.0
             excess_return = (
-                realized_return - float(benchmark_return)
-                if benchmark_return is not None
+                realized_return - resolved_benchmark_return
+                if resolved_benchmark_return is not None
                 else None
+            )
+            normalized_drawdown = (
+                None
+                if max_drawdown is None
+                else self._finite(max_drawdown, "max_drawdown")
             )
             now = datetime.now(timezone.utc).isoformat()
             cursor = connection.execute(
@@ -261,22 +309,34 @@ class RecommendationHistoryRepository:
                     realized_return,
                     benchmark_return,
                     excess_return,
+                    benchmark_evidence_json,
                     max_drawdown,
                     source_provider,
                     source_timestamp,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     recommendation_id,
                     int(horizon_days),
                     evaluated,
-                    float(entry_price),
-                    float(exit_price),
+                    normalized_entry_price,
+                    normalized_exit_price,
                     realized_return,
-                    benchmark_return,
+                    resolved_benchmark_return,
                     excess_return,
-                    max_drawdown,
+                    (
+                        json.dumps(
+                            normalized_benchmark_evidence,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            allow_nan=False,
+                        )
+                        if normalized_benchmark_evidence is not None
+                        else None
+                    ),
+                    normalized_drawdown,
                     provider,
                     source_time,
                     now,
@@ -312,24 +372,122 @@ class RecommendationHistoryRepository:
                 """,
                 (recommendation_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw_evidence = item.pop("benchmark_evidence_json", None)
+            item["benchmark_evidence"] = (
+                json.loads(raw_evidence) if raw_evidence is not None else None
+            )
+            result.append(item)
+        return result
 
-    def _required_text(self, value: str, field: str) -> str:
+    def _validate_benchmark_evidence(
+        self,
+        evidence: dict[str, Any],
+        *,
+        frozen_symbol: str | None,
+        generated_at: datetime,
+        due_at: datetime,
+        evaluated_at: datetime,
+    ) -> tuple[dict[str, Any], float]:
+        if not isinstance(evidence, dict):
+            raise ValueError("benchmark_evidence debe ser un objeto.")
+        if frozen_symbol is None:
+            raise ValueError("No puede persistirse benchmark sin símbolo congelado.")
+        if evidence.get("status") != "resolved":
+            raise ValueError("La evidencia del benchmark debe estar resuelta.")
+        symbol = self._optional_symbol(evidence.get("benchmarkSymbol"))
+        if symbol != frozen_symbol:
+            raise ValueError("La evidencia pertenece a otro benchmark.")
+        instrument_id = evidence.get("benchmarkInstrumentId")
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise ValueError("benchmarkInstrumentId debe ser entero positivo.")
+        entry_price = self._positive_finite(evidence.get("entryPrice"), "benchmark.entryPrice")
+        exit_price = self._positive_finite(evidence.get("exitPrice"), "benchmark.exitPrice")
+        calculated_return = (exit_price / entry_price) - 1.0
+        reported_return = self._finite(
+            evidence.get("benchmarkReturn"), "benchmark.benchmarkReturn"
+        )
+        if not math.isclose(
+            calculated_return, reported_return, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            raise ValueError("benchmarkReturn no coincide con los precios preservados.")
+
+        entry_observed = self._parse_utc_value(
+            evidence.get("entryObservedAt"), "benchmark.entryObservedAt"
+        )
+        exit_observed = self._parse_utc_value(
+            evidence.get("exitObservedAt"), "benchmark.exitObservedAt"
+        )
+        entry_retrieved = self._parse_utc_value(
+            evidence.get("entryRetrievedAt"), "benchmark.entryRetrievedAt"
+        )
+        exit_retrieved = self._parse_utc_value(
+            evidence.get("exitRetrievedAt"), "benchmark.exitRetrievedAt"
+        )
+        if entry_observed < generated_at or entry_observed > due_at:
+            raise ValueError("La observación de entrada del benchmark está fuera de ventana.")
+        if exit_observed < due_at or exit_observed > evaluated_at:
+            raise ValueError("La observación de salida del benchmark está fuera de ventana.")
+        if entry_retrieved > evaluated_at or exit_retrieved > evaluated_at:
+            raise ValueError("La evidencia del benchmark fue recuperada después de as_of.")
+        entry_provider = self._required_text(
+            evidence.get("entrySourceProvider"), "benchmark.entrySourceProvider"
+        )
+        exit_provider = self._required_text(
+            evidence.get("exitSourceProvider"), "benchmark.exitSourceProvider"
+        )
+        normalized = {
+            "status": "resolved",
+            "benchmarkSymbol": symbol,
+            "benchmarkInstrumentId": instrument_id,
+            "entryPrice": entry_price,
+            "exitPrice": exit_price,
+            "benchmarkReturn": calculated_return,
+            "entryObservedAt": entry_observed.isoformat(),
+            "exitObservedAt": exit_observed.isoformat(),
+            "entryRetrievedAt": entry_retrieved.isoformat(),
+            "exitRetrievedAt": exit_retrieved.isoformat(),
+            "entrySourceProvider": entry_provider,
+            "exitSourceProvider": exit_provider,
+            "policy": evidence.get("policy") if isinstance(evidence.get("policy"), dict) else {},
+        }
+        return normalized, calculated_return
+
+    def _required_text(self, value: object, field: str) -> str:
         normalized = str(value or "").strip()
         if not normalized:
             raise ValueError(f"{field} es obligatorio.")
         return normalized
 
-    def _optional_symbol(self, value: str | None) -> str | None:
+    def _optional_symbol(self, value: object) -> str | None:
         if value is None:
             return None
         normalized = str(value).strip().upper()
         return normalized or None
 
     def _bounded(self, value: float, field: str, low: float, high: float) -> float:
-        result = float(value)
+        result = self._finite(value, field)
         if result < low or result > high:
             raise ValueError(f"{field} debe estar entre {low} y {high}.")
+        return result
+
+    def _positive_finite(self, value: object, field: str) -> float:
+        result = self._finite(value, field)
+        if result <= 0:
+            raise ValueError(f"{field} debe ser positivo.")
+        return result
+
+    def _finite(self, value: object, field: str) -> float:
+        if isinstance(value, bool):
+            raise ValueError(f"{field} debe ser finito.")
+        try:
+            result = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} debe ser finito.") from exc
+        if not math.isfinite(result):
+            raise ValueError(f"{field} debe ser finito.")
         return result
 
     def _utc_iso(self, value: datetime, field: str) -> str:
@@ -345,3 +503,13 @@ class RecommendationHistoryRepository:
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise RuntimeError(f"{field} histórico debe incluir zona horaria.")
         return parsed.astimezone(timezone.utc)
+
+    def _parse_utc_value(self, value: object, field: str) -> datetime:
+        raw = str(value or "").strip()
+        if not raw:
+            raise ValueError(f"{field} es obligatorio.")
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} debe ser ISO-8601 válido.") from exc
+        return self._aware_utc(parsed, field)
