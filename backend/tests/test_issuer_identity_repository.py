@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 import pytest
@@ -169,4 +170,22 @@ def test_repository_rejects_invalid_confidence(tmp_path: Path) -> None:
             external_id="0000320193",
             canonical_name="Apple Inc.",
             evidence_confidence=1.1,
+        )
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_repository_rejects_non_finite_confidence(
+    tmp_path: Path,
+    value: float,
+) -> None:
+    repository = IssuerIdentityRepository(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+
+    with pytest.raises(ValueError, match="confidence debe ser finita"):
+        repository.upsert_external_issuer(
+            source_provider="sec_edgar",
+            external_id="0000320193",
+            canonical_name="Apple Inc.",
+            evidence_confidence=value,
         )
