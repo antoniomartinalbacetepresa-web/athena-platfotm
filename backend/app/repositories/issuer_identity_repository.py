@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -261,6 +262,6 @@ class IssuerIdentityRepository:
 
     def _confidence(self, value: float) -> float:
         result = float(value)
-        if result < 0 or result > 1:
-            raise ValueError("confidence debe estar entre 0 y 1.")
+        if not isfinite(result) or result < 0 or result > 1:
+            raise ValueError("confidence debe ser finita y estar entre 0 y 1.")
         return result
