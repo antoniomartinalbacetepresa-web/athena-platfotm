@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Protocol
 
 from app.services.recommendation_fundamental_signal_service import (
@@ -386,16 +387,22 @@ class RecommendationEvidenceGateService:
         return len(resolved) == 1
 
     def _float_at_least(self, value: object, threshold: float) -> bool:
-        try:
-            return float(value) >= threshold
-        except (TypeError, ValueError):
+        if isinstance(value, bool):
             return False
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return isfinite(numeric_value) and numeric_value >= threshold
 
     def _positive_float(self, value: object) -> bool:
-        try:
-            return float(value) > 0
-        except (TypeError, ValueError):
+        if isinstance(value, bool):
             return False
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return isfinite(numeric_value) and numeric_value > 0
 
     def _optional_int(self, value: object) -> int | None:
         if value is None:
