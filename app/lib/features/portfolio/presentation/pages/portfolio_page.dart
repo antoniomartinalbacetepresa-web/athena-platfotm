@@ -6,9 +6,11 @@ import '../../../../core/theme/athena_spacing.dart';
 import '../../../market/di/market_dependencies.dart';
 import '../../models/portfolio.dart';
 import '../../models/portfolio_position.dart';
+import '../../models/portfolio_valuation_summary.dart';
 import '../../services/portfolio_service.dart';
 import '../../widgets/add_position_dialog.dart';
 import '../../widgets/set_reference_capital_dialog.dart';
+import '../controllers/portfolio_current_valuation_controller.dart';
 
 class PortfolioPage extends StatefulWidget {
   const PortfolioPage({super.key});
@@ -22,6 +24,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
 
   final PortfolioService _portfolioService = PortfolioService();
   late final MarketDependencies _marketDependencies;
+  late final PortfolioCurrentValuationController _valuationController;
 
   List<PortfolioPosition> _positions = [];
   bool _isLoading = true;
@@ -35,13 +38,34 @@ class _PortfolioPageState extends State<PortfolioPage> {
   void initState() {
     super.initState();
     _marketDependencies = MarketDependencies.create();
+    _valuationController =
+        PortfolioCurrentValuationController.forMarketDependencies(
+      _marketDependencies,
+    )..addListener(_onValuationChanged);
     _loadPortfolio();
   }
 
   @override
   void dispose() {
+    _valuationController.removeListener(_onValuationChanged);
+    _valuationController.dispose();
     _marketDependencies.dispose();
     super.dispose();
+  }
+
+  void _onValuationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadCurrentValuation() async {
+    if (_positions.isEmpty) {
+      _valuationController.clear();
+      return;
+    }
+    await _valuationController.load(
+      positions: _positions,
+      baseCurrency: _baseCurrency,
+    );
   }
 
   Future<void> _loadPortfolio() async {
@@ -69,8 +93,10 @@ class _PortfolioPageState extends State<PortfolioPage> {
         _loadError = null;
         _priceRefreshMessage = refreshMessage;
       });
+      await _loadCurrentValuation();
     } catch (_) {
       if (!mounted) return;
+      _valuationController.clear();
       setState(() {
         _positions = [];
         _isLoading = false;
@@ -98,6 +124,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         _isRefreshingPrices = false;
         _priceRefreshMessage = _refreshMessageFor(report);
       });
+      await _loadCurrentValuation();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -107,6 +134,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
             'No se pudieron actualizar las cotizaciones. Se conservan los '
             'últimos precios persistidos; ATHENA no los sustituye por estimaciones.';
       });
+      await _loadCurrentValuation();
     }
   }
 
@@ -181,6 +209,8 @@ class _PortfolioPageState extends State<PortfolioPage> {
         _positions = _portfolio?.positions ?? [];
         _priceRefreshMessage = null;
       });
+      await _loadCurrentValuation();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -230,6 +260,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
       await _portfolioService.removePosition(position.symbol);
       if (!mounted) return;
       setState(() => _positions = _portfolio?.positions ?? []);
+      await _loadCurrentValuation();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -238,40 +269,39 @@ class _PortfolioPageState extends State<PortfolioPage> {
     }
   }
 
-  bool get _allPositionsComparableInBaseCurrency {
-    if (_positions.isEmpty) return true;
-    return _positions.every((position) {
-      final currency = position.priceCurrency?.trim().toUpperCase();
-      return currency == _baseCurrency;
-    });
+  PortfolioValuationSummary? _valuationSummary(double referenceCapital) {
+    final valuation = _valuationController.valuation;
+    if (valuation == null) return null;
+    try {
+      return PortfolioValuationSummary.fromValuation(
+        valuation: valuation,
+        referenceCapital: referenceCapital,
+      );
+    } catch (_) {
+      return null;
+    }
   }
-
-  double get _baseInvestedValue =>
-      _positions.fold(0.0, (sum, position) => sum + position.investedValue);
-
-  double get _baseCurrentValue =>
-      _positions.fold(0.0, (sum, position) => sum + position.currentValue);
 
   @override
   Widget build(BuildContext context) {
     final portfolio = _portfolio;
     final referenceCapital = portfolio?.initialCapital ?? 0.0;
     final hasReferenceCapital = referenceCapital > 0;
-    final comparable = _allPositionsComparableInBaseCurrency;
-    final totalInvested = comparable ? _baseInvestedValue : null;
-    final totalCurrentValue = comparable ? _baseCurrentValue : null;
-    final totalProfitLoss = comparable && totalInvested != null && totalCurrentValue != null
-        ? totalCurrentValue - totalInvested
-        : null;
-    final totalProfitLossPercentage = totalProfitLoss != null && totalInvested! > 0
-        ? (totalProfitLoss / totalInvested) * 100
-        : null;
-    final unallocatedCapital = hasReferenceCapital && totalInvested != null
-        ? (referenceCapital - totalInvested).clamp(0.0, double.infinity)
-        : null;
-    final excessOverReference = hasReferenceCapital && totalInvested != null
-        ? (totalInvested - referenceCapital).clamp(0.0, double.infinity)
-        : null;
+    final summary = _valuationSummary(referenceCapital);
+    final isEmpty = _positions.isEmpty;
+    final totalInvested = isEmpty ? 0.0 : summary?.investedCapital;
+    final totalCurrentValue = isEmpty ? 0.0 : summary?.currentValue;
+    final totalProfitLoss = isEmpty ? 0.0 : summary?.profitLoss;
+    final totalProfitLossPercentage =
+        isEmpty ? null : summary?.profitLossPercentage;
+    final unallocatedCapital = isEmpty && hasReferenceCapital
+        ? referenceCapital
+        : summary?.unallocatedCapital;
+    final excessOverReference = isEmpty && hasReferenceCapital
+        ? 0.0
+        : summary?.excessOverReference;
+    final historicalComparable =
+        isEmpty || (summary?.historicalComparisonsAvailable ?? false);
 
     return Scaffold(
       backgroundColor: AthenaColors.background,
@@ -294,12 +324,25 @@ class _PortfolioPageState extends State<PortfolioPage> {
                     _statusBanner(_priceRefreshMessage!),
                     const SizedBox(height: AthenaSpacing.md),
                   ],
-                  if (!comparable && _positions.isNotEmpty) ...[
+                  if (_valuationController.isLoading && _positions.isNotEmpty) ...[
                     _statusBanner(
-                      'La cartera contiene posiciones en monedas distintas de EUR. '
-                      'ATHENA conserva los importes nativos y bloquea los agregados '
-                      'hasta aplicar FX verificable; no suma divisas como si fueran euros.',
+                      'ATHENA está recalculando el valor actual en EUR con precios y FX verificables. '
+                      'La valoración anterior no se muestra durante la recarga.',
                     ),
+                    const SizedBox(height: AthenaSpacing.md),
+                  ],
+                  if (_valuationController.error != null && _positions.isNotEmpty) ...[
+                    _statusBanner(_valuationController.error!, isError: true),
+                    const SizedBox(height: AthenaSpacing.md),
+                  ],
+                  if (summary?.usesCurrentFx == true) ...[
+                    _statusBanner(
+                      'Valor actual consolidado en EUR con FX actual verificable. '
+                      'El coste histórico, P/L, rentabilidad y capital no asignado permanecen bloqueados '
+                      'hasta disponer de FX PIT de adquisición.',
+                    ),
+                    const SizedBox(height: AthenaSpacing.md),
+                    _valuationProvenance(summary!),
                     const SizedBox(height: AthenaSpacing.md),
                   ],
                   _buildSummary(
@@ -317,7 +360,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
                     hasReferenceCapital: hasReferenceCapital,
                     referenceCapital: referenceCapital,
                     unallocatedCapital: unallocatedCapital,
-                    comparable: comparable,
+                    comparable: historicalComparable,
                   ),
                   const SizedBox(height: 28),
                   _buildPositionsHeader(),
@@ -339,6 +382,29 @@ class _PortfolioPageState extends State<PortfolioPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _valuationProvenance(PortfolioValuationSummary summary) {
+    final parts = <String>[];
+    final marketObserved = summary.latestMarketObservedAt;
+    final marketRetrieved = summary.latestMarketRetrievedAt;
+    final fxObserved = summary.latestFxObservedAt;
+    final fxRetrieved = summary.latestFxRetrievedAt;
+    if (marketObserved != null && marketRetrieved != null) {
+      parts.add(
+        'Mercado observado ${_formatDateTime(marketObserved.toLocal())} · recuperado ${_formatDateTime(marketRetrieved.toLocal())}',
+      );
+    }
+    if (fxObserved != null && fxRetrieved != null) {
+      parts.add(
+        'FX observado ${_formatDateTime(fxObserved.toLocal())} · recuperado ${_formatDateTime(fxRetrieved.toLocal())}',
+      );
+    }
+    return _statusBanner(
+      parts.isEmpty
+          ? 'La valoración no expone timestamps agregados suficientes; ATHENA no amplía su provenance por inferencia.'
+          : parts.join(' · '),
     );
   }
 
@@ -477,17 +543,23 @@ class _PortfolioPageState extends State<PortfolioPage> {
             children: [
               _summaryItem(
                 'Capital de referencia',
-                hasReferenceCapital ? _formatCurrency(referenceCapital, _baseCurrency) : 'No definido',
+                hasReferenceCapital
+                    ? _formatCurrency(referenceCapital, _baseCurrency)
+                    : 'No definido',
                 AthenaColors.text,
               ),
               _summaryItem(
                 'Capital invertido',
-                totalInvested == null ? 'Pendiente FX' : _formatCurrency(totalInvested, _baseCurrency),
+                totalInvested == null
+                    ? 'No disponible'
+                    : _formatCurrency(totalInvested, _baseCurrency),
                 AthenaColors.text,
               ),
               _summaryItem(
                 'Valor actual posiciones',
-                totalCurrentValue == null ? 'Pendiente FX' : _formatCurrency(totalCurrentValue, _baseCurrency),
+                totalCurrentValue == null
+                    ? 'No disponible'
+                    : _formatCurrency(totalCurrentValue, _baseCurrency),
                 AthenaColors.text,
               ),
               _summaryItem(
@@ -540,7 +612,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
   }) {
     final referenceText = hasReferenceCapital
         ? 'Capital de referencia: ${_formatCurrency(referenceCapital, _baseCurrency)}. '
-            '${comparable ? 'Capital actualmente no asignado: ${_formatCurrency(unallocatedCapital ?? 0, _baseCurrency)}.' : 'El capital no asignado no se calcula hasta convertir la cartera a EUR con FX verificable.'}'
+            '${comparable ? 'Capital actualmente no asignado: ${_formatCurrency(unallocatedCapital ?? 0, _baseCurrency)}.' : 'El capital no asignado no se calcula hasta disponer de un coste histórico EUR verificable con FX PIT cuando sea necesario.'}'
         : 'Define un capital de referencia para que una futura planificación validada pueda expresarse en euros y porcentajes.';
 
     return _card(
@@ -679,7 +751,10 @@ class _PortfolioPageState extends State<PortfolioPage> {
         children: [
           Text(
             title,
-            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+            style: const TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 13,
+            ),
           ),
           const SizedBox(height: 5),
           Text(
@@ -700,6 +775,11 @@ class _PortfolioPageState extends State<PortfolioPage> {
 
   static String _formatSignedCurrency(num value, String currency) =>
       '${value > 0 ? '+' : ''}${value.toStringAsFixed(2)} $currency';
+
+  static String _formatDateTime(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+  }
 }
 
 class _ValidationBadge extends StatelessWidget {
@@ -838,8 +918,10 @@ class _PositionWithDelete extends StatelessWidget {
     final metadata = <String>[
       position.symbol,
       _currency,
-      if (position.exchange?.trim().isNotEmpty == true) position.exchange!.trim(),
-      if (position.quoteType?.trim().isNotEmpty == true) position.quoteType!.trim(),
+      if (position.exchange?.trim().isNotEmpty == true)
+        position.exchange!.trim(),
+      if (position.quoteType?.trim().isNotEmpty == true)
+        position.quoteType!.trim(),
     ];
 
     return Row(
@@ -917,7 +999,11 @@ class _PositionWithDelete extends StatelessWidget {
     );
   }
 
-  Widget _valueColumn(String title, String value, {Color valueColor = AthenaColors.text}) {
+  Widget _valueColumn(
+    String title,
+    String value, {
+    Color valueColor = AthenaColors.text,
+  }) {
     return SizedBox(
       width: 132,
       child: Column(
@@ -926,7 +1012,10 @@ class _PositionWithDelete extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+            style: const TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 11,
+            ),
           ),
           const SizedBox(height: 3),
           Text(
