@@ -8,6 +8,9 @@ from typing import Any, Protocol
 from app.services.recommendation_fundamental_signal_service import (
     RecommendationFundamentalSignalService,
 )
+from app.services.recommendation_macro_evidence_service import (
+    RecommendationMacroEvidenceService,
+)
 from app.services.recommendation_market_signal_service import (
     RecommendationMarketSignalService,
 )
@@ -33,12 +36,15 @@ class RecommendationEvidenceGate:
     provenance_contract_ready: bool
     data_quality_ready: bool
     valuation_ready: bool
+    macro_context_ready: bool
+    macro_context_valid: bool
     calibration_ready: bool
     recommendation_candidate_ready: bool
     blockers: tuple[str, ...]
     market: dict[str, Any]
     fundamentals: dict[str, Any]
     valuation: dict[str, Any]
+    macro: dict[str, Any]
     production_eligible: bool
     reason: str
 
@@ -55,12 +61,15 @@ class RecommendationEvidenceGate:
             "provenanceContractReady": self.provenance_contract_ready,
             "dataQualityReady": self.data_quality_ready,
             "valuationReady": self.valuation_ready,
+            "macroContextReady": self.macro_context_ready,
+            "macroContextValid": self.macro_context_valid,
             "calibrationReady": self.calibration_ready,
             "recommendationCandidateReady": self.recommendation_candidate_ready,
             "blockers": list(self.blockers),
             "market": self.market,
             "fundamentals": self.fundamentals,
             "valuation": self.valuation,
+            "macro": self.macro,
             "analysisCoverage": self._analysis_coverage(),
             "productionEligible": self.production_eligible,
             "reason": self.reason,
@@ -74,6 +83,10 @@ class RecommendationEvidenceGate:
                     "structural_finiteness_and_pit_contract_only_no_empirical_"
                     "quality_threshold_assumed"
                 ),
+                "macro": (
+                    "persisted_pit_context_captured_for_future_out_of_sample_"
+                    "calibration_no_direction_or_weight_assumed"
+                ),
                 "valuation": "pit_reported_annual_pe_required_for_initial_gate",
                 "calibration": "out_of_sample_validation_required",
                 "investorActivity": (
@@ -86,6 +99,8 @@ class RecommendationEvidenceGate:
         market_status = self.market.get("status")
         fundamental_status = self.fundamentals.get("status")
         valuation_status = self.valuation.get("status")
+        macro_status = self.macro.get("status")
+        macro_connected = macro_status == "diagnostic_ready"
         return {
             "technical": {
                 "connected": True,
@@ -119,13 +134,27 @@ class RecommendationEvidenceGate:
                 "evidenceReady": self.valuation_ready,
                 "productionEligible": False,
             },
-            "marketMacro": {
-                "connected": False,
-                "influencesCandidate": False,
-                "status": "infrastructure_available_not_connected_to_candidate",
-                "evidenceReady": False,
-                "productionEligible": False,
-            },
+            "marketMacro": (
+                {
+                    "connected": True,
+                    "influencesCandidate": False,
+                    "sourceBlock": "macro",
+                    "status": macro_status,
+                    "evidenceReady": self.macro_context_ready,
+                    "capturedForCalibration": True,
+                    "directionalScoreAssigned": False,
+                    "thresholdCalibrated": False,
+                    "productionEligible": False,
+                }
+                if macro_connected
+                else {
+                    "connected": False,
+                    "influencesCandidate": False,
+                    "status": "infrastructure_available_not_connected_to_candidate",
+                    "evidenceReady": False,
+                    "productionEligible": False,
+                }
+            ),
             "dataQuality": {
                 "connected": True,
                 "influencesCandidate": True,
@@ -180,6 +209,7 @@ class RecommendationEvidenceGateService:
         market_service: _DiagnosticService | None = None,
         fundamental_service: _DiagnosticService | None = None,
         valuation_service: _DiagnosticService | None = None,
+        macro_service: _DiagnosticService | None = None,
     ) -> None:
         self._market_service = (
             market_service
@@ -195,6 +225,11 @@ class RecommendationEvidenceGateService:
             valuation_service
             if valuation_service is not None
             else RecommendationValuationSignalService()
+        )
+        self._macro_service = (
+            macro_service
+            if macro_service is not None
+            else RecommendationMacroEvidenceService()
         )
 
     def evaluate(
@@ -232,6 +267,15 @@ class RecommendationEvidenceGateService:
             expected_symbol=normalized_symbol,
             expected_as_of=as_of_utc,
         )
+        macro_payload = self._safe_payload(
+            self._macro_service.evaluate(
+                symbol=normalized_symbol,
+                as_of=as_of_utc,
+            ),
+            component_name="macro",
+            expected_symbol=normalized_symbol,
+            expected_as_of=as_of_utc,
+        )
 
         market_ready = market_payload.get("status") == "diagnostic_ready"
         fundamental_ready = (
@@ -242,6 +286,12 @@ class RecommendationEvidenceGateService:
             valuation_payload.get("status") == "diagnostic_ready"
             and self._positive_float(valuation_payload.get("reportedAnnualPe"))
         )
+        macro_status = str(macro_payload.get("status") or "")
+        macro_context_ready = (
+            macro_status == "diagnostic_ready"
+            and self._macro_context_contract_ready(macro_payload, as_of=as_of_utc)
+        )
+        macro_context_valid = macro_status == "no_data" or macro_context_ready
 
         market_instrument_id = self._optional_int(market_payload.get("instrumentId"))
         fundamental_instrument_id = self._optional_int(
@@ -294,11 +344,16 @@ class RecommendationEvidenceGateService:
             blockers.append("data_quality_contract_incomplete")
         if not valuation_ready:
             blockers.append("valuation_not_ready")
+        if not macro_context_valid:
+            blockers.append("macro_context_invalid")
         if not calibration_ready:
             blockers.append("calibration_not_validated")
 
         recommendation_candidate_ready = (
-            core_evidence_ready and valuation_ready and calibration_ready
+            core_evidence_ready
+            and valuation_ready
+            and macro_context_valid
+            and calibration_ready
         )
         if recommendation_candidate_ready:
             raise RuntimeError(
@@ -309,7 +364,8 @@ class RecommendationEvidenceGateService:
             status = "evidence_ready_for_calibration"
             reason = (
                 "Mercado, fundamentales, identidad, procedencia, calidad estructural "
-                "y valoración PIT superan el gate de evidencia. ATHENA mantiene "
+                "y valoración PIT superan el gate de evidencia. El contexto macro PIT "
+                "se conserva cuando existe, sin dirección ni peso, y ATHENA mantiene "
                 "bloqueado el consejo hasta validar la combinación fuera de muestra."
             )
         elif core_evidence_ready:
@@ -338,12 +394,15 @@ class RecommendationEvidenceGateService:
             provenance_contract_ready=provenance_contract_ready,
             data_quality_ready=data_quality_ready,
             valuation_ready=valuation_ready,
+            macro_context_ready=macro_context_ready,
+            macro_context_valid=macro_context_valid,
             calibration_ready=calibration_ready,
             recommendation_candidate_ready=recommendation_candidate_ready,
             blockers=tuple(blockers),
             market=market_payload,
             fundamentals=fundamental_payload,
             valuation=valuation_payload,
+            macro=macro_payload,
             production_eligible=False,
             reason=reason,
         )
@@ -380,6 +439,49 @@ class RecommendationEvidenceGateService:
                 f"El componente {component_name} usó un corte point-in-time distinto."
             )
         return dict(payload)
+
+    def _macro_context_contract_ready(
+        self,
+        payload: dict[str, Any],
+        *,
+        as_of: datetime,
+    ) -> bool:
+        observations = payload.get("observations")
+        observation_count = self._optional_int(payload.get("observationCount"))
+        if (
+            observation_count is None
+            or observation_count <= 0
+            or not isinstance(observations, list)
+            or len(observations) != observation_count
+        ):
+            return False
+        for observation in observations:
+            if not isinstance(observation, dict):
+                return False
+            if not str(observation.get("metric") or "").startswith("macro."):
+                return False
+            if not str(observation.get("sourceId") or "").strip():
+                return False
+            if not self._finite_float(observation.get("value")):
+                return False
+            available_at = self._optional_aware_datetime(
+                observation.get("availableAt")
+            )
+            retrieved_at = self._optional_aware_datetime(
+                observation.get("retrievedAt")
+            )
+            if (
+                available_at is None
+                or retrieved_at is None
+                or available_at > as_of
+                or retrieved_at > as_of
+            ):
+                return False
+            for key in ("qualityScore", "confidenceScore"):
+                score = observation.get(key)
+                if score is not None and not self._float_between(score, 0.0, 100.0):
+                    return False
+        return True
 
     def _provenance_contract_ready(
         self,
