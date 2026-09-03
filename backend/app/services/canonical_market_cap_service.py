@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from statistics import median
 from typing import Any
 
@@ -127,9 +128,14 @@ class CanonicalMarketCapService:
 
         groups: dict[int, dict[str, Any]] = {}
         raw_total = 0.0
+        valid_row_count = 0
         for row in rows:
+            cap = self._positive_finite_cap(row["market_cap_usd"])
+            if cap is None:
+                continue
+
             issuer_id = int(row["issuer_id"])
-            cap = float(row["market_cap_usd"])
+            valid_row_count += 1
             raw_total += cap
             group = groups.setdefault(
                 issuer_id,
@@ -179,8 +185,7 @@ class CanonicalMarketCapService:
                 multi_listing_issuer_count += 1
                 minimum_cap = min(caps)
                 maximum_cap = max(caps)
-                if minimum_cap > 0:
-                    cross_listing_ratios.append(maximum_cap / minimum_cap)
+                cross_listing_ratios.append(maximum_cap / minimum_cap)
 
             region = str(group.get("region_key") or "").strip().lower()
             country = str(group.get("domicile_country") or "").strip()
@@ -196,7 +201,7 @@ class CanonicalMarketCapService:
         region_weights = self._weights_from_caps(region_caps)
 
         return CanonicalMarketCapReport(
-            linked_listing_count=len(rows),
+            linked_listing_count=valid_row_count,
             canonical_issuer_count=len(groups),
             raw_linked_market_cap_usd=raw_total,
             canonical_market_cap_usd=canonical_total,
@@ -226,22 +231,50 @@ class CanonicalMarketCapService:
         listings: list[dict[str, Any]],
         selected_instrument_by_issuer: dict[int, int],
     ) -> tuple[float, bool]:
-        caps = [float(item["market_cap_usd"]) for item in listings]
+        valid_listings = [
+            (item, cap)
+            for item in listings
+            if (cap := self._positive_finite_cap(item.get("market_cap_usd")))
+            is not None
+        ]
+        if not valid_listings:
+            raise ValueError(
+                "No existe una capitalización positiva y finita para el emisor."
+            )
+
         selected_instrument_id = selected_instrument_by_issuer.get(issuer_id)
         if selected_instrument_id is not None:
             selected = [
-                item
-                for item in listings
+                cap
+                for item, cap in valid_listings
                 if int(item["instrument_id"]) == selected_instrument_id
             ]
             if len(selected) == 1:
-                return float(selected[0]["market_cap_usd"]), True
+                return selected[0], True
 
-        return float(median(caps)), False
+        return float(median(cap for _, cap in valid_listings)), False
 
     def _weights_from_caps(self, caps: dict[str, float]) -> dict[str, float]:
-        total = sum(caps.values())
-        return {
-            region: (caps.get(region, 0.0) / total if total > 0 else 0.0)
+        safe_caps = {
+            region: self._positive_finite_cap(caps.get(region, 0.0)) or 0.0
             for region in self._REGIONS
         }
+        total = sum(safe_caps.values())
+        return {
+            region: (safe_caps[region] / total if total > 0 else 0.0)
+            for region in self._REGIONS
+        }
+
+    def _positive_finite_cap(self, value: Any) -> float | None:
+        if isinstance(value, bool) or value is None:
+            return None
+
+        try:
+            cap = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if not isfinite(cap) or cap <= 0:
+            return None
+
+        return cap
