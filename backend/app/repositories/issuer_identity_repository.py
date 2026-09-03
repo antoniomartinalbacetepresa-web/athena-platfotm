@@ -204,8 +204,11 @@ class IssuerIdentityRepository:
                     confidence = excluded.confidence,
                     updated_at = excluded.updated_at
                 WHERE
-                    excluded.confidence > instrument_issuer_links.confidence
-                    OR excluded.issuer_id = instrument_issuer_links.issuer_id
+                    excluded.confidence >= instrument_issuer_links.confidence
+                    AND (
+                        excluded.issuer_id = instrument_issuer_links.issuer_id
+                        OR excluded.confidence > instrument_issuer_links.confidence
+                    )
                 """,
                 (
                     instrument_id,
