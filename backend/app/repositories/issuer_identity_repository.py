@@ -146,6 +146,20 @@ class IssuerIdentityRepository:
             if confidence < existing_confidence:
                 return issuer_id
 
+            if confidence == existing_confidence:
+                connection.execute(
+                    """
+                    UPDATE canonical_issuers
+                    SET
+                        domicile_country = COALESCE(domicile_country, ?),
+                        region_key = COALESCE(region_key, ?),
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (country, region, now, issuer_id),
+                )
+                return issuer_id
+
             connection.execute(
                 """
                 UPDATE canonical_issuers
