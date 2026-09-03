@@ -10,7 +10,13 @@ PortfolioPosition position({
   double shares = 2,
   double averagePrice = 100,
   double currentPrice = 120,
+  String sourceProvider = 'yahoo',
+  DateTime? observedAt,
+  DateTime? retrievedAt,
 }) {
+  final observed = observedAt ?? DateTime.utc(2026, 9, 3, 0, 0);
+  final retrieved =
+      retrievedAt ?? observed.add(const Duration(seconds: 1));
   return PortfolioPosition(
     symbol: symbol,
     companyName: '$symbol Company',
@@ -18,10 +24,17 @@ PortfolioPosition position({
     averagePrice: averagePrice,
     currentPrice: currentPrice,
     priceCurrency: currency,
+    currentPriceUpdatedAt: observed,
+    currentPriceSourceProvider: sourceProvider,
+    currentPriceRetrievedAt: retrieved,
   );
 }
 
-FxQuote usdEur({double rate = 0.85}) {
+FxQuote usdEur({
+  double rate = 0.85,
+  String sourceProvider = 'yahoo',
+  String sourceSymbol = 'USDEUR=X',
+}) {
   final observedAt = DateTime.utc(2026, 9, 3, 0, 0);
   return FxQuote(
     status: 'ok',
@@ -30,8 +43,8 @@ FxQuote usdEur({double rate = 0.85}) {
     rate: rate,
     observedAt: observedAt,
     retrievedAt: observedAt.add(const Duration(seconds: 1)),
-    sourceProvider: 'yahoo',
-    sourceSymbol: 'USDEUR=X',
+    sourceProvider: sourceProvider,
+    sourceSymbol: sourceSymbol,
     historicalPointInTimeEligible: false,
   );
 }
@@ -65,6 +78,14 @@ void main() {
     expect(valuation.profitLossInBaseCurrency, 40);
     expect(valuation.profitLossPercentage, 20);
     expect(valuation.fxEvidence, isEmpty);
+    expect(valuation.usesFx, isFalse);
+    expect(valuation.latestMarketObservedAt, DateTime.utc(2026, 9, 3, 0, 0));
+    expect(
+      valuation.latestMarketRetrievedAt,
+      DateTime.utc(2026, 9, 3, 0, 0, 1),
+    );
+    expect(valuation.latestFxObservedAt, isNull);
+    expect(valuation.latestFxRetrievedAt, isNull);
   });
 
   test('converts current USD value to EUR but blocks historical P/L', () async {
@@ -91,9 +112,15 @@ void main() {
     expect(valuation.currentValueInBaseCurrency, 204);
     expect(valuation.positionsValued, 1);
     expect(valuation.fxEvidence, hasLength(1));
+    expect(valuation.usesFx, isTrue);
     expect(valuation.historicalCostBasisInBaseCurrency, isNull);
     expect(valuation.profitLossInBaseCurrency, isNull);
     expect(valuation.profitLossPercentage, isNull);
+    expect(valuation.latestFxObservedAt, DateTime.utc(2026, 9, 3, 0, 0));
+    expect(
+      valuation.latestFxRetrievedAt,
+      DateTime.utc(2026, 9, 3, 0, 0, 1),
+    );
   });
 
   test('reuses one FX quote for positions sharing the same currency', () async {
@@ -125,6 +152,7 @@ void main() {
       },
     );
 
+    final observedAt = DateTime.utc(2026, 9, 3, 0, 0);
     final invalid = PortfolioPosition(
       symbol: 'LEGACY',
       companyName: 'Legacy',
@@ -132,6 +160,55 @@ void main() {
       averagePrice: 100,
       currentPrice: 120,
       priceCurrency: null,
+      currentPriceUpdatedAt: observedAt,
+      currentPriceSourceProvider: 'yahoo',
+      currentPriceRetrievedAt: observedAt.add(const Duration(seconds: 1)),
+    );
+
+    expect(
+      () => service.value(positions: [invalid]),
+      throwsStateError,
+    );
+  });
+
+  test('fails closed when current market provenance is incomplete', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur();
+      },
+    );
+
+    final invalid = PortfolioPosition(
+      symbol: 'MSFT',
+      companyName: 'Microsoft',
+      shares: 1,
+      averagePrice: 100,
+      currentPrice: 120,
+      priceCurrency: 'USD',
+      currentPriceUpdatedAt: DateTime.utc(2026, 9, 3, 0, 0),
+      currentPriceSourceProvider: null,
+      currentPriceRetrievedAt: DateTime.utc(2026, 9, 3, 0, 0, 1),
+    );
+
+    expect(
+      () => service.value(positions: [invalid]),
+      throwsStateError,
+    );
+  });
+
+  test('fails closed when market retrieval precedes observation', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur();
+      },
+    );
+
+    final observedAt = DateTime.utc(2026, 9, 3, 0, 0, 2);
+    final invalid = position(
+      symbol: 'MSFT',
+      currency: 'USD',
+      observedAt: observedAt,
+      retrievedAt: observedAt.subtract(const Duration(seconds: 1)),
     );
 
     expect(
@@ -156,6 +233,21 @@ void main() {
     final service = PortfolioCurrentValuationService(
       loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
         return wrongPair;
+      },
+    );
+
+    expect(
+      () => service.value(
+        positions: [position(symbol: 'MSFT', currency: 'USD')],
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('rejects FX evidence without a source symbol', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur(sourceSymbol: '');
       },
     );
 
