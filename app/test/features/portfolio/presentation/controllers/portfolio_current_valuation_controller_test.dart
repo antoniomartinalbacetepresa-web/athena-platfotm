@@ -111,4 +111,48 @@ void main() {
     expect(controller.valuation, isNull);
     expect(controller.error, isNull);
   });
+
+  test('dispose invalidates an in-flight valuation without notifying later', () async {
+    final pending = Completer<PortfolioCurrentValuation>();
+    final controller = PortfolioCurrentValuationController(
+      loadValuation: ({required positions, required baseCurrency}) =>
+          pending.future,
+    );
+
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    final load = controller.load(
+      positions: const <PortfolioPosition>[],
+      baseCurrency: 'EUR',
+    );
+    expect(notifications, 1);
+
+    controller.dispose();
+    pending.complete(_valuation(777));
+
+    await expectLater(load, completes);
+    expect(notifications, 1);
+  });
+
+  test('forService delegates to the validated valuation service', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+      }) async {
+        throw StateError('FX must not be requested for an empty portfolio');
+      },
+    );
+    final controller = PortfolioCurrentValuationController.forService(service);
+
+    await controller.load(
+      positions: const <PortfolioPosition>[],
+      baseCurrency: 'EUR',
+    );
+
+    expect(controller.error, isNull);
+    expect(controller.valuation?.currentValueInBaseCurrency, 0);
+    expect(controller.valuation?.positionsValued, 0);
+  });
 }
