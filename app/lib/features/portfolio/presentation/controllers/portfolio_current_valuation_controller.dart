@@ -22,10 +22,19 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   int _requestGeneration = 0;
+  bool _isDisposed = false;
 
   PortfolioCurrentValuationController({
     required this.loadValuation,
   });
+
+  factory PortfolioCurrentValuationController.forService(
+    PortfolioCurrentValuationService service,
+  ) {
+    return PortfolioCurrentValuationController(
+      loadValuation: service.value,
+    );
+  }
 
   PortfolioCurrentValuation? get valuation => _valuation;
 
@@ -37,6 +46,8 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
     required List<PortfolioPosition> positions,
     String baseCurrency = 'EUR',
   }) async {
+    if (_isDisposed) return;
+
     final generation = ++_requestGeneration;
 
     _isLoading = true;
@@ -49,18 +60,18 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
         baseCurrency: baseCurrency,
       );
 
-      if (generation != _requestGeneration) return;
+      if (_isDisposed || generation != _requestGeneration) return;
 
       _valuation = next;
       _error = null;
     } catch (_) {
-      if (generation != _requestGeneration) return;
+      if (_isDisposed || generation != _requestGeneration) return;
 
       _valuation = null;
       _error =
           'No se pudo obtener una valoración actual verificable de la cartera.';
     } finally {
-      if (generation == _requestGeneration) {
+      if (!_isDisposed && generation == _requestGeneration) {
         _isLoading = false;
         notifyListeners();
       }
@@ -68,10 +79,21 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
   }
 
   void clear() {
+    if (_isDisposed) return;
+
     _requestGeneration++;
     _valuation = null;
     _isLoading = false;
     _error = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    if (_isDisposed) return;
+
+    _isDisposed = true;
+    _requestGeneration++;
+    super.dispose();
   }
 }
