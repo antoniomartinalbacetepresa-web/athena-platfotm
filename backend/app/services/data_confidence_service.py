@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from statistics import median
 from typing import Iterable
 
@@ -43,8 +44,16 @@ class DataConfidenceService:
         items = list(observations)
         if not items:
             raise ValueError("At least one observation is required.")
-        if discrepancy_threshold_pct < 0:
-            raise ValueError("discrepancy_threshold_pct must be non-negative.")
+        if isinstance(discrepancy_threshold_pct, bool):
+            raise ValueError("discrepancy_threshold_pct must be a finite non-negative number.")
+        try:
+            normalized_threshold = float(discrepancy_threshold_pct)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "discrepancy_threshold_pct must be a finite non-negative number."
+            ) from exc
+        if not isfinite(normalized_threshold) or normalized_threshold < 0:
+            raise ValueError("discrepancy_threshold_pct must be a finite non-negative number.")
 
         metric = items[0].metric
         if any(item.metric != metric for item in items):
@@ -65,11 +74,15 @@ class DataConfidenceService:
         ]
         source_quality_score = sum(source_quality_values) / len(source_quality_values)
 
-        numeric_values = [
-            float(item.value)
-            for item in items
-            if isinstance(item.value, (int, float)) and not isinstance(item.value, bool)
-        ]
+        numeric_values: list[float] = []
+        for item in items:
+            if isinstance(item.value, (int, float)) and not isinstance(item.value, bool):
+                numeric_value = float(item.value)
+                if not isfinite(numeric_value):
+                    raise ValueError(
+                        "Numeric confidence observations must be finite before comparison."
+                    )
+                numeric_values.append(numeric_value)
 
         if len(numeric_values) <= 1:
             dispersion_pct = 0.0
@@ -106,7 +119,7 @@ class DataConfidenceService:
             ),
             sources_used=tuple(sorted(set(source_ids))),
             observations_used=len(items),
-            has_discrepancy=dispersion_pct > discrepancy_threshold_pct,
+            has_discrepancy=dispersion_pct > normalized_threshold,
         )
 
     def _validate_comparison_context(self, items: list[NormalizedDatum]) -> None:
