@@ -51,6 +51,87 @@ def test_external_id_reuses_same_canonical_issuer(tmp_path: Path) -> None:
     ]
 
 
+def test_weaker_external_evidence_cannot_degrade_canonical_issuer(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "AAPL")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Apple Inc.",
+        evidence_confidence=0.98,
+        domicile_country="United States",
+        region_key="america",
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="sec_company_tickers_exchange",
+        resolution_method="exact_ticker_unique_cik",
+        confidence=0.98,
+    )
+
+    same_issuer_id = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Incorrect weaker name",
+        evidence_confidence=0.40,
+        domicile_country="Incorrect country",
+        region_key="incorrect-region",
+    )
+
+    assert same_issuer_id == issuer_id
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["canonical_name"] == "Apple Inc."
+    assert resolved["domicile_country"] == "United States"
+    assert resolved["region_key"] == "america"
+    assert repository.list_external_ids(issuer_id)[0]["evidence_confidence"] == pytest.approx(
+        0.98
+    )
+
+
+def test_equal_external_confidence_does_not_replace_conflicting_identity(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "EQ")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="official_registry",
+        external_id="ISSUER-1",
+        canonical_name="Canonical Issuer",
+        evidence_confidence=0.90,
+        domicile_country="United States",
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="official_registry",
+        resolution_method="official_identifier",
+        confidence=0.90,
+    )
+
+    repository.upsert_external_issuer(
+        source_provider="official_registry",
+        external_id="ISSUER-1",
+        canonical_name="Conflicting Equal Name",
+        evidence_confidence=0.90,
+        domicile_country="Conflicting Country",
+        region_key="america",
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["canonical_name"] == "Canonical Issuer"
+    assert resolved["domicile_country"] == "United States"
+    assert resolved["region_key"] == "america"
+
+
 def test_instrument_link_keeps_identity_evidence(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
@@ -157,6 +238,80 @@ def test_weaker_evidence_cannot_replace_stronger_link(tmp_path: Path) -> None:
     assert resolved["issuer_id"] == strong_issuer
     assert resolved["canonical_name"] == "Strong Issuer"
     assert resolved["confidence"] == pytest.approx(0.99)
+
+
+def test_equal_confidence_cannot_replace_different_issuer(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "TIE")
+    repository = IssuerIdentityRepository(database=database)
+    first_issuer = repository.upsert_external_issuer(
+        source_provider="official_a",
+        external_id="FIRST",
+        canonical_name="First Issuer",
+        evidence_confidence=0.90,
+    )
+    second_issuer = repository.upsert_external_issuer(
+        source_provider="official_b",
+        external_id="SECOND",
+        canonical_name="Second Issuer",
+        evidence_confidence=0.90,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=first_issuer,
+        evidence_source="official_a",
+        resolution_method="official_identifier",
+        confidence=0.90,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=second_issuer,
+        evidence_source="official_b",
+        resolution_method="official_identifier",
+        confidence=0.90,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["issuer_id"] == first_issuer
+    assert resolved["canonical_name"] == "First Issuer"
+    assert resolved["confidence"] == pytest.approx(0.90)
+
+
+def test_same_issuer_link_cannot_be_downgraded(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "MONO")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="official",
+        external_id="MONO-ISSUER",
+        canonical_name="Monotonic Issuer",
+        evidence_confidence=0.95,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="official",
+        resolution_method="official_identifier",
+        confidence=0.95,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="weaker_refresh",
+        resolution_method="heuristic",
+        confidence=0.50,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["confidence"] == pytest.approx(0.95)
+    assert resolved["evidence_source"] == "official"
+    assert resolved["resolution_method"] == "official_identifier"
 
 
 def test_repository_rejects_invalid_confidence(tmp_path: Path) -> None:
