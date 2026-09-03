@@ -92,7 +92,7 @@ class IssuerIdentityRepository:
         region_key: str | None = None,
     ) -> int:
         self.initialize()
-        source = self._required_text(source_provider, "source_provider")
+        source = self._provider_text(source_provider)
         external = self._required_text(external_id, "external_id")
         name = self._required_text(canonical_name, "canonical_name")
         confidence = self._confidence(evidence_confidence)
@@ -276,6 +276,9 @@ class IssuerIdentityRepository:
         if not normalized:
             raise ValueError(f"{field} es obligatorio.")
         return normalized
+
+    def _provider_text(self, value: str) -> str:
+        return self._required_text(value, "source_provider").casefold()
 
     def _optional_text(self, value: str | None) -> str | None:
         if value is None:
