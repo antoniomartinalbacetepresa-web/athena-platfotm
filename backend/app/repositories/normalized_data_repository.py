@@ -14,6 +14,7 @@ class NormalizedDataRepository:
         self._database = database
 
     def initialize(self) -> None:
+        self._database.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._database.connect() as connection:
             connection.executescript(
                 """
