@@ -103,7 +103,7 @@ class IssuerIdentityRepository:
         with self._database.connect() as connection:
             existing = connection.execute(
                 """
-                SELECT issuer_id
+                SELECT issuer_id, evidence_confidence
                 FROM issuer_external_ids
                 WHERE source_provider = ? AND external_id = ?
                 """,
@@ -142,6 +142,10 @@ class IssuerIdentityRepository:
                 return issuer_id
 
             issuer_id = int(existing["issuer_id"])
+            existing_confidence = float(existing["evidence_confidence"])
+            if confidence < existing_confidence:
+                return issuer_id
+
             connection.execute(
                 """
                 UPDATE canonical_issuers
@@ -199,7 +203,9 @@ class IssuerIdentityRepository:
                     resolution_method = excluded.resolution_method,
                     confidence = excluded.confidence,
                     updated_at = excluded.updated_at
-                WHERE excluded.confidence >= instrument_issuer_links.confidence
+                WHERE
+                    excluded.confidence > instrument_issuer_links.confidence
+                    OR excluded.issuer_id = instrument_issuer_links.issuer_id
                 """,
                 (
                     instrument_id,
