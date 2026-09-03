@@ -38,6 +38,10 @@ def _market_payload(
     production_eligible: bool = False,
     as_of: str = "2026-09-01T20:30:00+00:00",
     source_providers: list[str] | None = None,
+    latest_price: float = 100.0,
+    technical_score: float = 55.0,
+    latest_observed_at: str = "2026-09-01T20:00:00+00:00",
+    latest_retrieved_at: str = "2026-09-01T20:10:00+00:00",
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": status,
@@ -45,6 +49,15 @@ def _market_payload(
         "instrumentId": instrument_id,
         "asOf": as_of,
         "observationCount": 80,
+        "latestObservedAt": latest_observed_at,
+        "latestRetrievedAt": latest_retrieved_at,
+        "latestPrice": latest_price,
+        "return20d": 0.05,
+        "return60d": 0.10,
+        "annualizedVolatility": 0.20,
+        "maxDrawdown60d": -0.08,
+        "technicalScore": technical_score,
+        "riskScore": 28.0,
         "productionEligible": production_eligible,
     }
     if source_providers is not None:
@@ -59,6 +72,7 @@ def _fundamental_payload(
     coverage_ratio: float = 1.0,
     production_eligible: bool = False,
     as_of: str = "2026-09-01T20:30:00+00:00",
+    fact_available_at: str = "2026-08-01T00:00:00+00:00",
 ) -> dict[str, object]:
     return {
         "status": status,
@@ -67,12 +81,17 @@ def _fundamental_payload(
         "entityId": "sec-cik:0000320193",
         "asOf": as_of,
         "coverageRatio": coverage_ratio,
+        "revenueGrowth": 0.08,
+        "netMargin": 0.20,
+        "liabilitiesToAssets": 0.45,
+        "meanQualityScore": 0.95,
         "facts": [
             {
                 "key": "revenue",
                 "metric": "fundamental.us-gaap.revenues",
                 "value": 100.0,
-                "availableAt": "2026-08-01T00:00:00+00:00",
+                "availableAt": fact_available_at,
+                "qualityScore": 0.95,
             }
         ],
         "productionEligible": production_eligible,
@@ -86,6 +105,9 @@ def _valuation_payload(
     reported_annual_pe: float | None = None,
     production_eligible: bool = False,
     as_of: str = "2026-09-01T20:30:00+00:00",
+    latest_price: float = 100.0,
+    latest_price_observed_at: str = "2026-09-01T20:00:00+00:00",
+    latest_price_retrieved_at: str = "2026-09-01T20:10:00+00:00",
 ) -> dict[str, object]:
     return {
         "status": status,
@@ -93,6 +115,9 @@ def _valuation_payload(
         "instrumentId": instrument_id,
         "entityId": "sec-cik:0000320193",
         "asOf": as_of,
+        "latestPrice": latest_price,
+        "latestPriceObservedAt": latest_price_observed_at,
+        "latestPriceRetrievedAt": latest_price_retrieved_at,
         "marketSourceProviders": ["yahoo_finance"],
         "annualDilutedEps": (
             {
@@ -100,6 +125,7 @@ def _valuation_payload(
                 "value": 8.0,
                 "availableAt": "2026-08-01T00:00:00+00:00",
                 "sourceVersion": "10-K|accession|CY2025",
+                "qualityScore": 0.95,
             }
             if status == "diagnostic_ready"
             else None
@@ -129,6 +155,7 @@ def test_gate_keeps_recommendation_blocked_when_core_ready_but_valuation_missing
     assert result.fundamental_evidence_ready is True
     assert result.identity_consistent is True
     assert result.provenance_contract_ready is True
+    assert result.data_quality_ready is True
     assert result.valuation_ready is False
     assert result.calibration_ready is False
     assert result.recommendation_candidate_ready is False
@@ -158,6 +185,7 @@ def test_gate_marks_evidence_ready_for_calibration_but_not_for_advice() -> None:
 
     assert result.status == "evidence_ready_for_calibration"
     assert result.core_evidence_ready is True
+    assert result.data_quality_ready is True
     assert result.valuation_ready is True
     assert result.calibration_ready is False
     assert result.recommendation_candidate_ready is False
@@ -203,10 +231,11 @@ def test_gate_exposes_machine_readable_engine_connectivity_without_mixing_invest
         "productionEligible": False,
     }
     assert coverage["dataQuality"] == {
-        "connected": False,
-        "influencesCandidate": False,
-        "status": "infrastructure_available_not_connected_to_candidate",
-        "evidenceReady": False,
+        "connected": True,
+        "influencesCandidate": True,
+        "status": "structural_contract_ready",
+        "evidenceReady": True,
+        "thresholdCalibrated": False,
         "productionEligible": False,
     }
     assert coverage["calibration"]["influencesCandidate"] is False
@@ -223,6 +252,9 @@ def test_gate_exposes_machine_readable_engine_connectivity_without_mixing_invest
     }
     assert payload["policy"]["investorActivity"] == (
         "independent_parallel_evidence_not_part_of_athena_recommendation"
+    )
+    assert payload["policy"]["qualityThreshold"] == (
+        "not_assumed_until_empirically_calibrated"
     )
     assert payload["productionEligible"] is False
     assert payload["recommendationCandidateReady"] is False
@@ -246,8 +278,10 @@ def test_gate_blocks_partial_fundamentals_and_missing_market_provenance() -> Non
     assert result.core_evidence_ready is False
     assert result.fundamental_evidence_ready is False
     assert result.provenance_contract_ready is False
+    assert result.data_quality_ready is False
     assert "fundamental_evidence_not_ready" in result.blockers
     assert "provenance_contract_incomplete" in result.blockers
+    assert "data_quality_contract_incomplete" in result.blockers
     assert result.production_eligible is False
 
 
@@ -336,8 +370,10 @@ def test_gate_rejects_non_finite_or_boolean_fundamental_coverage(
     result = service.evaluate(symbol="AAPL", as_of=AS_OF)
 
     assert result.fundamental_evidence_ready is False
+    assert result.data_quality_ready is False
     assert result.core_evidence_ready is False
     assert "fundamental_evidence_not_ready" in result.blockers
+    assert "data_quality_contract_incomplete" in result.blockers
     assert result.recommendation_candidate_ready is False
     assert result.production_eligible is False
 
@@ -360,6 +396,91 @@ def test_gate_rejects_non_finite_or_boolean_reported_pe(
     result = service.evaluate(symbol="AAPL", as_of=AS_OF)
 
     assert result.valuation_ready is False
+    assert result.data_quality_ready is True
     assert "valuation_not_ready" in result.blockers
     assert result.recommendation_candidate_ready is False
+    assert result.production_eligible is False
+
+
+@pytest.mark.parametrize("technical_score", [float("inf"), float("-inf"), float("nan"), True])
+def test_gate_data_quality_rejects_invalid_market_feature(
+    technical_score: float,
+) -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(
+            _market_payload(
+                source_providers=["yahoo_finance"],
+                technical_score=technical_score,
+            )
+        ),
+        fundamental_service=_Service(_fundamental_payload()),
+        valuation_service=_Service(_valuation_payload()),
+    )
+
+    result = service.evaluate(symbol="AAPL", as_of=AS_OF)
+
+    assert result.market_evidence_ready is True
+    assert result.data_quality_ready is False
+    assert result.core_evidence_ready is False
+    assert "data_quality_contract_incomplete" in result.blockers
+    assert result.production_eligible is False
+
+
+def test_gate_data_quality_rejects_market_retrieval_after_cutoff() -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(
+            _market_payload(
+                source_providers=["yahoo_finance"],
+                latest_retrieved_at="2026-09-01T20:31:00+00:00",
+            )
+        ),
+        fundamental_service=_Service(_fundamental_payload()),
+        valuation_service=_Service(_valuation_payload()),
+    )
+
+    result = service.evaluate(symbol="AAPL", as_of=AS_OF)
+
+    assert result.data_quality_ready is False
+    assert result.core_evidence_ready is False
+    assert "data_quality_contract_incomplete" in result.blockers
+    assert result.production_eligible is False
+
+
+def test_gate_data_quality_rejects_fundamental_fact_available_after_cutoff() -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(_market_payload(source_providers=["yahoo_finance"])),
+        fundamental_service=_Service(
+            _fundamental_payload(fact_available_at="2026-09-01T20:31:00+00:00")
+        ),
+        valuation_service=_Service(_valuation_payload()),
+    )
+
+    result = service.evaluate(symbol="AAPL", as_of=AS_OF)
+
+    assert result.fundamental_evidence_ready is True
+    assert result.data_quality_ready is False
+    assert result.core_evidence_ready is False
+    assert "data_quality_contract_incomplete" in result.blockers
+    assert result.production_eligible is False
+
+
+def test_gate_data_quality_rejects_valuation_market_retrieval_after_cutoff() -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(_market_payload(source_providers=["yahoo_finance"])),
+        fundamental_service=_Service(_fundamental_payload()),
+        valuation_service=_Service(
+            _valuation_payload(
+                status="diagnostic_ready",
+                reported_annual_pe=25.0,
+                latest_price_retrieved_at="2026-09-01T20:31:00+00:00",
+            )
+        ),
+    )
+
+    result = service.evaluate(symbol="AAPL", as_of=AS_OF)
+
+    assert result.valuation_ready is True
+    assert result.data_quality_ready is False
+    assert result.core_evidence_ready is False
+    assert "data_quality_contract_incomplete" in result.blockers
     assert result.production_eligible is False
