@@ -235,3 +235,83 @@ def test_selector_does_not_choose_foreign_listing_without_domestic_candidate(
 
     assert report.selected_issuer_count == 0
     assert report.no_domestic_listing_count == 1
+
+
+def test_selector_reports_listing_identity_gap_dimensions(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    rows = [
+        {
+            "symbol": "COMPLETE",
+            "exchangeShortName": "NMS",
+            "currency": "USD",
+            "instrumentType": "EQUITY",
+            "isPrimaryListing": True,
+        },
+        {
+            "symbol": "NOEX",
+            "exchangeShortName": "",
+            "currency": "USD",
+            "instrumentType": "EQUITY",
+        },
+        {
+            "symbol": "BADFX",
+            "exchangeShortName": "NMS",
+            "currency": "US",
+            "instrumentType": "EQUITY",
+        },
+        {
+            "symbol": "NOTYPE",
+            "exchangeShortName": "NMS",
+            "currency": "USD",
+            "instrumentType": "UNKNOWN",
+        },
+    ]
+    instrument_ids = []
+    for row in rows:
+        instrument_ids.append(
+            instruments.upsert(
+                {
+                    "symbol": row["symbol"],
+                    "companyName": row["symbol"],
+                    "country": "United States",
+                    "regionKey": "america",
+                    "exchangeShortName": row["exchangeShortName"],
+                    "currency": row["currency"],
+                    "instrumentType": row["instrumentType"],
+                    "marketCap": 100.0,
+                    "isPrimaryListing": row.get("isPrimaryListing", False),
+                }
+            )
+        )
+
+    identities = IssuerIdentityRepository(database=database)
+    issuer_id = identities.upsert_external_issuer(
+        source_provider="official",
+        external_id="IDENTITY-GAPS",
+        canonical_name="Identity Gaps Issuer",
+        evidence_confidence=1.0,
+        domicile_country="United States",
+        region_key="america",
+    )
+    for instrument_id in instrument_ids:
+        identities.link_instrument(
+            instrument_id=instrument_id,
+            issuer_id=issuer_id,
+            evidence_source="official",
+            resolution_method="official_identifier",
+            confidence=1.0,
+        )
+
+    report = CanonicalListingSelectionService(database=database).get_report()
+    api = report.to_api_dict()
+
+    assert report.selected_issuer_count == 1
+    assert report.domestic_listing_count == 4
+    assert report.complete_identity_listing_count == 1
+    assert report.missing_exchange_listing_count == 1
+    assert report.invalid_currency_listing_count == 1
+    assert report.unknown_instrument_type_listing_count == 1
+    assert report.complete_identity_coverage == pytest.approx(0.25)
+    assert api["completeIdentityCoverage"] == pytest.approx(0.25)

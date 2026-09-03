@@ -15,6 +15,11 @@ class CanonicalListingSelectionReport:
     ambiguous_issuer_count: int
     no_domestic_listing_count: int
     incomplete_listing_identity_count: int
+    domestic_listing_count: int
+    complete_identity_listing_count: int
+    missing_exchange_listing_count: int
+    invalid_currency_listing_count: int
+    unknown_instrument_type_listing_count: int
     selections: tuple[dict[str, Any], ...]
     ambiguous: tuple[dict[str, Any], ...]
 
@@ -23,6 +28,12 @@ class CanonicalListingSelectionReport:
         if self.eligible_issuer_count <= 0:
             return 0.0
         return self.selected_issuer_count / self.eligible_issuer_count
+
+    @property
+    def complete_identity_coverage(self) -> float:
+        if self.domestic_listing_count <= 0:
+            return 0.0
+        return self.complete_identity_listing_count / self.domestic_listing_count
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -34,6 +45,12 @@ class CanonicalListingSelectionReport:
             "noDomesticListingCount": self.no_domestic_listing_count,
             "incompleteListingIdentityCount": self.incomplete_listing_identity_count,
             "selectionCoverage": self.selection_coverage,
+            "domesticListingCount": self.domestic_listing_count,
+            "completeIdentityListingCount": self.complete_identity_listing_count,
+            "missingExchangeListingCount": self.missing_exchange_listing_count,
+            "invalidCurrencyListingCount": self.invalid_currency_listing_count,
+            "unknownInstrumentTypeListingCount": self.unknown_instrument_type_listing_count,
+            "completeIdentityCoverage": self.complete_identity_coverage,
             "selections": [dict(item) for item in self.selections],
             "ambiguous": [dict(item) for item in self.ambiguous],
             "warning": (
@@ -111,6 +128,11 @@ class CanonicalListingSelectionService:
         ambiguous: list[dict[str, Any]] = []
         no_domestic = 0
         incomplete_identity = 0
+        domestic_listing_count = 0
+        complete_identity_listing_count = 0
+        missing_exchange_listing_count = 0
+        invalid_currency_listing_count = 0
+        unknown_instrument_type_listing_count = 0
 
         for group in groups.values():
             domicile = self._normalize_country(group["domicileCountry"])
@@ -123,6 +145,20 @@ class CanonicalListingSelectionService:
             if not domestic:
                 no_domestic += 1
                 continue
+
+            domestic_listing_count += len(domestic)
+            for listing in domestic:
+                has_exchange = self._has_exchange(listing)
+                has_currency = self._has_valid_currency(listing)
+                has_instrument_type = self._has_known_instrument_type(listing)
+                if not has_exchange:
+                    missing_exchange_listing_count += 1
+                if not has_currency:
+                    invalid_currency_listing_count += 1
+                if not has_instrument_type:
+                    unknown_instrument_type_listing_count += 1
+                if has_exchange and has_currency and has_instrument_type:
+                    complete_identity_listing_count += 1
 
             identity_complete = [
                 listing
@@ -177,6 +213,11 @@ class CanonicalListingSelectionService:
             ambiguous_issuer_count=len(ambiguous),
             no_domestic_listing_count=no_domestic,
             incomplete_listing_identity_count=incomplete_identity,
+            domestic_listing_count=domestic_listing_count,
+            complete_identity_listing_count=complete_identity_listing_count,
+            missing_exchange_listing_count=missing_exchange_listing_count,
+            invalid_currency_listing_count=invalid_currency_listing_count,
+            unknown_instrument_type_listing_count=unknown_instrument_type_listing_count,
             selections=tuple(selections[: self._MAX_DIAGNOSTIC_ITEMS]),
             ambiguous=tuple(ambiguous[: self._MAX_DIAGNOSTIC_ITEMS]),
         )
@@ -184,15 +225,24 @@ class CanonicalListingSelectionService:
     def _normalize_country(self, value: str) -> str:
         return self._countries.normalize_country(value) or ""
 
+    @staticmethod
+    def _has_exchange(listing: dict[str, Any]) -> bool:
+        return bool(str(listing.get("exchange") or "").strip())
+
+    @staticmethod
+    def _has_valid_currency(listing: dict[str, Any]) -> bool:
+        currency = str(listing.get("currency") or "").strip().upper()
+        return len(currency) == 3 and currency.isalpha()
+
+    @classmethod
+    def _has_known_instrument_type(cls, listing: dict[str, Any]) -> bool:
+        instrument_type = str(listing.get("instrumentType") or "").strip().lower()
+        return instrument_type not in cls._UNKNOWN_INSTRUMENT_TYPES
+
     @classmethod
     def _has_complete_listing_identity(cls, listing: dict[str, Any]) -> bool:
-        exchange = str(listing.get("exchange") or "").strip()
-        currency = str(listing.get("currency") or "").strip().upper()
-        instrument_type = str(listing.get("instrumentType") or "").strip().lower()
-
         return (
-            bool(exchange)
-            and len(currency) == 3
-            and currency.isalpha()
-            and instrument_type not in cls._UNKNOWN_INSTRUMENT_TYPES
+            cls._has_exchange(listing)
+            and cls._has_valid_currency(listing)
+            and cls._has_known_instrument_type(listing)
         )
