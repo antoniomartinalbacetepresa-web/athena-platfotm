@@ -58,6 +58,27 @@ def _ready_payload() -> dict[str, object]:
         },
         "fundamentals": {"coverageRatio": 1.0},
         "valuation": {"reportedAnnualPe": 25.0},
+        "macro": {
+            "status": "macro_context_available",
+            "ready": True,
+            "influencesCandidate": False,
+            "thresholdCalibrated": False,
+            "observations": [
+                {
+                    "metric": "macro.cpi.all_items",
+                    "entity": "US",
+                    "value": 312.4,
+                    "unit": "index",
+                    "source": "fred_alfred",
+                    "observedAt": "2025-12-01T00:00:00+00:00",
+                    "availableAt": "2026-01-08T13:30:00+00:00",
+                    "retrievedAt": "2026-01-09T10:00:00+00:00",
+                    "sourceUrl": "https://fred.stlouisfed.org/series/CPIAUCSL",
+                    "qualityScore": 95.0,
+                    "confidence": 95.0,
+                }
+            ],
+        },
     }
 
 
@@ -78,6 +99,7 @@ def test_capture_persists_ready_evidence_without_creating_advice() -> None:
 
     assert result["status"] == "captured_for_calibration"
     assert result["snapshotId"] == 42
+    assert result["featureSchemaVersion"] == "shadow-evidence-v2"
     assert result["advisoryStatus"] == "no_advice"
     assert gate.calls == [{"symbol": "AAPL", "as_of": AS_OF}]
     assert len(repository.calls) == 1
@@ -85,8 +107,46 @@ def test_capture_persists_ready_evidence_without_creating_advice() -> None:
     assert call["instrument_id"] == 1
     assert call["entry_price"] == 200.0
     assert call["benchmark_symbol"] == "SPY"
+    assert call["feature_schema_version"] == "shadow-evidence-v2"
     snapshot = call["evidence_snapshot"]
     assert isinstance(snapshot, dict)
+    assert "action" not in snapshot
+    assert "conviction" not in snapshot
+
+
+def test_capture_freezes_macro_context_under_versioned_shadow_schema() -> None:
+    repository = _Repository()
+    payload = _ready_payload()
+    service = RecommendationShadowCaptureService(
+        repository=repository,  # type: ignore[arg-type]
+        evidence_gate_service=_Gate(payload),
+    )
+
+    service.capture(
+        symbol="AAPL",
+        as_of=AS_OF,
+        captured_at=AS_OF + timedelta(minutes=1),
+    )
+
+    assert len(repository.calls) == 1
+    call = repository.calls[0]
+    assert call["feature_schema_version"] == "shadow-evidence-v2"
+    snapshot = call["evidence_snapshot"]
+    assert isinstance(snapshot, dict)
+    macro = snapshot.get("macro")
+    assert isinstance(macro, dict)
+    assert macro["influencesCandidate"] is False
+    assert macro["thresholdCalibrated"] is False
+    observations = macro["observations"]
+    assert isinstance(observations, list)
+    assert len(observations) == 1
+    observation = observations[0]
+    assert isinstance(observation, dict)
+    assert observation["metric"] == "macro.cpi.all_items"
+    assert observation["source"] == "fred_alfred"
+    assert observation["availableAt"] == "2026-01-08T13:30:00+00:00"
+    assert observation["retrievedAt"] == "2026-01-09T10:00:00+00:00"
+    assert observation["sourceUrl"] == "https://fred.stlouisfed.org/series/CPIAUCSL"
     assert "action" not in snapshot
     assert "conviction" not in snapshot
 
