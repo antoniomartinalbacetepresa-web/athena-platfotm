@@ -12,6 +12,10 @@ class PortfolioCurrentValuation {
   final int positionsValued;
   final List<FxQuote> fxEvidence;
   final double? historicalCostBasisInBaseCurrency;
+  final DateTime? latestMarketObservedAt;
+  final DateTime? latestMarketRetrievedAt;
+  final DateTime? latestFxObservedAt;
+  final DateTime? latestFxRetrievedAt;
 
   const PortfolioCurrentValuation({
     required this.baseCurrency,
@@ -19,10 +23,16 @@ class PortfolioCurrentValuation {
     required this.positionsValued,
     required this.fxEvidence,
     required this.historicalCostBasisInBaseCurrency,
+    required this.latestMarketObservedAt,
+    required this.latestMarketRetrievedAt,
+    required this.latestFxObservedAt,
+    required this.latestFxRetrievedAt,
   });
 
   bool get hasHistoricalCostBasis =>
       historicalCostBasisInBaseCurrency != null;
+
+  bool get usesFx => fxEvidence.isNotEmpty;
 
   double? get profitLossInBaseCurrency {
     final costBasis = historicalCostBasisInBaseCurrency;
@@ -48,6 +58,11 @@ class PortfolioCurrentValuation {
 /// portfolio P/L remain unavailable whenever a position is denominated in a
 /// different currency because ATHENA does not yet persist the acquisition-date
 /// FX required for a truthful historical conversion.
+///
+/// The service fails closed when either market-price provenance or FX
+/// provenance is incomplete. A numerical price without source and coherent
+/// observation/retrieval timestamps is not sufficient evidence for an ATHENA
+/// portfolio aggregate.
 class PortfolioCurrentValuationService {
   final CurrentFxRateLoader loadCurrentFxRate;
 
@@ -66,9 +81,22 @@ class PortfolioCurrentValuationService {
     var currentValueInBase = 0.0;
     var historicalCostBasisInBase = 0.0;
     var historicalCostBasisReady = true;
+    DateTime? latestMarketObservedAt;
+    DateTime? latestMarketRetrievedAt;
 
     for (final position in positions) {
       _validatePositionEconomics(position);
+      _validateMarketEvidence(position);
+
+      latestMarketObservedAt = _latest(
+        latestMarketObservedAt,
+        position.currentPriceUpdatedAt!,
+      );
+      latestMarketRetrievedAt = _latest(
+        latestMarketRetrievedAt,
+        position.currentPriceRetrievedAt!,
+      );
+
       final sourceCurrency = _normalizeCurrency(
         position.priceCurrency ?? '',
         'priceCurrency(${position.symbol})',
@@ -111,6 +139,13 @@ class PortfolioCurrentValuationService {
       throw StateError('El valor agregado de cartera no es finito o es negativo.');
     }
 
+    DateTime? latestFxObservedAt;
+    DateTime? latestFxRetrievedAt;
+    for (final fx in fxEvidence) {
+      latestFxObservedAt = _latest(latestFxObservedAt, fx.observedAt);
+      latestFxRetrievedAt = _latest(latestFxRetrievedAt, fx.retrievedAt);
+    }
+
     return PortfolioCurrentValuation(
       baseCurrency: base,
       currentValueInBaseCurrency: currentValueInBase,
@@ -118,10 +153,17 @@ class PortfolioCurrentValuationService {
       fxEvidence: List.unmodifiable(fxEvidence),
       historicalCostBasisInBaseCurrency:
           historicalCostBasisReady ? historicalCostBasisInBase : null,
+      latestMarketObservedAt: latestMarketObservedAt,
+      latestMarketRetrievedAt: latestMarketRetrievedAt,
+      latestFxObservedAt: latestFxObservedAt,
+      latestFxRetrievedAt: latestFxRetrievedAt,
     );
   }
 
   void _validatePositionEconomics(PortfolioPosition position) {
+    if (position.symbol.trim().isEmpty) {
+      throw StateError('La posición no declara un símbolo verificable.');
+    }
     if (!position.shares.isFinite || position.shares <= 0) {
       throw StateError('Cantidad inválida para ${position.symbol}.');
     }
@@ -139,6 +181,28 @@ class PortfolioCurrentValuationService {
     }
   }
 
+  void _validateMarketEvidence(PortfolioPosition position) {
+    final provider = position.currentPriceSourceProvider?.trim();
+    final observedAt = position.currentPriceUpdatedAt;
+    final retrievedAt = position.currentPriceRetrievedAt;
+
+    if (provider == null || provider.isEmpty) {
+      throw StateError(
+        'La posición ${position.symbol} no declara proveedor del precio actual.',
+      );
+    }
+    if (observedAt == null || retrievedAt == null) {
+      throw StateError(
+        'La posición ${position.symbol} no conserva timestamps de provenance.',
+      );
+    }
+    if (retrievedAt.isBefore(observedAt)) {
+      throw StateError(
+        'La recuperación del precio de ${position.symbol} precede a su observación.',
+      );
+    }
+  }
+
   void _validateFxEvidence(
     FxQuote fx, {
     required String expectedBase,
@@ -152,6 +216,9 @@ class PortfolioCurrentValuationService {
     }
     if (fx.sourceProvider.trim().isEmpty) {
       throw StateError('La evidencia FX no declara proveedor.');
+    }
+    if (fx.sourceSymbol.trim().isEmpty) {
+      throw StateError('La evidencia FX no declara símbolo fuente.');
     }
     if (fx.retrievedAt.isBefore(fx.observedAt)) {
       throw StateError('La recuperación FX precede a su observación.');
@@ -169,5 +236,12 @@ class PortfolioCurrentValuationService {
       throw StateError('$field no contiene una moneda ISO verificable.');
     }
     return normalized;
+  }
+
+  DateTime _latest(DateTime? current, DateTime candidate) {
+    if (current == null || candidate.isAfter(current)) {
+      return candidate;
+    }
+    return current;
   }
 }
