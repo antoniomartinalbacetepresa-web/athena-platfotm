@@ -36,6 +36,8 @@ def test_pipeline_applies_identity_domicile_and_diagnostics(tmp_path: Path) -> N
             "country": "United States",
             "regionKey": "america",
             "exchangeShortName": "NMS",
+            "currency": "USD",
+            "instrumentType": "EQUITY",
             "marketCap": 500.0,
         }
     )
