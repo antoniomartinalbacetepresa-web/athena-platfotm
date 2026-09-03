@@ -39,13 +39,14 @@ class CanonicalListingSelectionReport:
             "warning": (
                 "No se elige un ticker arbitrariamente cuando existen varias clases o "
                 "varios listados domésticos sin evidencia explícita de primariedad, ni "
-                "cuando falta una identidad de exchange verificable."
+                "cuando falta identidad verificable de exchange, moneda o tipo de instrumento."
             ),
         }
 
 
 class CanonicalListingSelectionService:
     _MAX_DIAGNOSTIC_ITEMS = 100
+    _UNKNOWN_INSTRUMENT_TYPES = {"", "unknown", "n/a", "na", "none", "null"}
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -183,6 +184,15 @@ class CanonicalListingSelectionService:
     def _normalize_country(self, value: str) -> str:
         return self._countries.normalize_country(value) or ""
 
-    @staticmethod
-    def _has_complete_listing_identity(listing: dict[str, Any]) -> bool:
-        return bool(str(listing.get("exchange") or "").strip())
+    @classmethod
+    def _has_complete_listing_identity(cls, listing: dict[str, Any]) -> bool:
+        exchange = str(listing.get("exchange") or "").strip()
+        currency = str(listing.get("currency") or "").strip().upper()
+        instrument_type = str(listing.get("instrumentType") or "").strip().lower()
+
+        return (
+            bool(exchange)
+            and len(currency) == 3
+            and currency.isalpha()
+            and instrument_type not in cls._UNKNOWN_INSTRUMENT_TYPES
+        )
