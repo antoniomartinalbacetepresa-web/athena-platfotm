@@ -83,9 +83,6 @@ class NormalizedDataRepository:
                 """
             )
 
-            # SQLite considera distintos los NULL dentro de una restricción
-            # UNIQUE. Eliminamos duplicados históricos equivalentes antes de
-            # añadir un índice de identidad que normaliza NULL y cadena vacía.
             connection.execute(
                 """
                 DELETE FROM normalized_data_observations
@@ -106,8 +103,7 @@ class NormalizedDataRepository:
 
             connection.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS
-                    uq_normalized_data_observation_identity
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_normalized_data_observation_identity
                 ON normalized_data_observations (
                     metric,
                     COALESCE(entity_id, ''),
@@ -124,60 +120,32 @@ class NormalizedDataRepository:
         self.initialize()
         provenance = datum.provenance
         value_json = json.dumps(datum.value, ensure_ascii=False, sort_keys=True)
-
         with self._database.connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO normalized_data_observations (
-                    metric,
-                    entity_id,
-                    value_json,
-                    data_kind,
-                    unit,
-                    currency,
-                    quality_score,
-                    confidence_score,
-                    source_id,
-                    retrieved_at,
-                    effective_at,
-                    published_at,
-                    source_timestamp,
-                    available_at,
-                    source_version,
-                    raw_identifier,
-                    normalized_identifier,
-                    source_url
+                    metric, entity_id, value_json, data_kind, unit, currency,
+                    quality_score, confidence_score, source_id, retrieved_at,
+                    effective_at, published_at, source_timestamp, available_at,
+                    source_version, raw_identifier, normalized_identifier, source_url
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    datum.metric,
-                    datum.entity_id,
-                    value_json,
-                    datum.data_kind,
-                    datum.unit,
-                    datum.currency,
-                    datum.quality_score,
-                    datum.confidence_score,
-                    provenance.source_id,
-                    provenance.retrieved_at,
-                    provenance.effective_at,
-                    provenance.published_at,
-                    provenance.source_timestamp,
-                    provenance.available_at,
-                    provenance.version,
-                    provenance.raw_identifier,
-                    provenance.normalized_identifier,
+                    datum.metric, datum.entity_id, value_json, datum.data_kind,
+                    datum.unit, datum.currency, datum.quality_score,
+                    datum.confidence_score, provenance.source_id,
+                    provenance.retrieved_at, provenance.effective_at,
+                    provenance.published_at, provenance.source_timestamp,
+                    provenance.available_at, provenance.version,
+                    provenance.raw_identifier, provenance.normalized_identifier,
                     provenance.source_url,
                 ),
             )
-
             if cursor.rowcount == 1 and cursor.lastrowid is not None:
                 return int(cursor.lastrowid)
-
             row = connection.execute(
                 """
-                SELECT id
-                FROM normalized_data_observations
+                SELECT id FROM normalized_data_observations
                 WHERE metric = ?
                   AND COALESCE(entity_id, '') = COALESCE(?, '')
                   AND source_id = ?
@@ -185,17 +153,12 @@ class NormalizedDataRepository:
                   AND COALESCE(published_at, '') = COALESCE(?, '')
                   AND COALESCE(source_version, '') = COALESCE(?, '')
                   AND value_json = ?
-                ORDER BY id ASC
-                LIMIT 1
+                ORDER BY id ASC LIMIT 1
                 """,
                 (
-                    datum.metric,
-                    datum.entity_id,
-                    provenance.source_id,
-                    provenance.effective_at,
-                    provenance.published_at,
-                    provenance.version,
-                    value_json,
+                    datum.metric, datum.entity_id, provenance.source_id,
+                    provenance.effective_at, provenance.published_at,
+                    provenance.version, value_json,
                 ),
             ).fetchone()
             if row is None:
@@ -216,7 +179,6 @@ class NormalizedDataRepository:
         self.initialize()
         clauses = ["metric = ?"]
         params: list[object] = [metric]
-
         if entity_id is not None:
             clauses.append("entity_id = ?")
             params.append(entity_id)
@@ -227,13 +189,13 @@ class NormalizedDataRepository:
             clauses.append("available_at IS NOT NULL")
             clauses.append("available_at <= ?")
             params.append(as_of)
-
+            clauses.append("retrieved_at <= ?")
+            params.append(as_of)
         where_sql = " AND ".join(clauses)
         with self._database.connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT *
-                FROM normalized_data_observations
+                SELECT * FROM normalized_data_observations
                 WHERE {where_sql}
                 ORDER BY
                     COALESCE(effective_at, published_at, retrieved_at) DESC,
@@ -242,5 +204,4 @@ class NormalizedDataRepository:
                 """,
                 tuple(params),
             ).fetchall()
-
         return [dict(row) for row in rows]
