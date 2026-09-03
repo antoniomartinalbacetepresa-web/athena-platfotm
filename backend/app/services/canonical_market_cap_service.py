@@ -6,6 +6,9 @@ from typing import Any
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.issuer_identity_repository import IssuerIdentityRepository
+from app.services.canonical_listing_selection_service import (
+    CanonicalListingSelectionService,
+)
 from app.services.country_region_service import CountryRegionService
 
 
@@ -38,7 +41,7 @@ class CanonicalMarketCapReport:
     def to_api_dict(self) -> dict[str, Any]:
         return {
             "status": "diagnostic_only",
-            "method": "canonical_domestic_listing_else_median_cross_listing_market_cap",
+            "method": "canonical_identity_complete_listing_else_median_cross_listing_market_cap",
             "linkedListingCount": self.linked_listing_count,
             "canonicalIssuerCount": self.canonical_issuer_count,
             "rawLinkedMarketCapUsd": self.raw_linked_market_cap_usd,
@@ -57,7 +60,8 @@ class CanonicalMarketCapReport:
                 "medianFallbackCount": self.median_fallback_market_cap_count,
                 "fallbackMeaning": (
                     "La mediana se conserva sólo como diagnóstico cuando no existe un "
-                    "listado doméstico canónico inequívoco."
+                    "listado doméstico canónico inequívoco con identidad completa y "
+                    "capitalización disponible."
                 ),
             },
             "crossListingMarketCapConsistency": {
@@ -83,9 +87,16 @@ class CanonicalMarketCapService:
         self._database = database if database is not None else AthenaDatabase()
         self._identities = IssuerIdentityRepository(database=self._database)
         self._countries = CountryRegionService()
+        self._listing_selection = CanonicalListingSelectionService(
+            database=self._database
+        )
 
     def get_report(self) -> CanonicalMarketCapReport:
         self._identities.initialize()
+        selected_instrument_by_issuer = {
+            int(item["issuerId"]): int(item["instrumentId"])
+            for item in self._listing_selection.get_report().selections
+        }
         excluded_placeholders = ",".join(
             "?" for _ in self._EXCLUDED_INSTRUMENT_TYPES
         )
@@ -123,6 +134,7 @@ class CanonicalMarketCapService:
             group = groups.setdefault(
                 issuer_id,
                 {
+                    "issuer_id": issuer_id,
                     "listings": [],
                     "domicile_country": row["domicile_country"],
                     "region_key": row["region_key"],
@@ -153,8 +165,9 @@ class CanonicalMarketCapService:
             listings = list(group["listings"])
             caps = [float(item["market_cap_usd"]) for item in listings]
             issuer_cap, used_canonical_listing = self._select_issuer_market_cap(
+                issuer_id=int(group["issuer_id"]),
                 listings=listings,
-                domicile_country=str(group.get("domicile_country") or ""),
+                selected_instrument_by_issuer=selected_instrument_by_issuer,
             )
             if used_canonical_listing:
                 canonical_listing_market_cap_count += 1
@@ -209,26 +222,21 @@ class CanonicalMarketCapService:
     def _select_issuer_market_cap(
         self,
         *,
+        issuer_id: int,
         listings: list[dict[str, Any]],
-        domicile_country: str,
+        selected_instrument_by_issuer: dict[int, int],
     ) -> tuple[float, bool]:
         caps = [float(item["market_cap_usd"]) for item in listings]
-        domicile = self._countries.normalize_country(domicile_country) or ""
-        domestic = [
-            item
-            for item in listings
-            if (self._countries.normalize_country(item["listing_country"]) or "")
-            == domicile
-            and domicile
-        ]
-        explicit_primary = [
-            item for item in domestic if item["is_primary_listing"]
-        ]
+        selected_instrument_id = selected_instrument_by_issuer.get(issuer_id)
+        if selected_instrument_id is not None:
+            selected = [
+                item
+                for item in listings
+                if int(item["instrument_id"]) == selected_instrument_id
+            ]
+            if len(selected) == 1:
+                return float(selected[0]["market_cap_usd"]), True
 
-        if len(explicit_primary) == 1:
-            return float(explicit_primary[0]["market_cap_usd"]), True
-        if len(domestic) == 1:
-            return float(domestic[0]["market_cap_usd"]), True
         return float(median(caps)), False
 
     def _weights_from_caps(self, caps: dict[str, float]) -> dict[str, float]:

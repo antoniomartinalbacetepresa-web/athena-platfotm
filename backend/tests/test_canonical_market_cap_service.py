@@ -16,6 +16,9 @@ def _insert(
     country: str,
     region: str,
     is_primary: bool = False,
+    exchange: str | None = None,
+    currency: str = "USD",
+    instrument_type: str = "EQUITY",
 ) -> int:
     return repository.upsert(
         {
@@ -23,7 +26,9 @@ def _insert(
             "companyName": symbol,
             "country": country,
             "regionKey": region,
-            "exchangeShortName": symbol,
+            "exchangeShortName": exchange if exchange is not None else symbol,
+            "currency": currency,
+            "instrumentType": instrument_type,
             "marketCap": market_cap,
             "isPrimaryListing": is_primary,
         }
@@ -202,6 +207,59 @@ def test_canonical_market_cap_uses_median_only_when_domestic_selection_is_ambigu
     assert report.canonical_market_cap_usd == pytest.approx(400.0)
     assert report.canonical_listing_market_cap_count == 0
     assert report.median_fallback_market_cap_count == 1
+    assert report.to_api_dict()["readyForRegionalWeighting"] is False
+
+
+def test_canonical_market_cap_uses_only_identity_complete_canonical_listing(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    incomplete_primary_id = _insert(
+        instruments,
+        symbol="PRIMARY-NO-FX",
+        market_cap=100.0,
+        country="United States",
+        region="america",
+        is_primary=True,
+        currency="",
+    )
+    complete_secondary_id = _insert(
+        instruments,
+        symbol="SECONDARY-COMPLETE",
+        market_cap=300.0,
+        country="United States",
+        region="america",
+    )
+
+    identities = IssuerIdentityRepository(database=database)
+    issuer_id = identities.upsert_external_issuer(
+        source_provider="official",
+        external_id="ISSUER-IDENTITY-GATED",
+        canonical_name="Identity Gated Issuer",
+        evidence_confidence=1.0,
+        domicile_country="United States",
+        region_key="america",
+    )
+    for instrument_id in (incomplete_primary_id, complete_secondary_id):
+        identities.link_instrument(
+            instrument_id=instrument_id,
+            issuer_id=issuer_id,
+            evidence_source="official",
+            resolution_method="official_identifier",
+            confidence=1.0,
+        )
+
+    report = CanonicalMarketCapService(database=database).get_report()
+
+    assert report.raw_linked_market_cap_usd == pytest.approx(400.0)
+    assert report.canonical_market_cap_usd == pytest.approx(300.0)
+    assert report.canonical_listing_market_cap_count == 1
+    assert report.median_fallback_market_cap_count == 0
+    assert report.region_market_cap_usd == pytest.approx(
+        {"america": 300.0, "europe": 0.0, "asia": 0.0}
+    )
     assert report.to_api_dict()["readyForRegionalWeighting"] is False
 
 
