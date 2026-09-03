@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/features/market/data/config/market_provider_settings.dart';
+import 'package:app/features/market/di/market_dependencies.dart';
 import 'package:app/features/portfolio/models/portfolio_position.dart';
 import 'package:app/features/portfolio/presentation/controllers/portfolio_current_valuation_controller.dart';
 import 'package:app/features/portfolio/services/portfolio_current_valuation_service.dart';
@@ -154,5 +156,19 @@ void main() {
     expect(controller.error, isNull);
     expect(controller.valuation?.currentValueInBaseCurrency, 0);
     expect(controller.valuation?.positionsValued, 0);
+  });
+
+  test('forMarketDependencies fails closed when backend FX is unavailable', () {
+    final dependencies = MarketDependencies.create(
+      settings: const MarketProviderSettings.development(),
+    );
+    addTearDown(dependencies.dispose);
+
+    expect(
+      () => PortfolioCurrentValuationController.forMarketDependencies(
+        dependencies,
+      ),
+      throwsA(isA<StateError>()),
+    );
   });
 }
