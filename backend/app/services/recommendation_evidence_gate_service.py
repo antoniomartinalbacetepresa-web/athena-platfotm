@@ -83,6 +83,7 @@ class RecommendationEvidenceGate:
         return {
             "technical": {
                 "connected": True,
+                "influencesCandidate": True,
                 "sourceBlock": "market",
                 "status": market_status,
                 "evidenceReady": self.market_evidence_ready,
@@ -90,6 +91,7 @@ class RecommendationEvidenceGate:
             },
             "risk": {
                 "connected": True,
+                "influencesCandidate": True,
                 "sourceBlock": "market",
                 "status": market_status,
                 "evidenceReady": self.market_evidence_ready,
@@ -97,6 +99,7 @@ class RecommendationEvidenceGate:
             },
             "fundamentals": {
                 "connected": True,
+                "influencesCandidate": True,
                 "sourceBlock": "fundamentals",
                 "status": fundamental_status,
                 "evidenceReady": self.fundamental_evidence_ready,
@@ -104,13 +107,29 @@ class RecommendationEvidenceGate:
             },
             "valuation": {
                 "connected": True,
+                "influencesCandidate": True,
                 "sourceBlock": "valuation",
                 "status": valuation_status,
                 "evidenceReady": self.valuation_ready,
                 "productionEligible": False,
             },
+            "marketMacro": {
+                "connected": False,
+                "influencesCandidate": False,
+                "status": "infrastructure_available_not_connected_to_candidate",
+                "evidenceReady": False,
+                "productionEligible": False,
+            },
+            "dataQuality": {
+                "connected": False,
+                "influencesCandidate": False,
+                "status": "infrastructure_available_not_connected_to_candidate",
+                "evidenceReady": False,
+                "productionEligible": False,
+            },
             "calibration": {
                 "connected": True,
+                "influencesCandidate": False,
                 "status": (
                     "validated" if self.calibration_ready else "not_validated"
                 ),
@@ -119,6 +138,7 @@ class RecommendationEvidenceGate:
             },
             "recommendationCombination": {
                 "connected": True,
+                "influencesCandidate": False,
                 "status": (
                     "candidate_ready"
                     if self.recommendation_candidate_ready
@@ -129,6 +149,7 @@ class RecommendationEvidenceGate:
             },
             "investorActivity": {
                 "connected": False,
+                "influencesCandidate": False,
                 "status": "independent_engine_not_yet_connected",
                 "evidenceReady": False,
                 "includedInAthenaRecommendation": False,
