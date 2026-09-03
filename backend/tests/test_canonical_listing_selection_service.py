@@ -25,6 +25,8 @@ def _listing(
             "country": country,
             "regionKey": region,
             "exchangeShortName": symbol,
+            "currency": "USD",
+            "instrumentType": "EQUITY",
             "marketCap": 100.0,
             "isPrimaryListing": is_primary,
         }
