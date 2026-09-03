@@ -18,6 +18,8 @@ class PortfolioPage extends StatefulWidget {
 }
 
 class _PortfolioPageState extends State<PortfolioPage> {
+  static const _baseCurrency = 'EUR';
+
   final PortfolioService _portfolioService = PortfolioService();
   late final MarketDependencies _marketDependencies;
 
@@ -45,7 +47,6 @@ class _PortfolioPageState extends State<PortfolioPage> {
   Future<void> _loadPortfolio() async {
     try {
       await _portfolioService.loadPortfolio();
-
       String? refreshMessage;
       final portfolio = _portfolio;
       if (portfolio != null && portfolio.positions.isNotEmpty) {
@@ -61,10 +62,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         }
       }
 
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       setState(() {
         _positions = _portfolio?.positions ?? [];
         _isLoading = false;
@@ -72,9 +70,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         _priceRefreshMessage = refreshMessage;
       });
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _positions = [];
         _isLoading = false;
@@ -85,9 +81,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
   }
 
   Future<void> _refreshPrices() async {
-    if (_isRefreshingPrices || _positions.isEmpty) {
-      return;
-    }
+    if (_isRefreshingPrices || _positions.isEmpty) return;
 
     setState(() {
       _isRefreshingPrices = true;
@@ -98,18 +92,14 @@ class _PortfolioPageState extends State<PortfolioPage> {
       final report = await _portfolioService.refreshCurrentPrices(
         marketRepository: _marketDependencies.repository,
       );
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _positions = _portfolio?.positions ?? [];
         _isRefreshingPrices = false;
         _priceRefreshMessage = _refreshMessageFor(report);
       });
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _positions = _portfolio?.positions ?? [];
         _isRefreshingPrices = false;
@@ -121,10 +111,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
   }
 
   String? _refreshMessageFor(PortfolioPriceRefreshReport report) {
-    if (report.totalPositions == 0 || report.isComplete) {
-      return null;
-    }
-
+    if (report.totalPositions == 0 || report.isComplete) return null;
     final failed = report.failedSymbols.join(', ');
     return 'Cotizaciones actualizadas: ${report.updatedPositions} de '
         '${report.totalPositions}. Sin actualización verificable: $failed. '
@@ -138,26 +125,17 @@ class _PortfolioPageState extends State<PortfolioPage> {
         currentValue: _portfolio?.initialCapital,
       ),
     );
-
-    if (value == null) {
-      return;
-    }
+    if (value == null) return;
 
     try {
       await _portfolioService.updateReferenceCapital(value);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _positions = _portfolio?.positions ?? [];
-      });
+      if (!mounted) return;
+      setState(() => _positions = _portfolio?.positions ?? []);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Capital de referencia actualizado.')),
       );
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('No se pudo guardar el capital de referencia.'),
@@ -169,12 +147,11 @@ class _PortfolioPageState extends State<PortfolioPage> {
   Future<void> _addPosition() async {
     final result = await showDialog<AddPositionResult>(
       context: context,
-      builder: (context) => const AddPositionDialog(),
+      builder: (context) => AddPositionDialog(
+        marketRepository: _marketDependencies.repository,
+      ),
     );
-
-    if (result == null) {
-      return;
-    }
+    if (result == null) return;
 
     final position = PortfolioPosition(
       symbol: result.symbol,
@@ -182,6 +159,9 @@ class _PortfolioPageState extends State<PortfolioPage> {
       shares: result.shares,
       averagePrice: result.averagePrice,
       currentPrice: result.currentPrice,
+      priceCurrency: result.priceCurrency,
+      exchange: result.exchange,
+      quoteType: result.quoteType,
       currentPriceUpdatedAt: result.currentPriceUpdatedAt,
       currentPriceSourceProvider: result.currentPriceSourceProvider,
       currentPriceRetrievedAt: result.currentPriceRetrievedAt,
@@ -195,11 +175,8 @@ class _PortfolioPageState extends State<PortfolioPage> {
           initialCapital: 0,
         );
       }
-
       await _portfolioService.addPosition(position);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _positions = _portfolio?.positions ?? [];
         _priceRefreshMessage = null;
@@ -212,9 +189,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         ),
       );
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo guardar la posición.')),
       );
@@ -234,8 +209,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
           ),
         ),
         content: Text(
-          '¿Quieres eliminar ${position.companyName} (${position.symbol}) '
-          'de tu cartera?',
+          '¿Quieres eliminar ${position.companyName} (${position.symbol}) de tu cartera?',
           style: const TextStyle(color: AthenaColors.textSecondary),
         ),
         actions: [
@@ -250,40 +224,53 @@ class _PortfolioPageState extends State<PortfolioPage> {
         ],
       ),
     );
-
-    if (confirmed != true) {
-      return;
-    }
+    if (confirmed != true) return;
 
     try {
       await _portfolioService.removePosition(position.symbol);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _positions = _portfolio?.positions ?? [];
-      });
+      if (!mounted) return;
+      setState(() => _positions = _portfolio?.positions ?? []);
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo guardar el cambio.')),
       );
     }
   }
 
+  bool get _allPositionsComparableInBaseCurrency {
+    if (_positions.isEmpty) return true;
+    return _positions.every((position) {
+      final currency = position.priceCurrency?.trim().toUpperCase();
+      return currency == _baseCurrency;
+    });
+  }
+
+  double get _baseInvestedValue =>
+      _positions.fold(0.0, (sum, position) => sum + position.investedValue);
+
+  double get _baseCurrentValue =>
+      _positions.fold(0.0, (sum, position) => sum + position.currentValue);
+
   @override
   Widget build(BuildContext context) {
     final portfolio = _portfolio;
-    final totalInvested = portfolio?.investedValue ?? 0.0;
-    final totalCurrentValue = portfolio?.currentValue ?? 0.0;
-    final totalProfitLoss = portfolio?.profitLoss ?? 0.0;
-    final totalProfitLossPercentage = portfolio?.profitLossPercentage ?? 0.0;
     final referenceCapital = portfolio?.initialCapital ?? 0.0;
     final hasReferenceCapital = referenceCapital > 0;
-    final unallocatedCapital = hasReferenceCapital
+    final comparable = _allPositionsComparableInBaseCurrency;
+    final totalInvested = comparable ? _baseInvestedValue : null;
+    final totalCurrentValue = comparable ? _baseCurrentValue : null;
+    final totalProfitLoss = comparable && totalInvested != null && totalCurrentValue != null
+        ? totalCurrentValue - totalInvested
+        : null;
+    final totalProfitLossPercentage = totalProfitLoss != null && totalInvested! > 0
+        ? (totalProfitLoss / totalInvested) * 100
+        : null;
+    final unallocatedCapital = hasReferenceCapital && totalInvested != null
         ? (referenceCapital - totalInvested).clamp(0.0, double.infinity)
+        : null;
+    final excessOverReference = hasReferenceCapital && totalInvested != null
+        ? (totalInvested - referenceCapital).clamp(0.0, double.infinity)
         : null;
 
     return Scaffold(
@@ -307,6 +294,14 @@ class _PortfolioPageState extends State<PortfolioPage> {
                     _statusBanner(_priceRefreshMessage!),
                     const SizedBox(height: AthenaSpacing.md),
                   ],
+                  if (!comparable && _positions.isNotEmpty) ...[
+                    _statusBanner(
+                      'La cartera contiene posiciones en monedas distintas de EUR. '
+                      'ATHENA conserva los importes nativos y bloquea los agregados '
+                      'hasta aplicar FX verificable; no suma divisas como si fueran euros.',
+                    ),
+                    const SizedBox(height: AthenaSpacing.md),
+                  ],
                   _buildSummary(
                     totalInvested: totalInvested,
                     totalCurrentValue: totalCurrentValue,
@@ -315,12 +310,14 @@ class _PortfolioPageState extends State<PortfolioPage> {
                     referenceCapital: referenceCapital,
                     hasReferenceCapital: hasReferenceCapital,
                     unallocatedCapital: unallocatedCapital,
+                    excessOverReference: excessOverReference,
                   ),
                   const SizedBox(height: AthenaSpacing.lg),
                   _buildAthenaAllocationState(
                     hasReferenceCapital: hasReferenceCapital,
                     referenceCapital: referenceCapital,
                     unallocatedCapital: unallocatedCapital,
+                    comparable: comparable,
                   ),
                   const SizedBox(height: 28),
                   _buildPositionsHeader(),
@@ -362,10 +359,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
           child: IconButton(
             tooltip: 'Volver',
             onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(
-              Icons.arrow_back_rounded,
-              color: AthenaColors.text,
-            ),
+            icon: const Icon(Icons.arrow_back_rounded, color: AthenaColors.text),
           ),
         ),
         const Column(
@@ -383,10 +377,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
             SizedBox(height: 4),
             Text(
               'Capital, posiciones y planificación basada en evidencia',
-              style: TextStyle(
-                color: AthenaColors.textSecondary,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: AthenaColors.textSecondary, fontSize: 14),
             ),
           ],
         ),
@@ -459,19 +450,22 @@ class _PortfolioPageState extends State<PortfolioPage> {
   }
 
   Widget _buildSummary({
-    required double totalInvested,
-    required double totalCurrentValue,
-    required double totalProfitLoss,
-    required double totalProfitLossPercentage,
+    required double? totalInvested,
+    required double? totalCurrentValue,
+    required double? totalProfitLoss,
+    required double? totalProfitLossPercentage,
     required double referenceCapital,
     required bool hasReferenceCapital,
     required double? unallocatedCapital,
+    required double? excessOverReference,
   }) {
-    final profitColor = totalProfitLoss > 0
-        ? const Color(0xFF45D483)
-        : totalProfitLoss < 0
-            ? const Color(0xFFFF5C5C)
-            : AthenaColors.text;
+    final profitColor = totalProfitLoss == null
+        ? AthenaColors.textSecondary
+        : totalProfitLoss > 0
+            ? const Color(0xFF45D483)
+            : totalProfitLoss < 0
+                ? const Color(0xFFFF5C5C)
+                : AthenaColors.text;
 
     return _card(
       child: Column(
@@ -483,39 +477,42 @@ class _PortfolioPageState extends State<PortfolioPage> {
             children: [
               _summaryItem(
                 'Capital de referencia',
-                hasReferenceCapital
-                    ? _formatCurrency(referenceCapital)
-                    : 'No definido',
+                hasReferenceCapital ? _formatCurrency(referenceCapital, _baseCurrency) : 'No definido',
                 AthenaColors.text,
               ),
               _summaryItem(
                 'Capital invertido',
-                _formatCurrency(totalInvested),
+                totalInvested == null ? 'Pendiente FX' : _formatCurrency(totalInvested, _baseCurrency),
                 AthenaColors.text,
               ),
               _summaryItem(
                 'Valor actual posiciones',
-                _formatCurrency(totalCurrentValue),
+                totalCurrentValue == null ? 'Pendiente FX' : _formatCurrency(totalCurrentValue, _baseCurrency),
                 AthenaColors.text,
               ),
               _summaryItem(
-                'Capital no asignado',
-                unallocatedCapital == null
-                    ? 'No disponible'
-                    : _formatCurrency(unallocatedCapital),
+                excessOverReference != null && excessOverReference > 0
+                    ? 'Exceso sobre referencia'
+                    : 'Capital no asignado',
+                excessOverReference != null && excessOverReference > 0
+                    ? _formatCurrency(excessOverReference, _baseCurrency)
+                    : unallocatedCapital == null
+                        ? 'No disponible'
+                        : _formatCurrency(unallocatedCapital, _baseCurrency),
                 AthenaColors.text,
               ),
               _summaryItem(
                 'Beneficio / pérdida',
-                _formatSignedCurrency(totalProfitLoss),
+                totalProfitLoss == null
+                    ? 'No disponible'
+                    : _formatSignedCurrency(totalProfitLoss, _baseCurrency),
                 profitColor,
               ),
               _summaryItem(
                 'Rentabilidad',
-                totalInvested == 0
-                    ? 'Sin muestra'
-                    : '${totalProfitLossPercentage >= 0 ? '+' : ''}'
-                        '${totalProfitLossPercentage.toStringAsFixed(2)} %',
+                totalProfitLossPercentage == null
+                    ? 'No disponible'
+                    : '${totalProfitLossPercentage >= 0 ? '+' : ''}${totalProfitLossPercentage.toStringAsFixed(2)} %',
                 profitColor,
               ),
             ],
@@ -539,7 +536,13 @@ class _PortfolioPageState extends State<PortfolioPage> {
     required bool hasReferenceCapital,
     required double referenceCapital,
     required double? unallocatedCapital,
+    required bool comparable,
   }) {
+    final referenceText = hasReferenceCapital
+        ? 'Capital de referencia: ${_formatCurrency(referenceCapital, _baseCurrency)}. '
+            '${comparable ? 'Capital actualmente no asignado: ${_formatCurrency(unallocatedCapital ?? 0, _baseCurrency)}.' : 'El capital no asignado no se calcula hasta convertir la cartera a EUR con FX verificable.'}'
+        : 'Define un capital de referencia para que una futura planificación validada pueda expresarse en euros y porcentajes.';
+
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -562,12 +565,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
           ),
           const SizedBox(height: 12),
           Text(
-            hasReferenceCapital
-                ? 'Capital de referencia: ${_formatCurrency(referenceCapital)}. '
-                    'Capital actualmente no asignado: '
-                    '${_formatCurrency(unallocatedCapital ?? 0)}.'
-                : 'Define un capital de referencia para que una futura '
-                    'planificación validada pueda expresarse en euros y porcentajes.',
+            referenceText,
             style: const TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 13,
@@ -577,10 +575,8 @@ class _PortfolioPageState extends State<PortfolioPage> {
           const SizedBox(height: 10),
           const Text(
             'ATHENA no propone todavía importes por activo porque el motor de '
-            'recomendaciones sigue en validación. La asignación sólo se '
-            'habilitará con recomendaciones reales, trazables y elegibles para '
-            'producción. Hasta entonces no se inventan pesos, retornos ni '
-            'expectativas.',
+            'recomendaciones sigue en validación. La asignación sólo se habilitará '
+            'con recomendaciones reales, trazables y elegibles para producción.',
             style: TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 13,
@@ -675,11 +671,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
     );
   }
 
-  static Widget _summaryItem(
-    String title,
-    String value,
-    Color valueColor,
-  ) {
+  static Widget _summaryItem(String title, String value, Color valueColor) {
     return SizedBox(
       width: 210,
       child: Column(
@@ -687,10 +679,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 13,
-            ),
+            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
           ),
           const SizedBox(height: 5),
           Text(
@@ -706,11 +695,11 @@ class _PortfolioPageState extends State<PortfolioPage> {
     );
   }
 
-  static String _formatCurrency(num value) => '${value.toStringAsFixed(2)} €';
+  static String _formatCurrency(num value, String currency) =>
+      '${value.toStringAsFixed(2)} $currency';
 
-  static String _formatSignedCurrency(num value) {
-    return '${value > 0 ? '+' : ''}${value.toStringAsFixed(2)} €';
-  }
+  static String _formatSignedCurrency(num value, String currency) =>
+      '${value > 0 ? '+' : ''}${value.toStringAsFixed(2)} $currency';
 }
 
 class _ValidationBadge extends StatelessWidget {
@@ -741,10 +730,15 @@ class _PositionWithDelete extends StatelessWidget {
   final PortfolioPosition position;
   final VoidCallback onDelete;
 
-  const _PositionWithDelete({
-    required this.position,
-    required this.onDelete,
-  });
+  const _PositionWithDelete({required this.position, required this.onDelete});
+
+  String get _currency {
+    final currency = position.priceCurrency?.trim().toUpperCase();
+    if (currency == null || !RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
+      return 'MONEDA?';
+    }
+    return currency;
+  }
 
   bool get _hasCompleteProvenance {
     final provider = position.currentPriceSourceProvider?.trim();
@@ -776,26 +770,27 @@ class _PositionWithDelete extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          final values = Wrap(
+            spacing: AthenaSpacing.lg,
+            runSpacing: AthenaSpacing.md,
+            children: [
+              _valueColumn('Invertido', _format(position.investedValue)),
+              _valueColumn('Valor actual', _format(position.currentValue)),
+              _valueColumn(
+                'Resultado nominal',
+                '${position.profitLoss > 0 ? '+' : ''}${position.profitLoss.toStringAsFixed(2)} $_currency',
+                valueColor: profitColor,
+              ),
+            ],
+          );
+
           if (constraints.maxWidth < 720) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _identity(),
                 const SizedBox(height: AthenaSpacing.md),
-                Wrap(
-                  spacing: AthenaSpacing.lg,
-                  runSpacing: AthenaSpacing.md,
-                  children: [
-                    _valueColumn('Invertido', _format(position.investedValue)),
-                    _valueColumn('Valor actual', _format(position.currentValue)),
-                    _valueColumn(
-                      'Resultado',
-                      '${position.profitLoss > 0 ? '+' : ''}'
-                      '${position.profitLoss.toStringAsFixed(2)} €',
-                      valueColor: profitColor,
-                    ),
-                  ],
-                ),
+                values,
                 const SizedBox(height: AthenaSpacing.md),
                 _provenance(),
                 Align(
@@ -818,16 +813,7 @@ class _PositionWithDelete extends StatelessWidget {
               Row(
                 children: [
                   Expanded(child: _identity()),
-                  _valueColumn('Invertido', _format(position.investedValue)),
-                  const SizedBox(width: 28),
-                  _valueColumn('Valor actual', _format(position.currentValue)),
-                  const SizedBox(width: 28),
-                  _valueColumn(
-                    'Resultado',
-                    '${position.profitLoss > 0 ? '+' : ''}'
-                    '${position.profitLoss.toStringAsFixed(2)} €',
-                    valueColor: profitColor,
-                  ),
+                  values,
                   const SizedBox(width: 12),
                   IconButton(
                     tooltip: 'Eliminar',
@@ -849,6 +835,13 @@ class _PositionWithDelete extends StatelessWidget {
   }
 
   Widget _identity() {
+    final metadata = <String>[
+      position.symbol,
+      _currency,
+      if (position.exchange?.trim().isNotEmpty == true) position.exchange!.trim(),
+      if (position.quoteType?.trim().isNotEmpty == true) position.quoteType!.trim(),
+    ];
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -886,7 +879,7 @@ class _PositionWithDelete extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                '${position.symbol} · ${_formatNumber(position.shares)} acciones',
+                '${metadata.join(' · ')} · ${_formatNumber(position.shares)} acciones',
                 style: const TextStyle(
                   color: AthenaColors.textSecondary,
                   fontSize: 12,
@@ -902,8 +895,7 @@ class _PositionWithDelete extends StatelessWidget {
   Widget _provenance() {
     if (!_hasCompleteProvenance) {
       return const Text(
-        'Precio persistido sin provenance completa · actualizar antes de usar '
-        'esta posición como evidencia.',
+        'Precio persistido sin provenance completa · actualizar antes de usar esta posición como evidencia.',
         style: TextStyle(
           color: Color(0xFFFFB86B),
           fontSize: 11,
@@ -916,8 +908,7 @@ class _PositionWithDelete extends StatelessWidget {
     final updatedAt = position.currentPriceUpdatedAt!.toLocal();
     final retrievedAt = position.currentPriceRetrievedAt!.toLocal();
     return Text(
-      'Precio: $provider · observado ${_formatDateTime(updatedAt)} · '
-      'recuperado ${_formatDateTime(retrievedAt)}',
+      'Precio: $provider · observado ${_formatDateTime(updatedAt)} · recuperado ${_formatDateTime(retrievedAt)}',
       style: const TextStyle(
         color: AthenaColors.textSecondary,
         fontSize: 11,
@@ -926,23 +917,16 @@ class _PositionWithDelete extends StatelessWidget {
     );
   }
 
-  static Widget _valueColumn(
-    String title,
-    String value, {
-    Color valueColor = AthenaColors.text,
-  }) {
+  Widget _valueColumn(String title, String value, {Color valueColor = AthenaColors.text}) {
     return SizedBox(
-      width: 118,
+      width: 132,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 11,
-            ),
+            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
           ),
           const SizedBox(height: 3),
           Text(
@@ -959,18 +943,15 @@ class _PositionWithDelete extends StatelessWidget {
     );
   }
 
-  static String _format(double value) => '${value.toStringAsFixed(2)} €';
+  String _format(double value) => '${value.toStringAsFixed(2)} $_currency';
 
   static String _formatNumber(double value) {
-    if (value == value.roundToDouble()) {
-      return value.toInt().toString();
-    }
+    if (value == value.roundToDouble()) return value.toInt().toString();
     return value.toStringAsFixed(4).replaceFirst(RegExp(r'0+$'), '');
   }
 
   static String _formatDateTime(DateTime value) {
     String two(int number) => number.toString().padLeft(2, '0');
-    return '${two(value.day)}/${two(value.month)}/${value.year} '
-        '${two(value.hour)}:${two(value.minute)}';
+    return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
   }
 }
