@@ -182,19 +182,40 @@ def test_gate_exposes_machine_readable_engine_connectivity_without_mixing_invest
 
     assert coverage["technical"] == {
         "connected": True,
+        "influencesCandidate": True,
         "sourceBlock": "market",
         "status": "diagnostic_ready",
         "evidenceReady": True,
         "productionEligible": False,
     }
     assert coverage["risk"]["connected"] is True
+    assert coverage["risk"]["influencesCandidate"] is True
     assert coverage["risk"]["evidenceReady"] is True
+    assert coverage["fundamentals"]["influencesCandidate"] is True
     assert coverage["fundamentals"]["evidenceReady"] is True
+    assert coverage["valuation"]["influencesCandidate"] is True
     assert coverage["valuation"]["evidenceReady"] is True
+    assert coverage["marketMacro"] == {
+        "connected": False,
+        "influencesCandidate": False,
+        "status": "infrastructure_available_not_connected_to_candidate",
+        "evidenceReady": False,
+        "productionEligible": False,
+    }
+    assert coverage["dataQuality"] == {
+        "connected": False,
+        "influencesCandidate": False,
+        "status": "infrastructure_available_not_connected_to_candidate",
+        "evidenceReady": False,
+        "productionEligible": False,
+    }
+    assert coverage["calibration"]["influencesCandidate"] is False
     assert coverage["calibration"]["evidenceReady"] is False
+    assert coverage["recommendationCombination"]["influencesCandidate"] is False
     assert coverage["recommendationCombination"]["evidenceReady"] is False
     assert coverage["investorActivity"] == {
         "connected": False,
+        "influencesCandidate": False,
         "status": "independent_engine_not_yet_connected",
         "evidenceReady": False,
         "includedInAthenaRecommendation": False,
