@@ -58,6 +58,36 @@ void main() {
     expect(controller.error, isNotNull);
   });
 
+  test('clears the previous valuation while a newer snapshot is loading', () async {
+    final pending = Completer<PortfolioCurrentValuation>();
+    var calls = 0;
+    final controller = PortfolioCurrentValuationController(
+      loadValuation: ({required positions, required baseCurrency}) {
+        calls++;
+        if (calls == 1) return Future.value(_valuation(1000));
+        return pending.future;
+      },
+    );
+
+    await controller.load(
+      positions: const <PortfolioPosition>[],
+      baseCurrency: 'EUR',
+    );
+    expect(controller.valuation?.currentValueInBaseCurrency, 1000);
+
+    final reload = controller.load(
+      positions: const <PortfolioPosition>[],
+      baseCurrency: 'EUR',
+    );
+
+    expect(controller.isLoading, isTrue);
+    expect(controller.valuation, isNull);
+
+    pending.complete(_valuation(1100));
+    await reload;
+    expect(controller.valuation?.currentValueInBaseCurrency, 1100);
+  });
+
   test('older async result cannot overwrite a newer valuation', () async {
     final first = Completer<PortfolioCurrentValuation>();
     final second = Completer<PortfolioCurrentValuation>();
