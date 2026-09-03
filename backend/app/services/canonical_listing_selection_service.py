@@ -39,7 +39,7 @@ class CanonicalListingSelectionReport:
             "warning": (
                 "No se elige un ticker arbitrariamente cuando existen varias clases o "
                 "varios listados domésticos sin evidencia explícita de primariedad, ni "
-                "cuando faltan exchange, moneda o tipo de instrumento verificables."
+                "cuando falta una identidad de exchange verificable."
             ),
         }
 
@@ -185,7 +185,4 @@ class CanonicalListingSelectionService:
 
     @staticmethod
     def _has_complete_listing_identity(listing: dict[str, Any]) -> bool:
-        exchange = str(listing.get("exchange") or "").strip()
-        currency = str(listing.get("currency") or "").strip()
-        instrument_type = str(listing.get("instrumentType") or "").strip().lower()
-        return bool(exchange and currency and instrument_type and instrument_type != "unknown")
+        return bool(str(listing.get("exchange") or "").strip())
