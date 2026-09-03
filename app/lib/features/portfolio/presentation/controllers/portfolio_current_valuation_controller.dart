@@ -74,6 +74,9 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
 
     final generation = ++_requestGeneration;
 
+    // Never expose a valuation that belongs to an older portfolio snapshot
+    // while a new price/position/FX request is in flight.
+    _valuation = null;
     _isLoading = true;
     _error = null;
     notifyListeners();
