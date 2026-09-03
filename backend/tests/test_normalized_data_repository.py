@@ -105,6 +105,40 @@ def test_repository_as_of_requires_explicit_availability(tmp_path) -> None:
     assert point_in_time == []
 
 
+def test_repository_as_of_rejects_observation_retrieved_after_cutoff(tmp_path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    repository = NormalizedDataRepository(database)
+
+    repository.save(
+        NormalizedDatum(
+            metric="macro.test.series",
+            value=4.25,
+            data_kind="fact",
+            provenance=DataProvenance(
+                source_id="macro_source",
+                retrieved_at="2026-09-02T08:00:00+00:00",
+                effective_at="2026-08-01",
+                published_at="2026-08-15",
+                available_at="2026-08-15T00:00:00+00:00",
+                version="vintage-2026-08-15",
+            ),
+        )
+    )
+
+    before_retrieval = repository.get_latest(
+        metric="macro.test.series",
+        as_of="2026-09-01T20:30:00+00:00",
+    )
+    after_retrieval = repository.get_latest(
+        metric="macro.test.series",
+        as_of="2026-09-02T09:00:00+00:00",
+    )
+
+    assert before_retrieval == []
+    assert [row["value_json"] for row in after_retrieval] == ["4.25"]
+
+
 def test_repository_deduplicates_same_observation(tmp_path) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
