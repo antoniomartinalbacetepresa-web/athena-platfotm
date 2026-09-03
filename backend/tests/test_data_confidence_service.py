@@ -128,3 +128,30 @@ def test_confidence_rejects_negative_discrepancy_threshold() -> None:
             [_datum("one", 100.0, 90.0)],
             discrepancy_threshold_pct=-1.0,
         )
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
+def test_confidence_rejects_non_finite_numeric_observations(
+    invalid_value: float,
+) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        DataConfidenceService().assess(
+            [
+                _datum("one", 100.0, 90.0),
+                _datum("two", invalid_value, 90.0),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_threshold",
+    [float("nan"), float("inf"), float("-inf"), True],
+)
+def test_confidence_rejects_non_finite_or_boolean_thresholds(
+    invalid_threshold: float,
+) -> None:
+    with pytest.raises(ValueError, match="finite non-negative"):
+        DataConfidenceService().assess(
+            [_datum("one", 100.0, 90.0)],
+            discrepancy_threshold_pct=invalid_threshold,
+        )
