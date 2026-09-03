@@ -18,7 +18,11 @@ class _EvidenceGateService(Protocol):
 class RecommendationShadowCaptureService:
     """Capture immutable PIT evidence for later calibration, without an action."""
 
-    FEATURE_SCHEMA_VERSION = "shadow-evidence-v1"
+    # v2 freezes the macro-context-aware evidence-gate contract. Keeping the
+    # previous v1 label after macro was added would mix incompatible feature
+    # semantics inside calibration datasets and make historical provenance
+    # ambiguous.
+    FEATURE_SCHEMA_VERSION = "shadow-evidence-v2"
 
     def __init__(
         self,
