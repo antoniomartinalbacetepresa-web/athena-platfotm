@@ -330,3 +330,107 @@ def test_canonical_market_cap_keeps_unresolved_domicile_out_of_region_weights(
     assert report.median_cross_listing_market_cap_ratio is None
     assert report.max_cross_listing_market_cap_ratio is None
     assert report.to_api_dict()["readyForRegionalWeighting"] is False
+
+
+def test_canonical_market_cap_excludes_infinite_primary_from_all_aggregates(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    infinite_primary_id = _insert(
+        instruments,
+        symbol="INFINITE-PRIMARY",
+        market_cap=float("inf"),
+        country="United States",
+        region="america",
+        is_primary=True,
+    )
+    valid_secondary_id = _insert(
+        instruments,
+        symbol="VALID-SECONDARY",
+        market_cap=300.0,
+        country="United States",
+        region="america",
+    )
+
+    identities = IssuerIdentityRepository(database=database)
+    issuer_id = identities.upsert_external_issuer(
+        source_provider="official",
+        external_id="ISSUER-NON-FINITE",
+        canonical_name="Non Finite Issuer",
+        evidence_confidence=1.0,
+        domicile_country="United States",
+        region_key="america",
+    )
+    for instrument_id in (infinite_primary_id, valid_secondary_id):
+        identities.link_instrument(
+            instrument_id=instrument_id,
+            issuer_id=issuer_id,
+            evidence_source="official",
+            resolution_method="official_identifier",
+            confidence=1.0,
+        )
+
+    report = CanonicalMarketCapService(database=database).get_report()
+
+    assert report.linked_listing_count == 1
+    assert report.raw_linked_market_cap_usd == pytest.approx(300.0)
+    assert report.canonical_market_cap_usd == pytest.approx(300.0)
+    assert report.duplicate_excess_market_cap_usd == pytest.approx(0.0)
+    assert report.canonical_listing_market_cap_count == 0
+    assert report.median_fallback_market_cap_count == 1
+    assert report.multi_listing_issuer_count == 0
+    assert report.cross_listing_ratio_observation_count == 0
+    assert report.region_market_cap_usd == pytest.approx(
+        {"america": 300.0, "europe": 0.0, "asia": 0.0}
+    )
+    assert report.region_weights == pytest.approx(
+        {"america": 1.0, "europe": 0.0, "asia": 0.0}
+    )
+    assert report.to_api_dict()["readyForRegionalWeighting"] is False
+
+
+@pytest.mark.parametrize(
+    "invalid_cap",
+    [float("nan"), float("inf"), float("-inf"), 0.0, -1.0, True, None],
+)
+def test_canonical_market_cap_selection_ignores_invalid_caps(
+    tmp_path: Path,
+    invalid_cap: object,
+) -> None:
+    service = CanonicalMarketCapService(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+
+    cap, used_canonical = service._select_issuer_market_cap(
+        issuer_id=7,
+        listings=[
+            {"instrument_id": 1, "market_cap_usd": invalid_cap},
+            {"instrument_id": 2, "market_cap_usd": 250.0},
+        ],
+        selected_instrument_by_issuer={7: 1},
+    )
+
+    assert cap == pytest.approx(250.0)
+    assert used_canonical is False
+
+
+def test_canonical_market_cap_weights_fail_closed_on_invalid_caps(
+    tmp_path: Path,
+) -> None:
+    service = CanonicalMarketCapService(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+
+    weights = service._weights_from_caps(
+        {
+            "america": 300.0,
+            "europe": float("inf"),
+            "asia": float("nan"),
+        }
+    )
+
+    assert weights == pytest.approx(
+        {"america": 1.0, "europe": 0.0, "asia": 0.0}
+    )
