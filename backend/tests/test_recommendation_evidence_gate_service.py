@@ -293,3 +293,52 @@ def test_gate_rejects_naive_as_of_before_calling_components() -> None:
     assert market.calls == []
     assert fundamentals.calls == []
     assert valuation.calls == []
+
+
+@pytest.mark.parametrize("coverage_ratio", [float("inf"), float("-inf"), float("nan"), True])
+def test_gate_rejects_non_finite_or_boolean_fundamental_coverage(
+    coverage_ratio: float,
+) -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(_market_payload(source_providers=["yahoo_finance"])),
+        fundamental_service=_Service(
+            _fundamental_payload(coverage_ratio=coverage_ratio)
+        ),
+        valuation_service=_Service(
+            _valuation_payload(
+                status="diagnostic_ready",
+                reported_annual_pe=25.0,
+            )
+        ),
+    )
+
+    result = service.evaluate(symbol="AAPL", as_of=AS_OF)
+
+    assert result.fundamental_evidence_ready is False
+    assert result.core_evidence_ready is False
+    assert "fundamental_evidence_not_ready" in result.blockers
+    assert result.recommendation_candidate_ready is False
+    assert result.production_eligible is False
+
+
+@pytest.mark.parametrize("reported_annual_pe", [float("inf"), float("-inf"), float("nan"), True])
+def test_gate_rejects_non_finite_or_boolean_reported_pe(
+    reported_annual_pe: float,
+) -> None:
+    service = RecommendationEvidenceGateService(
+        market_service=_Service(_market_payload(source_providers=["yahoo_finance"])),
+        fundamental_service=_Service(_fundamental_payload()),
+        valuation_service=_Service(
+            _valuation_payload(
+                status="diagnostic_ready",
+                reported_annual_pe=reported_annual_pe,
+            )
+        ),
+    )
+
+    result = service.evaluate(symbol="AAPL", as_of=AS_OF)
+
+    assert result.valuation_ready is False
+    assert "valuation_not_ready" in result.blockers
+    assert result.recommendation_candidate_ready is False
+    assert result.production_eligible is False
