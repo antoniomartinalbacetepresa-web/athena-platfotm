@@ -14,6 +14,7 @@ class CanonicalListingSelectionReport:
     selected_issuer_count: int
     ambiguous_issuer_count: int
     no_domestic_listing_count: int
+    incomplete_listing_identity_count: int
     selections: tuple[dict[str, Any], ...]
     ambiguous: tuple[dict[str, Any], ...]
 
@@ -31,12 +32,14 @@ class CanonicalListingSelectionReport:
             "selectedIssuerCount": self.selected_issuer_count,
             "ambiguousIssuerCount": self.ambiguous_issuer_count,
             "noDomesticListingCount": self.no_domestic_listing_count,
+            "incompleteListingIdentityCount": self.incomplete_listing_identity_count,
             "selectionCoverage": self.selection_coverage,
             "selections": [dict(item) for item in self.selections],
             "ambiguous": [dict(item) for item in self.ambiguous],
             "warning": (
                 "No se elige un ticker arbitrariamente cuando existen varias clases o "
-                "varios listados domésticos sin evidencia explícita de primariedad."
+                "varios listados domésticos sin evidencia explícita de primariedad, ni "
+                "cuando faltan exchange, moneda o tipo de instrumento verificables."
             ),
         }
 
@@ -62,6 +65,8 @@ class CanonicalListingSelectionService:
                     i.symbol,
                     i.country AS listing_country,
                     i.exchange_short_name,
+                    i.instrument_type,
+                    i.currency,
                     i.is_primary_listing,
                     i.market_cap_usd
                 FROM canonical_issuers ci
@@ -94,6 +99,8 @@ class CanonicalListingSelectionService:
                     "symbol": str(row["symbol"]),
                     "listingCountry": str(row["listing_country"] or ""),
                     "exchange": str(row["exchange_short_name"] or ""),
+                    "instrumentType": str(row["instrument_type"] or ""),
+                    "currency": str(row["currency"] or ""),
                     "isPrimaryListing": bool(row["is_primary_listing"]),
                     "marketCapUsd": row["market_cap_usd"],
                 }
@@ -102,6 +109,7 @@ class CanonicalListingSelectionService:
         selections: list[dict[str, Any]] = []
         ambiguous: list[dict[str, Any]] = []
         no_domestic = 0
+        incomplete_identity = 0
 
         for group in groups.values():
             domicile = self._normalize_country(group["domicileCountry"])
@@ -115,15 +123,24 @@ class CanonicalListingSelectionService:
                 no_domestic += 1
                 continue
 
+            identity_complete = [
+                listing
+                for listing in domestic
+                if self._has_complete_listing_identity(listing)
+            ]
+            if not identity_complete:
+                incomplete_identity += 1
+                continue
+
             explicit_primary = [
-                listing for listing in domestic if listing["isPrimaryListing"]
+                listing for listing in identity_complete if listing["isPrimaryListing"]
             ]
 
             if len(explicit_primary) == 1:
                 selected = explicit_primary[0]
                 method = "explicit_primary_domestic_listing"
-            elif len(domestic) == 1:
-                selected = domestic[0]
+            elif len(identity_complete) == 1:
+                selected = identity_complete[0]
                 method = "single_domestic_listing"
             else:
                 ambiguous.append(
@@ -132,7 +149,7 @@ class CanonicalListingSelectionService:
                         "canonicalName": group["canonicalName"],
                         "domicileCountry": group["domicileCountry"],
                         "candidateSymbols": [
-                            listing["symbol"] for listing in domestic
+                            listing["symbol"] for listing in identity_complete
                         ],
                         "explicitPrimaryCount": len(explicit_primary),
                     }
@@ -147,6 +164,8 @@ class CanonicalListingSelectionService:
                     "instrumentId": selected["instrumentId"],
                     "symbol": selected["symbol"],
                     "exchange": selected["exchange"],
+                    "currency": selected["currency"],
+                    "instrumentType": selected["instrumentType"],
                     "selectionMethod": method,
                 }
             )
@@ -156,9 +175,17 @@ class CanonicalListingSelectionService:
             selected_issuer_count=len(selections),
             ambiguous_issuer_count=len(ambiguous),
             no_domestic_listing_count=no_domestic,
+            incomplete_listing_identity_count=incomplete_identity,
             selections=tuple(selections[: self._MAX_DIAGNOSTIC_ITEMS]),
             ambiguous=tuple(ambiguous[: self._MAX_DIAGNOSTIC_ITEMS]),
         )
 
     def _normalize_country(self, value: str) -> str:
         return self._countries.normalize_country(value) or ""
+
+    @staticmethod
+    def _has_complete_listing_identity(listing: dict[str, Any]) -> bool:
+        exchange = str(listing.get("exchange") or "").strip()
+        currency = str(listing.get("currency") or "").strip()
+        instrument_type = str(listing.get("instrumentType") or "").strip().lower()
+        return bool(exchange and currency and instrument_type and instrument_type != "unknown")
