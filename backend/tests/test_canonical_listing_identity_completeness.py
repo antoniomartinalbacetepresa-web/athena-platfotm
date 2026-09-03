@@ -1,24 +1,41 @@
 from pathlib import Path
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.issuer_identity_repository import IssuerIdentityRepository
 from app.services.canonical_listing_selection_service import CanonicalListingSelectionService
 
 
-def test_selector_fails_closed_when_domestic_listing_has_no_exchange_identity(
+@pytest.mark.parametrize(
+    ("exchange", "currency", "instrument_type"),
+    [
+        (None, "USD", "EQUITY"),
+        ("NASDAQ", None, "EQUITY"),
+        ("NASDAQ", "US", "EQUITY"),
+        ("NASDAQ", "USD", None),
+        ("NASDAQ", "USD", "UNKNOWN"),
+    ],
+)
+def test_selector_fails_closed_when_domestic_listing_identity_is_incomplete(
     tmp_path: Path,
+    exchange: str | None,
+    currency: str | None,
+    instrument_type: str | None,
 ) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
     instruments = InstrumentRepository(database=database)
     instrument_id = instruments.upsert(
         {
-            "symbol": "NOEX",
-            "companyName": "No Exchange Issuer",
+            "symbol": "INCOMPLETE",
+            "companyName": "Incomplete Listing Issuer",
             "country": "United States",
             "regionKey": "america",
-            "exchangeShortName": None,
+            "exchangeShortName": exchange,
+            "currency": currency,
+            "instrumentType": instrument_type,
             "marketCap": 100.0,
             "isPrimaryListing": True,
         }
@@ -26,8 +43,8 @@ def test_selector_fails_closed_when_domestic_listing_has_no_exchange_identity(
     identities = IssuerIdentityRepository(database=database)
     issuer_id = identities.upsert_external_issuer(
         source_provider="official",
-        external_id="NOEX",
-        canonical_name="No Exchange Issuer",
+        external_id="INCOMPLETE",
+        canonical_name="Incomplete Listing Issuer",
         evidence_confidence=1.0,
         domicile_country="United States",
         region_key="america",
