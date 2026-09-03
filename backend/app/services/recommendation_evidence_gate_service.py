@@ -31,6 +31,7 @@ class RecommendationEvidenceGate:
     fundamental_evidence_ready: bool
     identity_consistent: bool
     provenance_contract_ready: bool
+    data_quality_ready: bool
     valuation_ready: bool
     calibration_ready: bool
     recommendation_candidate_ready: bool
@@ -52,6 +53,7 @@ class RecommendationEvidenceGate:
             "fundamentalEvidenceReady": self.fundamental_evidence_ready,
             "identityConsistent": self.identity_consistent,
             "provenanceContractReady": self.provenance_contract_ready,
+            "dataQualityReady": self.data_quality_ready,
             "valuationReady": self.valuation_ready,
             "calibrationReady": self.calibration_ready,
             "recommendationCandidateReady": self.recommendation_candidate_ready,
@@ -68,6 +70,10 @@ class RecommendationEvidenceGate:
                 "sameInstrumentRequired": True,
                 "componentDiagnosticsMustRemainNonProductive": True,
                 "qualityThreshold": "not_assumed_until_empirically_calibrated",
+                "dataQuality": (
+                    "structural_finiteness_and_pit_contract_only_no_empirical_"
+                    "quality_threshold_assumed"
+                ),
                 "valuation": "pit_reported_annual_pe_required_for_initial_gate",
                 "calibration": "out_of_sample_validation_required",
                 "investorActivity": (
@@ -121,10 +127,15 @@ class RecommendationEvidenceGate:
                 "productionEligible": False,
             },
             "dataQuality": {
-                "connected": False,
-                "influencesCandidate": False,
-                "status": "infrastructure_available_not_connected_to_candidate",
-                "evidenceReady": False,
+                "connected": True,
+                "influencesCandidate": True,
+                "status": (
+                    "structural_contract_ready"
+                    if self.data_quality_ready
+                    else "structural_contract_incomplete"
+                ),
+                "evidenceReady": self.data_quality_ready,
+                "thresholdCalibrated": False,
                 "productionEligible": False,
             },
             "calibration": {
@@ -160,6 +171,8 @@ class RecommendationEvidenceGate:
 
 class RecommendationEvidenceGateService:
     """Fail-closed gate over recommendation evidence available at one PIT cutoff."""
+
+    _MARKET_MIN_OBSERVATIONS = 61
 
     def __init__(
         self,
@@ -250,12 +263,22 @@ class RecommendationEvidenceGateService:
             valuation_payload=valuation_payload,
             valuation_ready=valuation_ready,
         )
+        data_quality_ready = self._data_quality_contract_ready(
+            market_payload=market_payload,
+            fundamental_payload=fundamental_payload,
+            valuation_payload=valuation_payload,
+            as_of=as_of_utc,
+            market_ready=market_ready,
+            fundamental_ready=fundamental_ready,
+            valuation_ready=valuation_ready,
+        )
         calibration_ready = False
         core_evidence_ready = (
             market_ready
             and fundamental_ready
             and identity_consistent
             and provenance_contract_ready
+            and data_quality_ready
         )
 
         blockers: list[str] = []
@@ -267,6 +290,8 @@ class RecommendationEvidenceGateService:
             blockers.append("instrument_identity_mismatch")
         if not provenance_contract_ready:
             blockers.append("provenance_contract_incomplete")
+        if not data_quality_ready:
+            blockers.append("data_quality_contract_incomplete")
         if not valuation_ready:
             blockers.append("valuation_not_ready")
         if not calibration_ready:
@@ -283,15 +308,16 @@ class RecommendationEvidenceGateService:
         if core_evidence_ready and valuation_ready:
             status = "evidence_ready_for_calibration"
             reason = (
-                "Mercado, fundamentales, identidad, procedencia y la valoración PIT "
-                "inicial superan el gate de evidencia. ATHENA mantiene bloqueado el "
-                "consejo hasta validar la combinación fuera de muestra."
+                "Mercado, fundamentales, identidad, procedencia, calidad estructural "
+                "y valoración PIT superan el gate de evidencia. ATHENA mantiene "
+                "bloqueado el consejo hasta validar la combinación fuera de muestra."
             )
         elif core_evidence_ready:
             status = "core_evidence_ready"
             reason = (
-                "La evidencia técnica/riesgo y fundamental supera el gate básico, "
-                "pero la valoración PIT aún no está lista y no se genera consejo."
+                "La evidencia técnica/riesgo y fundamental supera el gate básico de "
+                "identidad, procedencia y calidad estructural, pero la valoración PIT "
+                "aún no está lista y no se genera consejo."
             )
         else:
             status = "evidence_incomplete"
@@ -310,6 +336,7 @@ class RecommendationEvidenceGateService:
             fundamental_evidence_ready=fundamental_ready,
             identity_consistent=identity_consistent,
             provenance_contract_ready=provenance_contract_ready,
+            data_quality_ready=data_quality_ready,
             valuation_ready=valuation_ready,
             calibration_ready=calibration_ready,
             recommendation_candidate_ready=recommendation_candidate_ready,
@@ -401,49 +428,187 @@ class RecommendationEvidenceGateService:
             and has_valuation_market_sources
         )
 
+    def _data_quality_contract_ready(
+        self,
+        *,
+        market_payload: dict[str, Any],
+        fundamental_payload: dict[str, Any],
+        valuation_payload: dict[str, Any],
+        as_of: datetime,
+        market_ready: bool,
+        fundamental_ready: bool,
+        valuation_ready: bool,
+    ) -> bool:
+        if market_ready and not self._market_quality_ready(market_payload, as_of=as_of):
+            return False
+        if fundamental_ready and not self._fundamental_quality_ready(
+            fundamental_payload,
+            as_of=as_of,
+        ):
+            return False
+        if valuation_ready and not self._valuation_quality_ready(
+            valuation_payload,
+            as_of=as_of,
+        ):
+            return False
+        return market_ready and fundamental_ready
+
+    def _market_quality_ready(
+        self,
+        payload: dict[str, Any],
+        *,
+        as_of: datetime,
+    ) -> bool:
+        observation_count = self._optional_int(payload.get("observationCount"))
+        if observation_count is None or observation_count < self._MARKET_MIN_OBSERVATIONS:
+            return False
+        if not self._positive_float(payload.get("latestPrice")):
+            return False
+        for key in ("return20d", "return60d", "maxDrawdown60d"):
+            if not self._finite_float(payload.get(key)):
+                return False
+        if not self._non_negative_float(payload.get("annualizedVolatility")):
+            return False
+        for key in ("technicalScore", "riskScore"):
+            if not self._float_between(payload.get(key), 0.0, 100.0):
+                return False
+        return self._pit_timestamp_pair_ready(
+            observed_value=payload.get("latestObservedAt"),
+            retrieved_value=payload.get("latestRetrievedAt"),
+            as_of=as_of,
+        )
+
+    def _fundamental_quality_ready(
+        self,
+        payload: dict[str, Any],
+        *,
+        as_of: datetime,
+    ) -> bool:
+        facts = payload.get("facts")
+        if not isinstance(facts, list) or not facts:
+            return False
+        for fact in facts:
+            if not isinstance(fact, dict):
+                return False
+            if not self._finite_float(fact.get("value")):
+                return False
+            available_at = self._optional_aware_datetime(fact.get("availableAt"))
+            if available_at is None or available_at > as_of:
+                return False
+            quality_score = fact.get("qualityScore")
+            if quality_score is not None and not self._finite_float(quality_score):
+                return False
+        for key in ("revenueGrowth", "netMargin", "liabilitiesToAssets"):
+            value = payload.get(key)
+            if value is not None and not self._finite_float(value):
+                return False
+        mean_quality_score = payload.get("meanQualityScore")
+        if mean_quality_score is not None and not self._finite_float(mean_quality_score):
+            return False
+        return True
+
+    def _valuation_quality_ready(
+        self,
+        payload: dict[str, Any],
+        *,
+        as_of: datetime,
+    ) -> bool:
+        if not self._positive_float(payload.get("latestPrice")):
+            return False
+        if not self._positive_float(payload.get("reportedAnnualPe")):
+            return False
+        if not self._pit_timestamp_pair_ready(
+            observed_value=payload.get("latestPriceObservedAt"),
+            retrieved_value=payload.get("latestPriceRetrievedAt"),
+            as_of=as_of,
+        ):
+            return False
+        eps = payload.get("annualDilutedEps")
+        if not isinstance(eps, dict) or not self._positive_float(eps.get("value")):
+            return False
+        available_at = self._optional_aware_datetime(eps.get("availableAt"))
+        if available_at is None or available_at > as_of:
+            return False
+        quality_score = eps.get("qualityScore")
+        return quality_score is None or self._finite_float(quality_score)
+
+    def _pit_timestamp_pair_ready(
+        self,
+        *,
+        observed_value: object,
+        retrieved_value: object,
+        as_of: datetime,
+    ) -> bool:
+        observed_at = self._optional_aware_datetime(observed_value)
+        retrieved_at = self._optional_aware_datetime(retrieved_value)
+        return (
+            observed_at is not None
+            and retrieved_at is not None
+            and observed_at <= retrieved_at
+            and retrieved_at <= as_of
+        )
+
     def _identity_consistent(self, *instrument_ids: int | None) -> bool:
         if any(value is None for value in instrument_ids):
             return False
         resolved = {int(value) for value in instrument_ids if value is not None}
         return len(resolved) == 1
 
-    def _float_at_least(self, value: object, threshold: float) -> bool:
+    def _finite_float(self, value: object) -> bool:
         if isinstance(value, bool):
             return False
         try:
             numeric_value = float(value)
         except (TypeError, ValueError, OverflowError):
             return False
-        return isfinite(numeric_value) and numeric_value >= threshold
+        return isfinite(numeric_value)
+
+    def _float_at_least(self, value: object, threshold: float) -> bool:
+        if not self._finite_float(value):
+            return False
+        return float(value) >= threshold
 
     def _positive_float(self, value: object) -> bool:
-        if isinstance(value, bool):
+        if not self._finite_float(value):
             return False
-        try:
-            numeric_value = float(value)
-        except (TypeError, ValueError, OverflowError):
+        return float(value) > 0
+
+    def _non_negative_float(self, value: object) -> bool:
+        if not self._finite_float(value):
             return False
-        return isfinite(numeric_value) and numeric_value > 0
+        return float(value) >= 0
+
+    def _float_between(self, value: object, minimum: float, maximum: float) -> bool:
+        if not self._finite_float(value):
+            return False
+        numeric_value = float(value)
+        return minimum <= numeric_value <= maximum
 
     def _optional_int(self, value: object) -> int | None:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
-    def _parse_aware_datetime(self, value: object) -> datetime:
+    def _optional_aware_datetime(self, value: object) -> datetime | None:
         text = str(value or "").strip()
         if not text:
-            raise RuntimeError("El diagnóstico no incluye asOf.")
+            return None
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise RuntimeError("El diagnóstico incluye un asOf inválido.") from exc
+        except (TypeError, ValueError):
+            return None
         if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise RuntimeError("El diagnóstico incluye un asOf sin zona horaria.")
+            return None
         return parsed.astimezone(timezone.utc)
+
+    def _parse_aware_datetime(self, value: object) -> datetime:
+        parsed = self._optional_aware_datetime(value)
+        if parsed is None:
+            raise RuntimeError("El diagnóstico incluye un asOf inválido o sin zona horaria.")
+        return parsed
 
     def _aware_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
