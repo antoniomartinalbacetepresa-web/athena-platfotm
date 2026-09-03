@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../market/di/market_dependencies.dart';
 import '../../models/portfolio_position.dart';
 import '../../services/portfolio_current_valuation_service.dart';
 
@@ -33,6 +34,29 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
   ) {
     return PortfolioCurrentValuationController(
       loadValuation: service.value,
+    );
+  }
+
+  /// Composes the production portfolio valuation chain from the already
+  /// configured market dependencies.
+  ///
+  /// The factory fails closed when the selected market configuration does not
+  /// expose ATHENA backend FX. This prevents callers from silently substituting
+  /// mock, nominal or direct-provider conversion inside the portfolio UI.
+  factory PortfolioCurrentValuationController.forMarketDependencies(
+    MarketDependencies dependencies,
+  ) {
+    final fxDataSource = dependencies.backendFxDataSource;
+    if (fxDataSource == null) {
+      throw StateError(
+        'La valoración multimoneda requiere FX verificable del backend ATHENA.',
+      );
+    }
+
+    return PortfolioCurrentValuationController.forService(
+      PortfolioCurrentValuationService(
+        loadCurrentFxRate: fxDataSource.getCurrentRate,
+      ),
     );
   }
 
