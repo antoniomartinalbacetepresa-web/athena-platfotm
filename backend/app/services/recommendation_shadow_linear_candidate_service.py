@@ -55,7 +55,23 @@ class RecommendationShadowLinearCandidateService:
         self._minimum_test_rows = int(minimum_test_rows)
 
     def evaluate(self, **split_kwargs: Any) -> dict[str, Any]:
+        """Build one PIT split and evaluate it.
+
+        This compatibility entry point owns split construction. Orchestrators
+        that already froze a split must call ``evaluate_frozen_split`` instead
+        so the evaluated universe cannot change between consumers.
+        """
         split = self._split_service.build(require_benchmark=True, **split_kwargs)
+        return self.evaluate_frozen_split(split=split)
+
+    def evaluate_frozen_split(self, *, split: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate an already-built temporal split without reading persistence.
+
+        The caller owns PIT construction and may safely reuse the exact same
+        split for parallel research paths (for example base vs macro). This
+        method intentionally performs no repository or split-service call.
+        """
+        self._validate_frozen_split(split)
         train_rows = list(split["train"])
         validation_rows = list(split["validation"])
         test_rows = list(split["test"])
@@ -168,6 +184,27 @@ class RecommendationShadowLinearCandidateService:
             },
             "splitCounts": split["counts"],
         }
+
+    def _validate_frozen_split(self, split: dict[str, Any]) -> None:
+        if not isinstance(split, dict):
+            raise ValueError("split congelado debe ser un diccionario.")
+        for key in ("train", "validation", "test", "counts", "featureSchemaVersion"):
+            if key not in split:
+                raise ValueError(f"split congelado sin campo obligatorio: {key}.")
+        for partition in ("train", "validation", "test"):
+            if not isinstance(split[partition], (list, tuple)):
+                raise ValueError(f"split congelado {partition} debe ser una secuencia.")
+        counts = split["counts"]
+        if not isinstance(counts, dict):
+            raise ValueError("split congelado counts debe ser un diccionario.")
+        for partition in ("train", "validation", "test"):
+            expected = counts.get(partition)
+            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+                raise ValueError(f"split congelado counts.{partition} inválido.")
+            if expected != len(split[partition]):
+                raise ValueError(
+                    f"split congelado counts.{partition} no coincide con la partición."
+                )
 
     def _blocked(self, split: dict[str, Any], reasons: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -323,6 +360,8 @@ class RecommendationShadowLinearCandidateService:
         return {"mse": mse, "mae": mae, "signAccuracy": sign_accuracy}
 
     def _finite_float(self, value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
         try:
             parsed = float(value)
         except (TypeError, ValueError):
