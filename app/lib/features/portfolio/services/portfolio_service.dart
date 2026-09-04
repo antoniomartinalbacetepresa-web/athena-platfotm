@@ -1,8 +1,11 @@
 import '../../market/models/market_quote.dart';
 import '../../market/repositories/market_repository.dart';
+import '../data/athena_backend_portfolio_identity_data_source.dart';
 import '../models/portfolio.dart';
+import '../models/portfolio_instrument_identity.dart';
 import '../models/portfolio_position.dart';
 import '../repositories/portfolio_repository.dart';
+import 'portfolio_identity_enrichment_service.dart';
 
 class PortfolioPriceRefreshReport {
   final int totalPositions;
@@ -22,11 +25,24 @@ class PortfolioPriceRefreshReport {
 }
 
 class PortfolioService {
+  static const String _defaultBackendUrl = String.fromEnvironment(
+    'ATHENA_BACKEND_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
+  static const PortfolioIdentityEnrichmentService _identityEnrichmentService =
+      PortfolioIdentityEnrichmentService();
+
   PortfolioService({
     PortfolioRepository? repository,
-  }) : _repository = repository ?? PortfolioRepository();
+    PortfolioIdentityResolver? identityResolver,
+  })  : _repository = repository ?? PortfolioRepository(),
+        _identityResolver = identityResolver,
+        _requireCanonicalIdentity =
+            identityResolver != null || repository == null;
 
   final PortfolioRepository _repository;
+  final PortfolioIdentityResolver? _identityResolver;
+  final bool _requireCanonicalIdentity;
 
   Portfolio? _portfolio;
 
@@ -182,7 +198,8 @@ class PortfolioService {
       throw StateError('No existe una cartera.');
     }
 
-    final verifiedPosition = _validateNewPosition(position);
+    final identityEnriched = await _enrichCanonicalIdentity(position);
+    final verifiedPosition = _validateNewPosition(identityEnriched);
     final normalizedSymbol = verifiedPosition.symbol;
     final alreadyExists = portfolio.positions.any(
       (existing) => existing.symbol.trim().toUpperCase() == normalizedSymbol,
@@ -198,6 +215,43 @@ class PortfolioService {
 
     _portfolio = portfolio.copyWith(positions: updatedPositions);
     await _repository.savePortfolio(_portfolio!);
+  }
+
+  Future<PortfolioPosition> _enrichCanonicalIdentity(
+    PortfolioPosition position,
+  ) async {
+    if (position.hasVerifiedCanonicalIdentity) {
+      return position;
+    }
+    if (!_requireCanonicalIdentity) {
+      return position;
+    }
+
+    final resolver = _identityResolver ?? _resolveCanonicalIdentity;
+    final enriched = await _identityEnrichmentService.enrich(
+      position: position,
+      resolver: resolver,
+    );
+    if (!enriched.hasVerifiedCanonicalIdentity) {
+      throw StateError(
+        'La posición no puede persistirse sin identidad canónica verificable.',
+      );
+    }
+    return enriched;
+  }
+
+  Future<PortfolioInstrumentIdentity> _resolveCanonicalIdentity({
+    required String symbol,
+    String? exchange,
+  }) async {
+    final dataSource = AthenaBackendPortfolioIdentityDataSource(
+      baseUrl: _defaultBackendUrl,
+    );
+    try {
+      return await dataSource.resolve(symbol: symbol, exchange: exchange);
+    } finally {
+      dataSource.dispose();
+    }
   }
 
   PortfolioPosition _validateNewPosition(PortfolioPosition position) {
@@ -251,6 +305,11 @@ class PortfolioService {
     if (retrievedAt.isBefore(updatedAt)) {
       throw StateError(
         'La recuperación de la cotización no puede preceder a su observación.',
+      );
+    }
+    if (_requireCanonicalIdentity && !position.hasVerifiedCanonicalIdentity) {
+      throw StateError(
+        'Una posición productiva requiere identidad canónica verificable.',
       );
     }
 
