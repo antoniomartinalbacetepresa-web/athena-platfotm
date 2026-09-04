@@ -7,21 +7,30 @@ from typing import Any
 from app.services.recommendation_shadow_linear_candidate_service import (
     RecommendationShadowLinearCandidateService,
 )
+from app.services.recommendation_shadow_macro_fold_preprocessing_service import (
+    RecommendationShadowMacroFoldPreprocessingService,
+)
+from app.services.recommendation_shadow_temporal_split_service import (
+    RecommendationShadowTemporalSplitService,
+)
 
 
 class RecommendationShadowWalkForwardService:
     """Evaluate one shadow candidate across ordered purged temporal folds.
 
-    This service is diagnostic only. It never maps model outputs to actions and
-    never promotes a model to production. Its purpose is to expose whether an
-    apparent out-of-sample edge survives multiple later temporal windows rather
-    than a single convenient train/validation/test split.
+    Macro research preprocessing is executed inside each already-purged fold and
+    fitted only on that fold's training partition. It remains diagnostic: macro
+    values are not appended to the candidate model here and therefore cannot
+    silently influence ATHENA scores, actions, or production eligibility.
     """
 
     def __init__(
         self,
         *,
         candidate_service: RecommendationShadowLinearCandidateService | None = None,
+        split_service: RecommendationShadowTemporalSplitService | None = None,
+        macro_preprocessing_service: RecommendationShadowMacroFoldPreprocessingService
+        | None = None,
         minimum_evaluated_folds: int = 3,
     ) -> None:
         if minimum_evaluated_folds < 2:
@@ -30,6 +39,14 @@ class RecommendationShadowWalkForwardService:
             candidate_service
             if candidate_service is not None
             else RecommendationShadowLinearCandidateService()
+        )
+        self._split_service = (
+            split_service if split_service is not None else RecommendationShadowTemporalSplitService()
+        )
+        self._macro_preprocessing_service = (
+            macro_preprocessing_service
+            if macro_preprocessing_service is not None
+            else RecommendationShadowMacroFoldPreprocessingService()
         )
         self._minimum_evaluated_folds = int(minimum_evaluated_folds)
 
@@ -45,6 +62,18 @@ class RecommendationShadowWalkForwardService:
 
         results: list[dict[str, Any]] = []
         for index, fold in enumerate(normalized):
+            split = self._split_service.build(
+                as_of=fold["as_of"],
+                train_end=fold["train_end"],
+                validation_end=fold["validation_end"],
+                horizon_days=horizon_days,
+                require_benchmark=True,
+            )
+            macro_preprocessing = self._macro_preprocessing_service.fit_transform(
+                train_rows=list(split["train"]),
+                validation_rows=list(split["validation"]),
+                test_rows=list(split["test"]),
+            )
             evaluation = self._candidate_service.evaluate(
                 as_of=fold["as_of"],
                 train_end=fold["train_end"],
@@ -58,6 +87,26 @@ class RecommendationShadowWalkForwardService:
                         "trainEnd": fold["train_end"].isoformat(),
                         "validationEnd": fold["validation_end"].isoformat(),
                         "testEnd": fold["as_of"].isoformat(),
+                    },
+                    "macroResearch": {
+                        "status": macro_preprocessing.get("status"),
+                        "schemaVersion": macro_preprocessing.get("schemaVersion"),
+                        "selectedFeatures": list(
+                            macro_preprocessing.get("selectedFeatures") or []
+                        ),
+                        "fitParameters": dict(
+                            macro_preprocessing.get("fitParameters") or {}
+                        ),
+                        "partitionCounts": {
+                            name: len(
+                                (macro_preprocessing.get("partitions") or {}).get(name)
+                                or []
+                            )
+                            for name in ("train", "validation", "test")
+                        },
+                        "reason": macro_preprocessing.get("reason"),
+                        "candidateInfluence": False,
+                        "productionEligible": False,
                     },
                     "evaluation": evaluation,
                 }
@@ -189,6 +238,8 @@ class RecommendationShadowWalkForwardService:
             "evaluation": "multiple_ordered_purged_temporal_folds",
             "benchmark": "zero_excess_return_baseline_per_fold",
             "stability": "reported_diagnostically_not_used_for_promotion",
+            "macroResearchPreprocessing": "fit_inside_each_fold_train_only",
+            "macroCandidateInfluence": "disabled_until_oos_comparison_is_validated",
             "actions": "not_assigned",
             "automaticModelMutation": False,
             "productionEligibility": False,
