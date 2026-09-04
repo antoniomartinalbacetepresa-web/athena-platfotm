@@ -4,6 +4,10 @@ import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_radius.dart';
 import '../../../market/di/market_dependencies.dart';
 import '../../../portfolio/models/portfolio.dart';
+import '../../../portfolio/models/portfolio_valuation_summary.dart';
+import '../../../portfolio/presentation/controllers/portfolio_concentration_controller.dart';
+import '../../../portfolio/presentation/controllers/portfolio_current_valuation_controller.dart';
+import '../../../portfolio/services/portfolio_concentration_service.dart';
 import '../../../portfolio/services/portfolio_service.dart';
 
 class MySpacePanel extends StatefulWidget {
@@ -14,8 +18,12 @@ class MySpacePanel extends StatefulWidget {
 }
 
 class _MySpacePanelState extends State<MySpacePanel> {
+  static const _baseCurrency = 'EUR';
+
   final PortfolioService _portfolioService = PortfolioService();
   late final MarketDependencies _marketDependencies;
+  late final PortfolioCurrentValuationController _valuationController;
+  late final PortfolioConcentrationController _concentrationController;
 
   Portfolio? _portfolio;
   bool _isLoading = true;
@@ -26,13 +34,49 @@ class _MySpacePanelState extends State<MySpacePanel> {
   void initState() {
     super.initState();
     _marketDependencies = MarketDependencies.create();
+    _valuationController =
+        PortfolioCurrentValuationController.forMarketDependencies(
+      _marketDependencies,
+    )..addListener(_onEvidenceChanged);
+    _concentrationController = PortfolioConcentrationController.forService(
+      PortfolioConcentrationService(
+        loadValuation: _valuationController.loadValuation,
+      ),
+    )..addListener(_onEvidenceChanged);
     _loadPortfolio();
   }
 
   @override
   void dispose() {
+    _valuationController.removeListener(_onEvidenceChanged);
+    _concentrationController.removeListener(_onEvidenceChanged);
+    _valuationController.dispose();
+    _concentrationController.dispose();
     _marketDependencies.dispose();
     super.dispose();
+  }
+
+  void _onEvidenceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadEvidence(Portfolio portfolio) async {
+    if (portfolio.positions.isEmpty) {
+      _valuationController.clear();
+      _concentrationController.clear();
+      return;
+    }
+
+    await Future.wait([
+      _valuationController.load(
+        positions: portfolio.positions,
+        baseCurrency: _baseCurrency,
+      ),
+      _concentrationController.load(
+        positions: portfolio.positions,
+        baseCurrency: _baseCurrency,
+      ),
+    ]);
   }
 
   Future<void> _loadPortfolio() async {
@@ -40,39 +84,58 @@ class _MySpacePanelState extends State<MySpacePanel> {
       await _portfolioService.loadPortfolio();
 
       var staleSymbols = const <String>[];
-      final portfolio = _portfolioService.portfolio;
-      if (portfolio != null && portfolio.positions.isNotEmpty) {
+      final loaded = _portfolioService.portfolio;
+      if (loaded != null && loaded.positions.isNotEmpty) {
         try {
           final report = await _portfolioService.refreshCurrentPrices(
             marketRepository: _marketDependencies.repository,
           );
           staleSymbols = report.failedSymbols;
         } catch (_) {
-          staleSymbols = portfolio.positions
+          staleSymbols = loaded.positions
               .map((position) => position.symbol)
               .toList(growable: false);
         }
       }
 
-      if (!mounted) {
-        return;
+      final portfolio = _portfolioService.portfolio;
+      if (portfolio != null) {
+        await _loadEvidence(portfolio);
+      } else {
+        _valuationController.clear();
+        _concentrationController.clear();
       }
+
+      if (!mounted) return;
       setState(() {
-        _portfolio = _portfolioService.portfolio;
+        _portfolio = portfolio;
         _staleSymbols = staleSymbols;
         _isLoading = false;
         _hasLoadError = false;
       });
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      _valuationController.clear();
+      _concentrationController.clear();
       setState(() {
         _portfolio = null;
         _staleSymbols = const [];
         _isLoading = false;
         _hasLoadError = true;
       });
+    }
+  }
+
+  PortfolioValuationSummary? _valuationSummary(Portfolio portfolio) {
+    final valuation = _valuationController.valuation;
+    if (valuation == null) return null;
+    try {
+      return PortfolioValuationSummary.fromValuation(
+        valuation: valuation,
+        referenceCapital: portfolio.initialCapital,
+      );
+    } catch (_) {
+      return null;
     }
   }
 
@@ -150,16 +213,21 @@ class _MySpacePanelState extends State<MySpacePanel> {
       );
     }
 
-    final invested = portfolio.investedValue;
-    final current = portfolio.currentValue;
-    final profitLoss = portfolio.profitLoss;
+    final summary = _valuationSummary(portfolio);
+    final concentration = _concentrationController.snapshot;
+    final hasPositions = portfolio.positions.isNotEmpty;
     final hasReferenceCapital = portfolio.initialCapital > 0;
-    final remainingReference = hasReferenceCapital
-        ? portfolio.referenceCapitalRemaining
-        : null;
-    final referenceExcess = hasReferenceCapital
-        ? portfolio.referenceCapitalExcess
-        : null;
+    final current = hasPositions ? summary?.currentValue : 0.0;
+    final invested = hasPositions ? summary?.investedCapital : 0.0;
+    final profitLoss = hasPositions ? summary?.profitLoss : 0.0;
+    final profitLossPercentage =
+        hasPositions ? summary?.profitLossPercentage : 0.0;
+    final referenceExcess = hasPositions
+        ? summary?.excessOverReference
+        : (hasReferenceCapital ? 0.0 : null);
+    final remainingReference = hasPositions
+        ? summary?.unallocatedCapital
+        : (hasReferenceCapital ? portfolio.initialCapital : null);
 
     return SingleChildScrollView(
       child: Column(
@@ -169,10 +237,18 @@ class _MySpacePanelState extends State<MySpacePanel> {
             _priceWarning(_staleSymbols),
             const SizedBox(height: 10),
           ],
+          if (_valuationController.error != null && hasPositions) ...[
+            _evidenceWarning(
+              'Valoración EUR no disponible: falta precio o FX verificable.',
+            ),
+            const SizedBox(height: 10),
+          ],
           _row(
             'Valor actual posiciones',
-            _formatCurrency(current),
-            '${portfolio.positions.length} posiciones',
+            current == null ? 'No disponible' : _formatCurrency(current),
+            current == null
+                ? 'ATHENA no suma monedas sin conversión verificable'
+                : '${portfolio.positions.length} posiciones · base EUR',
             AthenaColors.text,
           ),
           _divider(),
@@ -187,11 +263,11 @@ class _MySpacePanelState extends State<MySpacePanel> {
             AthenaColors.text,
           ),
           _divider(),
-          if (hasReferenceCapital && portfolio.isOverReferenceCapital)
+          if (referenceExcess != null && referenceExcess > 0)
             _row(
               'Exceso sobre referencia',
-              _formatCurrency(referenceExcess ?? 0),
-              'Coste invertido por encima de la referencia',
+              _formatCurrency(referenceExcess),
+              'Coste histórico EUR verificable por encima de la referencia',
               const Color(0xFFFFB86B),
             )
           else
@@ -201,30 +277,49 @@ class _MySpacePanelState extends State<MySpacePanel> {
                   ? 'No disponible'
                   : _formatCurrency(remainingReference),
               remainingReference == null
-                  ? 'Falta capital de referencia'
-                  : 'Referencia menos coste invertido',
+                  ? 'Requiere coste histórico EUR verificable'
+                  : 'Referencia menos coste histórico verificable',
               AthenaColors.text,
             ),
           _divider(),
           _row(
             'Resultado no realizado',
-            _formatSignedCurrency(profitLoss),
-            invested == 0
-                ? 'Sin capital invertido'
-                : '${portfolio.profitLossPercentage >= 0 ? '+' : ''}${portfolio.profitLossPercentage.toStringAsFixed(2)} %',
-            profitLoss > 0
-                ? const Color(0xFF45D483)
-                : profitLoss < 0
-                    ? const Color(0xFFFF5C5C)
-                    : AthenaColors.text,
+            profitLoss == null
+                ? 'No disponible'
+                : _formatSignedCurrency(profitLoss),
+            profitLoss == null || profitLossPercentage == null
+                ? 'Sin comparación histórica EUR verificable'
+                : '${profitLossPercentage >= 0 ? '+' : ''}${profitLossPercentage.toStringAsFixed(2)} %',
+            profitLoss == null
+                ? AthenaColors.textSecondary
+                : profitLoss > 0
+                    ? const Color(0xFF45D483)
+                    : profitLoss < 0
+                        ? const Color(0xFFFF5C5C)
+                        : AthenaColors.text,
           ),
           _divider(),
           _row(
-            'Riesgo',
-            'Pendiente',
-            'Sin métrica validada de cartera',
+            'Concentración',
+            concentration == null
+                ? 'No disponible'
+                : 'HHI ${concentration.concentrationIndex.toStringAsFixed(3)}',
+            concentration == null
+                ? 'Requiere valoración individual EUR verificable'
+                : '${concentration.effectivePositionCount.toStringAsFixed(2)} posiciones efectivas · mayor ${concentration.largestPositionSymbol} ${(concentration.largestPositionWeight * 100).toStringAsFixed(1)} %',
             AthenaColors.textSecondary,
           ),
+          if (invested == null && hasPositions) ...[
+            _divider(),
+            const Text(
+              'El coste/P&L histórico permanece bloqueado si una posición multimoneda no tiene fecha de coste o FX histórico verificable.',
+              style: TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 10,
+                height: 1.35,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -235,6 +330,12 @@ class _MySpacePanelState extends State<MySpacePanel> {
         ? 'Precio sin actualizar: ${symbols.single}'
         : '${symbols.length} precios sin actualizar';
 
+    return _evidenceWarning(
+      '$label. Se conserva el último valor guardado y no se sustituye por una estimación.',
+    );
+  }
+
+  static Widget _evidenceWarning(String message) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(9),
@@ -244,7 +345,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
         border: Border.all(color: AthenaColors.border),
       ),
       child: Text(
-        '$label. Se conserva el último valor guardado y no se sustituye por una estimación.',
+        message,
         style: const TextStyle(
           color: AthenaColors.textSecondary,
           fontSize: 10,
@@ -298,9 +399,8 @@ class _MySpacePanelState extends State<MySpacePanel> {
     );
   }
 
-  static String _formatCurrency(num value) {
-    return '${value.toStringAsFixed(2)} €';
-  }
+  static String _formatCurrency(num value) =>
+      '${value.toStringAsFixed(2)} €';
 
   static String _formatSignedCurrency(num value) {
     final prefix = value > 0 ? '+' : '';
