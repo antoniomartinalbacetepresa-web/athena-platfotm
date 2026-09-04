@@ -93,7 +93,7 @@ def test_company_ticker_exchange_associations_reject_incomplete_schema() -> None
         service.get_company_ticker_exchange_associations()
 
 
-def test_filter_institutional_and_insider_filings() -> None:
+def test_filter_institutional_and_insider_filings_preserves_publication_time() -> None:
     payload = {
         "filings": {
             "recent": {
@@ -101,6 +101,12 @@ def test_filter_institutional_and_insider_filings() -> None:
                 "accessionNumber": ["a", "b", "c", "d"],
                 "filingDate": ["2026-08-14", "2026-08-15", "2026-08-16", "2026-08-17"],
                 "reportDate": ["2026-06-30", "2026-08-15", "2026-06-30", "2026-06-30"],
+                "acceptanceDateTime": [
+                    "20260814163422",
+                    "20260815121530",
+                    "20260816110102",
+                    "20260817174501",
+                ],
                 "primaryDocument": ["a.xml", "b.xml", "c.htm", "d.xml"],
             }
         }
@@ -113,3 +119,8 @@ def test_filter_institutional_and_insider_filings() -> None:
 
     assert [item["form"] for item in institutional] == ["13F-HR", "13F-HR/A"]
     assert [item["form"] for item in insiders] == ["4"]
+    assert institutional[0]["reportDate"] == "2026-06-30"
+    assert institutional[0]["filingDate"] == "2026-08-14"
+    assert institutional[0]["acceptanceDateTime"] == "20260814163422"
+    assert institutional[1]["acceptanceDateTime"] == "20260817174501"
+    assert insiders[0]["acceptanceDateTime"] == "20260815121530"
