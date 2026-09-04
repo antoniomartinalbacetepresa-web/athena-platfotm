@@ -93,7 +93,7 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
                     ),
                   ),
                   child: const Text(
-                    'MOTOR EN VALIDACIÓN',
+                    'APRENDIZAJE SHADOW',
                     style: TextStyle(
                       color: AthenaColors.warning,
                       fontSize: 12,
@@ -105,9 +105,7 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
             ),
           ),
           const Divider(height: 1),
-          Expanded(
-            child: _buildBody(),
-          ),
+          Expanded(child: _buildBody()),
         ],
       ),
     );
@@ -115,19 +113,7 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
   Widget _buildBody() {
     if (_controller.isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: AthenaSpacing.md),
-            Text(
-              'Comprobando el estado del motor de recomendaciones...',
-              style: TextStyle(color: AthenaColors.textSecondary),
-            ),
-          ],
-        ),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_controller.error != null) {
@@ -135,8 +121,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         child: Padding(
           padding: EdgeInsets.all(AthenaSpacing.lg),
           child: Text(
-            'No se pudo consultar el estado del motor de recomendaciones.\n'
-            'ATHENA no mostrará señales de inversión sin validación.',
+            'No se pudo verificar el aprendizaje de ATHENA.\n'
+            'No se mostrarán señales mientras el estado no sea verificable.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: AthenaColors.textSecondary,
@@ -148,12 +134,12 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
     }
 
     final status = _controller.status;
-    if (status == null) {
+    if (status == null || !status.isShadowSafe) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(AthenaSpacing.lg),
           child: Text(
-            'El motor de recomendaciones todavía no está disponible.',
+            'Estado de recomendaciones no verificable.',
             style: TextStyle(color: AthenaColors.textSecondary),
           ),
         ),
@@ -164,29 +150,33 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
   }
 
   Widget _buildLearningStatus(RecommendationLearningStatus status) {
-    final sampleCount = _int(status.performance['sampleCount']) ?? 0;
-    final dueCount = _int(status.evaluationSchedule['dueCount']) ?? 0;
-    final driftStatus = status.drift?['status']?.toString() ?? 'sin muestra';
+    final persisted = status.persistedShadowCandidateCount;
+    final evaluatedCandidates = status.evaluatedShadowCandidateCount;
+    final observations = status.evaluatedShadowObservationCount;
+    final dueCount = _nonNegativeInt(status.evaluationSchedule['dueCount']);
+    final hasEvidence = status.hasMatureShadowEvidence;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AthenaSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'ATHENA todavía no publica recomendaciones activas.',
-            style: TextStyle(
+          Text(
+            hasEvidence
+                ? 'ATHENA ya está midiendo candidatos con resultados reales.'
+                : 'ATHENA está generando y siguiendo candidatos en sombra.',
+            style: const TextStyle(
               color: AthenaColors.text,
               fontSize: 18,
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: AthenaSpacing.sm),
-          const Text(
-            'Las señales COMPRAR, MANTENER, REDUCIR o VENDER aparecerán aquí '
-            'únicamente cuando procedan del motor real y puedan conservar su '
-            'evidencia point-in-time para ser evaluadas después.',
-            style: TextStyle(
+          Text(
+            hasEvidence
+                ? 'Las observaciones maduras se comparan con el exceso de retorno real frente al benchmark congelado. Aún no implican una señal de inversión.'
+                : 'Los resultados de 7, 30, 90, 180 y 365 días se incorporarán únicamente cuando hayan vencido y sean conocidos por ATHENA.',
+            style: const TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 14,
               height: 1.4,
@@ -197,20 +187,18 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
             spacing: AthenaSpacing.md,
             runSpacing: AthenaSpacing.md,
             children: [
-              _metric('Resultados evaluados', '$sampleCount'),
-              _metric('Evaluaciones pendientes', '$dueCount'),
-              _metric('Deriva del modelo', driftStatus.toUpperCase()),
-              _metric(
-                'Cambios automáticos',
-                status.automaticModelMutation ? 'ACTIVOS' : 'BLOQUEADOS',
-              ),
+              _metric('Candidatos shadow', _displayCount(persisted)),
+              _metric('Candidatos evaluados', _displayCount(evaluatedCandidates)),
+              _metric('Observaciones maduras', _displayCount(observations)),
+              _metric('Evaluaciones pendientes', _displayCount(dueCount)),
             ],
           ),
           const SizedBox(height: AthenaSpacing.lg),
-          const Text(
-            'Estado actual: diagnóstico y aprendizaje. Ninguna calibración se '
-            'aplica automáticamente.',
-            style: TextStyle(
+          Text(
+            hasEvidence
+                ? 'Estado: evidencia fuera de muestra acumulándose. Recomendaciones productivas aún bloqueadas.'
+                : 'Estado: esperando evidencia fuera de muestra suficiente. Recomendaciones productivas bloqueadas.',
+            style: const TextStyle(
               color: AthenaColors.warning,
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -255,16 +243,23 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
     );
   }
 
-  int? _int(dynamic value) {
+  String _displayCount(int? value) => value?.toString() ?? '—';
+
+  int? _nonNegativeInt(dynamic value) {
+    if (value is bool) {
+      return null;
+    }
+    int? parsed;
     if (value is int) {
-      return value;
+      parsed = value;
+    } else if (value is num) {
+      if (!value.isFinite || value != value.truncateToDouble()) {
+        return null;
+      }
+      parsed = value.toInt();
+    } else if (value is String) {
+      parsed = int.tryParse(value.trim());
     }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value.trim());
-    }
-    return null;
+    return parsed != null && parsed >= 0 ? parsed : null;
   }
 }
