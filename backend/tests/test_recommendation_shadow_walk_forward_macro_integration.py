@@ -9,8 +9,8 @@ class FakeCandidateService:
     def __init__(self):
         self.calls = []
 
-    def evaluate(self, **kwargs):
-        self.calls.append(kwargs)
+    def evaluate_frozen_split(self, *, split):
+        self.calls.append(split)
         return {
             "status": "shadow_linear_candidate_evaluated",
             "test": {"mse": 0.8, "mae": 0.7, "signAccuracy": 0.6},
@@ -26,11 +26,13 @@ class FakeCandidateService:
 class FakeSplitService:
     def __init__(self):
         self.calls = []
+        self.results = []
 
     def build(self, **kwargs):
         self.calls.append(kwargs)
         index = len(self.calls)
-        return {
+        split = {
+            "schemaVersion": "shadow-calibration-v1",
             "train": [
                 {
                     "snapshotId": f"train-{index}-1",
@@ -61,7 +63,10 @@ class FakeSplitService:
                     ],
                 }
             ],
+            "counts": {"train": 2, "validation": 1, "test": 1},
         }
+        self.results.append(split)
+        return split
 
 
 def _dt(year, month, day):
@@ -119,21 +124,18 @@ def test_walk_forward_fits_macro_preprocessing_inside_each_purged_fold_train_onl
     assert result["productionEligible"] is False
 
 
-def test_walk_forward_macro_research_does_not_change_candidate_inputs():
+def test_walk_forward_macro_research_uses_the_exact_same_frozen_split_as_candidate():
     candidate = FakeCandidateService()
+    split_service = FakeSplitService()
     service = RecommendationShadowWalkForwardService(
         candidate_service=candidate,
-        split_service=FakeSplitService(),
+        split_service=split_service,
         minimum_evaluated_folds=2,
     )
 
     service.evaluate(folds=_folds(), horizon_days=90)
 
     assert len(candidate.calls) == 2
-    for call, fold in zip(candidate.calls, _folds()):
-        assert call == {
-            "as_of": fold["as_of"],
-            "train_end": fold["train_end"],
-            "validation_end": fold["validation_end"],
-            "horizon_days": 90,
-        }
+    assert len(split_service.results) == 2
+    for candidate_split, built_split in zip(candidate.calls, split_service.results):
+        assert candidate_split is built_split
