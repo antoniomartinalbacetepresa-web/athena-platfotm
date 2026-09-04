@@ -31,6 +31,22 @@ def _setup(tmp_path):
     return database, repository, instrument_id
 
 
+def _macro_observation(*, retrieved_at: datetime | None = None) -> dict[str, object]:
+    return {
+        "metric": "macro.cpi.all_items",
+        "entity": "US",
+        "value": 312.4,
+        "unit": "index",
+        "source": "fred_alfred",
+        "observedAt": "2025-11-01T00:00:00+00:00",
+        "availableAt": "2025-12-10T13:30:00+00:00",
+        "retrievedAt": (retrieved_at or (CUT - timedelta(hours=1))).isoformat(),
+        "sourceUrl": "https://fred.stlouisfed.org/series/CPIAUCSL",
+        "qualityScore": 95.0,
+        "confidence": 94.0,
+    }
+
+
 def _evidence() -> dict[str, object]:
     return {
         "status": "evidence_ready_for_calibration",
@@ -53,6 +69,13 @@ def _evidence() -> dict[str, object]:
             },
         },
         "valuation": {"reportedAnnualPe": 25.0},
+        "macro": {
+            "status": "macro_context_available",
+            "ready": True,
+            "influencesCandidate": False,
+            "thresholdCalibrated": False,
+            "observations": [_macro_observation()],
+        },
     }
 
 
@@ -82,6 +105,7 @@ def _create_matured_snapshot(
     instrument_id: int,
     schema: str = FEATURE_SCHEMA_VERSION,
     benchmark_return: float | None = 0.03,
+    evidence: dict[str, object] | None = None,
 ) -> int:
     snapshot_id = repository.create_snapshot(
         instrument_id=instrument_id,
@@ -93,7 +117,7 @@ def _create_matured_snapshot(
         entry_price=100.0,
         entry_observed_at=CUT - timedelta(hours=1),
         entry_retrieved_at=CUT - timedelta(minutes=30),
-        evidence_snapshot=_evidence(),
+        evidence_snapshot=evidence or _evidence(),
         benchmark_symbol="SPY" if benchmark_return is not None else None,
     )
     due = CUT + timedelta(days=7)
@@ -147,10 +171,28 @@ def test_dataset_extracts_only_whitelisted_features_and_continuous_targets(tmp_p
         "liabilitiesToAssets": 0.63,
         "reportedAnnualPe": 25.0,
     }
+    assert row["macroObservations"] == [
+        {
+            "metric": "macro.cpi.all_items",
+            "entity": "US",
+            "value": 312.4,
+            "unit": "index",
+            "source": "fred_alfred",
+            "observedAt": "2025-11-01T00:00:00+00:00",
+            "availableAt": "2025-12-10T13:30:00+00:00",
+            "retrievedAt": "2026-01-01T19:00:00+00:00",
+            "sourceUrl": "https://fred.stlouisfed.org/series/CPIAUCSL",
+            "qualityScore": 95.0,
+            "confidence": 94.0,
+        }
+    ]
     assert "action" not in row
     assert "conviction" not in row
     assert result["policy"]["actions"] == "not_assigned"
     assert result["policy"]["featureWeights"] == "not_assigned"
+    assert result["policy"]["macroEvidence"] == (
+        "frozen_provenanced_observations_only_no_score_or_weight"
+    )
 
 
 def test_dataset_excludes_outcomes_not_known_by_as_of(tmp_path) -> None:
@@ -230,6 +272,28 @@ def test_dataset_fails_closed_on_snapshot_claiming_advice_readiness(tmp_path) ->
 
     result = RecommendationShadowCalibrationDatasetService(database=database).build(
         as_of=CUT + timedelta(days=8)
+    )
+
+    assert result["rowCount"] == 0
+    assert result["rejectedInvalidSnapshotCount"] == 1
+
+
+def test_dataset_rejects_macro_evidence_retrieved_after_snapshot_cutoff(tmp_path) -> None:
+    database, repository, instrument_id = _setup(tmp_path)
+    evidence = _evidence()
+    macro = evidence["macro"]
+    assert isinstance(macro, dict)
+    macro["observations"] = [
+        _macro_observation(retrieved_at=CUT + timedelta(minutes=1))
+    ]
+    _create_matured_snapshot(
+        repository,
+        instrument_id=instrument_id,
+        evidence=evidence,
+    )
+
+    result = RecommendationShadowCalibrationDatasetService(database=database).build(
+        as_of=CUT + timedelta(days=8),
     )
 
     assert result["rowCount"] == 0
