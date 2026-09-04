@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_radius.dart';
 import '../../../market/di/market_dependencies.dart';
+import '../../../portfolio/data/athena_backend_portfolio_correlation_data_source.dart';
 import '../../../portfolio/models/portfolio.dart';
 import '../../../portfolio/models/portfolio_valuation_summary.dart';
 import '../../../portfolio/presentation/controllers/portfolio_concentration_controller.dart';
+import '../../../portfolio/presentation/controllers/portfolio_correlation_controller.dart';
 import '../../../portfolio/presentation/controllers/portfolio_current_valuation_controller.dart';
 import '../../../portfolio/services/portfolio_concentration_service.dart';
+import '../../../portfolio/services/portfolio_correlation_evidence_service.dart';
 import '../../../portfolio/services/portfolio_service.dart';
 
 class MySpacePanel extends StatefulWidget {
@@ -19,11 +22,17 @@ class MySpacePanel extends StatefulWidget {
 
 class _MySpacePanelState extends State<MySpacePanel> {
   static const _baseCurrency = 'EUR';
+  static const _backendUrl = String.fromEnvironment(
+    'ATHENA_BACKEND_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
 
   final PortfolioService _portfolioService = PortfolioService();
   late final MarketDependencies _marketDependencies;
+  late final AthenaBackendPortfolioCorrelationDataSource _correlationDataSource;
   late final PortfolioCurrentValuationController _valuationController;
   late final PortfolioConcentrationController _concentrationController;
+  late final PortfolioCorrelationController _correlationController;
 
   Portfolio? _portfolio;
   bool _isLoading = true;
@@ -34,6 +43,9 @@ class _MySpacePanelState extends State<MySpacePanel> {
   void initState() {
     super.initState();
     _marketDependencies = MarketDependencies.create();
+    _correlationDataSource = AthenaBackendPortfolioCorrelationDataSource(
+      baseUrl: _backendUrl,
+    );
     _valuationController =
         PortfolioCurrentValuationController.forMarketDependencies(
       _marketDependencies,
@@ -43,6 +55,11 @@ class _MySpacePanelState extends State<MySpacePanel> {
         loadValuation: _valuationController.loadValuation,
       ),
     )..addListener(_onEvidenceChanged);
+    _correlationController = PortfolioCorrelationController(
+      service: PortfolioCorrelationEvidenceService(
+        loadPair: _correlationDataSource.getPair,
+      ),
+    )..addListener(_onEvidenceChanged);
     _loadPortfolio();
   }
 
@@ -50,8 +67,11 @@ class _MySpacePanelState extends State<MySpacePanel> {
   void dispose() {
     _valuationController.removeListener(_onEvidenceChanged);
     _concentrationController.removeListener(_onEvidenceChanged);
+    _correlationController.removeListener(_onEvidenceChanged);
     _valuationController.dispose();
     _concentrationController.dispose();
+    _correlationController.dispose();
+    _correlationDataSource.dispose();
     _marketDependencies.dispose();
     super.dispose();
   }
@@ -64,10 +84,11 @@ class _MySpacePanelState extends State<MySpacePanel> {
     if (portfolio.positions.isEmpty) {
       _valuationController.clear();
       _concentrationController.clear();
+      _correlationController.clear();
       return;
     }
 
-    await Future.wait([
+    final tasks = <Future<void>>[
       _valuationController.load(
         positions: portfolio.positions,
         baseCurrency: _baseCurrency,
@@ -76,7 +97,18 @@ class _MySpacePanelState extends State<MySpacePanel> {
         positions: portfolio.positions,
         baseCurrency: _baseCurrency,
       ),
-    ]);
+    ];
+    if (portfolio.positions.length >= 2) {
+      tasks.add(
+        _correlationController.load(
+          positions: portfolio.positions,
+          knowledgeCutoff: DateTime.now().toUtc(),
+        ),
+      );
+    } else {
+      _correlationController.clear();
+    }
+    await Future.wait(tasks);
   }
 
   Future<void> _loadPortfolio() async {
@@ -104,6 +136,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
       } else {
         _valuationController.clear();
         _concentrationController.clear();
+        _correlationController.clear();
       }
 
       if (!mounted) return;
@@ -117,6 +150,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
       if (!mounted) return;
       _valuationController.clear();
       _concentrationController.clear();
+      _correlationController.clear();
       setState(() {
         _portfolio = null;
         _staleSymbols = const [];
@@ -215,6 +249,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
 
     final summary = _valuationSummary(portfolio);
     final concentration = _concentrationController.snapshot;
+    final correlation = _correlationController.snapshot;
     final hasPositions = portfolio.positions.isNotEmpty;
     final hasReferenceCapital = portfolio.initialCapital > 0;
     final current = hasPositions ? summary?.currentValue : 0.0;
@@ -307,6 +342,21 @@ class _MySpacePanelState extends State<MySpacePanel> {
             concentration == null
                 ? 'Requiere valoración individual EUR verificable'
                 : '${concentration.effectivePositionCount.toStringAsFixed(2)} posiciones efectivas · mayor ${concentration.largestPositionSymbol} ${(concentration.largestPositionWeight * 100).toStringAsFixed(1)} %',
+            AthenaColors.textSecondary,
+          ),
+          _divider(),
+          _row(
+            'Correlación PIT',
+            portfolio.positions.length < 2
+                ? 'No aplica'
+                : correlation == null
+                    ? 'No disponible'
+                    : correlation.meanCorrelation.toStringAsFixed(3),
+            portfolio.positions.length < 2
+                ? 'Requiere al menos dos posiciones'
+                : correlation == null
+                    ? 'Requiere identidad canónica e históricos PIT alineados'
+                    : '${correlation.pairs.length} pares · mín ${correlation.minimumCorrelation.toStringAsFixed(3)} · máx ${correlation.maximumCorrelation.toStringAsFixed(3)} · n≥${correlation.minimumSampleCount}',
             AthenaColors.textSecondary,
           ),
           if (invested == null && hasPositions) ...[
