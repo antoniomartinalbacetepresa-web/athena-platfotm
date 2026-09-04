@@ -5,13 +5,18 @@ import '../../../core/theme/athena_radius.dart';
 import '../../../core/theme/athena_spacing.dart';
 import '../../market/di/market_dependencies.dart';
 import '../../market/repositories/market_repository.dart';
+import '../data/athena_backend_portfolio_identity_data_source.dart';
+import '../models/portfolio_position.dart';
+import '../services/portfolio_identity_enrichment_service.dart';
 
 class AddPositionDialog extends StatefulWidget {
   final MarketRepository? marketRepository;
+  final PortfolioIdentityResolver? identityResolver;
 
   const AddPositionDialog({
     super.key,
     this.marketRepository,
+    this.identityResolver,
   });
 
   @override
@@ -19,6 +24,13 @@ class AddPositionDialog extends StatefulWidget {
 }
 
 class _AddPositionDialogState extends State<AddPositionDialog> {
+  static const String _defaultBackendUrl = String.fromEnvironment(
+    'ATHENA_BACKEND_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
+  static const PortfolioIdentityEnrichmentService _identityEnrichmentService =
+      PortfolioIdentityEnrichmentService();
+
   final _formKey = GlobalKey<FormState>();
 
   final _symbolController = TextEditingController();
@@ -27,7 +39,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
   final _costBasisDateController = TextEditingController();
 
   MarketDependencies? _marketDependencies;
+  AthenaBackendPortfolioIdentityDataSource? _identityDataSource;
   late final MarketRepository _marketRepository;
+  late final PortfolioIdentityResolver _identityResolver;
 
   bool _isSaving = false;
   String? _quoteError;
@@ -43,6 +57,16 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
       _marketDependencies = MarketDependencies.create();
       _marketRepository = _marketDependencies!.repository;
     }
+
+    final injectedIdentityResolver = widget.identityResolver;
+    if (injectedIdentityResolver != null) {
+      _identityResolver = injectedIdentityResolver;
+    } else {
+      _identityDataSource = AthenaBackendPortfolioIdentityDataSource(
+        baseUrl: _defaultBackendUrl,
+      );
+      _identityResolver = _identityDataSource!.resolve;
+    }
   }
 
   @override
@@ -51,6 +75,7 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
     _sharesController.dispose();
     _averagePriceController.dispose();
     _costBasisDateController.dispose();
+    _identityDataSource?.dispose();
     _marketDependencies?.dispose();
     super.dispose();
   }
@@ -118,9 +143,39 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
         );
       }
 
-      final exchange = _optionalText(quote.exchange);
+      final exchange = _optionalText(quote.exchange)?.toUpperCase();
+      if (exchange == null || exchange.isEmpty) {
+        throw StateError(
+          'La cotización no incluye un exchange verificable para resolver identidad.',
+        );
+      }
       final quoteType = _optionalText(quote.quoteType);
       final verifiedName = quote.companyName.trim();
+
+      final draftPosition = PortfolioPosition(
+        symbol: verifiedSymbol,
+        companyName: verifiedName.isEmpty ? symbol : verifiedName,
+        shares: shares,
+        averagePrice: averagePrice,
+        currentPrice: currentPrice,
+        costBasisDate: costBasisDate,
+        priceCurrency: priceCurrency,
+        exchange: exchange,
+        quoteType: quoteType,
+        currentPriceUpdatedAt: quote.updatedAt,
+        currentPriceSourceProvider: sourceProvider,
+        currentPriceRetrievedAt: retrievedAt,
+      );
+      final verifiedPosition = await _identityEnrichmentService.enrich(
+        position: draftPosition,
+        resolver: _identityResolver,
+      );
+
+      if (!verifiedPosition.hasVerifiedCanonicalIdentity) {
+        throw StateError(
+          'La identidad canónica no quedó verificada para riesgo y correlación.',
+        );
+      }
 
       if (!mounted) {
         return;
@@ -128,18 +183,28 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
 
       Navigator.of(context).pop(
         AddPositionResult(
-          symbol: verifiedSymbol,
-          companyName: verifiedName.isEmpty ? symbol : verifiedName,
-          shares: shares,
-          averagePrice: averagePrice,
-          currentPrice: currentPrice,
-          costBasisDate: costBasisDate,
-          priceCurrency: priceCurrency,
-          exchange: exchange,
-          quoteType: quoteType,
-          currentPriceUpdatedAt: quote.updatedAt,
-          currentPriceSourceProvider: sourceProvider,
-          currentPriceRetrievedAt: retrievedAt,
+          symbol: verifiedPosition.symbol,
+          companyName: verifiedPosition.companyName,
+          shares: verifiedPosition.shares,
+          averagePrice: verifiedPosition.averagePrice,
+          currentPrice: verifiedPosition.currentPrice,
+          costBasisDate: verifiedPosition.costBasisDate,
+          priceCurrency: verifiedPosition.priceCurrency!,
+          exchange: verifiedPosition.exchange,
+          quoteType: verifiedPosition.quoteType,
+          currentPriceUpdatedAt: verifiedPosition.currentPriceUpdatedAt!,
+          currentPriceSourceProvider:
+              verifiedPosition.currentPriceSourceProvider!,
+          currentPriceRetrievedAt: verifiedPosition.currentPriceRetrievedAt!,
+          databaseInstrumentId: verifiedPosition.databaseInstrumentId!,
+          canonicalInstrumentId: verifiedPosition.canonicalInstrumentId!,
+          canonicalIssuerId: verifiedPosition.canonicalIssuerId!,
+          identitySourceProvider: verifiedPosition.identitySourceProvider!,
+          identityRetrievedAt: verifiedPosition.identityRetrievedAt!,
+          identityResolutionMethod: verifiedPosition.identityResolutionMethod!,
+          identityExchangeVerified:
+              verifiedPosition.identityExchangeVerified,
+          identityRiskReady: verifiedPosition.identityRiskReady,
         ),
       );
     } catch (_) {
@@ -150,9 +215,10 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
       setState(() {
         _isSaving = false;
         _quoteError =
-            'No se pudo verificar el instrumento, el precio, la moneda y su '
-            'procedencia con el backend de ATHENA. La posición no se guardará '
-            'con datos manuales, estimados o sin trazabilidad.';
+            'No se pudo verificar el instrumento, el precio, la moneda, el '
+            'listing y su identidad canónica con el backend de ATHENA. La '
+            'posición no se guardará con datos manuales, estimados, ambiguos o '
+            'sin trazabilidad.';
       });
     }
   }
@@ -252,10 +318,10 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'ATHENA verifica el instrumento, obtiene el precio '
-                          'actual y su moneda desde el backend y exige procedencia '
-                          'temporal trazable antes de guardar. No se aceptan '
-                          'identidades ni precios actuales escritos a mano.',
+                          'ATHENA verifica instrumento, precio, moneda, listing '
+                          'e identidad canónica con provenance temporal antes de '
+                          'guardar. No se aceptan identidades ni precios actuales '
+                          'escritos a mano.',
                           style: TextStyle(
                             color: AthenaColors.textSecondary,
                             fontSize: 12,
@@ -422,6 +488,14 @@ class AddPositionResult {
   final DateTime currentPriceUpdatedAt;
   final String currentPriceSourceProvider;
   final DateTime currentPriceRetrievedAt;
+  final int databaseInstrumentId;
+  final String canonicalInstrumentId;
+  final String canonicalIssuerId;
+  final String identitySourceProvider;
+  final DateTime identityRetrievedAt;
+  final String identityResolutionMethod;
+  final bool identityExchangeVerified;
+  final bool identityRiskReady;
 
   const AddPositionResult({
     required this.symbol,
@@ -436,5 +510,13 @@ class AddPositionResult {
     required this.currentPriceUpdatedAt,
     required this.currentPriceSourceProvider,
     required this.currentPriceRetrievedAt,
+    required this.databaseInstrumentId,
+    required this.canonicalInstrumentId,
+    required this.canonicalIssuerId,
+    required this.identitySourceProvider,
+    required this.identityRetrievedAt,
+    required this.identityResolutionMethod,
+    required this.identityExchangeVerified,
+    required this.identityRiskReady,
   });
 }
