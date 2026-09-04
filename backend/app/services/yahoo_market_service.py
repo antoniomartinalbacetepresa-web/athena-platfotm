@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import math
 from typing import Any
 
 import yfinance as yf
@@ -221,12 +222,12 @@ class YahooMarketService:
         return text if text else None
 
     def _to_float(self, value: Any) -> float | None:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         try:
             result = float(value)
         except (TypeError, ValueError):
             return None
-        if result != result:
+        if not math.isfinite(result):
             return None
         return result
