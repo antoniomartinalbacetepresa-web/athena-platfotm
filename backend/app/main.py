@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.macro import router as macro_router
 from app.api.market import router as market_router
 from app.api.recommendation_research import router as recommendation_research_router
+from app.api.recommendation_shadow_operations import (
+    router as recommendation_shadow_operations_router,
+)
 from app.api.recommendations import router as recommendations_router
 from app.api.sec import router as sec_router
 from app.api.sources import router as sources_router
@@ -22,7 +25,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -32,6 +35,7 @@ app.include_router(macro_router)
 app.include_router(sources_router)
 app.include_router(recommendations_router)
 app.include_router(recommendation_research_router)
+app.include_router(recommendation_shadow_operations_router)
 
 
 @app.get("/health")
