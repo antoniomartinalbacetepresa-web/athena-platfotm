@@ -187,6 +187,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
       shares: result.shares,
       averagePrice: result.averagePrice,
       currentPrice: result.currentPrice,
+      costBasisDate: result.costBasisDate,
       priceCurrency: result.priceCurrency,
       exchange: result.exchange,
       quoteType: result.quoteType,
@@ -326,8 +327,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
                   ],
                   if (_valuationController.isLoading && _positions.isNotEmpty) ...[
                     _statusBanner(
-                      'ATHENA está recalculando el valor actual en EUR con precios y FX verificables. '
-                      'La valoración anterior no se muestra durante la recarga.',
+                      'ATHENA está recalculando la cartera en EUR con precios y FX verificables.',
                     ),
                     const SizedBox(height: AthenaSpacing.md),
                   ],
@@ -337,12 +337,12 @@ class _PortfolioPageState extends State<PortfolioPage> {
                   ],
                   if (summary?.usesCurrentFx == true) ...[
                     _statusBanner(
-                      'Valor actual consolidado en EUR con FX actual verificable. '
-                      'El coste histórico, P/L, rentabilidad y capital no asignado permanecen bloqueados '
-                      'hasta disponer de FX PIT de adquisición.',
+                      summary!.historicalComparisonsAvailable
+                          ? 'Valor actual y coste histórico consolidados en EUR con conversiones verificables.'
+                          : 'Valor actual consolidado en EUR con FX actual verificable. El coste histórico, P/L y rentabilidad permanecen no disponibles para cualquier posición que carezca de fecha de coste válida o FX histórico verificable.',
                     ),
                     const SizedBox(height: AthenaSpacing.md),
-                    _valuationProvenance(summary!),
+                    _valuationProvenance(summary),
                     const SizedBox(height: AthenaSpacing.md),
                   ],
                   _buildSummary(
@@ -967,6 +967,16 @@ class _PositionWithDelete extends StatelessWidget {
                   fontSize: 12,
                 ),
               ),
+              if (position.costBasisDate != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  'Fecha de coste: ${_formatDate(position.costBasisDate!.toLocal())}',
+                  style: const TextStyle(
+                    color: AthenaColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1037,6 +1047,11 @@ class _PositionWithDelete extends StatelessWidget {
   static String _formatNumber(double value) {
     if (value == value.roundToDouble()) return value.toInt().toString();
     return value.toStringAsFixed(4).replaceFirst(RegExp(r'0+$'), '');
+  }
+
+  static String _formatDate(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year}';
   }
 
   static String _formatDateTime(DateTime value) {
