@@ -99,6 +99,7 @@ class SecEdgarService:
         accession_numbers = recent.get("accessionNumber", [])
         filing_dates = recent.get("filingDate", [])
         report_dates = recent.get("reportDate", [])
+        acceptance_times = recent.get("acceptanceDateTime", [])
         primary_documents = recent.get("primaryDocument", [])
 
         result: list[dict[str, Any]] = []
@@ -113,6 +114,7 @@ class SecEdgarService:
                     "accessionNumber": self._value_at(accession_numbers, index),
                     "filingDate": self._value_at(filing_dates, index),
                     "reportDate": self._value_at(report_dates, index),
+                    "acceptanceDateTime": self._value_at(acceptance_times, index),
                     "primaryDocument": self._value_at(primary_documents, index),
                 }
             )
