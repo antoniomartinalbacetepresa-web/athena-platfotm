@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timezone
 from math import isfinite
 from typing import Any, Protocol
 
+from app.repositories.fx_rate_repository import FxRateRecord, FxRateRepository
 from app.services.yahoo_market_service import YahooMarketService
 
 
@@ -21,14 +22,20 @@ class _MarketQuoteService(Protocol):
 class FxQuoteService:
     """Resolve FX conversion rates with explicit provenance and PIT guards.
 
-    Current quotes are never backdated. Historical observations can be used for
-    a current portfolio calculation, but a caller performing a historical
-    evaluation must provide the historical knowledge cutoff. A rate retrieved
-    after that cutoff is rejected rather than silently introducing lookahead.
+    Current quotes are never backdated. Historical observations can be persisted
+    and replayed only when their original observation and retrieval timestamps
+    were already knowable at the requested cutoff. When no repository is
+    injected, the service retains its stateless behaviour for isolated callers.
     """
 
-    def __init__(self, *, market_service: _MarketQuoteService | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        market_service: _MarketQuoteService | None = None,
+        repository: FxRateRepository | None = None,
+    ) -> None:
         self._market_service = market_service or YahooMarketService()
+        self._repository = repository
 
     def get_current_rate(self, *, base_currency: str, quote_currency: str) -> dict[str, Any]:
         base = self._currency(base_currency, "base_currency")
@@ -97,13 +104,13 @@ class FxQuoteService:
         observed_on: date,
         knowledge_cutoff: datetime | None = None,
     ) -> dict[str, Any]:
-        """Resolve the FX close observed on a specific date without lookahead.
+        """Resolve or replay the FX close observed on a specific date.
 
-        If ``knowledge_cutoff`` is omitted, the observation is intended for a
-        calculation performed now and the cutoff is captured after retrieval.
-        Historical replay/backtesting must pass its original cutoff explicitly;
-        a newly retrieved observation will then fail closed if it was not known
-        by that time.
+        A historical evaluation must provide its original ``knowledge_cutoff``.
+        If an immutable persisted observation existed by that cutoff it is
+        replayed without contacting the upstream provider. Otherwise a new
+        upstream retrieval is accepted only when its retrieval timestamp does
+        not exceed the cutoff, then persisted when a repository is configured.
         """
 
         base = self._currency(base_currency, "base_currency")
@@ -115,23 +122,32 @@ class FxQuoteService:
             if explicit_cutoff
             else None
         )
+        target_observed_at = datetime.combine(
+            target_date,
+            time.min,
+            tzinfo=timezone.utc,
+        )
+        if cutoff is not None and target_observed_at > cutoff:
+            raise RuntimeError(
+                "La fecha FX solicitada es posterior al corte de conocimiento; usarla introduciría lookahead."
+            )
 
         if base == quote:
             retrieved_at = datetime.now(timezone.utc)
             effective_cutoff = cutoff or retrieved_at
-            observed_at = datetime.combine(target_date, time.min, tzinfo=timezone.utc)
             return {
                 "status": "fx_historical_identity",
                 "baseCurrency": base,
                 "quoteCurrency": quote,
                 "rate": 1.0,
                 "observedOn": target_date.isoformat(),
-                "observedAt": observed_at.isoformat(),
+                "observedAt": target_observed_at.isoformat(),
                 "retrievedAt": retrieved_at.isoformat(),
                 "knowledgeCutoff": effective_cutoff.isoformat(),
                 "sourceProvider": "identity",
                 "sourceSymbol": None,
                 "historicalPointInTimeEligible": True,
+                "replayedFromPersistence": False,
                 "policy": {
                     "exactObservationDateRequired": True,
                     "retrievalMustNotExceedKnowledgeCutoff": True,
@@ -140,6 +156,21 @@ class FxQuoteService:
             }
 
         source_symbol = f"{base}{quote}=X"
+        replay_cutoff = cutoff or datetime.now(timezone.utc)
+        if self._repository is not None:
+            persisted = self._repository.get_pit(
+                observed_on=target_date,
+                base_currency=base,
+                quote_currency=quote,
+                source_symbol=source_symbol,
+                knowledge_cutoff=replay_cutoff,
+            )
+            if persisted is not None:
+                return self._persisted_payload(
+                    record=persisted,
+                    knowledge_cutoff=replay_cutoff,
+                )
+
         rows = self._market_service.get_history(
             source_symbol,
             from_date=target_date.isoformat(),
@@ -168,11 +199,73 @@ class FxQuoteService:
             raise RuntimeError("La observación FX histórica no corresponde a la fecha solicitada.")
 
         effective_cutoff = cutoff or datetime.now(timezone.utc)
-        if retrieved_at > effective_cutoff:
+        if observed_at > effective_cutoff or retrieved_at > effective_cutoff:
             raise RuntimeError(
-                "La observación FX fue recuperada después del corte de conocimiento; usarla introduciría lookahead."
+                "La observación FX fue conocida después del corte de conocimiento; usarla introduciría lookahead."
             )
 
+        if self._repository is not None:
+            self._repository.save(
+                observed_on=target_date,
+                base_currency=base,
+                quote_currency=quote,
+                rate=rate,
+                source_provider=source_provider,
+                source_symbol=source_symbol,
+                observed_at=observed_at,
+                retrieved_at=retrieved_at,
+            )
+
+        return self._historical_payload(
+            base=base,
+            quote=quote,
+            rate=rate,
+            target_date=target_date,
+            observed_at=observed_at,
+            retrieved_at=retrieved_at,
+            knowledge_cutoff=effective_cutoff,
+            source_provider=source_provider,
+            source_symbol=source_symbol,
+            replayed=False,
+        )
+
+    def _persisted_payload(
+        self,
+        *,
+        record: FxRateRecord,
+        knowledge_cutoff: datetime,
+    ) -> dict[str, Any]:
+        if record.source_symbol is None:
+            raise RuntimeError("La observación FX persistida carece de símbolo de procedencia.")
+        if record.observed_at > knowledge_cutoff or record.retrieved_at > knowledge_cutoff:
+            raise RuntimeError("La observación FX persistida viola el corte PIT solicitado.")
+        return self._historical_payload(
+            base=record.base_currency,
+            quote=record.quote_currency,
+            rate=record.rate,
+            target_date=record.observed_on,
+            observed_at=record.observed_at,
+            retrieved_at=record.retrieved_at,
+            knowledge_cutoff=knowledge_cutoff,
+            source_provider=record.source_provider,
+            source_symbol=record.source_symbol,
+            replayed=True,
+        )
+
+    def _historical_payload(
+        self,
+        *,
+        base: str,
+        quote: str,
+        rate: float,
+        target_date: date,
+        observed_at: datetime,
+        retrieved_at: datetime,
+        knowledge_cutoff: datetime,
+        source_provider: str,
+        source_symbol: str,
+        replayed: bool,
+    ) -> dict[str, Any]:
         return {
             "status": "fx_historical_ready",
             "baseCurrency": base,
@@ -181,15 +274,17 @@ class FxQuoteService:
             "observedOn": target_date.isoformat(),
             "observedAt": observed_at.isoformat(),
             "retrievedAt": retrieved_at.isoformat(),
-            "knowledgeCutoff": effective_cutoff.isoformat(),
+            "knowledgeCutoff": knowledge_cutoff.isoformat(),
             "sourceProvider": source_provider,
             "sourceSymbol": source_symbol,
             "historicalPointInTimeEligible": True,
+            "replayedFromPersistence": replayed,
             "policy": {
                 "exactObservationDateRequired": True,
                 "retrievalMustNotExceedKnowledgeCutoff": True,
                 "historicalBackdatingForbidden": True,
                 "persistObservationForFutureReplay": True,
+                "persistedReplayRequiresOriginalRetrievalBeforeCutoff": True,
             },
         }
 
