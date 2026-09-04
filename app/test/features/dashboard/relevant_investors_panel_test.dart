@@ -111,6 +111,29 @@ void main() {
     expect(find.textContaining('CIK 123456'), findsOneWidget);
   });
 
+  testWidgets('invalid CIK configuration fails closed without network loading', (
+    tester,
+  ) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      host(
+        RelevantInvestorsPanel(
+          configuredCiks: const ['123456', 'bad-cik'],
+          loader: (cik) async {
+            calls += 1;
+            return activityFor(cik);
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Configuración institucional inválida'), findsOneWidget);
+    expect(find.textContaining('lista de CIKs no es verificable'), findsOneWidget);
+    expect(calls, 0);
+    expect(find.textContaining('CIK 123456'), findsNothing);
+  });
+
   testWidgets('fails closed when any configured investor cannot be verified', (
     tester,
   ) async {
