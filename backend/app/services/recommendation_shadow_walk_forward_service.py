@@ -18,10 +18,10 @@ from app.services.recommendation_shadow_temporal_split_service import (
 class RecommendationShadowWalkForwardService:
     """Evaluate one shadow candidate across ordered purged temporal folds.
 
-    Macro research preprocessing is executed inside each already-purged fold and
-    fitted only on that fold's training partition. It remains diagnostic: macro
-    values are not appended to the candidate model here and therefore cannot
-    silently influence ATHENA scores, actions, or production eligibility.
+    Each fold is built exactly once, then reused by every research consumer.
+    Macro preprocessing is fitted only on the frozen fold's training partition
+    and remains diagnostic: macro values are not appended to the candidate model
+    here and cannot silently influence scores, actions, or production eligibility.
     """
 
     def __init__(
@@ -41,7 +41,9 @@ class RecommendationShadowWalkForwardService:
             else RecommendationShadowLinearCandidateService()
         )
         self._split_service = (
-            split_service if split_service is not None else RecommendationShadowTemporalSplitService()
+            split_service
+            if split_service is not None
+            else RecommendationShadowTemporalSplitService()
         )
         self._macro_preprocessing_service = (
             macro_preprocessing_service
@@ -74,12 +76,7 @@ class RecommendationShadowWalkForwardService:
                 validation_rows=list(split["validation"]),
                 test_rows=list(split["test"]),
             )
-            evaluation = self._candidate_service.evaluate(
-                as_of=fold["as_of"],
-                train_end=fold["train_end"],
-                validation_end=fold["validation_end"],
-                horizon_days=horizon_days,
-            )
+            evaluation = self._candidate_service.evaluate_frozen_split(split=split)
             results.append(
                 {
                     "foldIndex": index,
@@ -203,19 +200,25 @@ class RecommendationShadowWalkForwardService:
         previous_as_of: datetime | None = None
         for index, fold in enumerate(folds):
             try:
-                train_end = self._aware_utc(fold["train_end"], f"folds[{index}].train_end")
+                train_end = self._aware_utc(
+                    fold["train_end"], f"folds[{index}].train_end"
+                )
                 validation_end = self._aware_utc(
                     fold["validation_end"], f"folds[{index}].validation_end"
                 )
                 as_of = self._aware_utc(fold["as_of"], f"folds[{index}].as_of")
             except KeyError as exc:
-                raise ValueError(f"Falta una frontera obligatoria en folds[{index}].") from exc
+                raise ValueError(
+                    f"Falta una frontera obligatoria en folds[{index}]."
+                ) from exc
             if not train_end < validation_end < as_of:
                 raise ValueError(
                     f"folds[{index}] requiere train_end < validation_end < as_of."
                 )
             if previous_as_of is not None and as_of <= previous_as_of:
-                raise ValueError("Los folds deben avanzar estrictamente en el tiempo por as_of.")
+                raise ValueError(
+                    "Los folds deben avanzar estrictamente en el tiempo por as_of."
+                )
             previous_as_of = as_of
             normalized.append(
                 {
@@ -236,6 +239,7 @@ class RecommendationShadowWalkForwardService:
     def _policy(self) -> dict[str, Any]:
         return {
             "evaluation": "multiple_ordered_purged_temporal_folds",
+            "foldUniverse": "single_frozen_split_reused_by_all_fold_consumers",
             "benchmark": "zero_excess_return_baseline_per_fold",
             "stability": "reported_diagnostically_not_used_for_promotion",
             "macroResearchPreprocessing": "fit_inside_each_fold_train_only",
