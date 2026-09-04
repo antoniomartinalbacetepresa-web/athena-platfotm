@@ -12,10 +12,12 @@ import '../repositories/mock_market_universe_repository.dart';
 import '../services/athena_backend_market_service.dart';
 import '../services/global_market_context_service.dart';
 import '../services/global_market_data_service.dart';
+import '../services/market_context_service.dart';
 import '../services/mock_market_context_service.dart';
 import '../services/mock_market_service.dart';
 import '../services/regional_market_context_service_impl.dart';
 import '../services/regional_market_weight_service.dart';
+import '../services/unavailable_market_context_service.dart';
 
 /// Dependencias principales de la funcionalidad de mercado.
 ///
@@ -58,6 +60,7 @@ class MarketDependencies {
     final regionalMarketWeightService = const RegionalMarketWeightService();
 
     late final MarketRepository marketRepository;
+    late final MarketContextService marketContextService;
     late final MarketUniverseRepository marketUniverseRepository;
     AthenaBackendMarketDataProvider? backendMarketProvider;
     AthenaBackendMarketUniverseDataSource? backendUniverseDataSource;
@@ -68,6 +71,7 @@ class MarketDependencies {
         marketRepository = MarketRepositoryImpl(
           marketService: const MockMarketService(),
         );
+        marketContextService = const MockMarketContextService();
         marketUniverseRepository = const MockMarketUniverseRepository();
 
       case 'athena_backend':
@@ -93,6 +97,7 @@ class MarketDependencies {
             provider: backendMarketProvider,
           ),
         );
+        marketContextService = const UnavailableMarketContextService();
         marketUniverseRepository = MarketUniverseRepositoryImpl(
           dataSource: backendUniverseDataSource,
         );
@@ -106,7 +111,7 @@ class MarketDependencies {
     }
 
     final marketContextRepository = MarketContextRepositoryImpl(
-      marketContextService: const MockMarketContextService(),
+      marketContextService: marketContextService,
     );
 
     final regionalMarketContextService = RegionalMarketContextServiceImpl(
