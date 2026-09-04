@@ -6,6 +6,35 @@ from app.api import recommendation_shadow_operations
 from app.main import app
 
 
+class FakePreHoldoutPipelineService:
+    def __init__(
+        self,
+        *,
+        advisory_status="no_advice",
+        production_eligible=False,
+        automatic_production_promotion=False,
+        actions="not_assigned",
+    ):
+        self.advisory_status = advisory_status
+        self.production_eligible = production_eligible
+        self.automatic_production_promotion = automatic_production_promotion
+        self.actions = actions
+        self.calls = []
+
+    def prepare(self, **kwargs):
+        self.calls.append(kwargs)
+        return {
+            "status": "shadow_pre_holdout_candidates_frozen_and_persisted",
+            "preparedHorizonCount": 2,
+            "advisoryStatus": self.advisory_status,
+            "productionEligible": self.production_eligible,
+            "policy": {
+                "automaticProductionPromotion": self.automatic_production_promotion,
+                "actions": self.actions,
+            },
+        }
+
+
 class FakeOperationalLiveCycleService:
     def __init__(
         self,
@@ -37,6 +66,93 @@ class FakeOperationalLiveCycleService:
                 "automaticProductionPromotion": self.automatic_production_promotion,
             },
         }
+
+
+def test_prepare_endpoint_runs_real_research_gated_persistence_defaults(monkeypatch):
+    fake = FakePreHoldoutPipelineService()
+    monkeypatch.setattr(
+        recommendation_shadow_operations,
+        "pre_holdout_pipeline_service",
+        fake,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/recommendations/learning/shadow-prepare-cohort",
+        params={"as_of": "2026-09-04T05:00:00+00:00"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["preparedHorizonCount"] == 2
+    assert fake.calls[0]["horizons"] == (7, 30, 90, 180, 365)
+    assert fake.calls[0]["as_of"].utcoffset() is not None
+    assert response.json()["data"]["advisoryStatus"] == "no_advice"
+    assert response.json()["data"]["productionEligible"] is False
+
+
+def test_prepare_endpoint_accepts_explicit_unique_positive_horizons(monkeypatch):
+    fake = FakePreHoldoutPipelineService()
+    monkeypatch.setattr(
+        recommendation_shadow_operations,
+        "pre_holdout_pipeline_service",
+        fake,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/recommendations/learning/shadow-prepare-cohort",
+        params={"horizons": "7,30,90"},
+    )
+
+    assert response.status_code == 200
+    assert fake.calls[0]["horizons"] == (7, 30, 90)
+
+
+def test_prepare_endpoint_rejects_naive_as_of_and_invalid_horizons_before_service(monkeypatch):
+    fake = FakePreHoldoutPipelineService()
+    monkeypatch.setattr(
+        recommendation_shadow_operations,
+        "pre_holdout_pipeline_service",
+        fake,
+    )
+    client = TestClient(app)
+
+    naive = client.post(
+        "/api/v1/recommendations/learning/shadow-prepare-cohort",
+        params={"as_of": "2026-09-04T05:00:00"},
+    )
+    assert naive.status_code == 400
+
+    for value in ("", "0,30", "30,30", "30,abc"):
+        response = client.post(
+            "/api/v1/recommendations/learning/shadow-prepare-cohort",
+            params={"horizons": value},
+        )
+        assert response.status_code == 400
+
+    assert fake.calls == []
+
+
+def test_prepare_endpoint_fails_closed_on_advice_production_or_action_escalation(monkeypatch):
+    client = TestClient(app)
+    violations = (
+        FakePreHoldoutPipelineService(advisory_status="buy"),
+        FakePreHoldoutPipelineService(production_eligible=True),
+        FakePreHoldoutPipelineService(automatic_production_promotion=True),
+        FakePreHoldoutPipelineService(actions="buy"),
+    )
+
+    for fake in violations:
+        monkeypatch.setattr(
+            recommendation_shadow_operations,
+            "pre_holdout_pipeline_service",
+            fake,
+        )
+        response = client.post(
+            "/api/v1/recommendations/learning/shadow-prepare-cohort"
+        )
+        assert response.status_code == 500
+        assert len(fake.calls) == 1
 
 
 def test_post_endpoint_runs_operational_cycle_with_real_safe_defaults(monkeypatch):
