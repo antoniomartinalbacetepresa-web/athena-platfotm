@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/features/market/models/market_quote.dart';
+import 'package:app/features/market/repositories/market_repository.dart';
 import 'package:app/features/portfolio/models/portfolio.dart';
 import 'package:app/features/portfolio/models/portfolio_instrument_identity.dart';
 import 'package:app/features/portfolio/models/portfolio_position.dart';
@@ -21,6 +23,15 @@ class FakePortfolioRepository extends PortfolioRepository {
   Future<void> deletePortfolio() async {
     stored = null;
   }
+}
+
+class SingleQuoteMarketRepository implements MarketRepository {
+  final MarketQuote quote;
+
+  SingleQuoteMarketRepository(this.quote);
+
+  @override
+  Future<MarketQuote> getQuote(String symbol) async => quote;
 }
 
 PortfolioPosition draftPosition() {
@@ -64,6 +75,38 @@ PortfolioInstrumentIdentity verifiedIdentity({
   );
 }
 
+MarketQuote refreshedQuote({
+  String exchange = 'NMS',
+  String currency = 'USD',
+  double price = 435,
+}) {
+  return MarketQuote(
+    symbol: 'MSFT',
+    companyName: 'Microsoft Corp.',
+    currentPrice: price,
+    change: 1,
+    changePercentage: 0.2,
+    currency: currency,
+    exchange: exchange,
+    quoteType: 'EQUITY',
+    updatedAt: DateTime.utc(2026, 9, 3, 16, 30),
+    sourceProvider: 'yahoo',
+    retrievedAt: DateTime.utc(2026, 9, 3, 16, 31),
+  );
+}
+
+Future<PortfolioService> serviceWithVerifiedPosition(
+  FakePortfolioRepository repository,
+) async {
+  final service = PortfolioService(
+    repository: repository,
+    identityResolver: ({required symbol, exchange}) async => verifiedIdentity(),
+  );
+  await service.createPortfolio(id: 'p1', name: 'Mi cartera', initialCapital: 0);
+  await service.addPosition(draftPosition());
+  return service;
+}
+
 void main() {
   test('persists only after canonical identity enrichment succeeds', () async {
     final repository = FakePortfolioRepository();
@@ -99,10 +142,7 @@ void main() {
 
     await service.createPortfolio(id: 'p1', name: 'Mi cartera', initialCapital: 0);
 
-    await expectLater(
-      service.addPosition(draftPosition()),
-      throwsStateError,
-    );
+    await expectLater(service.addPosition(draftPosition()), throwsStateError);
     expect(repository.stored!.positions, isEmpty);
   });
 
@@ -116,10 +156,61 @@ void main() {
 
     await service.createPortfolio(id: 'p1', name: 'Mi cartera', initialCapital: 0);
 
-    await expectLater(
-      service.addPosition(draftPosition()),
-      throwsStateError,
-    );
+    await expectLater(service.addPosition(draftPosition()), throwsStateError);
     expect(repository.stored!.positions, isEmpty);
+  });
+
+  test('refresh keeps canonical identity when listing and currency still match', () async {
+    final repository = FakePortfolioRepository();
+    final service = await serviceWithVerifiedPosition(repository);
+
+    final report = await service.refreshCurrentPrices(
+      marketRepository: SingleQuoteMarketRepository(refreshedQuote()),
+    );
+
+    expect(report.isComplete, isTrue);
+    final stored = repository.stored!.positions.single;
+    expect(stored.currentPrice, 435);
+    expect(stored.canonicalInstrumentId, 'MSFT@NMS');
+    expect(stored.databaseInstrumentId, 42);
+    expect(stored.hasVerifiedCanonicalIdentity, isTrue);
+  });
+
+  test('refresh rejects listing drift and preserves prior verified position', () async {
+    final repository = FakePortfolioRepository();
+    final service = await serviceWithVerifiedPosition(repository);
+    final before = repository.stored!.positions.single;
+
+    final report = await service.refreshCurrentPrices(
+      marketRepository: SingleQuoteMarketRepository(
+        refreshedQuote(exchange: 'NYQ', price: 999),
+      ),
+    );
+
+    expect(report.updatedPositions, 0);
+    expect(report.failedSymbols, ['MSFT']);
+    final stored = service.portfolio!.positions.single;
+    expect(stored.currentPrice, before.currentPrice);
+    expect(stored.exchange, 'NMS');
+    expect(stored.canonicalInstrumentId, 'MSFT@NMS');
+  });
+
+  test('refresh rejects currency drift and preserves prior verified position', () async {
+    final repository = FakePortfolioRepository();
+    final service = await serviceWithVerifiedPosition(repository);
+    final before = repository.stored!.positions.single;
+
+    final report = await service.refreshCurrentPrices(
+      marketRepository: SingleQuoteMarketRepository(
+        refreshedQuote(currency: 'EUR', price: 999),
+      ),
+    );
+
+    expect(report.updatedPositions, 0);
+    expect(report.failedSymbols, ['MSFT']);
+    final stored = service.portfolio!.positions.single;
+    expect(stored.currentPrice, before.currentPrice);
+    expect(stored.priceCurrency, 'USD');
+    expect(stored.canonicalInstrumentId, 'MSFT@NMS');
   });
 }
