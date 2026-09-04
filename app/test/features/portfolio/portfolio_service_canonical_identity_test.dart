@@ -213,4 +213,71 @@ void main() {
     expect(stored.priceCurrency, 'USD');
     expect(stored.canonicalInstrumentId, 'MSFT@NMS');
   });
+
+  test('update preserves canonical identity while changing mutable position data', () async {
+    final repository = FakePortfolioRepository();
+    final service = await serviceWithVerifiedPosition(repository);
+    final before = repository.stored!.positions.single;
+
+    await service.updatePosition(
+      before.copyWith(
+        shares: 3,
+        averagePrice: 410,
+        currentPrice: 440,
+        currentPriceUpdatedAt: DateTime.utc(2026, 9, 4, 16, 30),
+        currentPriceRetrievedAt: DateTime.utc(2026, 9, 4, 16, 31),
+      ),
+    );
+
+    final stored = repository.stored!.positions.single;
+    expect(stored.shares, 3);
+    expect(stored.averagePrice, 410);
+    expect(stored.currentPrice, 440);
+    expect(stored.databaseInstrumentId, before.databaseInstrumentId);
+    expect(stored.canonicalInstrumentId, before.canonicalInstrumentId);
+    expect(stored.canonicalIssuerId, before.canonicalIssuerId);
+    expect(stored.hasVerifiedCanonicalIdentity, isTrue);
+  });
+
+  test('update rejects listing, currency or canonical identity drift without persistence',
+      () async {
+    for (final mutate in <PortfolioPosition Function(PortfolioPosition)>[
+      (position) => position.copyWith(exchange: 'NYQ'),
+      (position) => position.copyWith(priceCurrency: 'EUR'),
+      (position) => PortfolioPosition(
+            symbol: position.symbol,
+            companyName: position.companyName,
+            shares: position.shares,
+            averagePrice: position.averagePrice,
+            currentPrice: position.currentPrice,
+            costBasisDate: position.costBasisDate,
+            priceCurrency: position.priceCurrency,
+            exchange: position.exchange,
+            quoteType: position.quoteType,
+            currentPriceUpdatedAt: position.currentPriceUpdatedAt,
+            currentPriceSourceProvider: position.currentPriceSourceProvider,
+            currentPriceRetrievedAt: position.currentPriceRetrievedAt,
+            databaseInstrumentId: 999,
+            canonicalInstrumentId: position.canonicalInstrumentId,
+            canonicalIssuerId: position.canonicalIssuerId,
+            identitySourceProvider: position.identitySourceProvider,
+            identityRetrievedAt: position.identityRetrievedAt,
+            identityResolutionMethod: position.identityResolutionMethod,
+            identityExchangeVerified: position.identityExchangeVerified,
+            identityRiskReady: position.identityRiskReady,
+          ),
+    ]) {
+      final repository = FakePortfolioRepository();
+      final service = await serviceWithVerifiedPosition(repository);
+      final before = repository.stored!.positions.single;
+
+      await expectLater(service.updatePosition(mutate(before)), throwsStateError);
+
+      final stored = repository.stored!.positions.single;
+      expect(stored.exchange, 'NMS');
+      expect(stored.priceCurrency, 'USD');
+      expect(stored.databaseInstrumentId, 42);
+      expect(stored.canonicalInstrumentId, 'MSFT@NMS');
+    }
+  });
 }
