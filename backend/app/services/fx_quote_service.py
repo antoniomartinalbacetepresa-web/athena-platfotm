@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from math import isfinite
 from typing import Any, Protocol
 
@@ -10,14 +10,21 @@ from app.services.yahoo_market_service import YahooMarketService
 class _MarketQuoteService(Protocol):
     def get_quote(self, symbol: str) -> dict[str, Any] | None: ...
 
+    def get_history(
+        self,
+        symbol: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
 
 class FxQuoteService:
-    """Resolve current FX conversion rates with explicit provenance.
+    """Resolve FX conversion rates with explicit provenance and PIT guards.
 
-    The service deliberately exposes only a *current* conversion contract. It
-    does not pretend that a rate retrieved now was known at an earlier point in
-    time. Historical portfolio/recommendation evaluation must use a separately
-    persisted PIT FX observation before it can be considered valid.
+    Current quotes are never backdated. Historical observations can be used for
+    a current portfolio calculation, but a caller performing a historical
+    evaluation must provide the historical knowledge cutoff. A rate retrieved
+    after that cutoff is rejected rather than silently introducing lookahead.
     """
 
     def __init__(self, *, market_service: _MarketQuoteService | None = None) -> None:
@@ -50,12 +57,7 @@ class FxQuoteService:
         if returned_symbol != source_symbol:
             raise RuntimeError("La fuente FX devolvió un instrumento distinto al solicitado.")
 
-        try:
-            rate = float(payload.get("close"))
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError("La cotización FX no contiene una tasa numérica válida.") from exc
-        if not isfinite(rate) or rate <= 0:
-            raise RuntimeError("La cotización FX no contiene una tasa positiva y finita.")
+        rate = self._positive_finite_rate(payload.get("close"))
 
         source_provider = str(payload.get("sourceProvider") or "").strip()
         if not source_provider:
@@ -87,11 +89,131 @@ class FxQuoteService:
             },
         }
 
+    def get_historical_rate(
+        self,
+        *,
+        base_currency: str,
+        quote_currency: str,
+        observed_on: date,
+        knowledge_cutoff: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Resolve the FX close observed on a specific date without lookahead.
+
+        If ``knowledge_cutoff`` is omitted, the observation is intended for a
+        calculation performed now and the cutoff is captured after retrieval.
+        Historical replay/backtesting must pass its original cutoff explicitly;
+        a newly retrieved observation will then fail closed if it was not known
+        by that time.
+        """
+
+        base = self._currency(base_currency, "base_currency")
+        quote = self._currency(quote_currency, "quote_currency")
+        target_date = self._date(observed_on, "observed_on")
+        explicit_cutoff = knowledge_cutoff is not None
+        cutoff = (
+            self._aware_datetime(knowledge_cutoff, "knowledge_cutoff")
+            if explicit_cutoff
+            else None
+        )
+
+        if base == quote:
+            retrieved_at = datetime.now(timezone.utc)
+            effective_cutoff = cutoff or retrieved_at
+            observed_at = datetime.combine(target_date, time.min, tzinfo=timezone.utc)
+            return {
+                "status": "fx_historical_identity",
+                "baseCurrency": base,
+                "quoteCurrency": quote,
+                "rate": 1.0,
+                "observedOn": target_date.isoformat(),
+                "observedAt": observed_at.isoformat(),
+                "retrievedAt": retrieved_at.isoformat(),
+                "knowledgeCutoff": effective_cutoff.isoformat(),
+                "sourceProvider": "identity",
+                "sourceSymbol": None,
+                "historicalPointInTimeEligible": True,
+                "policy": {
+                    "exactObservationDateRequired": True,
+                    "retrievalMustNotExceedKnowledgeCutoff": True,
+                    "identityConversionRequiresNoMarketObservation": True,
+                },
+            }
+
+        source_symbol = f"{base}{quote}=X"
+        rows = self._market_service.get_history(
+            source_symbol,
+            from_date=target_date.isoformat(),
+            to_date=target_date.isoformat(),
+        )
+        if not isinstance(rows, list) or not rows:
+            raise RuntimeError("No existe una observación FX verificable para la fecha solicitada.")
+        if len(rows) != 1 or not isinstance(rows[0], dict):
+            raise RuntimeError("La fuente FX devolvió una observación histórica ambigua.")
+
+        payload = rows[0]
+        returned_symbol = str(payload.get("symbol") or "").strip().upper()
+        if returned_symbol != source_symbol:
+            raise RuntimeError("La fuente FX histórica devolvió un instrumento distinto al solicitado.")
+
+        rate = self._positive_finite_rate(payload.get("close"))
+        source_provider = str(payload.get("sourceProvider") or "").strip()
+        if not source_provider:
+            raise RuntimeError("La cotización FX histórica no contiene proveedor de procedencia.")
+
+        observed_at = self._aware_iso(payload.get("timestamp"), "timestamp")
+        retrieved_at = self._aware_iso(payload.get("retrievedAt"), "retrievedAt")
+        if retrieved_at < observed_at:
+            raise RuntimeError("La recuperación FX histórica no puede preceder a su observación.")
+        if observed_at.date() != target_date:
+            raise RuntimeError("La observación FX histórica no corresponde a la fecha solicitada.")
+
+        effective_cutoff = cutoff or datetime.now(timezone.utc)
+        if retrieved_at > effective_cutoff:
+            raise RuntimeError(
+                "La observación FX fue recuperada después del corte de conocimiento; usarla introduciría lookahead."
+            )
+
+        return {
+            "status": "fx_historical_ready",
+            "baseCurrency": base,
+            "quoteCurrency": quote,
+            "rate": rate,
+            "observedOn": target_date.isoformat(),
+            "observedAt": observed_at.isoformat(),
+            "retrievedAt": retrieved_at.isoformat(),
+            "knowledgeCutoff": effective_cutoff.isoformat(),
+            "sourceProvider": source_provider,
+            "sourceSymbol": source_symbol,
+            "historicalPointInTimeEligible": True,
+            "policy": {
+                "exactObservationDateRequired": True,
+                "retrievalMustNotExceedKnowledgeCutoff": True,
+                "historicalBackdatingForbidden": True,
+                "persistObservationForFutureReplay": True,
+            },
+        }
+
     def _currency(self, value: str, field: str) -> str:
         normalized = str(value or "").strip().upper()
         if len(normalized) != 3 or not normalized.isalpha():
             raise ValueError(f"{field} debe ser un código ISO de tres letras.")
         return normalized
+
+    def _date(self, value: object, field: str) -> date:
+        if isinstance(value, datetime) or not isinstance(value, date):
+            raise ValueError(f"{field} debe ser una fecha sin hora.")
+        return value
+
+    def _positive_finite_rate(self, value: object) -> float:
+        if isinstance(value, bool):
+            raise RuntimeError("La cotización FX no contiene una tasa numérica válida.")
+        try:
+            rate = float(value)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("La cotización FX no contiene una tasa numérica válida.") from exc
+        if not isfinite(rate) or rate <= 0:
+            raise RuntimeError("La cotización FX no contiene una tasa positiva y finita.")
+        return rate
 
     def _aware_iso(self, value: object, field: str) -> datetime:
         raw = str(value or "").strip()
@@ -104,3 +226,10 @@ class FxQuoteService:
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise RuntimeError(f"La cotización FX contiene {field} sin zona horaria.")
         return parsed.astimezone(timezone.utc)
+
+    def _aware_datetime(self, value: object, field: str) -> datetime:
+        if not isinstance(value, datetime):
+            raise ValueError(f"{field} debe ser datetime.")
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return value.astimezone(timezone.utc)
