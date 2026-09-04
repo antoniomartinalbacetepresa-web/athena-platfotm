@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.macro import router as macro_router
 from app.api.market import router as market_router
 from app.api.news import router as news_router
+from app.api.portfolio import router as portfolio_router
 from app.api.recommendation_research import router as recommendation_research_router
 from app.api.recommendation_shadow_operations import (
     router as recommendation_shadow_operations_router,
@@ -35,6 +36,7 @@ app.include_router(sec_router)
 app.include_router(macro_router)
 app.include_router(news_router)
 app.include_router(sources_router)
+app.include_router(portfolio_router)
 app.include_router(recommendations_router)
 app.include_router(recommendation_research_router)
 app.include_router(recommendation_shadow_operations_router)
