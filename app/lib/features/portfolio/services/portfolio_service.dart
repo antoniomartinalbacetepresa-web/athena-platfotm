@@ -363,18 +363,67 @@ class PortfolioService {
   }
 
   Future<void> updatePosition(PortfolioPosition updatedPosition) async {
-    if (_portfolio == null) {
+    final portfolio = _portfolio;
+    if (portfolio == null) {
       throw StateError('No existe una cartera.');
     }
 
-    final updatedPositions = _portfolio!.positions.map((position) {
-      if (position.symbol == updatedPosition.symbol) {
-        return updatedPosition;
-      }
-      return position;
-    }).toList();
+    final normalizedSymbol = updatedPosition.symbol.trim().toUpperCase();
+    final index = portfolio.positions.indexWhere(
+      (position) => position.symbol.trim().toUpperCase() == normalizedSymbol,
+    );
+    if (index < 0) {
+      throw StateError('La posición que se intenta actualizar no existe.');
+    }
 
-    _portfolio = _portfolio!.copyWith(positions: updatedPositions);
+    final existing = portfolio.positions[index];
+    final existingExchange = existing.exchange?.trim().toUpperCase();
+    final requestedExchange = updatedPosition.exchange?.trim().toUpperCase();
+    final existingCurrency = existing.priceCurrency?.trim().toUpperCase();
+    final requestedCurrency =
+        updatedPosition.priceCurrency?.trim().toUpperCase();
+
+    if (existingExchange != requestedExchange ||
+        existingCurrency != requestedCurrency) {
+      throw StateError(
+        'No se puede cambiar listing ni moneda mediante una actualización de posición.',
+      );
+    }
+
+    if (existing.hasVerifiedCanonicalIdentity) {
+      if (updatedPosition.databaseInstrumentId != existing.databaseInstrumentId ||
+          updatedPosition.canonicalInstrumentId !=
+              existing.canonicalInstrumentId ||
+          updatedPosition.canonicalIssuerId != existing.canonicalIssuerId ||
+          updatedPosition.identitySourceProvider !=
+              existing.identitySourceProvider ||
+          updatedPosition.identityRetrievedAt != existing.identityRetrievedAt ||
+          updatedPosition.identityResolutionMethod !=
+              existing.identityResolutionMethod ||
+          updatedPosition.identityExchangeVerified !=
+              existing.identityExchangeVerified ||
+          updatedPosition.identityRiskReady != existing.identityRiskReady) {
+        throw StateError(
+          'La identidad canónica de una posición es inmutable durante un ajuste.',
+        );
+      }
+    }
+
+    final candidate = existing.copyWith(
+      companyName: updatedPosition.companyName,
+      shares: updatedPosition.shares,
+      averagePrice: updatedPosition.averagePrice,
+      currentPrice: updatedPosition.currentPrice,
+      costBasisDate: updatedPosition.costBasisDate,
+      currentPriceUpdatedAt: updatedPosition.currentPriceUpdatedAt,
+      currentPriceSourceProvider: updatedPosition.currentPriceSourceProvider,
+      currentPriceRetrievedAt: updatedPosition.currentPriceRetrievedAt,
+    );
+    final validated = _validateNewPosition(candidate);
+
+    final updatedPositions = [...portfolio.positions];
+    updatedPositions[index] = validated;
+    _portfolio = portfolio.copyWith(positions: updatedPositions);
     await _repository.savePortfolio(_portfolio!);
   }
 
