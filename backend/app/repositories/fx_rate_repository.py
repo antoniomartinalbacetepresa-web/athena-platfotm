@@ -22,7 +22,15 @@ class FxRateRecord:
 
 
 class FxRateRepository:
-    """Persist immutable FX observations and replay only what was knowable PIT."""
+    """Persist immutable FX observations and replay only what was knowable PIT.
+
+    The pre-existing ``fx_rates`` schema calls the instrument/source currency
+    ``currency`` and the conversion destination ``base_currency``. This
+    repository deliberately hides that legacy naming and exposes the explicit
+    pair semantics ``base_currency -> quote_currency`` used by FxQuoteService.
+    Multiple retrievals are retained as immutable revisions; PIT replay chooses
+    the latest revision that was already known by the requested cutoff.
+    """
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -57,12 +65,20 @@ class FxRateRepository:
         with self._database.connect() as connection:
             existing = connection.execute(
                 """
-                SELECT id, date, base_currency, quote_currency, rate, source,
+                SELECT id, currency, base_currency, rate, source_provider,
                        source_symbol, source_timestamp, retrieved_at
                 FROM fx_rates
-                WHERE date = ? AND base_currency = ? AND quote_currency = ? AND source = ?
+                WHERE currency = ?
+                  AND base_currency = ?
+                  AND retrieved_at = ?
+                  AND source_provider = ?
                 """,
-                (target_date.isoformat(), base, quote, provider),
+                (
+                    base,
+                    quote,
+                    retrieved.isoformat(),
+                    provider,
+                ),
             ).fetchone()
 
             if existing is not None:
@@ -72,33 +88,37 @@ class FxRateRepository:
                     rate=normalized_rate,
                     source_symbol=symbol,
                     observed_at=observed,
-                    retrieved_at=retrieved,
                 )
                 return record
 
             cursor = connection.execute(
                 """
                 INSERT INTO fx_rates (
-                    date, base_currency, quote_currency, rate, source,
-                    source_symbol, source_timestamp, retrieved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    currency,
+                    base_currency,
+                    rate,
+                    source_symbol,
+                    source_provider,
+                    source_timestamp,
+                    retrieved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    target_date.isoformat(),
                     base,
                     quote,
                     normalized_rate,
-                    provider,
                     symbol,
+                    provider,
                     observed.isoformat(),
                     retrieved.isoformat(),
                 ),
             )
             row = connection.execute(
                 """
-                SELECT id, date, base_currency, quote_currency, rate, source,
+                SELECT id, currency, base_currency, rate, source_provider,
                        source_symbol, source_timestamp, retrieved_at
-                FROM fx_rates WHERE id = ?
+                FROM fx_rates
+                WHERE id = ?
                 """,
                 (cursor.lastrowid,),
             ).fetchone()
@@ -125,24 +145,24 @@ class FxRateRepository:
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, date, base_currency, quote_currency, rate, source,
+                SELECT id, currency, base_currency, rate, source_provider,
                        source_symbol, source_timestamp, retrieved_at
                 FROM fx_rates
-                WHERE date = ?
+                WHERE currency = ?
                   AND base_currency = ?
-                  AND quote_currency = ?
                   AND source_symbol = ?
                   AND source_timestamp IS NOT NULL
+                  AND substr(source_timestamp, 1, 10) = ?
                   AND source_timestamp <= ?
                   AND retrieved_at <= ?
-                ORDER BY retrieved_at ASC, id ASC
+                ORDER BY retrieved_at DESC, id DESC
                 LIMIT 2
                 """,
                 (
-                    target_date.isoformat(),
                     base,
                     quote,
                     symbol,
+                    target_date.isoformat(),
                     cutoff.isoformat(),
                     cutoff.isoformat(),
                 ),
@@ -150,11 +170,23 @@ class FxRateRepository:
 
         if not rows:
             return None
-        if len(rows) != 1:
-            raise RuntimeError(
-                "Existen varias observaciones FX PIT elegibles y no puede elegirse una fuente sin ambigüedad."
-            )
-        return self._record(rows[0])
+
+        newest = self._record(rows[0])
+        if len(rows) > 1:
+            previous = self._record(rows[1])
+            if (
+                newest.retrieved_at == previous.retrieved_at
+                and (
+                    newest.rate != previous.rate
+                    or newest.source_provider != previous.source_provider
+                    or newest.observed_at != previous.observed_at
+                )
+            ):
+                raise RuntimeError(
+                    "Existen varias observaciones FX PIT igualmente recientes y contradictorias."
+                )
+
+        return newest
 
     def _assert_same_immutable_observation(
         self,
@@ -163,44 +195,43 @@ class FxRateRepository:
         rate: float,
         source_symbol: str | None,
         observed_at: datetime,
-        retrieved_at: datetime,
     ) -> None:
         if (
             record.rate != rate
             or record.source_symbol != source_symbol
             or record.observed_at != observed_at
-            or record.retrieved_at != retrieved_at
         ):
             raise RuntimeError(
                 "Conflicto de integridad: una observación FX persistida no puede sobrescribirse."
             )
 
     def _record(self, row: Any) -> FxRateRecord:
-        observed_raw = row[7]
+        observed_raw = row[6]
         if observed_raw is None:
             raise RuntimeError("La observación FX persistida carece de observed_at.")
-        record = FxRateRecord(
-            id=int(row[0]),
-            observed_on=date.fromisoformat(str(row[1])),
-            base_currency=self._currency(str(row[2]), "base_currency"),
-            quote_currency=self._currency(str(row[3]), "quote_currency"),
-            rate=self._positive_finite(row[4]),
-            source_provider=self._required_text(str(row[5]), "source_provider"),
-            source_symbol=self._optional_text(row[6]),
-            observed_at=self._aware_utc(
-                datetime.fromisoformat(str(observed_raw).replace("Z", "+00:00")),
-                "observed_at",
-            ),
-            retrieved_at=self._aware_utc(
-                datetime.fromisoformat(str(row[8]).replace("Z", "+00:00")),
-                "retrieved_at",
-            ),
+
+        observed = self._aware_utc(
+            datetime.fromisoformat(str(observed_raw).replace("Z", "+00:00")),
+            "observed_at",
         )
-        if record.observed_at.date() != record.observed_on:
-            raise RuntimeError("La observación FX persistida viola su fecha observada.")
-        if record.retrieved_at < record.observed_at:
+        retrieved = self._aware_utc(
+            datetime.fromisoformat(str(row[7]).replace("Z", "+00:00")),
+            "retrieved_at",
+        )
+        if retrieved < observed:
             raise RuntimeError("La observación FX persistida viola el orden temporal PIT.")
-        return record
+
+        return FxRateRecord(
+            id=int(row[0]),
+            observed_on=observed.date(),
+            base_currency=self._currency(str(row[1]), "base_currency"),
+            quote_currency=self._currency(str(row[2]), "quote_currency"),
+            rate=self._positive_finite(row[3]),
+            source_provider=self._required_text(str(row[4]), "source_provider"),
+            source_symbol=self._optional_text(row[5]),
+            observed_at=observed,
+            retrieved_at=retrieved,
+        )
 
     def _currency(self, value: object, field: str) -> str:
         normalized = str(value or "").strip().upper()
