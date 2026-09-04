@@ -73,7 +73,7 @@ class PortfolioService {
     for (final position in portfolio.positions) {
       try {
         final quote = await marketRepository.getQuote(position.symbol);
-        _validateRefreshQuote(quote, expectedSymbol: position.symbol);
+        _validateRefreshQuote(quote, position: position);
 
         refreshed.add(
           position.copyWith(
@@ -108,9 +108,9 @@ class PortfolioService {
 
   void _validateRefreshQuote(
     MarketQuote quote, {
-    required String expectedSymbol,
+    required PortfolioPosition position,
   }) {
-    final normalizedExpectedSymbol = expectedSymbol.trim().toUpperCase();
+    final normalizedExpectedSymbol = position.symbol.trim().toUpperCase();
     final normalizedQuoteSymbol = quote.symbol.trim().toUpperCase();
     if (normalizedExpectedSymbol.isEmpty ||
         normalizedQuoteSymbol != normalizedExpectedSymbol) {
@@ -135,6 +135,31 @@ class PortfolioService {
       throw StateError(
         'La recuperación no puede preceder a la observación de mercado.',
       );
+    }
+
+    if (position.hasVerifiedCanonicalIdentity) {
+      final persistedExchange = position.exchange?.trim().toUpperCase();
+      final refreshedExchange = quote.exchange?.trim().toUpperCase();
+      if (persistedExchange == null ||
+          persistedExchange.isEmpty ||
+          refreshedExchange == null ||
+          refreshedExchange.isEmpty ||
+          refreshedExchange != persistedExchange) {
+        throw StateError(
+          'La cotización actual pertenece a un listing distinto de la identidad canónica persistida.',
+        );
+      }
+
+      final persistedCurrency = position.priceCurrency?.trim().toUpperCase();
+      final refreshedCurrency = quote.currency?.trim().toUpperCase();
+      if (persistedCurrency == null ||
+          !RegExp(r'^[A-Z]{3}$').hasMatch(persistedCurrency) ||
+          refreshedCurrency == null ||
+          refreshedCurrency != persistedCurrency) {
+        throw StateError(
+          'La moneda de la cotización actual no coincide con la identidad canónica persistida.',
+        );
+      }
     }
   }
 
