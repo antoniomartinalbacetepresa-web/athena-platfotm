@@ -51,6 +51,82 @@ void main() {
       expect(quote.convertCurrent(100), 86);
     });
 
+    test('obtiene FX histórico para una fecha exacta', () async {
+      final client = MockClient((request) async {
+        expect(request.url.path, '/api/v1/market/fx/historical');
+        expect(request.url.queryParameters['base'], 'USD');
+        expect(request.url.queryParameters['quote'], 'EUR');
+        expect(request.url.queryParameters['observedOn'], '2026-08-15');
+        expect(request.url.queryParameters.containsKey('knowledgeCutoff'), isFalse);
+
+        return http.Response(
+          jsonEncode({
+            'data': {
+              'status': 'fx_historical_ready',
+              'baseCurrency': 'USD',
+              'quoteCurrency': 'EUR',
+              'rate': 0.84,
+              'observedAt': '2026-08-15T00:00:00Z',
+              'retrievedAt': '2026-09-04T18:00:00Z',
+              'sourceProvider': 'yahoo',
+              'sourceSymbol': 'USDEUR=X',
+              'historicalPointInTimeEligible': false,
+            },
+          }),
+          200,
+        );
+      });
+
+      final dataSource = AthenaBackendFxDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+
+      final quote = await dataSource.getHistoricalRate(
+        baseCurrency: 'USD',
+        quoteCurrency: 'EUR',
+        observedOn: DateTime.utc(2026, 8, 15),
+      );
+
+      expect(quote.rate, 0.84);
+      expect(quote.observedAt, DateTime.utc(2026, 8, 15));
+      expect(quote.retrievedAt, DateTime.utc(2026, 9, 4, 18));
+    });
+
+    test('rechaza histórico recuperado después del knowledge cutoff', () async {
+      final client = MockClient((request) async => http.Response(
+            jsonEncode({
+              'data': {
+                'status': 'fx_historical_ready',
+                'baseCurrency': 'USD',
+                'quoteCurrency': 'EUR',
+                'rate': 0.84,
+                'observedAt': '2026-08-15T00:00:00Z',
+                'retrievedAt': '2026-09-04T18:00:00Z',
+                'sourceProvider': 'yahoo',
+                'sourceSymbol': 'USDEUR=X',
+                'historicalPointInTimeEligible': false,
+              },
+            }),
+            200,
+          ));
+
+      final dataSource = AthenaBackendFxDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+
+      expect(
+        () => dataSource.getHistoricalRate(
+          baseCurrency: 'USD',
+          quoteCurrency: 'EUR',
+          observedOn: DateTime.utc(2026, 8, 15),
+          knowledgeCutoff: DateTime.utc(2026, 8, 16),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('rechaza respuesta de un par distinto', () async {
       final client = MockClient((request) async => http.Response(
             jsonEncode({
