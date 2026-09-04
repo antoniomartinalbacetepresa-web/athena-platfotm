@@ -11,6 +11,7 @@ from app.services.recommendation_shadow_calibration_dataset_service import (
 
 
 CUT = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc)
+FEATURE_SCHEMA_VERSION = "shadow-evidence-v2"
 
 
 def _setup(tmp_path):
@@ -79,7 +80,7 @@ def _create_matured_snapshot(
     repository: RecommendationShadowRepository,
     *,
     instrument_id: int,
-    schema: str = "shadow-evidence-v1",
+    schema: str = FEATURE_SCHEMA_VERSION,
     benchmark_return: float | None = 0.03,
 ) -> int:
     snapshot_id = repository.create_snapshot(
@@ -177,7 +178,7 @@ def test_dataset_requires_exact_feature_schema_version(tmp_path) -> None:
     )
 
     assert result["rowCount"] == 0
-    assert result["featureSchemaVersion"] == "shadow-evidence-v1"
+    assert result["featureSchemaVersion"] == FEATURE_SCHEMA_VERSION
 
 
 def test_dataset_can_require_frozen_benchmark_outcomes(tmp_path) -> None:
@@ -208,7 +209,7 @@ def test_dataset_fails_closed_on_snapshot_claiming_advice_readiness(tmp_path) ->
         symbol="AAPL",
         data_cutoff_at=CUT,
         captured_at=CUT,
-        feature_schema_version="shadow-evidence-v1",
+        feature_schema_version=FEATURE_SCHEMA_VERSION,
         evidence_status="evidence_ready_for_calibration",
         entry_price=100.0,
         entry_observed_at=CUT - timedelta(hours=1),
