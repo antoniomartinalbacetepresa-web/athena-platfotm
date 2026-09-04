@@ -4,6 +4,7 @@ class PortfolioPosition {
   final double shares;
   final double averagePrice;
   final double currentPrice;
+  final DateTime? costBasisDate;
   final String? priceCurrency;
   final String? exchange;
   final String? quoteType;
@@ -17,6 +18,7 @@ class PortfolioPosition {
     required this.shares,
     required this.averagePrice,
     required this.currentPrice,
+    this.costBasisDate,
     this.priceCurrency,
     this.exchange,
     this.quoteType,
@@ -51,6 +53,7 @@ class PortfolioPosition {
     double? shares,
     double? averagePrice,
     double? currentPrice,
+    DateTime? costBasisDate,
     String? priceCurrency,
     String? exchange,
     String? quoteType,
@@ -64,6 +67,7 @@ class PortfolioPosition {
       shares: shares ?? this.shares,
       averagePrice: averagePrice ?? this.averagePrice,
       currentPrice: currentPrice ?? this.currentPrice,
+      costBasisDate: costBasisDate ?? this.costBasisDate,
       priceCurrency: priceCurrency ?? this.priceCurrency,
       exchange: exchange ?? this.exchange,
       quoteType: quoteType ?? this.quoteType,
@@ -83,6 +87,7 @@ class PortfolioPosition {
       'shares': shares,
       'averagePrice': averagePrice,
       'currentPrice': currentPrice,
+      'costBasisDate': costBasisDate?.toUtc().toIso8601String(),
       'priceCurrency': priceCurrency,
       'exchange': exchange,
       'quoteType': quoteType,
@@ -93,6 +98,7 @@ class PortfolioPosition {
   }
 
   factory PortfolioPosition.fromMap(Map<String, dynamic> map) {
+    final costBasisDateRaw = map['costBasisDate'];
     final updatedAtRaw = map['currentPriceUpdatedAt'];
     final retrievedAtRaw = map['currentPriceRetrievedAt'];
 
@@ -102,6 +108,9 @@ class PortfolioPosition {
       shares: (map['shares'] as num).toDouble(),
       averagePrice: (map['averagePrice'] as num).toDouble(),
       currentPrice: (map['currentPrice'] as num).toDouble(),
+      costBasisDate: costBasisDateRaw == null
+          ? null
+          : DateTime.tryParse(costBasisDateRaw.toString())?.toUtc(),
       priceCurrency: map['priceCurrency']?.toString(),
       exchange: map['exchange']?.toString(),
       quoteType: map['quoteType']?.toString(),
