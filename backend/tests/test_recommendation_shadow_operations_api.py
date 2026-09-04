@@ -68,6 +68,40 @@ class FakeOperationalLiveCycleService:
         }
 
 
+class FakeFollowupBatchService:
+    def __init__(
+        self,
+        *,
+        advisory_status="no_advice",
+        production_eligible=False,
+        recommendation_candidate_ready=False,
+        automatic_trading=False,
+        automatic_production_promotion=False,
+    ):
+        self.advisory_status = advisory_status
+        self.production_eligible = production_eligible
+        self.recommendation_candidate_ready = recommendation_candidate_ready
+        self.automatic_trading = automatic_trading
+        self.automatic_production_promotion = automatic_production_promotion
+        self.calls = []
+
+    def run(self, **kwargs):
+        self.calls.append(kwargs)
+        return {
+            "status": "shadow_live_followup_batch_completed",
+            "candidateCount": 3,
+            "processedCandidateCount": 3,
+            "evaluatedHorizonCount": 4,
+            "advisoryStatus": self.advisory_status,
+            "productionEligible": self.production_eligible,
+            "recommendationCandidateReady": self.recommendation_candidate_ready,
+            "policy": {
+                "automaticTrading": self.automatic_trading,
+                "automaticProductionPromotion": self.automatic_production_promotion,
+            },
+        }
+
+
 def test_prepare_endpoint_runs_real_research_gated_persistence_defaults(monkeypatch):
     fake = FakePreHoldoutPipelineService()
     monkeypatch.setattr(
@@ -281,3 +315,75 @@ def test_endpoint_maps_validation_errors_without_leaking_as_server_success(monke
 
     assert response.status_code == 400
     assert "cohorte frozen inválida" in response.json()["detail"]
+
+
+def test_followup_endpoint_processes_all_persisted_candidates_with_safe_defaults(monkeypatch):
+    fake = FakeFollowupBatchService()
+    monkeypatch.setattr(
+        recommendation_shadow_operations,
+        "followup_batch_service",
+        fake,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/recommendations/learning/shadow-followup-cycle",
+        params={"as_of": "2026-09-04T06:00:00+00:00"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["processedCandidateCount"] == 3
+    assert response.json()["data"]["evaluatedHorizonCount"] == 4
+    assert fake.calls[0]["horizons"] == (7, 30, 90, 180, 365)
+    assert fake.calls[0]["as_of"].utcoffset() is not None
+    assert response.json()["data"]["advisoryStatus"] == "no_advice"
+    assert response.json()["data"]["productionEligible"] is False
+    assert response.json()["data"]["recommendationCandidateReady"] is False
+
+
+def test_followup_endpoint_rejects_naive_cutoff_and_invalid_horizons(monkeypatch):
+    fake = FakeFollowupBatchService()
+    monkeypatch.setattr(
+        recommendation_shadow_operations,
+        "followup_batch_service",
+        fake,
+    )
+    client = TestClient(app)
+
+    naive = client.post(
+        "/api/v1/recommendations/learning/shadow-followup-cycle",
+        params={"as_of": "2026-09-04T06:00:00"},
+    )
+    assert naive.status_code == 400
+
+    for value in ("", "0,30", "30,30", "30,abc"):
+        response = client.post(
+            "/api/v1/recommendations/learning/shadow-followup-cycle",
+            params={"horizons": value},
+        )
+        assert response.status_code == 400
+
+    assert fake.calls == []
+
+
+def test_followup_endpoint_fails_closed_on_shadow_or_automation_escalation(monkeypatch):
+    client = TestClient(app)
+    violations = (
+        FakeFollowupBatchService(advisory_status="buy"),
+        FakeFollowupBatchService(production_eligible=True),
+        FakeFollowupBatchService(recommendation_candidate_ready=True),
+        FakeFollowupBatchService(automatic_trading=True),
+        FakeFollowupBatchService(automatic_production_promotion=True),
+    )
+
+    for fake in violations:
+        monkeypatch.setattr(
+            recommendation_shadow_operations,
+            "followup_batch_service",
+            fake,
+        )
+        response = client.post(
+            "/api/v1/recommendations/learning/shadow-followup-cycle"
+        )
+        assert response.status_code == 500
+        assert len(fake.calls) == 1
