@@ -24,6 +24,7 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
   final _symbolController = TextEditingController();
   final _sharesController = TextEditingController();
   final _averagePriceController = TextEditingController();
+  final _costBasisDateController = TextEditingController();
 
   MarketDependencies? _marketDependencies;
   late final MarketRepository _marketRepository;
@@ -49,6 +50,7 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
     _symbolController.dispose();
     _sharesController.dispose();
     _averagePriceController.dispose();
+    _costBasisDateController.dispose();
     _marketDependencies?.dispose();
     super.dispose();
   }
@@ -61,6 +63,9 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
     final symbol = _symbolController.text.trim().toUpperCase();
     final shares = _parseNumber(_sharesController.text);
     final averagePrice = _parseNumber(_averagePriceController.text);
+    final costBasisDate = _parseOptionalCostBasisDate(
+      _costBasisDateController.text,
+    );
 
     setState(() {
       _isSaving = true;
@@ -128,6 +133,7 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
           shares: shares,
           averagePrice: averagePrice,
           currentPrice: currentPrice,
+          costBasisDate: costBasisDate,
           priceCurrency: priceCurrency,
           exchange: exchange,
           quoteType: quoteType,
@@ -205,6 +211,26 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
                     decimal: true,
                   ),
                   validator: _validateNumber,
+                ),
+                const SizedBox(height: AthenaSpacing.md),
+                _field(
+                  controller: _costBasisDateController,
+                  label: 'Fecha del coste (AAAA-MM-DD, opcional)',
+                  hint: 'Ej. 2026-08-15',
+                  keyboardType: TextInputType.datetime,
+                  validator: _validateOptionalCostBasisDate,
+                ),
+                const SizedBox(height: AthenaSpacing.sm),
+                const Text(
+                  'Indica la fecha sólo si el precio medio corresponde a una '
+                  'única compra. Si agrega varias compras, déjala vacía: ATHENA '
+                  'bloqueará el P/L multimoneda antes que aplicar un único FX '
+                  'histórico a lotes distintos.',
+                  style: TextStyle(
+                    color: AthenaColors.textSecondary,
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
                 ),
                 const SizedBox(height: AthenaSpacing.md),
                 Container(
@@ -325,6 +351,54 @@ class _AddPositionDialogState extends State<AddPositionDialog> {
     return null;
   }
 
+  String? _validateOptionalCostBasisDate(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) {
+      return null;
+    }
+
+    final parsed = _tryParseCostBasisDate(text);
+    if (parsed == null) {
+      return 'Usa una fecha válida con formato AAAA-MM-DD';
+    }
+
+    final now = DateTime.now().toUtc();
+    final today = DateTime.utc(now.year, now.month, now.day);
+    if (parsed.isAfter(today)) {
+      return 'La fecha del coste no puede estar en el futuro';
+    }
+
+    return null;
+  }
+
+  DateTime? _parseOptionalCostBasisDate(String value) {
+    final text = value.trim();
+    if (text.isEmpty) {
+      return null;
+    }
+    return _tryParseCostBasisDate(text);
+  }
+
+  DateTime? _tryParseCostBasisDate(String value) {
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value);
+    if (match == null) {
+      return null;
+    }
+
+    final year = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final day = int.tryParse(match.group(3)!);
+    if (year == null || month == null || day == null) {
+      return null;
+    }
+
+    final parsed = DateTime.utc(year, month, day);
+    if (parsed.year != year || parsed.month != month || parsed.day != day) {
+      return null;
+    }
+    return parsed;
+  }
+
   double _parseNumber(String value) {
     return double.parse(value.trim().replaceAll(',', '.'));
   }
@@ -341,6 +415,7 @@ class AddPositionResult {
   final double shares;
   final double averagePrice;
   final double currentPrice;
+  final DateTime? costBasisDate;
   final String priceCurrency;
   final String? exchange;
   final String? quoteType;
@@ -354,6 +429,7 @@ class AddPositionResult {
     required this.shares,
     required this.averagePrice,
     required this.currentPrice,
+    this.costBasisDate,
     required this.priceCurrency,
     this.exchange,
     this.quoteType,
