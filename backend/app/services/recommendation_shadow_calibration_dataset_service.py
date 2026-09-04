@@ -36,6 +36,7 @@ class ShadowCalibrationRow:
     net_margin: float | None
     liabilities_to_assets: float | None
     reported_annual_pe: float | None
+    macro_observations: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +65,7 @@ class ShadowCalibrationRow:
                 "liabilitiesToAssets": self.liabilities_to_assets,
                 "reportedAnnualPe": self.reported_annual_pe,
             },
+            "macroObservations": self.macro_observations,
         }
 
 
@@ -79,6 +81,10 @@ class RecommendationShadowCalibrationDatasetService:
     only a scalar benchmark return can still contribute their realized asset
     return, but their benchmark/excess targets are suppressed rather than
     silently trusted.
+
+    Macro observations are exposed as frozen, provenance-preserving research
+    evidence. They are deliberately not flattened into a directional score or
+    weighted feature until out-of-sample evidence justifies that transformation.
     """
 
     FEATURE_SCHEMA_VERSION = RecommendationShadowCaptureService.FEATURE_SCHEMA_VERSION
@@ -174,6 +180,14 @@ class RecommendationShadowCalibrationDatasetService:
                 rejected_invalid_snapshot += 1
                 continue
 
+            macro_observations, macro_valid = self._extract_macro_observations(
+                snapshot=snapshot,
+                data_cutoff_at=row.get("data_cutoff_at"),
+            )
+            if not macro_valid:
+                rejected_invalid_snapshot += 1
+                continue
+
             realized_return = self._required_finite_float(row.get("realized_return"))
             if realized_return is None:
                 rejected_non_finite_target += 1
@@ -227,6 +241,7 @@ class RecommendationShadowCalibrationDatasetService:
                 reported_annual_pe=self._optional_float(
                     valuation.get("reportedAnnualPe")
                 ),
+                macro_observations=macro_observations,
             )
             dataset.append(calibration_row.to_dict())
 
@@ -251,11 +266,91 @@ class RecommendationShadowCalibrationDatasetService:
                 "outcomeTimingMetadata": "included_for_purged_chronological_splits",
                 "benchmarkTargets": "exact_persisted_observation_provenance_required",
                 "legacyBenchmarkScalars": "suppressed_from_calibration",
+                "macroEvidence": "frozen_provenanced_observations_only_no_score_or_weight",
                 "numericIntegrity": "non_finite_values_never_enter_calibration",
                 "schema": "exact_feature_schema_version_required",
                 "trainingUse": "out_of_sample_validation_required_before_advice",
             },
         }
+
+    def _extract_macro_observations(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        data_cutoff_at: object,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        raw_macro = snapshot.get("macro")
+        if raw_macro is None:
+            return [], True
+        if not isinstance(raw_macro, dict):
+            return [], False
+
+        raw_observations = raw_macro.get("observations")
+        ready = raw_macro.get("ready") is True
+        if raw_observations is None:
+            return ([], not ready)
+        if not isinstance(raw_observations, list):
+            return [], False
+
+        cutoff = self._parse_aware_datetime(data_cutoff_at)
+        if cutoff is None:
+            return [], False
+
+        normalized: list[dict[str, Any]] = []
+        for raw in raw_observations:
+            if not isinstance(raw, dict):
+                return [], False
+            metric = str(raw.get("metric") or "").strip()
+            entity = str(raw.get("entity") or "").strip()
+            unit = str(raw.get("unit") or "").strip()
+            source = str(raw.get("source") or "").strip()
+            source_url = str(raw.get("sourceUrl") or "").strip()
+            value = self._required_finite_float(raw.get("value"))
+            observed_at = self._parse_aware_datetime(raw.get("observedAt"))
+            available_at = self._parse_aware_datetime(raw.get("availableAt"))
+            retrieved_at = self._parse_aware_datetime(raw.get("retrievedAt"))
+            quality_score = self._optional_bounded_score(raw.get("qualityScore"))
+            confidence = self._optional_bounded_score(raw.get("confidence"))
+
+            if (
+                not metric.startswith("macro.")
+                or not entity
+                or not unit
+                or not source
+                or not source_url
+                or value is None
+                or observed_at is None
+                or available_at is None
+                or retrieved_at is None
+                or available_at > cutoff
+                or retrieved_at > cutoff
+                or observed_at > available_at
+            ):
+                return [], False
+            if raw.get("qualityScore") is not None and quality_score is None:
+                return [], False
+            if raw.get("confidence") is not None and confidence is None:
+                return [], False
+
+            normalized.append(
+                {
+                    "metric": metric,
+                    "entity": entity,
+                    "value": value,
+                    "unit": unit,
+                    "source": source,
+                    "observedAt": observed_at.isoformat(),
+                    "availableAt": available_at.isoformat(),
+                    "retrievedAt": retrieved_at.isoformat(),
+                    "sourceUrl": source_url,
+                    "qualityScore": quality_score,
+                    "confidence": confidence,
+                }
+            )
+
+        if ready and not normalized:
+            return [], False
+        return normalized, True
 
     def _benchmark_evidence_matches(self, row: dict[str, Any]) -> bool:
         benchmark_return = self._optional_float(row.get("benchmark_return"))
@@ -309,6 +404,8 @@ class RecommendationShadowCalibrationDatasetService:
         )
 
     def _required_finite_float(self, value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
         try:
             parsed = float(value)
         except (TypeError, ValueError):
@@ -319,6 +416,29 @@ class RecommendationShadowCalibrationDatasetService:
         if value is None:
             return None
         return self._required_finite_float(value)
+
+    def _optional_bounded_score(self, value: object) -> float | None:
+        if value is None:
+            return None
+        parsed = self._required_finite_float(value)
+        if parsed is None or parsed < 0.0 or parsed > 100.0:
+            return None
+        return parsed
+
+    def _parse_aware_datetime(self, value: object) -> datetime | None:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
 
     def _aware_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
