@@ -12,6 +12,18 @@ class PortfolioPosition {
   final String? currentPriceSourceProvider;
   final DateTime? currentPriceRetrievedAt;
 
+  /// Canonical identity is persisted only after the backend resolves the
+  /// position against a verified listing. Legacy positions remain readable
+  /// with these fields null and are therefore not risk/correlation ready.
+  final int? databaseInstrumentId;
+  final String? canonicalInstrumentId;
+  final String? canonicalIssuerId;
+  final String? identitySourceProvider;
+  final DateTime? identityRetrievedAt;
+  final String? identityResolutionMethod;
+  final bool identityExchangeVerified;
+  final bool identityRiskReady;
+
   const PortfolioPosition({
     required this.symbol,
     required this.companyName,
@@ -25,25 +37,39 @@ class PortfolioPosition {
     this.currentPriceUpdatedAt,
     this.currentPriceSourceProvider,
     this.currentPriceRetrievedAt,
+    this.databaseInstrumentId,
+    this.canonicalInstrumentId,
+    this.canonicalIssuerId,
+    this.identitySourceProvider,
+    this.identityRetrievedAt,
+    this.identityResolutionMethod,
+    this.identityExchangeVerified = false,
+    this.identityRiskReady = false,
   });
 
-  double get investedValue {
-    return shares * averagePrice;
-  }
+  bool get hasVerifiedCanonicalIdentity =>
+      databaseInstrumentId != null &&
+      databaseInstrumentId! > 0 &&
+      canonicalInstrumentId != null &&
+      canonicalInstrumentId!.trim().isNotEmpty &&
+      canonicalIssuerId != null &&
+      canonicalIssuerId!.trim().isNotEmpty &&
+      identitySourceProvider != null &&
+      identitySourceProvider!.trim().isNotEmpty &&
+      identityRetrievedAt != null &&
+      identityResolutionMethod != null &&
+      identityResolutionMethod!.trim().isNotEmpty &&
+      identityExchangeVerified &&
+      identityRiskReady;
 
-  double get currentValue {
-    return shares * currentPrice;
-  }
+  double get investedValue => shares * averagePrice;
 
-  double get profitLoss {
-    return currentValue - investedValue;
-  }
+  double get currentValue => shares * currentPrice;
+
+  double get profitLoss => currentValue - investedValue;
 
   double get profitLossPercentage {
-    if (investedValue == 0) {
-      return 0;
-    }
-
+    if (investedValue == 0) return 0;
     return (profitLoss / investedValue) * 100;
   }
 
@@ -60,6 +86,14 @@ class PortfolioPosition {
     DateTime? currentPriceUpdatedAt,
     String? currentPriceSourceProvider,
     DateTime? currentPriceRetrievedAt,
+    int? databaseInstrumentId,
+    String? canonicalInstrumentId,
+    String? canonicalIssuerId,
+    String? identitySourceProvider,
+    DateTime? identityRetrievedAt,
+    String? identityResolutionMethod,
+    bool? identityExchangeVerified,
+    bool? identityRiskReady,
   }) {
     return PortfolioPosition(
       symbol: symbol ?? this.symbol,
@@ -71,12 +105,23 @@ class PortfolioPosition {
       priceCurrency: priceCurrency ?? this.priceCurrency,
       exchange: exchange ?? this.exchange,
       quoteType: quoteType ?? this.quoteType,
-      currentPriceUpdatedAt:
-          currentPriceUpdatedAt ?? this.currentPriceUpdatedAt,
+      currentPriceUpdatedAt: currentPriceUpdatedAt ?? this.currentPriceUpdatedAt,
       currentPriceSourceProvider:
           currentPriceSourceProvider ?? this.currentPriceSourceProvider,
       currentPriceRetrievedAt:
           currentPriceRetrievedAt ?? this.currentPriceRetrievedAt,
+      databaseInstrumentId: databaseInstrumentId ?? this.databaseInstrumentId,
+      canonicalInstrumentId:
+          canonicalInstrumentId ?? this.canonicalInstrumentId,
+      canonicalIssuerId: canonicalIssuerId ?? this.canonicalIssuerId,
+      identitySourceProvider:
+          identitySourceProvider ?? this.identitySourceProvider,
+      identityRetrievedAt: identityRetrievedAt ?? this.identityRetrievedAt,
+      identityResolutionMethod:
+          identityResolutionMethod ?? this.identityResolutionMethod,
+      identityExchangeVerified:
+          identityExchangeVerified ?? this.identityExchangeVerified,
+      identityRiskReady: identityRiskReady ?? this.identityRiskReady,
     );
   }
 
@@ -94,6 +139,14 @@ class PortfolioPosition {
       'currentPriceUpdatedAt': currentPriceUpdatedAt?.toIso8601String(),
       'currentPriceSourceProvider': currentPriceSourceProvider,
       'currentPriceRetrievedAt': currentPriceRetrievedAt?.toIso8601String(),
+      'databaseInstrumentId': databaseInstrumentId,
+      'canonicalInstrumentId': canonicalInstrumentId,
+      'canonicalIssuerId': canonicalIssuerId,
+      'identitySourceProvider': identitySourceProvider,
+      'identityRetrievedAt': identityRetrievedAt?.toUtc().toIso8601String(),
+      'identityResolutionMethod': identityResolutionMethod,
+      'identityExchangeVerified': identityExchangeVerified,
+      'identityRiskReady': identityRiskReady,
     };
   }
 
@@ -101,6 +154,8 @@ class PortfolioPosition {
     final costBasisDateRaw = map['costBasisDate'];
     final updatedAtRaw = map['currentPriceUpdatedAt'];
     final retrievedAtRaw = map['currentPriceRetrievedAt'];
+    final identityRetrievedAtRaw = map['identityRetrievedAt'];
+    final databaseInstrumentIdRaw = map['databaseInstrumentId'];
 
     return PortfolioPosition(
       symbol: map['symbol'] as String,
@@ -122,14 +177,24 @@ class PortfolioPosition {
       currentPriceRetrievedAt: retrievedAtRaw == null
           ? null
           : DateTime.tryParse(retrievedAtRaw.toString()),
+      databaseInstrumentId: databaseInstrumentIdRaw is int &&
+              databaseInstrumentIdRaw > 0
+          ? databaseInstrumentIdRaw
+          : null,
+      canonicalInstrumentId: map['canonicalInstrumentId']?.toString(),
+      canonicalIssuerId: map['canonicalIssuerId']?.toString(),
+      identitySourceProvider: map['identitySourceProvider']?.toString(),
+      identityRetrievedAt: identityRetrievedAtRaw == null
+          ? null
+          : DateTime.tryParse(identityRetrievedAtRaw.toString())?.toUtc(),
+      identityResolutionMethod: map['identityResolutionMethod']?.toString(),
+      identityExchangeVerified: map['identityExchangeVerified'] == true,
+      identityRiskReady: map['identityRiskReady'] == true,
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return toMap();
-  }
+  Map<String, dynamic> toJson() => toMap();
 
-  factory PortfolioPosition.fromJson(Map<String, dynamic> json) {
-    return PortfolioPosition.fromMap(json);
-  }
+  factory PortfolioPosition.fromJson(Map<String, dynamic> json) =>
+      PortfolioPosition.fromMap(json);
 }
