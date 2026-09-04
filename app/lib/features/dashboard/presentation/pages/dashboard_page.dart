@@ -8,6 +8,7 @@ import '../widgets/market_panel.dart';
 import '../widgets/my_space_panel.dart';
 import '../widgets/news_panel.dart';
 import '../widgets/recommendations_panel.dart';
+import '../widgets/relevant_investors_panel.dart';
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
@@ -87,6 +88,8 @@ class _DesktopDashboard extends StatelessWidget {
             ],
           ),
         ),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(height: 330, child: RelevantInvestorsPanel()),
       ],
     );
   }
@@ -108,6 +111,8 @@ class _CompactDashboard extends StatelessWidget {
         SizedBox(height: 430, child: MarketPanel()),
         SizedBox(height: AthenaSpacing.md),
         SizedBox(height: 300, child: NewsPanel()),
+        SizedBox(height: AthenaSpacing.md),
+        SizedBox(height: 340, child: RelevantInvestorsPanel()),
       ],
     );
   }
