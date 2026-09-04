@@ -7,6 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app.services.recommendation_shadow_operational_live_cycle_service import (
     RecommendationShadowOperationalLiveCycleService,
 )
+from app.services.recommendation_shadow_pre_holdout_pipeline_service import (
+    RecommendationShadowPreHoldoutPipelineService,
+)
 
 
 router = APIRouter(
@@ -15,6 +18,7 @@ router = APIRouter(
 )
 
 operational_live_cycle_service = RecommendationShadowOperationalLiveCycleService()
+pre_holdout_pipeline_service = RecommendationShadowPreHoldoutPipelineService()
 
 
 def _effective_as_of(value: datetime | None) -> datetime:
@@ -40,6 +44,35 @@ def _parse_horizons(value: str) -> tuple[int, ...]:
     if len(set(horizons)) != len(horizons):
         raise HTTPException(status_code=400, detail="Los horizontes no pueden repetirse.")
     return horizons
+
+
+def _assert_pre_holdout_shadow_contract(payload: dict[str, object]) -> None:
+    if payload.get("advisoryStatus") != "no_advice":
+        raise HTTPException(
+            status_code=500,
+            detail="La preparación pre-holdout violó el contrato no-advice de ATHENA.",
+        )
+    if payload.get("productionEligible") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La preparación pre-holdout no puede habilitar producción.",
+        )
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="La preparación pre-holdout devolvió política inválida.",
+        )
+    if policy.get("automaticProductionPromotion") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="La preparación pre-holdout no puede promover producción automáticamente.",
+        )
+    if policy.get("actions") != "not_assigned":
+        raise HTTPException(
+            status_code=500,
+            detail="La preparación pre-holdout no puede asignar acciones de inversión.",
+        )
 
 
 def _assert_operational_shadow_contract(payload: dict[str, object]) -> None:
@@ -71,6 +104,32 @@ def _assert_operational_shadow_contract(payload: dict[str, object]) -> None:
             status_code=500,
             detail="El live cycle operativo no puede promover producción automáticamente.",
         )
+
+
+@router.post("/shadow-prepare-cohort")
+def prepare_shadow_cohort(
+    as_of: datetime | None = Query(None),
+    horizons: str = Query("7,30,90,180,365"),
+) -> dict[str, object]:
+    """Run research gating and persist only validated frozen shadow candidates."""
+
+    effective_as_of = _effective_as_of(as_of)
+    effective_horizons = _parse_horizons(horizons)
+    try:
+        payload = pre_holdout_pipeline_service.prepare(
+            as_of=effective_as_of,
+            horizons=effective_horizons,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo preparar la cohorte shadow pre-holdout de ATHENA.",
+        ) from exc
+
+    _assert_pre_holdout_shadow_contract(payload)
+    return {"data": payload}
 
 
 @router.post("/shadow-live-cycle")
