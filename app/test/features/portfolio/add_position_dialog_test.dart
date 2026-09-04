@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/features/market/models/market_quote.dart';
 import 'package:app/features/market/repositories/market_repository.dart';
+import 'package:app/features/portfolio/models/portfolio_instrument_identity.dart';
+import 'package:app/features/portfolio/services/portfolio_identity_enrichment_service.dart';
 import 'package:app/features/portfolio/widgets/add_position_dialog.dart';
 
 class FakeMarketRepository implements MarketRepository {
@@ -34,10 +36,38 @@ class FakeMarketRepository implements MarketRepository {
   }
 }
 
+PortfolioInstrumentIdentity validIdentity({
+  String symbol = 'MSFT',
+  String exchange = 'NMS',
+  String currency = 'USD',
+  bool exchangeVerified = true,
+  bool riskReady = true,
+}) {
+  return PortfolioInstrumentIdentity(
+    databaseInstrumentId: 42,
+    canonicalInstrumentId: '$symbol@$exchange',
+    issuerId: 'issuer:microsoft',
+    symbol: symbol,
+    exchange: exchange,
+    exchangeShortName: exchange,
+    currency: currency,
+    sourceProvider: 'yahoo_catalog',
+    retrievedAt: DateTime.utc(2026, 9, 2, 16, 32),
+    resolutionMethod: 'symbol_and_exchange_exact',
+    exchangeVerified: exchangeVerified,
+    isRiskReady: riskReady,
+    isWeightingReady: false,
+    recommendationPolicy: 'no_advice',
+    productionEligible: false,
+    automaticTrading: false,
+  );
+}
+
 Future<AddPositionResult?> openAndSubmit(
   WidgetTester tester,
   FakeMarketRepository repository, {
   String? costBasisDate,
+  PortfolioIdentityResolver? identityResolver,
 }) async {
   AddPositionResult? result;
 
@@ -51,6 +81,12 @@ Future<AddPositionResult?> openAndSubmit(
                 context: context,
                 builder: (_) => AddPositionDialog(
                   marketRepository: repository,
+                  identityResolver: identityResolver ??
+                      ({required symbol, exchange}) async {
+                        expect(symbol, 'MSFT');
+                        expect(exchange, 'NMS');
+                        return validIdentity();
+                      },
                 ),
               );
             },
@@ -94,7 +130,7 @@ Future<AddPositionResult?> openAndSubmit(
 
 void main() {
   testWidgets(
-    'obtiene identidad precio moneda listing y provenance sin campos manuales',
+    'obtiene precio listing identidad canónica y provenance sin campos manuales',
     (tester) async {
       final repository = FakeMarketRepository();
 
@@ -114,6 +150,14 @@ void main() {
       expect(result.currentPriceUpdatedAt, DateTime.utc(2026, 9, 2, 16, 30));
       expect(result.currentPriceSourceProvider, 'yahoo');
       expect(result.currentPriceRetrievedAt, DateTime.utc(2026, 9, 2, 16, 31));
+      expect(result.databaseInstrumentId, 42);
+      expect(result.canonicalInstrumentId, 'MSFT@NMS');
+      expect(result.canonicalIssuerId, 'issuer:microsoft');
+      expect(result.identitySourceProvider, 'yahoo_catalog');
+      expect(result.identityRetrievedAt, DateTime.utc(2026, 9, 2, 16, 32));
+      expect(result.identityResolutionMethod, 'symbol_and_exchange_exact');
+      expect(result.identityExchangeVerified, isTrue);
+      expect(result.identityRiskReady, isTrue);
     },
   );
 
@@ -167,6 +211,7 @@ void main() {
         change: 1.0,
         changePercentage: 0.2,
         currency: 'USD',
+        exchange: 'NMS',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
       ),
@@ -187,6 +232,7 @@ void main() {
         change: 1.0,
         changePercentage: 0.2,
         currency: 'USD',
+        exchange: 'NMS',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         sourceProvider: 'yahoo',
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 29),
@@ -208,6 +254,7 @@ void main() {
         change: 1,
         changePercentage: 0.5,
         currency: 'USD',
+        exchange: 'NMS',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         sourceProvider: 'yahoo',
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
@@ -228,6 +275,7 @@ void main() {
         currentPrice: 432.10,
         change: 1,
         changePercentage: 0.2,
+        exchange: 'NMS',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         sourceProvider: 'yahoo',
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
@@ -249,6 +297,7 @@ void main() {
         change: 1,
         changePercentage: 0.2,
         currency: r'US$',
+        exchange: 'NMS',
         updatedAt: DateTime.utc(2026, 9, 2, 16, 30),
         sourceProvider: 'yahoo',
         retrievedAt: DateTime.utc(2026, 9, 2, 16, 31),
@@ -259,5 +308,19 @@ void main() {
 
     expect(result, isNull);
     expect(find.textContaining('sin trazabilidad'), findsOneWidget);
+  });
+
+  testWidgets('rechaza identidad canónica no apta para riesgo', (tester) async {
+    final repository = FakeMarketRepository();
+
+    final result = await openAndSubmit(
+      tester,
+      repository,
+      identityResolver: ({required symbol, exchange}) async =>
+          validIdentity(exchangeVerified: false, riskReady: false),
+    );
+
+    expect(result, isNull);
+    expect(find.textContaining('identidad canónica'), findsWidgets);
   });
 }
