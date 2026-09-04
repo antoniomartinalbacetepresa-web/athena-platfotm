@@ -31,8 +31,6 @@ class PortfolioInstrumentIdentity:
 
     @property
     def is_weighting_ready(self) -> bool:
-        # Resolving one portfolio listing does not prove issuer-domicile or
-        # deduplication coverage for global weighting.
         return False
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -61,12 +59,12 @@ class PortfolioInstrumentIdentity:
 
 
 class PortfolioInstrumentIdentityService:
-    """Resolves a portfolio listing against ATHENA's persisted canonical catalog.
+    """Resolve a portfolio listing against the persisted canonical catalog.
 
-    Resolution is deterministic and fail-closed. A unique symbol may identify a
-    catalog row for diagnostics, but risk readiness additionally requires that a
-    supplied exchange matches either the canonical full or short exchange code.
-    No fuzzy issuer, symbol or exchange matching is performed.
+    A unique symbol may identify one catalog row for diagnostics, but risk
+    readiness requires an exact supplied exchange match against the canonical
+    full or short exchange code. No fuzzy matching or silent exchange aliases
+    are used.
     """
 
     def __init__(
@@ -129,7 +127,7 @@ class PortfolioInstrumentIdentityService:
                 )
             selected = candidates[0]
             method = "unique_active_symbol"
-            exchange_verified = normalized_exchange is None
+            exchange_verified = False
 
         return self._validate_selected(
             selected,
