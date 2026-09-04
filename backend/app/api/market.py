@@ -1,5 +1,8 @@
+from datetime import date, datetime
+
 from fastapi import APIRouter, HTTPException, Query
 
+from app.repositories.fx_rate_repository import FxRateRepository
 from app.services.fx_quote_service import FxQuoteService
 from app.services.market_weighting_readiness_service import (
     MarketWeightingReadinessService,
@@ -16,7 +19,11 @@ router = APIRouter(
 )
 
 market_service = YahooMarketService()
-fx_quote_service = FxQuoteService(market_service=market_service)
+fx_rate_repository = FxRateRepository()
+fx_quote_service = FxQuoteService(
+    market_service=market_service,
+    repository=fx_rate_repository,
+)
 market_universe_service = PersistedMarketUniverseService()
 market_weighting_readiness_service = MarketWeightingReadinessService()
 
@@ -71,6 +78,40 @@ def get_fx_quote(
         raise HTTPException(
             status_code=502,
             detail="No se pudo obtener una conversión FX trazable.",
+        ) from exc
+
+    return {"data": payload}
+
+
+@router.get("/fx/historical")
+def get_historical_fx_quote(
+    base_currency: str = Query(..., min_length=3, max_length=3, alias="base"),
+    quote_currency: str = Query(..., min_length=3, max_length=3, alias="quote"),
+    observed_on: date = Query(..., alias="observedOn"),
+    knowledge_cutoff: datetime | None = Query(None, alias="knowledgeCutoff"),
+) -> dict[str, object]:
+    """Return an exact-date FX observation with PIT provenance.
+
+    When ``knowledgeCutoff`` is supplied, the service may only replay or obtain
+    evidence that was already knowable by that timestamp. Without a cutoff the
+    endpoint is intended for current portfolio accounting: it may retrieve the
+    historical observation now and persist that immutable retrieval for future
+    reproducibility.
+    """
+
+    try:
+        payload = fx_quote_service.get_historical_rate(
+            base_currency=base_currency,
+            quote_currency=quote_currency,
+            observed_on=observed_on,
+            knowledge_cutoff=knowledge_cutoff,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo obtener una conversión FX histórica verificable.",
         ) from exc
 
     return {"data": payload}
