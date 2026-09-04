@@ -6,11 +6,18 @@ typedef CurrentFxRateLoader = Future<FxQuote> Function({
   required String quoteCurrency,
 });
 
+typedef HistoricalFxRateLoader = Future<FxQuote> Function({
+  required String baseCurrency,
+  required String quoteCurrency,
+  required DateTime observedOn,
+});
+
 class PortfolioCurrentValuation {
   final String baseCurrency;
   final double currentValueInBaseCurrency;
   final int positionsValued;
   final List<FxQuote> fxEvidence;
+  final List<FxQuote> historicalFxEvidence;
   final double? historicalCostBasisInBaseCurrency;
   final DateTime? latestMarketObservedAt;
   final DateTime? latestMarketRetrievedAt;
@@ -22,6 +29,7 @@ class PortfolioCurrentValuation {
     required this.currentValueInBaseCurrency,
     required this.positionsValued,
     required this.fxEvidence,
+    this.historicalFxEvidence = const [],
     required this.historicalCostBasisInBaseCurrency,
     required this.latestMarketObservedAt,
     required this.latestMarketRetrievedAt,
@@ -32,7 +40,7 @@ class PortfolioCurrentValuation {
   bool get hasHistoricalCostBasis =>
       historicalCostBasisInBaseCurrency != null;
 
-  bool get usesFx => fxEvidence.isNotEmpty;
+  bool get usesFx => fxEvidence.isNotEmpty || historicalFxEvidence.isNotEmpty;
 
   double? get profitLossInBaseCurrency {
     final costBasis = historicalCostBasisInBaseCurrency;
@@ -52,22 +60,21 @@ class PortfolioCurrentValuation {
   }
 }
 
-/// Values the *current* market value of a portfolio in one base currency.
+/// Values current market value and, when evidence is available, historical
+/// cost basis in one base currency.
 ///
-/// Current FX is allowed only for current valuation. Historical cost basis and
-/// portfolio P/L remain unavailable whenever a position is denominated in a
-/// different currency because ATHENA does not yet persist the acquisition-date
-/// FX required for a truthful historical conversion.
-///
-/// The service fails closed when either market-price provenance or FX
-/// provenance is incomplete. A numerical price without source and coherent
-/// observation/retrieval timestamps is not sufficient evidence for an ATHENA
-/// portfolio aggregate.
+/// Cross-currency cost basis is converted only when the position explicitly
+/// persists a [PortfolioPosition.costBasisDate] and the ATHENA backend returns
+/// a verifiable historical FX observation for that date. Legacy positions
+/// without that economic date remain loadable, but cost basis and P/L stay
+/// unavailable rather than being estimated.
 class PortfolioCurrentValuationService {
   final CurrentFxRateLoader loadCurrentFxRate;
+  final HistoricalFxRateLoader? loadHistoricalFxRate;
 
   const PortfolioCurrentValuationService({
     required this.loadCurrentFxRate,
+    this.loadHistoricalFxRate,
   });
 
   Future<PortfolioCurrentValuation> value({
@@ -75,8 +82,10 @@ class PortfolioCurrentValuationService {
     String baseCurrency = 'EUR',
   }) async {
     final base = _normalizeCurrency(baseCurrency, 'baseCurrency');
-    final fxBySourceCurrency = <String, FxQuote>{};
-    final fxEvidence = <FxQuote>[];
+    final currentFxBySourceCurrency = <String, FxQuote>{};
+    final historicalFxByKey = <String, FxQuote>{};
+    final currentFxEvidence = <FxQuote>[];
+    final historicalFxEvidence = <FxQuote>[];
 
     var currentValueInBase = 0.0;
     var historicalCostBasisInBase = 0.0;
@@ -108,31 +117,74 @@ class PortfolioCurrentValuationService {
         continue;
       }
 
-      historicalCostBasisReady = false;
-
-      var fx = fxBySourceCurrency[sourceCurrency];
-      if (fx == null) {
-        fx = await loadCurrentFxRate(
+      var currentFx = currentFxBySourceCurrency[sourceCurrency];
+      if (currentFx == null) {
+        currentFx = await loadCurrentFxRate(
           baseCurrency: sourceCurrency,
           quoteCurrency: base,
         );
         _validateFxEvidence(
-          fx,
+          currentFx,
           expectedBase: sourceCurrency,
           expectedQuote: base,
         );
-        fxBySourceCurrency[sourceCurrency] = fx;
-        fxEvidence.add(fx);
+        currentFxBySourceCurrency[sourceCurrency] = currentFx;
+        currentFxEvidence.add(currentFx);
       }
 
-      final converted = fx.convertCurrent(position.currentValue);
-      if (!converted.isFinite || converted < 0) {
+      final convertedCurrent = currentFx.convertCurrent(position.currentValue);
+      if (!convertedCurrent.isFinite || convertedCurrent < 0) {
         throw StateError(
           'La conversión FX produjo un valor actual inválido para '
           '${position.symbol}.',
         );
       }
-      currentValueInBase += converted;
+      currentValueInBase += convertedCurrent;
+
+      final costBasisDate = position.costBasisDate;
+      final historicalLoader = loadHistoricalFxRate;
+      if (costBasisDate == null || historicalLoader == null) {
+        historicalCostBasisReady = false;
+        continue;
+      }
+
+      final normalizedCostDate = costBasisDate.toUtc();
+      if (normalizedCostDate.isAfter(position.currentPriceRetrievedAt!.toUtc())) {
+        throw StateError(
+          'La fecha económica del coste de ${position.symbol} es posterior a la evidencia actual.',
+        );
+      }
+
+      final historicalKey =
+          '$sourceCurrency|${_dateKey(normalizedCostDate)}';
+      var historicalFx = historicalFxByKey[historicalKey];
+      if (historicalFx == null) {
+        try {
+          historicalFx = await historicalLoader(
+            baseCurrency: sourceCurrency,
+            quoteCurrency: base,
+            observedOn: normalizedCostDate,
+          );
+          _validateHistoricalFxEvidence(
+            historicalFx,
+            expectedBase: sourceCurrency,
+            expectedQuote: base,
+            expectedDate: normalizedCostDate,
+          );
+        } catch (_) {
+          historicalCostBasisReady = false;
+          continue;
+        }
+        historicalFxByKey[historicalKey] = historicalFx;
+        historicalFxEvidence.add(historicalFx);
+      }
+
+      final convertedCost = historicalFx.convertCurrent(position.investedValue);
+      if (!convertedCost.isFinite || convertedCost < 0) {
+        historicalCostBasisReady = false;
+        continue;
+      }
+      historicalCostBasisInBase += convertedCost;
     }
 
     if (!currentValueInBase.isFinite || currentValueInBase < 0) {
@@ -141,7 +193,7 @@ class PortfolioCurrentValuationService {
 
     DateTime? latestFxObservedAt;
     DateTime? latestFxRetrievedAt;
-    for (final fx in fxEvidence) {
+    for (final fx in [...currentFxEvidence, ...historicalFxEvidence]) {
       latestFxObservedAt = _latest(latestFxObservedAt, fx.observedAt);
       latestFxRetrievedAt = _latest(latestFxRetrievedAt, fx.retrievedAt);
     }
@@ -150,7 +202,8 @@ class PortfolioCurrentValuationService {
       baseCurrency: base,
       currentValueInBaseCurrency: currentValueInBase,
       positionsValued: positions.length,
-      fxEvidence: List.unmodifiable(fxEvidence),
+      fxEvidence: List.unmodifiable(currentFxEvidence),
+      historicalFxEvidence: List.unmodifiable(historicalFxEvidence),
       historicalCostBasisInBaseCurrency:
           historicalCostBasisReady ? historicalCostBasisInBase : null,
       latestMarketObservedAt: latestMarketObservedAt,
@@ -208,6 +261,45 @@ class PortfolioCurrentValuationService {
     required String expectedBase,
     required String expectedQuote,
   }) {
+    _validateFxCore(
+      fx,
+      expectedBase: expectedBase,
+      expectedQuote: expectedQuote,
+    );
+    if (fx.historicalPointInTimeEligible) {
+      throw StateError(
+        'Una cotización FX actual no puede utilizarse como evidencia PIT histórica.',
+      );
+    }
+  }
+
+  void _validateHistoricalFxEvidence(
+    FxQuote fx, {
+    required String expectedBase,
+    required String expectedQuote,
+    required DateTime expectedDate,
+  }) {
+    _validateFxCore(
+      fx,
+      expectedBase: expectedBase,
+      expectedQuote: expectedQuote,
+    );
+    final observed = fx.observedAt.toUtc();
+    final expected = expectedDate.toUtc();
+    if (observed.year != expected.year ||
+        observed.month != expected.month ||
+        observed.day != expected.day) {
+      throw StateError(
+        'La evidencia FX histórica no corresponde a la fecha económica del coste.',
+      );
+    }
+  }
+
+  void _validateFxCore(
+    FxQuote fx, {
+    required String expectedBase,
+    required String expectedQuote,
+  }) {
     if (fx.baseCurrency != expectedBase || fx.quoteCurrency != expectedQuote) {
       throw StateError('La evidencia FX no corresponde al par solicitado.');
     }
@@ -217,16 +309,11 @@ class PortfolioCurrentValuationService {
     if (fx.sourceProvider.trim().isEmpty) {
       throw StateError('La evidencia FX no declara proveedor.');
     }
-    if (fx.sourceSymbol.trim().isEmpty) {
+    if (fx.sourceSymbol == null || fx.sourceSymbol!.trim().isEmpty) {
       throw StateError('La evidencia FX no declara símbolo fuente.');
     }
     if (fx.retrievedAt.isBefore(fx.observedAt)) {
       throw StateError('La recuperación FX precede a su observación.');
-    }
-    if (fx.historicalPointInTimeEligible) {
-      throw StateError(
-        'Una cotización FX actual no puede utilizarse como evidencia PIT histórica.',
-      );
     }
   }
 
@@ -236,6 +323,13 @@ class PortfolioCurrentValuationService {
       throw StateError('$field no contiene una moneda ISO verificable.');
     }
     return normalized;
+  }
+
+  String _dateKey(DateTime value) {
+    final utc = value.toUtc();
+    return '${utc.year.toString().padLeft(4, '0')}-'
+        '${utc.month.toString().padLeft(2, '0')}-'
+        '${utc.day.toString().padLeft(2, '0')}';
   }
 
   DateTime _latest(DateTime? current, DateTime candidate) {
