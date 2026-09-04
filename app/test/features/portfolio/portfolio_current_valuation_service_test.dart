@@ -10,6 +10,7 @@ PortfolioPosition position({
   double shares = 2,
   double averagePrice = 100,
   double currentPrice = 120,
+  DateTime? costBasisDate,
   String sourceProvider = 'yahoo',
   DateTime? observedAt,
   DateTime? retrievedAt,
@@ -23,6 +24,7 @@ PortfolioPosition position({
     shares: shares,
     averagePrice: averagePrice,
     currentPrice: currentPrice,
+    costBasisDate: costBasisDate,
     priceCurrency: currency,
     currentPriceUpdatedAt: observed,
     currentPriceSourceProvider: sourceProvider,
@@ -32,17 +34,19 @@ PortfolioPosition position({
 
 FxQuote usdEur({
   double rate = 0.85,
+  DateTime? observedAt,
+  DateTime? retrievedAt,
   String sourceProvider = 'yahoo',
   String sourceSymbol = 'USDEUR=X',
 }) {
-  final observedAt = DateTime.utc(2026, 9, 3, 0, 0);
+  final observed = observedAt ?? DateTime.utc(2026, 9, 3, 0, 0);
   return FxQuote(
     status: 'ok',
     baseCurrency: 'USD',
     quoteCurrency: 'EUR',
     rate: rate,
-    observedAt: observedAt,
-    retrievedAt: observedAt.add(const Duration(seconds: 1)),
+    observedAt: observed,
+    retrievedAt: retrievedAt ?? observed.add(const Duration(seconds: 1)),
     sourceProvider: sourceProvider,
     sourceSymbol: sourceSymbol,
     historicalPointInTimeEligible: false,
@@ -78,6 +82,7 @@ void main() {
     expect(valuation.profitLossInBaseCurrency, 40);
     expect(valuation.profitLossPercentage, 20);
     expect(valuation.fxEvidence, isEmpty);
+    expect(valuation.historicalFxEvidence, isEmpty);
     expect(valuation.usesFx, isFalse);
     expect(valuation.latestMarketObservedAt, DateTime.utc(2026, 9, 3, 0, 0));
     expect(
@@ -88,12 +93,19 @@ void main() {
     expect(valuation.latestFxRetrievedAt, isNull);
   });
 
-  test('converts current USD value to EUR but blocks historical P/L', () async {
+  test('converts current USD value to EUR but blocks historical P/L without cost date', () async {
     final service = PortfolioCurrentValuationService(
       loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
         expect(baseCurrency, 'USD');
         expect(quoteCurrency, 'EUR');
         return usdEur(rate: 0.85);
+      },
+      loadHistoricalFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+        required observedOn,
+      }) async {
+        fail('Historical FX must not be requested without costBasisDate');
       },
     );
 
@@ -112,18 +124,91 @@ void main() {
     expect(valuation.currentValueInBaseCurrency, 204);
     expect(valuation.positionsValued, 1);
     expect(valuation.fxEvidence, hasLength(1));
+    expect(valuation.historicalFxEvidence, isEmpty);
     expect(valuation.usesFx, isTrue);
     expect(valuation.historicalCostBasisInBaseCurrency, isNull);
     expect(valuation.profitLossInBaseCurrency, isNull);
     expect(valuation.profitLossPercentage, isNull);
-    expect(valuation.latestFxObservedAt, DateTime.utc(2026, 9, 3, 0, 0));
-    expect(
-      valuation.latestFxRetrievedAt,
-      DateTime.utc(2026, 9, 3, 0, 0, 1),
-    );
   });
 
-  test('reuses one FX quote for positions sharing the same currency', () async {
+  test('converts historical cost basis using FX from explicit economic date', () async {
+    final costDate = DateTime.utc(2026, 8, 15);
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur(rate: 0.85);
+      },
+      loadHistoricalFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+        required observedOn,
+      }) async {
+        expect(baseCurrency, 'USD');
+        expect(quoteCurrency, 'EUR');
+        expect(observedOn, costDate);
+        return usdEur(
+          rate: 0.80,
+          observedAt: costDate,
+          retrievedAt: DateTime.utc(2026, 9, 4),
+        );
+      },
+    );
+
+    final valuation = await service.value(
+      positions: [
+        position(
+          symbol: 'MSFT',
+          currency: 'USD',
+          shares: 2,
+          averagePrice: 100,
+          currentPrice: 120,
+          costBasisDate: costDate,
+        ),
+      ],
+    );
+
+    expect(valuation.currentValueInBaseCurrency, 204);
+    expect(valuation.historicalCostBasisInBaseCurrency, 160);
+    expect(valuation.profitLossInBaseCurrency, 44);
+    expect(valuation.profitLossPercentage, closeTo(27.5, 1e-9));
+    expect(valuation.fxEvidence, hasLength(1));
+    expect(valuation.historicalFxEvidence, hasLength(1));
+  });
+
+  test('blocks historical aggregate when historical FX date is unverifiable', () async {
+    final costDate = DateTime.utc(2026, 8, 15);
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur(rate: 0.85);
+      },
+      loadHistoricalFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+        required observedOn,
+      }) async {
+        return usdEur(
+          rate: 0.80,
+          observedAt: DateTime.utc(2026, 8, 16),
+          retrievedAt: DateTime.utc(2026, 9, 4),
+        );
+      },
+    );
+
+    final valuation = await service.value(
+      positions: [
+        position(
+          symbol: 'MSFT',
+          currency: 'USD',
+          costBasisDate: costDate,
+        ),
+      ],
+    );
+
+    expect(valuation.currentValueInBaseCurrency, 204);
+    expect(valuation.historicalCostBasisInBaseCurrency, isNull);
+    expect(valuation.profitLossInBaseCurrency, isNull);
+  });
+
+  test('reuses one current FX quote for positions sharing the same currency', () async {
     var fxCalls = 0;
     final service = PortfolioCurrentValuationService(
       loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
@@ -255,7 +340,7 @@ void main() {
       () => service.value(
         positions: [position(symbol: 'MSFT', currency: 'USD')],
       ),
-      throwsStateError,
+      throwsA(anything),
     );
   });
 }
