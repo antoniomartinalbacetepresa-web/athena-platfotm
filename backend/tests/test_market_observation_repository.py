@@ -148,3 +148,111 @@ def test_market_observation_repository_reports_inserted_and_unchanged(tmp_path: 
     assert stats.received == 2
     assert stats.inserted == 2
     assert stats.unchanged == 0
+
+
+def test_market_observation_repository_rejects_non_finite_and_boolean_numbers(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed_at = datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc)
+
+    for invalid in (float("nan"), float("inf"), float("-inf"), True):
+        with pytest.raises(ValueError):
+            repository.save_many(
+                instrument_id=instrument_id,
+                observations=[
+                    {"timestamp": observed_at.isoformat(), "close": invalid}
+                ],
+                source_provider="yahoo_finance",
+                retrieved_at=observed_at + timedelta(minutes=1),
+            )
+
+
+def test_market_observation_repository_rejects_impossible_provenance_timestamps(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed_at = datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(ValueError, match="retrieved_at"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[{"timestamp": observed_at.isoformat(), "close": 100.0}],
+            source_provider="yahoo_finance",
+            retrieved_at=observed_at - timedelta(seconds=1),
+        )
+
+    with pytest.raises(ValueError, match="source_timestamp"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[
+                {
+                    "timestamp": observed_at.isoformat(),
+                    "source_timestamp": (observed_at + timedelta(minutes=2)).isoformat(),
+                    "close": 100.0,
+                }
+            ],
+            source_provider="yahoo_finance",
+            retrieved_at=observed_at + timedelta(minutes=1),
+        )
+
+
+def test_market_observation_repository_applies_knowledge_cutoff_and_observation_window(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    first_day = datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc)
+    second_day = first_day + timedelta(days=1)
+
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": first_day.isoformat(), "close": 100.0}],
+        source_provider="yahoo_finance",
+        retrieved_at=first_day + timedelta(hours=1),
+    )
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": second_day.isoformat(), "close": 101.0}],
+        source_provider="yahoo_finance",
+        retrieved_at=second_day + timedelta(hours=1),
+    )
+
+    cutoff = second_day + timedelta(minutes=30)
+    rows = repository.list_for_instrument(
+        instrument_id,
+        source_provider="yahoo_finance",
+        knowledge_cutoff=cutoff,
+        observed_from=first_day,
+        observed_to=second_day,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["observed_at"] == first_day.isoformat()
+    assert rows[0]["retrieved_at"] <= cutoff.isoformat()
+
+
+def test_market_observation_repository_rejects_invalid_pit_ranges(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    start = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    with pytest.raises(ValueError, match="observed_from"):
+        repository.list_for_instrument(
+            instrument_id,
+            observed_from=start,
+            observed_to=end,
+        )
+
+    with pytest.raises(ValueError, match="zona horaria"):
+        repository.list_for_instrument(
+            instrument_id,
+            knowledge_cutoff=datetime(2026, 1, 3),
+        )
