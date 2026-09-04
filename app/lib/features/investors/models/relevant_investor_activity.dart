@@ -105,7 +105,6 @@ class RelevantInvestorActivity {
   final DateTime retrievedAt;
   final String sourceUrl;
   final String sourceProvider;
-  final String informationTableDocumentUrl;
   final String valueUnit;
   final List<RelevantInvestorHolding> holdings;
 
@@ -119,7 +118,6 @@ class RelevantInvestorActivity {
     required this.retrievedAt,
     required this.sourceUrl,
     required this.sourceProvider,
-    required this.informationTableDocumentUrl,
     required this.valueUnit,
     required this.holdings,
   });
@@ -174,26 +172,23 @@ class RelevantInvestorActivity {
       return result.toUtc();
     }
 
-    void requirePassivePolicy() {
-      if (data['advisoryStatus'] != 'no_advice' ||
-          data['productionEligible'] != false ||
-          data['athenaRecommendationInfluence'] != false ||
-          data['automaticScoring'] != false ||
-          data['automaticTrading'] != false) {
-        throw const FormatException(
-          'La actividad 13F no puede influir en recomendación, scoring o trading.',
-        );
-      }
-      final identity = data['identityPolicy'];
-      if (identity is! Map ||
-          identity['canonicalInstrumentResolved'] != false ||
-          identity['isWeightingReady'] != false ||
-          identity['identifier'] != 'cusip_as_reported') {
-        throw const FormatException('La política de identidad 13F no es fail-closed.');
-      }
+    if (data['advisoryStatus'] != 'no_advice' ||
+        data['productionEligible'] != false ||
+        data['athenaRecommendationInfluence'] != false ||
+        data['automaticScoring'] != false ||
+        data['automaticTrading'] != false) {
+      throw const FormatException(
+        'La actividad 13F no puede influir en recomendación, scoring o trading.',
+      );
+    }
+    final identity = data['identityPolicy'];
+    if (identity is! Map ||
+        identity['canonicalInstrumentResolved'] != false ||
+        identity['isWeightingReady'] != false ||
+        identity['identifier'] != 'cusip_as_reported') {
+      throw const FormatException('La política de identidad 13F no es fail-closed.');
     }
 
-    requirePassivePolicy();
     final publication = utcTimestamp('publicationDateTime');
     final retrieved = utcTimestamp('retrievedAt');
     if (retrieved.isBefore(publication)) {
@@ -205,8 +200,6 @@ class RelevantInvestorActivity {
     }
     final sourceUrl = requiredText('sourceUrl');
     _requireSecArchiveUrl(sourceUrl);
-    final documentUrl = requiredText('informationTableDocumentUrl');
-    _requireSecArchiveUrl(documentUrl);
 
     final rawHoldings = data['holdings'];
     if (rawHoldings is! List || rawHoldings.isEmpty) {
@@ -248,7 +241,6 @@ class RelevantInvestorActivity {
       retrievedAt: retrieved,
       sourceUrl: sourceUrl,
       sourceProvider: sourceProvider,
-      informationTableDocumentUrl: documentUrl,
       valueUnit: requiredText('valueUnit'),
       holdings: List.unmodifiable(holdings),
     );
