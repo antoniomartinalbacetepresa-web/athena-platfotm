@@ -72,7 +72,7 @@ def test_portfolio_identity_accepts_unique_symbol_but_exposes_exchange_mismatch(
     assert result.is_risk_ready is False
 
 
-def test_portfolio_identity_unique_symbol_without_exchange_is_diagnostic_only_ready() -> None:
+def test_portfolio_identity_unique_symbol_without_exchange_stays_risk_blocked() -> None:
     service = PortfolioInstrumentIdentityService(
         repository=FakeInstrumentRepository([row()])
     )
@@ -80,8 +80,8 @@ def test_portfolio_identity_unique_symbol_without_exchange_is_diagnostic_only_re
     result = service.resolve(symbol="AAPL", exchange=None)
 
     assert result.resolution_method == "unique_active_symbol"
-    assert result.exchange_verified is True
-    assert result.is_risk_ready is True
+    assert result.exchange_verified is False
+    assert result.is_risk_ready is False
 
 
 def test_portfolio_identity_fails_closed_for_ambiguous_symbol() -> None:
