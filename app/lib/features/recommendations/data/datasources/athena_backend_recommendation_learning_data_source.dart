@@ -73,9 +73,9 @@ class AthenaBackendRecommendationLearningDataSource
   RecommendationLearningStatus _mapStatus(Map<String, dynamic> json) {
     final asOfRaw = json['asOf']?.toString().trim();
     final parsedAsOf = asOfRaw == null ? null : DateTime.tryParse(asOfRaw);
-    if (parsedAsOf == null) {
+    if (parsedAsOf == null || !parsedAsOf.isUtc) {
       throw const FormatException(
-        'El estado de aprendizaje no contiene un asOf válido.',
+        'El estado de aprendizaje no contiene un asOf UTC válido.',
       );
     }
 
@@ -83,18 +83,87 @@ class AthenaBackendRecommendationLearningDataSource
     final filters = filtersRaw is Map
         ? Map<String, dynamic>.from(filtersRaw)
         : const <String, dynamic>{};
+    final shadowLiveLongitudinal = _mapObject(json['shadowLiveLongitudinal']);
+    final advisoryStatus = json['advisoryStatus']?.toString().trim() ?? '';
+    final productionEligible = _strictBool(
+      json['productionEligible'],
+      'productionEligible',
+    );
+    final automaticModelMutation = _strictBool(
+      json['automaticModelMutation'],
+      'automaticModelMutation',
+    );
+    final automaticProductionPromotion = _strictBool(
+      json['automaticProductionPromotion'],
+      'automaticProductionPromotion',
+    );
+    final automaticTrading = _strictBool(
+      json['automaticTrading'],
+      'automaticTrading',
+    );
+
+    if (advisoryStatus != 'no_advice' ||
+        productionEligible ||
+        automaticModelMutation ||
+        automaticProductionPromotion ||
+        automaticTrading) {
+      throw const FormatException(
+        'El backend devolvió un estado de aprendizaje incompatible con el contrato shadow seguro.',
+      );
+    }
+    _validateShadowLongitudinal(shadowLiveLongitudinal);
 
     return RecommendationLearningStatus(
       status: json['status']?.toString().trim() ?? 'unknown',
       asOf: parsedAsOf,
       modelVersion: _nullableString(filters['modelVersion']),
-      horizonDays: _nullableInt(filters['horizonDays']),
+      horizonDays: _nullablePositiveInt(filters['horizonDays']),
       performance: _mapObject(json['performance']),
       calibration: _mapObject(json['calibration']),
       evaluationSchedule: _mapObject(json['evaluationSchedule']),
       drift: json['drift'] == null ? null : _mapObject(json['drift']),
-      automaticModelMutation: _bool(json['automaticModelMutation']) ?? false,
+      shadowLiveLongitudinal: shadowLiveLongitudinal,
+      advisoryStatus: advisoryStatus,
+      productionEligible: productionEligible,
+      automaticModelMutation: automaticModelMutation,
+      automaticProductionPromotion: automaticProductionPromotion,
+      automaticTrading: automaticTrading,
     );
+  }
+
+  void _validateShadowLongitudinal(Map<String, dynamic> value) {
+    if (value['advisoryStatus']?.toString().trim() != 'no_advice' ||
+        _strictBool(value['productionEligible'], 'shadow.productionEligible') ||
+        _strictBool(
+          value['recommendationCandidateReady'],
+          'shadow.recommendationCandidateReady',
+        )) {
+      throw const FormatException(
+        'El estado longitudinal shadow no mantiene el contrato no_advice.',
+      );
+    }
+
+    for (final field in const [
+      'persistedCandidateCount',
+      'eligibleCandidateCount',
+      'evaluatedCandidateCount',
+      'evaluatedObservationCount',
+      'skippedFutureCandidateCount',
+    ]) {
+      _requiredNonNegativeInt(value[field], 'shadow.$field');
+    }
+
+    final policy = _mapObject(value['policy']);
+    if (_strictBool(policy['automaticModelMutation'], 'shadow.automaticModelMutation') ||
+        _strictBool(
+          policy['automaticProductionPromotion'],
+          'shadow.automaticProductionPromotion',
+        ) ||
+        _strictBool(policy['automaticTrading'], 'shadow.automaticTrading')) {
+      throw const FormatException(
+        'El estado longitudinal shadow intenta habilitar automatismos productivos.',
+      );
+    }
   }
 
   Map<String, dynamic> _mapObject(dynamic value) {
@@ -114,42 +183,43 @@ class AthenaBackendRecommendationLearningDataSource
     return normalized.isEmpty ? null : normalized;
   }
 
-  int? _nullableInt(dynamic value) {
+  int? _nullablePositiveInt(dynamic value) {
     if (value == null) {
       return null;
     }
-    if (value is int) {
-      return value;
+    final parsed = _requiredNonNegativeInt(value, 'horizonDays');
+    if (parsed <= 0) {
+      throw const FormatException('horizonDays debe ser positivo.');
     }
-    if (value is num) {
-      return value.toInt();
-    }
-    return int.tryParse(value.toString().trim());
+    return parsed;
   }
 
-  bool? _bool(dynamic value) {
+  int _requiredNonNegativeInt(dynamic value, String field) {
     if (value is bool) {
-      return value;
+      throw FormatException('$field debe ser un entero no negativo.');
     }
-    if (value is num) {
-      if (value == 1) {
-        return true;
+    int? parsed;
+    if (value is int) {
+      parsed = value;
+    } else if (value is num) {
+      if (!value.isFinite || value != value.truncateToDouble()) {
+        throw FormatException('$field debe ser un entero no negativo.');
       }
-      if (value == 0) {
-        return false;
-      }
+      parsed = value.toInt();
+    } else if (value is String) {
+      parsed = int.tryParse(value.trim());
     }
-    if (value is String) {
-      switch (value.trim().toLowerCase()) {
-        case 'true':
-        case '1':
-          return true;
-        case 'false':
-        case '0':
-          return false;
-      }
+    if (parsed == null || parsed < 0) {
+      throw FormatException('$field debe ser un entero no negativo.');
     }
-    return null;
+    return parsed;
+  }
+
+  bool _strictBool(dynamic value, String field) {
+    if (value is! bool) {
+      throw FormatException('$field debe ser booleano.');
+    }
+    return value;
   }
 
   void dispose() {
