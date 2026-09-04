@@ -33,6 +33,7 @@ class RelevantInvestorsPanel extends StatefulWidget {
 
 class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
   AthenaBackendRelevantInvestorDataSource? _dataSource;
+  String? _configurationError;
   late final List<String> _ciks;
   late final RelevantInvestorActivityLoader _loader;
   late Future<List<RelevantInvestorActivity>> _activitiesFuture;
@@ -69,9 +70,9 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
       final cik = raw.trim();
       if (cik.isEmpty) continue;
       if (!RegExp(r'^\d{1,10}$').hasMatch(cik)) {
-        throw FormatException(
-          'ATHENA_RELEVANT_INVESTOR_CIKS contiene un CIK inválido.',
-        );
+        _configurationError =
+            'ATHENA_RELEVANT_INVESTOR_CIKS contiene un CIK inválido.';
+        return const [];
       }
       if (seen.add(cik)) result.add(cik);
     }
@@ -79,7 +80,7 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
   }
 
   Future<List<RelevantInvestorActivity>> _loadActivities() async {
-    if (_ciks.isEmpty) return const [];
+    if (_configurationError != null || _ciks.isEmpty) return const [];
     final activities = await Future.wait(_ciks.map(_loader));
     return List.unmodifiable(activities);
   }
@@ -112,7 +113,8 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
               ),
               IconButton(
                 tooltip: 'Actualizar actividad SEC 13F',
-                onPressed: _ciks.isEmpty ? null : _reload,
+                onPressed:
+                    _configurationError == null && _ciks.isNotEmpty ? _reload : null,
                 icon: const Icon(
                   Icons.refresh,
                   color: AthenaColors.textSecondary,
@@ -126,6 +128,14 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
             child: FutureBuilder<List<RelevantInvestorActivity>>(
               future: _activitiesFuture,
               builder: (context, snapshot) {
+                if (_configurationError != null) {
+                  return const _InvestorState(
+                    icon: Icons.gpp_bad_outlined,
+                    title: 'Configuración institucional inválida',
+                    detail:
+                        'ATHENA bloqueó la consulta porque la lista de CIKs no es verificable.',
+                  );
+                }
                 if (_ciks.isEmpty) {
                   return const _InvestorState(
                     icon: Icons.account_balance_outlined,
