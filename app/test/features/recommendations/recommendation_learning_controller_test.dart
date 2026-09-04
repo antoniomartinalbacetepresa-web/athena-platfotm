@@ -34,7 +34,17 @@ RecommendationLearningStatus _status() {
     calibration: const {'status': 'review_required'},
     evaluationSchedule: const {'dueCount': 3},
     drift: const {'status': 'stable'},
+    shadowLiveLongitudinal: const {
+      'persistedCandidateCount': 4,
+      'eligibleCandidateCount': 4,
+      'evaluatedCandidateCount': 3,
+      'evaluatedObservationCount': 7,
+    },
+    advisoryStatus: 'no_advice',
+    productionEligible: false,
     automaticModelMutation: false,
+    automaticProductionPromotion: false,
+    automaticTrading: false,
   );
 }
 
@@ -53,6 +63,8 @@ void main() {
     expect(controller.isLoading, isFalse);
     expect(controller.error, isNull);
     expect(controller.status?.performance['sampleSize'], 42);
+    expect(controller.status?.evaluatedShadowObservationCount, 7);
+    expect(controller.status?.isShadowSafe, isTrue);
   });
 
   test('expone error y elimina estado obsoleto si falla la carga', () async {
