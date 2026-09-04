@@ -36,8 +36,9 @@ class FakeMarketRepository implements MarketRepository {
 
 Future<AddPositionResult?> openAndSubmit(
   WidgetTester tester,
-  FakeMarketRepository repository,
-) async {
+  FakeMarketRepository repository, {
+  String? costBasisDate,
+}) async {
   AddPositionResult? result;
 
   await tester.pumpWidget(
@@ -75,6 +76,15 @@ Future<AddPositionResult?> openAndSubmit(
     find.widgetWithText(TextFormField, 'Precio medio de compra'),
     '400',
   );
+  if (costBasisDate != null) {
+    await tester.enterText(
+      find.widgetWithText(
+        TextFormField,
+        'Fecha del coste (AAAA-MM-DD, opcional)',
+      ),
+      costBasisDate,
+    );
+  }
 
   await tester.tap(find.text('Guardar posición'));
   await tester.pumpAndSettle();
@@ -97,6 +107,7 @@ void main() {
       expect(result!.symbol, 'MSFT');
       expect(result.companyName, 'Verified company');
       expect(result.currentPrice, 432.10);
+      expect(result.costBasisDate, isNull);
       expect(result.priceCurrency, 'USD');
       expect(result.exchange, 'NMS');
       expect(result.quoteType, 'EQUITY');
@@ -105,6 +116,47 @@ void main() {
       expect(result.currentPriceRetrievedAt, DateTime.utc(2026, 9, 2, 16, 31));
     },
   );
+
+  testWidgets('conserva fecha de coste explícita sin inferirla', (tester) async {
+    final repository = FakeMarketRepository();
+
+    final result = await openAndSubmit(
+      tester,
+      repository,
+      costBasisDate: '2026-08-15',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.costBasisDate, DateTime.utc(2026, 8, 15));
+  });
+
+  testWidgets('rechaza fecha de coste futura', (tester) async {
+    final repository = FakeMarketRepository();
+
+    final result = await openAndSubmit(
+      tester,
+      repository,
+      costBasisDate: '2999-01-01',
+    );
+
+    expect(result, isNull);
+    expect(find.textContaining('no puede estar en el futuro'), findsOneWidget);
+    expect(repository.requestedSymbol, isNull);
+  });
+
+  testWidgets('rechaza fecha de coste calendario inválida', (tester) async {
+    final repository = FakeMarketRepository();
+
+    final result = await openAndSubmit(
+      tester,
+      repository,
+      costBasisDate: '2026-02-31',
+    );
+
+    expect(result, isNull);
+    expect(find.textContaining('fecha válida'), findsOneWidget);
+    expect(repository.requestedSymbol, isNull);
+  });
 
   testWidgets('rechaza cotización sin proveedor verificable', (tester) async {
     final repository = FakeMarketRepository(
