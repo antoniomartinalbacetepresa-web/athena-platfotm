@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.recommendation_shadow_live_followup_batch_service import (
+    RecommendationShadowLiveFollowupBatchService,
+)
 from app.services.recommendation_shadow_operational_live_cycle_service import (
     RecommendationShadowOperationalLiveCycleService,
 )
@@ -18,6 +21,7 @@ router = APIRouter(
 )
 
 operational_live_cycle_service = RecommendationShadowOperationalLiveCycleService()
+followup_batch_service = RecommendationShadowLiveFollowupBatchService()
 pre_holdout_pipeline_service = RecommendationShadowPreHoldoutPipelineService()
 
 
@@ -79,30 +83,30 @@ def _assert_operational_shadow_contract(payload: dict[str, object]) -> None:
     if payload.get("advisoryStatus") != "no_advice":
         raise HTTPException(
             status_code=500,
-            detail="El live cycle operativo violó el contrato no-advice de ATHENA.",
+            detail="El ciclo operativo violó el contrato no-advice de ATHENA.",
         )
     if payload.get("productionEligible") is not False:
         raise HTTPException(
             status_code=500,
-            detail="El live cycle operativo no puede habilitar producción.",
+            detail="El ciclo operativo no puede habilitar producción.",
         )
     if payload.get("recommendationCandidateReady") is not False:
         raise HTTPException(
             status_code=500,
-            detail="El live cycle operativo no puede habilitar recomendaciones.",
+            detail="El ciclo operativo no puede habilitar recomendaciones.",
         )
     policy = payload.get("policy")
     if not isinstance(policy, dict):
-        raise HTTPException(status_code=500, detail="El live cycle devolvió política inválida.")
+        raise HTTPException(status_code=500, detail="El ciclo operativo devolvió política inválida.")
     if policy.get("automaticTrading") is not False:
         raise HTTPException(
             status_code=500,
-            detail="El live cycle operativo no puede habilitar trading automático.",
+            detail="El ciclo operativo no puede habilitar trading automático.",
         )
     if policy.get("automaticProductionPromotion") is not False:
         raise HTTPException(
             status_code=500,
-            detail="El live cycle operativo no puede promover producción automáticamente.",
+            detail="El ciclo operativo no puede promover producción automáticamente.",
         )
 
 
@@ -156,6 +160,32 @@ def run_shadow_live_cycle(
         raise HTTPException(
             status_code=500,
             detail="No se pudo ejecutar el live cycle shadow operativo de ATHENA.",
+        ) from exc
+
+    _assert_operational_shadow_contract(payload)
+    return {"data": payload}
+
+
+@router.post("/shadow-followup-cycle")
+def run_shadow_followup_cycle(
+    as_of: datetime | None = Query(None),
+    horizons: str = Query("7,30,90,180,365"),
+) -> dict[str, object]:
+    """Mature and evaluate every persisted live-shadow candidate at one PIT cutoff."""
+
+    effective_as_of = _effective_as_of(as_of)
+    effective_horizons = _parse_horizons(horizons)
+    try:
+        payload = followup_batch_service.run(
+            as_of=effective_as_of,
+            horizons=effective_horizons,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo ejecutar el seguimiento shadow automático de ATHENA.",
         ) from exc
 
     _assert_operational_shadow_contract(payload)
