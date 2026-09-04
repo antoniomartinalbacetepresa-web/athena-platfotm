@@ -155,7 +155,7 @@ class MarketObservationRepository:
         if cutoff_iso is not None:
             for row in result:
                 if row["retrieved_at"] > cutoff_iso or row["observed_at"] > cutoff_iso:
-                    raise StateError(
+                    raise RuntimeError(
                         "Una observación posterior al knowledge_cutoff atravesó el filtro PIT."
                     )
         return result
