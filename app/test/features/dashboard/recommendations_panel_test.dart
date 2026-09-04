@@ -21,14 +21,24 @@ class FakeLearningStatusProvider implements RecommendationLearningStatusProvider
       calibration: const {'status': 'review_required'},
       evaluationSchedule: const {'dueCount': 4},
       drift: const {'status': 'stable'},
+      shadowLiveLongitudinal: const {
+        'persistedCandidateCount': 8,
+        'eligibleCandidateCount': 7,
+        'evaluatedCandidateCount': 5,
+        'evaluatedObservationCount': 12,
+      },
+      advisoryStatus: 'no_advice',
+      productionEligible: false,
       automaticModelMutation: false,
+      automaticProductionPromotion: false,
+      automaticTrading: false,
     );
   }
 }
 
 void main() {
   testWidgets(
-    'no muestra recomendaciones ficticias y expone el estado real del motor',
+    'muestra aprendizaje shadow real sin recomendaciones ficticias',
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -47,20 +57,27 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('RECOMENDACIONES ATHENA'), findsOneWidget);
-      expect(find.text('MOTOR EN VALIDACIÓN'), findsOneWidget);
+      expect(find.text('APRENDIZAJE SHADOW'), findsOneWidget);
       expect(
-        find.text('ATHENA todavía no publica recomendaciones activas.'),
+        find.text(
+          'ATHENA ya está midiendo candidatos con resultados reales.',
+        ),
         findsOneWidget,
       );
+      expect(find.text('Candidatos shadow'), findsOneWidget);
+      expect(find.text('Candidatos evaluados'), findsOneWidget);
+      expect(find.text('Observaciones maduras'), findsOneWidget);
+      expect(find.text('Evaluaciones pendientes'), findsOneWidget);
+      expect(find.text('8'), findsOneWidget);
+      expect(find.text('5'), findsOneWidget);
       expect(find.text('12'), findsOneWidget);
       expect(find.text('4'), findsOneWidget);
-      expect(find.text('STABLE'), findsOneWidget);
-      expect(find.text('BLOQUEADOS'), findsOneWidget);
 
       expect(find.text('Microsoft'), findsNothing);
       expect(find.text('Apple'), findsNothing);
       expect(find.text('NVIDIA'), findsNothing);
       expect(find.text('COMPRAR'), findsNothing);
+      expect(find.text('MOTOR EN VALIDACIÓN'), findsNothing);
     },
   );
 }
