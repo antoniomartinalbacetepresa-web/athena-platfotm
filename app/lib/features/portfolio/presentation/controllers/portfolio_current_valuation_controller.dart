@@ -12,10 +12,6 @@ typedef PortfolioCurrentValuationLoader = Future<PortfolioCurrentValuation>
 
 /// Controls current portfolio valuation without allowing stale async results to
 /// overwrite newer portfolio state.
-///
-/// This controller deliberately exposes only *current* valuation. Historical
-/// cost basis and P/L remain governed by [PortfolioCurrentValuation], which
-/// keeps them unavailable when acquisition-date FX evidence is missing.
 class PortfolioCurrentValuationController extends ChangeNotifier {
   final PortfolioCurrentValuationLoader loadValuation;
 
@@ -37,12 +33,8 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
     );
   }
 
-  /// Composes the production portfolio valuation chain from the already
-  /// configured market dependencies.
-  ///
-  /// The factory fails closed when the selected market configuration does not
-  /// expose ATHENA backend FX. This prevents callers from silently substituting
-  /// mock, nominal or direct-provider conversion inside the portfolio UI.
+  /// Composes current and historical FX only through the configured ATHENA
+  /// backend. No nominal or direct-provider conversion is allowed in Flutter.
   factory PortfolioCurrentValuationController.forMarketDependencies(
     MarketDependencies dependencies,
   ) {
@@ -56,6 +48,16 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
     return PortfolioCurrentValuationController.forService(
       PortfolioCurrentValuationService(
         loadCurrentFxRate: fxDataSource.getCurrentRate,
+        loadHistoricalFxRate: ({
+          required baseCurrency,
+          required quoteCurrency,
+          required observedOn,
+        }) =>
+            fxDataSource.getHistoricalRate(
+          baseCurrency: baseCurrency,
+          quoteCurrency: quoteCurrency,
+          observedOn: observedOn,
+        ),
       ),
     );
   }
@@ -74,8 +76,6 @@ class PortfolioCurrentValuationController extends ChangeNotifier {
 
     final generation = ++_requestGeneration;
 
-    // Never expose a valuation that belongs to an older portfolio snapshot
-    // while a new price/position/FX request is in flight.
     _valuation = null;
     _isLoading = true;
     _error = null;
