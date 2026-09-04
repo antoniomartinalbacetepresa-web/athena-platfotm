@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import math
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -40,6 +41,11 @@ class RecommendationShadowMacroResearchFeatureService:
                 rejected_invalid_macro += 1
                 continue
 
+            data_cutoff = self._aware_datetime(raw_row.get("dataCutoffAt"))
+            if data_cutoff is None:
+                rejected_invalid_macro += 1
+                continue
+
             macro_observations = raw_row.get("macroObservations")
             if macro_observations is None:
                 macro_observations = []
@@ -47,7 +53,10 @@ class RecommendationShadowMacroResearchFeatureService:
                 rejected_invalid_macro += 1
                 continue
 
-            features, valid = self._features_from_observations(macro_observations)
+            features, valid = self._features_from_observations(
+                macro_observations,
+                data_cutoff=data_cutoff,
+            )
             if not valid:
                 rejected_invalid_macro += 1
                 continue
@@ -77,6 +86,7 @@ class RecommendationShadowMacroResearchFeatureService:
                 "thresholds": "not_assigned",
                 "candidateInfluence": "disabled",
                 "duplicates": "exact_dedupe_conflicts_rejected",
+                "pit": "observed_available_retrieved_not_after_snapshot_cutoff",
                 "trainingUse": "fit_only_inside_training_folds_then_validate_oos",
             },
         }
@@ -84,6 +94,8 @@ class RecommendationShadowMacroResearchFeatureService:
     def _features_from_observations(
         self,
         observations: list[object],
+        *,
+        data_cutoff: datetime,
     ) -> tuple[list[dict[str, Any]], bool]:
         by_key: dict[str, dict[str, Any]] = {}
         for raw in observations:
@@ -94,9 +106,9 @@ class RecommendationShadowMacroResearchFeatureService:
             entity = str(raw.get("entity") or "").strip()
             unit = str(raw.get("unit") or "").strip()
             source = str(raw.get("source") or "").strip()
-            observed_at = str(raw.get("observedAt") or "").strip()
-            available_at = str(raw.get("availableAt") or "").strip()
-            retrieved_at = str(raw.get("retrievedAt") or "").strip()
+            observed_at = self._aware_datetime(raw.get("observedAt"))
+            available_at = self._aware_datetime(raw.get("availableAt"))
+            retrieved_at = self._aware_datetime(raw.get("retrievedAt"))
             source_url = str(raw.get("sourceUrl") or "").strip()
             value = self._finite_float(raw.get("value"))
             quality_score = self._optional_bounded_score(raw.get("qualityScore"))
@@ -107,11 +119,14 @@ class RecommendationShadowMacroResearchFeatureService:
                 or not entity
                 or not unit
                 or not source
-                or not observed_at
-                or not available_at
-                or not retrieved_at
+                or observed_at is None
+                or available_at is None
+                or retrieved_at is None
                 or not source_url
                 or value is None
+                or observed_at > available_at
+                or available_at > data_cutoff
+                or retrieved_at > data_cutoff
             ):
                 return [], False
             if raw.get("qualityScore") is not None and quality_score is None:
@@ -127,9 +142,9 @@ class RecommendationShadowMacroResearchFeatureService:
                 "unit": unit,
                 "value": value,
                 "source": source,
-                "observedAt": observed_at,
-                "availableAt": available_at,
-                "retrievedAt": retrieved_at,
+                "observedAt": observed_at.isoformat(),
+                "availableAt": available_at.isoformat(),
+                "retrievedAt": retrieved_at.isoformat(),
                 "sourceUrl": source_url,
                 "qualityScore": quality_score,
                 "confidence": confidence,
@@ -160,3 +175,18 @@ class RecommendationShadowMacroResearchFeatureService:
         if parsed is None or parsed < 0.0 or parsed > 100.0:
             return None
         return parsed
+
+    def _aware_datetime(self, value: object) -> datetime | None:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
