@@ -9,6 +9,7 @@ from app.services.recommendation_shadow_calibration_dataset_service import (
 
 
 CUT = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc)
+FEATURE_SCHEMA_VERSION = "shadow-evidence-v2"
 
 
 def _benchmark_evidence(due: datetime) -> dict[str, object]:
@@ -50,7 +51,7 @@ def _setup_row(tmp_path, *, feature_value=0.08):
         symbol="AAPL",
         data_cutoff_at=CUT,
         captured_at=CUT,
-        feature_schema_version="shadow-evidence-v1",
+        feature_schema_version=FEATURE_SCHEMA_VERSION,
         evidence_status="evidence_ready_for_calibration",
         entry_price=100.0,
         entry_observed_at=CUT - timedelta(hours=1),
