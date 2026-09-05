@@ -113,7 +113,7 @@ def _service(contract):
     )
 
 
-def _correlation(other_id=20, *, correlation=0.30, sample_count=60, last_date="2026-09-01"):
+def _correlation(other_id=20, *, correlation=0.30, sample_count=60, last_date="2026-08-31"):
     return {
         "leftInstrumentId": 10,
         "rightInstrumentId": other_id,
