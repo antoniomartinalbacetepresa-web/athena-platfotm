@@ -29,13 +29,26 @@ def _fingerprint(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode()).hexdigest()
 
 
-def _action(*, instrument_id=10, state="flat", action="buy", as_of=AS_OF):
+def _contract():
+    return RecommendationShadowActionEconomicContractService().build(
+        transaction_cost_bps=5.0,
+        slippage_bps=3.0,
+        reduced_exposure_fraction=0.40,
+        objective_name="test",
+        objective_version="v1",
+    )
+
+
+def _action(*, instrument_id=10, state="flat", action="buy", as_of=AS_OF, economic_contract_fingerprint=None):
+    if economic_contract_fingerprint is None:
+        economic_contract_fingerprint = _contract()["economicContractFingerprint"]
     core = {
         "artifactVersion": "athena-uncertainty-bound-action-candidate-v1",
         "validatedActionCandidateFingerprint": "1" * 64,
         "actionUncertaintyEvidenceFingerprint": "2" * 64,
         "actionPromotionDecisionId": "decision-001",
         "actionPromotionDecisionFingerprint": "3" * 64,
+        "economicContractFingerprint": economic_contract_fingerprint,
         "candidateFingerprint": "4" * 64,
         "instrumentId": instrument_id,
         "symbol": "AAA",
@@ -58,16 +71,6 @@ def _action(*, instrument_id=10, state="flat", action="buy", as_of=AS_OF):
         "allocationEligible": False,
         "automaticTrading": False,
     }
-
-
-def _contract():
-    return RecommendationShadowActionEconomicContractService().build(
-        transaction_cost_bps=5.0,
-        slippage_bps=3.0,
-        reduced_exposure_fraction=0.40,
-        objective_name="test",
-        objective_version="v1",
-    )
 
 
 class _PolicyRepository:
@@ -166,7 +169,7 @@ def _valuation(*, positions=None, total=None):
 
 def _pipeline(valuation, *, action_artifact=None, action_repository=None, valuation_repository=None):
     contract = _contract()
-    action = action_artifact or _action()
+    action = action_artifact or _action(economic_contract_fingerprint=contract["economicContractFingerprint"])
     allocation = RecommendationAllocationCandidateService(
         policy_repository=_PolicyRepository(),
         economic_contract_validator=_ContractValidator(contract),
