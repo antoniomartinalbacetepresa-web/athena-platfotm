@@ -18,10 +18,10 @@ from app.services.recommendation_shadow_live_candidate_service import (
 class RecommendationShadowLiveCandidateEvaluationService:
     """Evaluate persisted continuous predictions using only matured PIT outcomes.
 
-    Excess-return predictions are scored only against outcomes whose benchmark
-    leg retains the exact frozen-symbol observation provenance. Persisted return
-    scalars are also cross-checked so storage corruption cannot silently alter
-    longitudinal OOS evidence.
+    Excess-return predictions are scored only against outcomes whose asset and
+    benchmark legs retain verifiable frozen observation provenance. Persisted
+    return scalars are reconstructed from preserved prices so coordinated storage
+    corruption cannot silently alter longitudinal OOS evidence.
     """
 
     def __init__(
@@ -120,6 +120,14 @@ class RecommendationShadowLiveCandidateEvaluationService:
             due_at = self._parse_aware(outcome.get("due_at"), "outcome.due_at")
             if evaluated_at < due_at:
                 raise ValueError("Un outcome fue evaluado antes de su vencimiento.")
+            asset_evidence = self._validated_asset_return_evidence(
+                snapshot,
+                outcome,
+                candidate_symbol=self._required_symbol(candidate.get("symbol"), "candidate.symbol"),
+                candidate_as_of=candidate_as_of,
+                due_at=due_at,
+                evaluated_at=evaluated_at,
+            )
             benchmark_evidence = self._validated_benchmark_evidence(
                 outcome,
                 frozen_symbol=frozen_benchmark_symbol,
@@ -133,7 +141,16 @@ class RecommendationShadowLiveCandidateEvaluationService:
             stored_benchmark_return = self._required_finite(
                 outcome.get("benchmark_return"), "outcome.benchmark_return"
             )
-            recomputed_excess_return = stored_realized_return - stored_benchmark_return
+            if not math.isclose(
+                stored_realized_return,
+                asset_evidence["realizedReturn"],
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                raise ValueError(
+                    "outcome.realized_return no coincide con los precios PIT preservados."
+                )
+            recomputed_excess_return = asset_evidence["realizedReturn"] - stored_benchmark_return
             if not math.isclose(
                 realized,
                 recomputed_excess_return,
@@ -141,7 +158,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
                 abs_tol=1e-12,
             ):
                 raise ValueError(
-                    "outcome.excess_return no coincide con realized_return - benchmark_return."
+                    "outcome.excess_return no coincide con la rentabilidad reconstruida menos benchmark_return."
                 )
             error = expected - realized
             if not math.isfinite(error):
@@ -162,6 +179,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
                 "outcomeEvaluatedAt": evaluated_at.isoformat(),
                 "benchmarkReturn": stored_benchmark_return,
                 "realizedReturn": stored_realized_return,
+                "assetEvidence": asset_evidence,
                 "benchmarkEvidence": benchmark_evidence,
             }
 
@@ -197,13 +215,113 @@ class RecommendationShadowLiveCandidateEvaluationService:
             "policy": {
                 "lookAhead": "outcome_evaluated_at_must_not_exceed_as_of",
                 "target": "realized_excess_return_vs_frozen_snapshot_benchmark",
-                "targetProvenance": "exact_persisted_benchmark_observations_required",
-                "targetIntegrity": "persisted_excess_return_must_equal_realized_return_minus_benchmark_return",
+                "targetProvenance": "exact_persisted_asset_and_benchmark_observations_required",
+                "targetIntegrity": "realized_return_reconstructed_from_frozen_entry_and_persisted_exit_prices_then_excess_recomputed",
+                "entryProvider": "single_frozen_market_provider_required_fail_closed_if_ambiguous",
                 "predictions": "immutable_persisted_live_candidate",
                 "actions": "not_evaluated_not_assigned",
                 "automaticModelMutation": False,
                 "automaticProductionPromotion": False,
             },
+        }
+
+    def _validated_asset_return_evidence(
+        self,
+        snapshot: dict[str, Any],
+        outcome: dict[str, Any],
+        *,
+        candidate_symbol: str,
+        candidate_as_of: datetime,
+        due_at: datetime,
+        evaluated_at: datetime,
+    ) -> dict[str, Any]:
+        snapshot_symbol = self._required_symbol(snapshot.get("symbol"), "snapshot.symbol")
+        if snapshot_symbol != candidate_symbol:
+            raise ValueError("El snapshot PIT pertenece a otro símbolo.")
+        instrument_id = snapshot.get("instrument_id")
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise ValueError("El snapshot PIT carece de instrument_id válido.")
+        data_cutoff = self._parse_aware(snapshot.get("data_cutoff_at"), "snapshot.data_cutoff_at")
+        if data_cutoff != candidate_as_of:
+            raise ValueError("El candidato y su snapshot usan cortes PIT distintos.")
+
+        entry_price = self._required_finite(snapshot.get("entry_price"), "snapshot.entry_price")
+        exit_price = self._required_finite(outcome.get("exit_price"), "outcome.exit_price")
+        if entry_price <= 0 or exit_price <= 0:
+            raise ValueError("Los precios preservados del activo deben ser positivos.")
+        entry_observed = self._parse_aware(
+            snapshot.get("entry_observed_at"), "snapshot.entry_observed_at"
+        )
+        entry_retrieved = self._parse_aware(
+            snapshot.get("entry_retrieved_at"), "snapshot.entry_retrieved_at"
+        )
+        exit_observed = self._parse_aware(
+            outcome.get("exit_observed_at"), "outcome.exit_observed_at"
+        )
+        exit_retrieved = self._parse_aware(
+            outcome.get("exit_retrieved_at"), "outcome.exit_retrieved_at"
+        )
+        if entry_observed > data_cutoff or entry_retrieved > data_cutoff:
+            raise ValueError("La entrada del activo viola el corte PIT congelado.")
+        if exit_observed < due_at or exit_observed > evaluated_at:
+            raise ValueError("La salida del activo está fuera de la ventana del outcome.")
+        if exit_retrieved > evaluated_at:
+            raise ValueError("La salida del activo fue conocida después de evaluated_at.")
+
+        evidence_snapshot = snapshot.get("evidence_snapshot")
+        market = evidence_snapshot.get("market") if isinstance(evidence_snapshot, dict) else None
+        if not isinstance(market, dict):
+            raise ValueError("El snapshot carece de evidencia de mercado congelada.")
+        market_symbol = self._required_symbol(market.get("symbol"), "snapshot.market.symbol")
+        if market_symbol != snapshot_symbol:
+            raise ValueError("La evidencia de mercado congelada pertenece a otro símbolo.")
+        market_instrument_id = market.get("instrumentId")
+        if market_instrument_id != instrument_id:
+            raise ValueError("La evidencia de mercado congelada pertenece a otro instrumento.")
+        market_as_of = self._parse_aware(market.get("asOf"), "snapshot.market.asOf")
+        if market_as_of != data_cutoff:
+            raise ValueError("La evidencia de mercado congelada usa otro corte PIT.")
+        market_price = self._required_finite(market.get("latestPrice"), "snapshot.market.latestPrice")
+        market_observed = self._parse_aware(
+            market.get("latestObservedAt"), "snapshot.market.latestObservedAt"
+        )
+        market_retrieved = self._parse_aware(
+            market.get("latestRetrievedAt"), "snapshot.market.latestRetrievedAt"
+        )
+        if not math.isclose(market_price, entry_price, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("El precio de entrada no coincide con la evidencia congelada.")
+        if market_observed != entry_observed or market_retrieved != entry_retrieved:
+            raise ValueError("Los tiempos de entrada no coinciden con la evidencia congelada.")
+        providers = market.get("sourceProviders")
+        if not isinstance(providers, list):
+            raise ValueError("La evidencia de entrada carece de provenance de proveedor.")
+        normalized_providers = sorted(
+            {str(value or "").strip() for value in providers if str(value or "").strip()}
+        )
+        if len(normalized_providers) != 1:
+            raise ValueError(
+                "La provenance exacta del precio de entrada es ambigua; se bloquea el outcome."
+            )
+        entry_provider = normalized_providers[0]
+        exit_provider = str(outcome.get("source_provider") or "").strip()
+        if not exit_provider:
+            raise ValueError("La salida del activo carece de provenance de proveedor.")
+
+        realized_return = (exit_price / entry_price) - 1.0
+        if not math.isfinite(realized_return):
+            raise ValueError("La rentabilidad reconstruida del activo no es finita.")
+        return {
+            "symbol": snapshot_symbol,
+            "instrumentId": instrument_id,
+            "entryPrice": entry_price,
+            "exitPrice": exit_price,
+            "realizedReturn": realized_return,
+            "entryObservedAt": entry_observed.isoformat(),
+            "exitObservedAt": exit_observed.isoformat(),
+            "entryRetrievedAt": entry_retrieved.isoformat(),
+            "exitRetrievedAt": exit_retrieved.isoformat(),
+            "entrySourceProvider": entry_provider,
+            "exitSourceProvider": exit_provider,
         }
 
     def _validated_benchmark_evidence(
@@ -286,6 +404,12 @@ class RecommendationShadowLiveCandidateEvaluationService:
         if candidate.get("recommendationCandidateReady") is not False:
             raise ValueError("El candidato evaluado no puede habilitar recomendación.")
 
+    def _required_symbol(self, value: object, field: str) -> str:
+        normalized = self._optional_symbol(value)
+        if normalized is None:
+            raise ValueError(f"{field} es obligatorio.")
+        return normalized
+
     def _optional_symbol(self, value: object) -> str | None:
         if value is None:
             return None
@@ -293,7 +417,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
         return normalized or None
 
     def _optional_finite(self, value: object) -> float | None:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         try:
             parsed = float(value)
