@@ -6,6 +6,9 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
+    RecommendationPortfolioValuationEvidenceRepository,
+)
 from app.services.recommendation_allocation_candidate_service import (
     RecommendationAllocationCandidateService,
 )
@@ -26,34 +29,49 @@ class _ValuationService(Protocol):
     def validate_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class _ValuationRepository(Protocol):
+    def seal(self, *, artifact: dict[str, Any]) -> dict[str, Any]: ...
+
+    def validate_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+
+
 class _AllocationService(Protocol):
     def build(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class RecommendationVerifiedAllocationPipelineService:
-    """Derive allocation inputs from internally built PIT portfolio evidence.
+    """Derive allocation inputs from sealed PIT portfolio evidence.
 
     Callers supply position observations, not valuation totals. The pipeline rebuilds
     invested-position market value from canonical identity, PIT prices and PIT FX,
+    validates and seals that exact valuation in the append-only evidence repository,
     derives the candidate instrument's current value and held-instrument set, and only
     then invokes the allocation engine. This prevents the verified path from accepting
-    caller-invented portfolio/position values or a free-standing SHA as provenance.
+    caller-invented portfolio/position values, a free-standing SHA, or an unpersisted
+    valuation as allocation provenance.
 
     The resulting artifact remains explicitly non-advisory and non-executable. Its
     portfolio-value scope is invested positions only; cash, liabilities and broker NAV
     are not inferred.
     """
 
-    ARTIFACT_VERSION = "athena-verified-allocation-pipeline-v1"
+    ARTIFACT_VERSION = "athena-verified-allocation-pipeline-v2"
 
     def __init__(
         self,
         *,
         valuation_service: _ValuationService | None = None,
+        valuation_repository: _ValuationRepository | None = None,
         allocation_service: _AllocationService | None = None,
     ) -> None:
         self._valuation_service = (
             valuation_service or RecommendationPortfolioValuationEvidenceService()
+        )
+        self._valuation_repository = (
+            valuation_repository
+            or RecommendationPortfolioValuationEvidenceRepository(
+                validator=self._valuation_service,
+            )
         )
         self._allocation_service = (
             allocation_service or RecommendationAllocationCandidateService()
@@ -111,6 +129,26 @@ class RecommendationVerifiedAllocationPipelineService:
         ):
             raise ValueError("El alcance de valoración no está soportado por este pipeline.")
 
+        valuation_record = self._valuation_repository.seal(artifact=valuation)
+        if not isinstance(valuation_record, dict):
+            raise ValueError("El repositorio no devolvió un registro de valoración válido.")
+        if self._valuation_repository.validate_record(valuation_record) is not valuation_record:
+            raise ValueError("El repositorio sustituyó el registro de valoración sellado.")
+        persisted_valuation = valuation_record.get("artifact")
+        if not isinstance(persisted_valuation, dict):
+            raise ValueError("El registro sellado carece de valoración PIT.")
+        if persisted_valuation != valuation:
+            raise ValueError("La valoración sellada difiere del artefacto validado.")
+        valuation = persisted_valuation
+        valuation_record_fingerprint = self._sha256(
+            valuation_record.get("record_fingerprint"),
+            "portfolioValuationRecordFingerprint",
+        )
+        valuation_persisted_at = self._aware_text(
+            valuation_record.get("persisted_at"),
+            "portfolioValuationPersistedAt",
+        )
+
         valuation_positions = valuation.get("positions")
         if not isinstance(valuation_positions, list):
             raise ValueError("La valoración carece de posiciones verificables.")
@@ -150,6 +188,15 @@ class RecommendationVerifiedAllocationPipelineService:
             valuation.get("portfolioValuationEvidenceFingerprint"),
             "portfolioValuationEvidenceFingerprint",
         )
+        if valuation_record.get("valuation_fingerprint") != valuation_fp:
+            raise ValueError("El registro sellado no corresponde al fingerprint de valoración.")
+        if self._aware_text(valuation_record.get("as_of"), "valuationRecord.as_of") != cutoff:
+            raise ValueError("El registro sellado cambió el corte temporal.")
+        if self._currency(
+            valuation_record.get("base_currency"), "valuationRecord.base_currency"
+        ) != currency:
+            raise ValueError("El registro sellado cambió la moneda base.")
+
         allocation = self._allocation_service.build(
             uncertainty_bound_action_candidate=uncertainty_bound_action_candidate,
             allocation_policy_id=allocation_policy_id,
@@ -178,6 +225,8 @@ class RecommendationVerifiedAllocationPipelineService:
             "baseCurrency": currency,
             "instrumentId": instrument_id,
             "portfolioValuationEvidenceFingerprint": valuation_fp,
+            "portfolioValuationRecordFingerprint": valuation_record_fingerprint,
+            "portfolioValuationPersistedAt": valuation_persisted_at.isoformat(),
             "allocationCandidateFingerprint": self._sha256(
                 allocation.get("allocationCandidateFingerprint"),
                 "allocationCandidateFingerprint",
@@ -194,8 +243,14 @@ class RecommendationVerifiedAllocationPipelineService:
             **core,
             "verifiedAllocationPipelineFingerprint": self._fingerprint(core),
             "portfolioValuationEvidence": valuation,
+            "portfolioValuationPersistence": {
+                "sealed": True,
+                "persistedAt": valuation_persisted_at.isoformat(),
+                "recordFingerprint": valuation_record_fingerprint,
+            },
             "allocationCandidate": allocation,
             "portfolioValuationBoundToAllocation": True,
+            "portfolioValuationSealedBeforeAllocation": True,
             "callerSuppliedValuationTotalsAccepted": False,
             "advisoryStatus": "no_advice",
             "recommendationCandidateReady": False,
@@ -204,6 +259,7 @@ class RecommendationVerifiedAllocationPipelineService:
             "automaticTrading": False,
             "policy": {
                 "portfolioTotalsDerivedInternallyFromPitEvidence": True,
+                "portfolioValuationMustBeAppendOnlySealedBeforeAllocation": True,
                 "currentPositionValueDerivedInternally": True,
                 "heldInstrumentIdsDerivedInternally": True,
                 "cashMustNotBeInferred": True,
