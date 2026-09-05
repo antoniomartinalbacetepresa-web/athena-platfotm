@@ -14,11 +14,11 @@ class RecommendationActionPromotionProtocolRepository:
 
     The repository owns registeredAt and the fingerprint. Callers cannot backdate
     a protocol after seeing future-reserve performance. The registry contains no
-    default investment thresholds: every economic/statistical criterion must be
-    supplied explicitly before the frozen action policy is selected.
+    default investment thresholds or sample sizes: every economic/statistical
+    criterion must be supplied explicitly before the frozen action policy is selected.
     """
 
-    PROTOCOL_VERSION = "athena-action-promotion-protocol-v1"
+    PROTOCOL_VERSION = "athena-action-promotion-protocol-v2"
     STATES = ("flat", "reduced_long", "full_long")
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
@@ -147,16 +147,22 @@ class RecommendationActionPromotionProtocolRepository:
             raise ValueError("Versión de protocolo de acciones no compatible.")
         protocol_id = self._non_empty(payload.get("protocolId"), "protocolId")
         horizons = self._horizons(payload.get("requiredHorizons"))
+        minimum_rows = self._minimum_rows(
+            payload.get("minimumFutureRowsByHorizon"), horizons
+        )
         criteria = self._criteria(payload.get("criteriaByHorizonAndState"), horizons)
         return {
             "artifactVersion": self.PROTOCOL_VERSION,
             "protocolId": protocol_id,
             "requiredHorizons": horizons,
             "requiredStates": list(self.STATES),
+            "minimumFutureRowsByHorizon": minimum_rows,
             "criteriaByHorizonAndState": criteria,
             "criteriaSemantics": {
                 "thresholdsAreCallerPrecommitted": True,
+                "minimumFutureRowsAreCallerPrecommitted": True,
                 "codeDefaultPromotionThresholds": False,
+                "codeDefaultProductionSampleSize": False,
                 "comparisonTarget": "frozen_policy_vs_hold_on_first_sealed_future_reserve",
             },
         }
@@ -168,14 +174,38 @@ class RecommendationActionPromotionProtocolRepository:
         horizons = self._horizons(protocol.get("requiredHorizons"))
         if protocol.get("requiredStates") != list(self.STATES):
             raise ValueError("requiredStates fue modificado.")
+        self._minimum_rows(protocol.get("minimumFutureRowsByHorizon"), horizons)
         self._criteria(protocol.get("criteriaByHorizonAndState"), horizons)
         semantics = protocol.get("criteriaSemantics")
         if not isinstance(semantics, dict):
             raise ValueError("criteriaSemantics es obligatorio.")
         if semantics.get("thresholdsAreCallerPrecommitted") is not True:
             raise ValueError("El protocolo no declara criterios precomprometidos.")
+        if semantics.get("minimumFutureRowsAreCallerPrecommitted") is not True:
+            raise ValueError("El protocolo no precompromete suficiencia muestral.")
         if semantics.get("codeDefaultPromotionThresholds") is not False:
             raise ValueError("El protocolo no puede depender de thresholds por defecto del código.")
+        if semantics.get("codeDefaultProductionSampleSize") is not False:
+            raise ValueError("El protocolo no puede depender de tamaño muestral por defecto del código.")
+
+    def _minimum_rows(self, payload: object, horizons: list[int]) -> dict[str, int]:
+        if not isinstance(payload, dict):
+            raise ValueError("minimumFutureRowsByHorizon es obligatorio.")
+        expected = {str(value) for value in horizons}
+        if set(payload) != expected:
+            raise ValueError(
+                "minimumFutureRowsByHorizon debe cubrir exactamente requiredHorizons."
+            )
+        result: dict[str, int] = {}
+        for horizon in horizons:
+            key = str(horizon)
+            value = payload.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(
+                    f"minimumFutureRowsByHorizon.{key} debe ser entero positivo."
+                )
+            result[key] = value
+        return result
 
     def _criteria(self, payload: object, horizons: list[int]) -> dict[str, dict[str, Any]]:
         if not isinstance(payload, dict):
