@@ -12,6 +12,12 @@ from app.services.portfolio_correlation_service import PortfolioCorrelationServi
 from app.services.portfolio_instrument_identity_service import (
     PortfolioInstrumentIdentityService,
 )
+from app.services.recommendation_authorized_allocation_pipeline_service import (
+    RecommendationAuthorizedAllocationPipelineService,
+)
+from app.services.recommendation_portfolio_correlation_evidence_store_service import (
+    RecommendationPortfolioCorrelationEvidenceStoreService,
+)
 from app.services.recommendation_portfolio_valuation_evidence_service import (
     RecommendationPortfolioValuationEvidenceService,
 )
@@ -48,6 +54,24 @@ def _safe_valuation_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
         raise RuntimeError("La valoración no expone un fingerprint SHA-256 válido.")
     return artifact
+
+
+def _safe_non_advisory_allocation(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("advisoryStatus") != "no_advice":
+        raise RuntimeError("Allocation violó el contrato no_advice.")
+    for field in (
+        "recommendationCandidateReady",
+        "productionEligible",
+        "allocationEligible",
+        "automaticTrading",
+    ):
+        if payload.get(field) is not False:
+            raise RuntimeError(f"Allocation violó {field}=False.")
+    if payload.get("correlationAuthorityBoundToAllocation") is not True:
+        raise RuntimeError("Allocation no quedó ligado a autoridad de correlación.")
+    if payload.get("callerSuppliedCorrelationArtifactsAccepted") is not False:
+        raise RuntimeError("Allocation aceptó correlación arbitraria del caller.")
+    return payload
 
 
 @router.get("/instrument-identity")
@@ -147,9 +171,8 @@ def get_portfolio_pair_correlation(
 ) -> dict[str, object]:
     """Return descriptive PIT correlation for two canonical instruments.
 
-    The endpoint never turns correlation into advice, allocation influence or an
-    automatic-trading signal. Those policies are also carried in the payload
-    returned by PortfolioCorrelationService.
+    This route remains diagnostic. Allocation must use the sealed authority route
+    below and can never promote this raw response directly into allocation input.
     """
     service = PortfolioCorrelationService()
     try:
@@ -170,4 +193,113 @@ def get_portfolio_pair_correlation(
         raise HTTPException(
             status_code=500,
             detail="No se pudo calcular una correlación PIT verificable.",
+        ) from exc
+
+
+@router.post("/correlation-evidence")
+def post_portfolio_correlation_evidence(
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, object]:
+    """Compute correlation from backend PIT observations and append-only seal it."""
+    try:
+        left = payload.get("leftInstrumentId")
+        right = payload.get("rightInstrumentId")
+        if isinstance(left, bool) or not isinstance(left, int) or left <= 0:
+            raise ValueError("leftInstrumentId debe ser entero positivo.")
+        if isinstance(right, bool) or not isinstance(right, int) or right <= 0:
+            raise ValueError("rightInstrumentId debe ser entero positivo.")
+        source_provider = payload.get("sourceProvider")
+        if not isinstance(source_provider, str) or not source_provider.strip():
+            raise ValueError("sourceProvider es obligatorio.")
+        cutoff = _aware_payload_datetime(payload.get("knowledgeCutoff"), "knowledgeCutoff")
+        observed_from = (
+            _aware_payload_datetime(payload.get("observedFrom"), "observedFrom")
+            if payload.get("observedFrom") is not None
+            else None
+        )
+        observed_to = (
+            _aware_payload_datetime(payload.get("observedTo"), "observedTo")
+            if payload.get("observedTo") is not None
+            else None
+        )
+        result = RecommendationPortfolioCorrelationEvidenceStoreService().calculate_and_seal(
+            left_instrument_id=left,
+            right_instrument_id=right,
+            source_provider=source_provider,
+            knowledge_cutoff=cutoff,
+            observed_from=observed_from,
+            observed_to=observed_to,
+        )
+        if result.get("advisoryStatus") != "no_advice":
+            raise RuntimeError("La autoridad de correlación intentó emitir advice.")
+        for field in ("productionEligible", "allocationEligible", "automaticTrading"):
+            if result.get(field) is not False:
+                raise RuntimeError(f"La autoridad de correlación violó {field}=False.")
+        return {"data": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo sellar evidencia PIT de correlación.",
+        ) from exc
+
+
+@router.post("/allocation-candidate")
+def post_portfolio_allocation_candidate(
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, object]:
+    """Build a non-advisory allocation candidate from backend-sealed authorities.
+
+    The client may reference sealed action/correlation fingerprints and declared
+    positions, but cannot submit action artifacts, portfolio totals or correlation
+    JSON. The backend rebuilds and seals PIT valuation internally before allocation.
+    """
+    try:
+        action_fingerprint = payload.get("uncertaintyBoundActionCandidateFingerprint")
+        if not isinstance(action_fingerprint, str):
+            raise ValueError("uncertaintyBoundActionCandidateFingerprint es obligatorio.")
+        allocation_policy_id = payload.get("allocationPolicyId")
+        if not isinstance(allocation_policy_id, str) or not allocation_policy_id.strip():
+            raise ValueError("allocationPolicyId es obligatorio.")
+        economic_contract = payload.get("economicContract")
+        if not isinstance(economic_contract, dict):
+            raise ValueError("economicContract debe ser un objeto.")
+        reference_capital = payload.get("referenceCapital")
+        if isinstance(reference_capital, bool) or not isinstance(reference_capital, (int, float)):
+            raise ValueError("referenceCapital debe ser numérico finito y positivo.")
+        base_currency = payload.get("baseCurrency")
+        if not isinstance(base_currency, str):
+            raise ValueError("baseCurrency debe ser una moneda ISO.")
+        positions = payload.get("positions")
+        if not isinstance(positions, list):
+            raise ValueError("positions debe ser una lista.")
+        correlation_fingerprints = payload.get("correlationEvidenceFingerprints")
+        if not isinstance(correlation_fingerprints, list) or any(
+            not isinstance(item, str) for item in correlation_fingerprints
+        ):
+            raise ValueError("correlationEvidenceFingerprints debe ser una lista de fingerprints.")
+        as_of = _aware_payload_datetime(payload.get("asOf"), "asOf")
+
+        result = RecommendationAuthorizedAllocationPipelineService().build(
+            uncertainty_bound_action_candidate_fingerprint=action_fingerprint,
+            allocation_policy_id=allocation_policy_id,
+            economic_contract=economic_contract,
+            reference_capital=float(reference_capital),
+            base_currency=base_currency,
+            positions=positions,
+            correlation_evidence_fingerprints=correlation_fingerprints,
+            as_of=as_of,
+        )
+        return {"data": _safe_non_advisory_allocation(result)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir un allocation candidate verificable.",
         ) from exc
