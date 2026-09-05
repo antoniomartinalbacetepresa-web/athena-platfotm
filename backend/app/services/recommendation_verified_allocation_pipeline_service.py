@@ -9,6 +9,9 @@ from typing import Any, Protocol
 from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
     RecommendationPortfolioValuationEvidenceRepository,
 )
+from app.repositories.recommendation_uncertainty_bound_action_candidate_repository import (
+    RecommendationUncertaintyBoundActionCandidateRepository,
+)
 from app.services.recommendation_allocation_candidate_service import (
     RecommendationAllocationCandidateService,
 )
@@ -35,33 +38,38 @@ class _ValuationRepository(Protocol):
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class _ActionRepository(Protocol):
+    def get(self, *, candidate_fingerprint: str) -> dict[str, Any] | None: ...
+
+    def validate_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+
+
 class _AllocationService(Protocol):
     def build(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class RecommendationVerifiedAllocationPipelineService:
-    """Derive allocation inputs from sealed PIT portfolio evidence.
+    """Derive allocation from backend-sealed action and PIT portfolio evidence.
 
-    Callers supply position observations, not valuation totals. The pipeline rebuilds
-    invested-position market value from canonical identity, PIT prices and PIT FX,
-    validates and seals that exact valuation in the append-only evidence repository,
-    derives the candidate instrument's current value and held-instrument set, and only
-    then invokes the allocation engine. This prevents the verified path from accepting
-    caller-invented portfolio/position values, a free-standing SHA, or an unpersisted
-    valuation as allocation provenance.
+    The caller supplies only the fingerprint of an uncertainty-bound action already
+    produced and append-only sealed by the backend. Arbitrary action JSON is not an
+    accepted input. Position observations are then rebuilt into a PIT valuation,
+    validated and append-only sealed before the allocation engine receives any
+    portfolio totals. Both authorities therefore remain independently auditable.
 
     The resulting artifact remains explicitly non-advisory and non-executable. Its
     portfolio-value scope is invested positions only; cash, liabilities and broker NAV
     are not inferred.
     """
 
-    ARTIFACT_VERSION = "athena-verified-allocation-pipeline-v2"
+    ARTIFACT_VERSION = "athena-verified-allocation-pipeline-v3"
 
     def __init__(
         self,
         *,
         valuation_service: _ValuationService | None = None,
         valuation_repository: _ValuationRepository | None = None,
+        action_repository: _ActionRepository | None = None,
         allocation_service: _AllocationService | None = None,
     ) -> None:
         self._valuation_service = (
@@ -73,6 +81,9 @@ class RecommendationVerifiedAllocationPipelineService:
                 validator=self._valuation_service,
             )
         )
+        self._action_repository = (
+            action_repository or RecommendationUncertaintyBoundActionCandidateRepository()
+        )
         self._allocation_service = (
             allocation_service or RecommendationAllocationCandidateService()
         )
@@ -80,7 +91,7 @@ class RecommendationVerifiedAllocationPipelineService:
     def build(
         self,
         *,
-        uncertainty_bound_action_candidate: dict[str, Any],
+        uncertainty_bound_action_candidate_fingerprint: str,
         allocation_policy_id: str,
         economic_contract: dict[str, Any],
         reference_capital: float,
@@ -90,17 +101,64 @@ class RecommendationVerifiedAllocationPipelineService:
         as_of: datetime,
     ) -> dict[str, Any]:
         cutoff = self._aware_datetime(as_of, "as_of")
+        requested_action_fp = self._sha256(
+            uncertainty_bound_action_candidate_fingerprint,
+            "uncertainty_bound_action_candidate_fingerprint",
+        )
+        action_record = self._action_repository.get(
+            candidate_fingerprint=requested_action_fp
+        )
+        if action_record is None:
+            raise ValueError("El candidato de acción no está sellado por el backend.")
+        if self._action_repository.validate_record(action_record) is not action_record:
+            raise ValueError("El repositorio sustituyó el registro de acción sellado.")
+        uncertainty_bound_action_candidate = action_record.get("artifact")
         if not isinstance(uncertainty_bound_action_candidate, dict):
-            raise ValueError("uncertainty_bound_action_candidate debe ser un objeto.")
+            raise ValueError("El registro de acción carece de artefacto válido.")
+        persisted_action_fp = self._sha256(
+            action_record.get("candidate_fingerprint"), "actionRecord.candidate_fingerprint"
+        )
+        if persisted_action_fp != requested_action_fp:
+            raise ValueError("El registro de acción no corresponde al fingerprint solicitado.")
+        if self._sha256(
+            uncertainty_bound_action_candidate.get(
+                "uncertaintyBoundActionCandidateFingerprint"
+            ),
+            "uncertaintyBoundActionCandidateFingerprint",
+        ) != requested_action_fp:
+            raise ValueError("El artefacto de acción no corresponde al registro sellado.")
+        action_record_fingerprint = self._sha256(
+            action_record.get("record_fingerprint"), "actionRecord.record_fingerprint"
+        )
+        action_persisted_at = self._aware_text(
+            action_record.get("persisted_at"), "actionRecord.persisted_at"
+        )
+        if uncertainty_bound_action_candidate.get("advisoryStatus") != "no_advice":
+            raise ValueError("La acción sellada intentó emitir advice.")
+        for field in (
+            "recommendationCandidateReady",
+            "productionEligible",
+            "allocationEligible",
+            "automaticTrading",
+        ):
+            if uncertainty_bound_action_candidate.get(field) is not False:
+                raise ValueError(f"La acción sellada violó {field}=False.")
+
         candidate_as_of = self._aware_text(
             uncertainty_bound_action_candidate.get("asOf"), "candidate.asOf"
         )
         if candidate_as_of != cutoff:
             raise ValueError("El candidato y la valoración deben compartir exactamente as_of.")
+        if self._aware_text(action_record.get("as_of"), "actionRecord.as_of") != cutoff:
+            raise ValueError("El registro de acción no comparte exactamente as_of.")
         instrument_id = self._positive_int(
             uncertainty_bound_action_candidate.get("instrumentId"),
             "candidate.instrumentId",
         )
+        if self._positive_int(
+            action_record.get("instrument_id"), "actionRecord.instrument_id"
+        ) != instrument_id:
+            raise ValueError("El registro de acción cambió instrumentId.")
 
         valuation = self._valuation_service.build(
             positions=positions,
@@ -212,6 +270,7 @@ class RecommendationVerifiedAllocationPipelineService:
         )
         self._assert_allocation_binding(
             allocation=allocation,
+            action_fingerprint=requested_action_fp,
             valuation_fingerprint=valuation_fp,
             portfolio_value=portfolio_value,
             current_position_value=current_position_value,
@@ -224,6 +283,9 @@ class RecommendationVerifiedAllocationPipelineService:
             "asOf": cutoff.isoformat(),
             "baseCurrency": currency,
             "instrumentId": instrument_id,
+            "uncertaintyBoundActionCandidateFingerprint": requested_action_fp,
+            "uncertaintyBoundActionRecordFingerprint": action_record_fingerprint,
+            "uncertaintyBoundActionPersistedAt": action_persisted_at.isoformat(),
             "portfolioValuationEvidenceFingerprint": valuation_fp,
             "portfolioValuationRecordFingerprint": valuation_record_fingerprint,
             "portfolioValuationPersistedAt": valuation_persisted_at.isoformat(),
@@ -242,6 +304,11 @@ class RecommendationVerifiedAllocationPipelineService:
             "status": "verified_allocation_pipeline_non_advisory",
             **core,
             "verifiedAllocationPipelineFingerprint": self._fingerprint(core),
+            "actionAuthority": {
+                "sealed": True,
+                "persistedAt": action_persisted_at.isoformat(),
+                "recordFingerprint": action_record_fingerprint,
+            },
             "portfolioValuationEvidence": valuation,
             "portfolioValuationPersistence": {
                 "sealed": True,
@@ -249,6 +316,8 @@ class RecommendationVerifiedAllocationPipelineService:
                 "recordFingerprint": valuation_record_fingerprint,
             },
             "allocationCandidate": allocation,
+            "actionAuthorityBoundToAllocation": True,
+            "callerSuppliedActionArtifactsAccepted": False,
             "portfolioValuationBoundToAllocation": True,
             "portfolioValuationSealedBeforeAllocation": True,
             "callerSuppliedValuationTotalsAccepted": False,
@@ -258,6 +327,8 @@ class RecommendationVerifiedAllocationPipelineService:
             "allocationEligible": False,
             "automaticTrading": False,
             "policy": {
+                "actionMustResolveFromAppendOnlyBackendAuthority": True,
+                "callerSuppliedActionJsonAccepted": False,
                 "portfolioTotalsDerivedInternallyFromPitEvidence": True,
                 "portfolioValuationMustBeAppendOnlySealedBeforeAllocation": True,
                 "currentPositionValueDerivedInternally": True,
@@ -273,6 +344,7 @@ class RecommendationVerifiedAllocationPipelineService:
         self,
         *,
         allocation: object,
+        action_fingerprint: str,
         valuation_fingerprint: str,
         portfolio_value: float,
         current_position_value: float,
@@ -283,6 +355,8 @@ class RecommendationVerifiedAllocationPipelineService:
             raise ValueError("El motor de asignación no devolvió un artefacto válido.")
         if allocation.get("status") != "allocation_candidate_non_advisory":
             raise ValueError("La asignación no permanece en estado no advisory.")
+        if allocation.get("uncertaintyBoundActionCandidateFingerprint") != action_fingerprint:
+            raise ValueError("La asignación no quedó ligada a la autoridad de acción.")
         if allocation.get("portfolioValuationEvidenceFingerprint") != valuation_fingerprint:
             raise ValueError("La asignación no quedó ligada a la valoración PIT.")
         if self._aware_text(allocation.get("asOf"), "allocation.asOf") != cutoff:
