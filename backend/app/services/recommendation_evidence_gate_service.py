@@ -79,6 +79,10 @@ class RecommendationEvidenceGate:
                 "sameInstrumentRequired": True,
                 "componentDiagnosticsMustRemainNonProductive": True,
                 "qualityThreshold": "not_assumed_until_empirically_calibrated",
+                "fundamentalReadiness": (
+                    "all_consumed_derived_features_present_and_finite_"
+                    "coverage_ratio_is_diagnostic_only"
+                ),
                 "dataQuality": (
                     "structural_finiteness_and_pit_contract_only_no_empirical_"
                     "quality_threshold_assumed"
@@ -188,9 +192,9 @@ class RecommendationEvidenceGate:
                 "productionEligible": False,
             },
             "investorActivity": {
-                "connected": False,
+                "connected": True,
                 "influencesCandidate": False,
-                "status": "independent_engine_not_yet_connected",
+                "status": "independent_parallel_engine_connected",
                 "evidenceReady": False,
                 "includedInAthenaRecommendation": False,
                 "productionEligible": False,
@@ -202,6 +206,11 @@ class RecommendationEvidenceGateService:
     """Fail-closed gate over recommendation evidence available at one PIT cutoff."""
 
     _MARKET_MIN_OBSERVATIONS = 61
+    _FUNDAMENTAL_FEATURE_KEYS = (
+        "revenueGrowth",
+        "netMargin",
+        "liabilitiesToAssets",
+    )
 
     def __init__(
         self,
@@ -278,10 +287,7 @@ class RecommendationEvidenceGateService:
         )
 
         market_ready = market_payload.get("status") == "diagnostic_ready"
-        fundamental_ready = (
-            fundamental_payload.get("status") == "diagnostic_ready"
-            and self._float_at_least(fundamental_payload.get("coverageRatio"), 0.75)
-        )
+        fundamental_ready = self._fundamental_contract_ready(fundamental_payload)
         valuation_ready = (
             valuation_payload.get("status") == "diagnostic_ready"
             and self._positive_float(valuation_payload.get("reportedAnnualPe"))
@@ -440,6 +446,16 @@ class RecommendationEvidenceGateService:
             )
         return dict(payload)
 
+    def _fundamental_contract_ready(self, payload: dict[str, Any]) -> bool:
+        if payload.get("status") != "diagnostic_ready":
+            return False
+        if not self._float_between(payload.get("coverageRatio"), 0.0, 1.0):
+            return False
+        return all(
+            self._finite_float(payload.get(key))
+            for key in self._FUNDAMENTAL_FEATURE_KEYS
+        )
+
     def _macro_context_contract_ready(
         self,
         payload: dict[str, Any],
@@ -464,12 +480,8 @@ class RecommendationEvidenceGateService:
                 return False
             if not self._finite_float(observation.get("value")):
                 return False
-            available_at = self._optional_aware_datetime(
-                observation.get("availableAt")
-            )
-            retrieved_at = self._optional_aware_datetime(
-                observation.get("retrievedAt")
-            )
+            available_at = self._optional_aware_datetime(observation.get("availableAt"))
+            retrieved_at = self._optional_aware_datetime(observation.get("retrievedAt"))
             if (
                 available_at is None
                 or retrieved_at is None
@@ -586,6 +598,13 @@ class RecommendationEvidenceGateService:
         *,
         as_of: datetime,
     ) -> bool:
+        if not self._float_between(payload.get("coverageRatio"), 0.0, 1.0):
+            return False
+        if not all(
+            self._finite_float(payload.get(key))
+            for key in self._FUNDAMENTAL_FEATURE_KEYS
+        ):
+            return False
         facts = payload.get("facts")
         if not isinstance(facts, list) or not facts:
             return False
@@ -599,10 +618,6 @@ class RecommendationEvidenceGateService:
                 return False
             quality_score = fact.get("qualityScore")
             if quality_score is not None and not self._finite_float(quality_score):
-                return False
-        for key in ("revenueGrowth", "netMargin", "liabilitiesToAssets"):
-            value = payload.get(key)
-            if value is not None and not self._finite_float(value):
                 return False
         mean_quality_score = payload.get("meanQualityScore")
         if mean_quality_score is not None and not self._finite_float(mean_quality_score):
@@ -664,11 +679,6 @@ class RecommendationEvidenceGateService:
         except (TypeError, ValueError, OverflowError):
             return False
         return isfinite(numeric_value)
-
-    def _float_at_least(self, value: object, threshold: float) -> bool:
-        if not self._finite_float(value):
-            return False
-        return float(value) >= threshold
 
     def _positive_float(self, value: object) -> bool:
         if not self._finite_float(value):
