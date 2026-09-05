@@ -101,6 +101,14 @@ class RecommendationAllocationCandidateService:
             economic_contract.get("economicContractFingerprint"),
             "economicContractFingerprint",
         )
+        candidate_contract_fp = self._sha256(
+            candidate.get("economicContractFingerprint"),
+            "candidate.economicContractFingerprint",
+        )
+        if contract_fp != candidate_contract_fp:
+            raise ValueError(
+                "El contrato económico no coincide con el precomprometido por la acción sellada."
+            )
 
         state = self._text(candidate.get("policyState"), "policyState")
         action = self._text(candidate.get("action"), "action").lower()
@@ -194,6 +202,7 @@ class RecommendationAllocationCandidateService:
                 "referenceCapitalSemantics": "user_owned_allocation_base_not_market_value",
                 "excessOverReferenceCapitalShownExplicitly": True,
                 "singleAssetExposureMappedOnlyInsideInstrumentSleeve": True,
+                "exactEconomicContractBoundToSealedAction": True,
                 "correlationRequiredOnlyWhenIncreasingExposure": True,
                 "deRiskingNeverBlockedByMissingCorrelation": True,
                 "verifiedIdentityFxAndPortfolioRiskPromotionStillRequired": True,
@@ -219,6 +228,7 @@ class RecommendationAllocationCandidateService:
             "actionUncertaintyEvidenceFingerprint",
             "actionPromotionDecisionId",
             "actionPromotionDecisionFingerprint",
+            "economicContractFingerprint",
             "candidateFingerprint",
             "instrumentId",
             "symbol",
