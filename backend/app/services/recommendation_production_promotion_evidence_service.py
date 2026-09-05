@@ -6,20 +6,73 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
+from app.repositories.recommendation_production_promotion_protocol_repository import (
+    RecommendationProductionPromotionProtocolRepository,
+)
+
 
 class RecommendationProductionPromotionEvidenceService:
     """Evaluate sealed post-selection evidence against a precommitted protocol.
 
     This service deliberately has no default production thresholds. Any acceptance
     criteria must arrive in a fingerprinted protocol whose registration timestamp
-    is not later than the research cutoff of the evidence being judged. Passing the
-    protocol only means that production evidence is ready for an explicit later
-    promotion decision; it never makes a recommendation, mutates a model, allocates
-    capital, or enables trading.
+    is not later than the research cutoff of the evidence being judged. The
+    production-facing path additionally loads that protocol from the immutable
+    registry, so callers cannot backdate a protocol after seeing confirmation data.
+    Passing the protocol only means that production evidence is ready for an
+    explicit later promotion decision; it never makes a recommendation, mutates a
+    model, allocates capital, or enables trading.
     """
 
     PROTOCOL_VERSION = "athena-production-promotion-protocol-v1"
     CONFIRMATION_VERSION = "shadow-post-selection-multi-horizon-v1"
+
+    def __init__(
+        self,
+        protocol_repository: RecommendationProductionPromotionProtocolRepository
+        | None = None,
+    ) -> None:
+        self._protocol_repository = (
+            protocol_repository
+            if protocol_repository is not None
+            else RecommendationProductionPromotionProtocolRepository()
+        )
+
+    def evaluate_registered(
+        self,
+        *,
+        confirmation_artifact: dict[str, Any],
+        protocol_id: str,
+    ) -> dict[str, Any]:
+        """Evaluate only against a protocol proven to exist in the registry."""
+        normalized_id = self._non_empty_string(protocol_id, "protocol_id")
+        record = self._protocol_repository.get(protocol_id=normalized_id)
+        if record is None:
+            raise ValueError("El protocolo de promoción no está registrado.")
+        validated_record = self._protocol_repository.validate_record(record)
+        protocol = validated_record.get("protocol")
+        if not isinstance(protocol, dict):
+            raise ValueError("El registro de protocolo no contiene un protocolo válido.")
+
+        result = self.evaluate(
+            confirmation_artifact=confirmation_artifact,
+            promotion_protocol=protocol,
+        )
+        return {
+            **result,
+            "protocolPersistence": {
+                "registered": True,
+                "recordId": validated_record.get("id"),
+                "createdAt": validated_record.get("created_at"),
+                "registeredAt": validated_record.get("registered_at"),
+                "protocolFingerprint": validated_record.get("protocol_fingerprint"),
+            },
+            "policy": {
+                **result["policy"],
+                "registeredProtocolRequiredForProductionPath": True,
+                "callerSuppliedRegistrationTimeAccepted": False,
+            },
+        }
 
     def evaluate(
         self,
