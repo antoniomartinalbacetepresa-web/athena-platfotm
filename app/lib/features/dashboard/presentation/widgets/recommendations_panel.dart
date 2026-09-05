@@ -6,14 +6,18 @@ import '../../../../core/widgets/dashboard_panel.dart';
 import '../../../recommendations/controllers/recommendation_learning_controller.dart';
 import '../../../recommendations/di/recommendation_dependencies.dart';
 import '../../../recommendations/models/recommendation_learning_status.dart';
+import '../../../recommendations/models/recommendation_shadow_candidate_snapshot.dart';
 import '../../../recommendations/services/recommendation_learning_status_provider.dart';
+import '../../../recommendations/services/recommendation_shadow_candidate_provider.dart';
 
 class RecommendationsPanel extends StatefulWidget {
   final RecommendationLearningStatusProvider? learningStatusProvider;
+  final RecommendationShadowCandidateProvider? shadowCandidateProvider;
 
   const RecommendationsPanel({
     super.key,
     this.learningStatusProvider,
+    this.shadowCandidateProvider,
   });
 
   @override
@@ -23,23 +27,59 @@ class RecommendationsPanel extends StatefulWidget {
 class _RecommendationsPanelState extends State<RecommendationsPanel> {
   RecommendationDependencies? _dependencies;
   late final RecommendationLearningController _controller;
+  late final RecommendationShadowCandidateProvider _shadowCandidateProvider;
+  late final bool _controllerOwnedByDependencies;
+  RecommendationShadowCandidateSnapshot? _shadowSnapshot;
+  bool _shadowLoading = true;
+  bool _shadowError = false;
 
   @override
   void initState() {
     super.initState();
 
-    final injectedProvider = widget.learningStatusProvider;
-    if (injectedProvider != null) {
-      _controller = RecommendationLearningController(
-        provider: injectedProvider,
-      );
-    } else {
+    if (widget.learningStatusProvider == null ||
+        widget.shadowCandidateProvider == null) {
       _dependencies = RecommendationDependencies.create();
-      _controller = _dependencies!.learningController;
     }
+
+    final injectedLearning = widget.learningStatusProvider;
+    if (injectedLearning != null) {
+      _controller = RecommendationLearningController(provider: injectedLearning);
+      _controllerOwnedByDependencies = false;
+    } else {
+      _controller = _dependencies!.learningController;
+      _controllerOwnedByDependencies = true;
+    }
+
+    _shadowCandidateProvider = widget.shadowCandidateProvider ??
+        _dependencies!.shadowCandidateDataSource;
 
     _controller.addListener(_onControllerChanged);
     _controller.load();
+    _loadShadowCandidate();
+  }
+
+  Future<void> _loadShadowCandidate() async {
+    try {
+      final snapshot = await _shadowCandidateProvider.getLatest();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _shadowSnapshot = snapshot.isShadowSafe ? snapshot : null;
+        _shadowError = !snapshot.isShadowSafe;
+        _shadowLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _shadowSnapshot = null;
+        _shadowError = true;
+        _shadowLoading = false;
+      });
+    }
   }
 
   void _onControllerChanged() {
@@ -51,11 +91,10 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
   @override
   void dispose() {
     _controller.removeListener(_onControllerChanged);
-    if (_dependencies != null) {
-      _dependencies!.dispose();
-    } else {
+    if (!_controllerOwnedByDependencies) {
       _controller.dispose();
     }
+    _dependencies?.dispose();
     super.dispose();
   }
 
@@ -183,6 +222,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
             ),
           ),
           const SizedBox(height: AthenaSpacing.lg),
+          _buildShadowCandidateEvidence(),
+          const SizedBox(height: AthenaSpacing.lg),
           Wrap(
             spacing: AthenaSpacing.md,
             runSpacing: AthenaSpacing.md,
@@ -207,6 +248,114 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         ],
       ),
     );
+  }
+
+  Widget _buildShadowCandidateEvidence() {
+    if (_shadowLoading) {
+      return const Text(
+        'Verificando el último candidato shadow conocido…',
+        style: TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+      );
+    }
+    if (_shadowError) {
+      return const Text(
+        'El candidato shadow actual no pudo verificarse y no se muestra.',
+        style: TextStyle(color: AthenaColors.warning, fontSize: 13),
+      );
+    }
+    final snapshot = _shadowSnapshot;
+    final candidate = snapshot?.candidate;
+    if (snapshot == null || candidate == null) {
+      return const Text(
+        'Todavía no existe un candidato shadow verificable conocido por ATHENA.',
+        style: TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+      );
+    }
+
+    final horizons = candidate.inferredHorizons;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AthenaSpacing.md),
+      decoration: BoxDecoration(
+        color: AthenaColors.cardSecondary,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AthenaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Candidato shadow verificable · ${candidate.symbol}',
+            style: const TextStyle(
+              color: AthenaColors.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Estimaciones fuera de producción. No constituyen una recomendación ni una orden de inversión.',
+            style: TextStyle(
+              color: AthenaColors.warning,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (horizons.isNotEmpty) ...[
+            const SizedBox(height: AthenaSpacing.sm),
+            Wrap(
+              spacing: AthenaSpacing.md,
+              runSpacing: AthenaSpacing.sm,
+              children: horizons
+                  .map(
+                    (item) => Text(
+                      '${item.horizonDays}d: ${_formatReturn(item.expectedExcessReturn)} exceso esperado',
+                      style: const TextStyle(
+                        color: AthenaColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+            ..._explanationWidgets(horizons.first),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _explanationWidgets(RecommendationShadowHorizon horizon) {
+    final raw = horizon.explanation['largestAbsoluteContributors'];
+    if (raw is! List || raw.isEmpty) {
+      return const <Widget>[];
+    }
+    final labels = <String>[];
+    for (final item in raw.take(3)) {
+      if (item is! Map) {
+        continue;
+      }
+      final feature = item['feature']?.toString().trim() ?? '';
+      final contribution = _finiteDouble(item['contribution']);
+      if (feature.isEmpty || contribution == null) {
+        continue;
+      }
+      labels.add('$feature ${contribution >= 0 ? '+' : ''}${(contribution * 100).toStringAsFixed(2)} pp');
+    }
+    if (labels.isEmpty) {
+      return const <Widget>[];
+    }
+    return [
+      const SizedBox(height: AthenaSpacing.sm),
+      Text(
+        'Factores principales (${horizon.horizonDays}d): ${labels.join(' · ')}',
+        style: const TextStyle(
+          color: AthenaColors.textSecondary,
+          fontSize: 12,
+          height: 1.35,
+        ),
+      ),
+    ];
   }
 
   Widget _metric(String label, String value) {
@@ -244,6 +393,22 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
   }
 
   String _displayCount(int? value) => value?.toString() ?? '—';
+
+  String _formatReturn(double? value) {
+    if (value == null || !value.isFinite) {
+      return '—';
+    }
+    final percentage = value * 100;
+    return '${percentage >= 0 ? '+' : ''}${percentage.toStringAsFixed(2)}%';
+  }
+
+  double? _finiteDouble(dynamic value) {
+    if (value is bool) {
+      return null;
+    }
+    final parsed = value is num ? value.toDouble() : double.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
 
   int? _nonNegativeInt(dynamic value) {
     if (value is bool) {
