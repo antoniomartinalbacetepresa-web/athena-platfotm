@@ -69,6 +69,30 @@ def _stored(candidate=None):
     }
 
 
+def _snapshot():
+    return {
+        "id": 10,
+        "instrument_id": 7,
+        "symbol": "TEST",
+        "data_cutoff_at": "2025-06-01T00:00:00+00:00",
+        "entry_price": 100.0,
+        "entry_observed_at": "2025-06-01T00:00:00+00:00",
+        "entry_retrieved_at": "2025-06-01T00:00:00+00:00",
+        "benchmark_symbol": "SPY",
+        "evidence_snapshot": {
+            "market": {
+                "symbol": "TEST",
+                "instrumentId": 7,
+                "asOf": "2025-06-01T00:00:00+00:00",
+                "latestPrice": 100.0,
+                "latestObservedAt": "2025-06-01T00:00:00+00:00",
+                "latestRetrievedAt": "2025-06-01T00:00:00+00:00",
+                "sourceProviders": ["asset_test"],
+            }
+        },
+    }
+
+
 def _benchmark_evidence(*, due_at: str, evaluated_at: str):
     return {
         "status": "resolved",
@@ -88,13 +112,18 @@ def _benchmark_evidence(*, due_at: str, evaluated_at: str):
 
 def _outcome(horizon, *, excess, evaluated_at, due_at=None):
     due = due_at or evaluated_at
+    realized = excess + 0.01
     return {
         "horizon_days": horizon,
         "due_at": due,
         "evaluated_at": evaluated_at,
+        "exit_price": 100.0 * (1.0 + realized),
+        "exit_observed_at": due,
+        "exit_retrieved_at": evaluated_at,
+        "source_provider": "asset_test",
         "excess_return": excess,
         "benchmark_return": 0.01,
-        "realized_return": excess + 0.01,
+        "realized_return": realized,
         "benchmark_evidence": _benchmark_evidence(
             due_at=due,
             evaluated_at=evaluated_at,
@@ -108,9 +137,7 @@ def _service(*, candidate=None, outcomes=None, stored=None, snapshot=None):
             _stored(candidate) if stored is None else stored
         ),
         snapshot_repository=FakeSnapshotRepository(
-            {"id": 10, "benchmark_symbol": "SPY"}
-            if snapshot is None
-            else snapshot,
+            _snapshot() if snapshot is None else snapshot,
             [] if outcomes is None else outcomes,
         ),
         candidate_service=FakeCandidateService(),
@@ -143,6 +170,7 @@ def test_evaluates_only_matured_predictions_and_computes_error_metrics():
     assert result["horizons"]["7"]["predictionError"] == pytest.approx(0.06)
     assert result["horizons"]["7"]["directionCorrect"] is True
     assert result["horizons"]["7"]["benchmarkEvidence"]["benchmarkSymbol"] == "SPY"
+    assert result["horizons"]["7"]["assetEvidence"]["instrumentId"] == 7
     assert result["horizons"]["30"]["predictionError"] == pytest.approx(-0.03)
     assert result["horizons"]["30"]["directionCorrect"] is False
     assert result["horizons"]["90"]["status"] == "not_evaluable_no_live_prediction"
