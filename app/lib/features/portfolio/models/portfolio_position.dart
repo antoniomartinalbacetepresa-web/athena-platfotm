@@ -1,3 +1,5 @@
+import 'athena_portfolio_policy_state.dart';
+
 class PortfolioPosition {
   final String symbol;
   final String companyName;
@@ -24,6 +26,14 @@ class PortfolioPosition {
   final bool identityExchangeVerified;
   final bool identityRiskReady;
 
+  /// Explicit state used by ATHENA's validated action-policy layer.
+  ///
+  /// This is deliberately nullable. Legacy positions and positions for which
+  /// the user has not explicitly classified the intended ATHENA exposure must
+  /// remain unclassified; ATHENA must never infer reduced_long/full_long from
+  /// shares, value, or an implicit percentage threshold.
+  final AthenaPortfolioPolicyState? athenaPolicyState;
+
   const PortfolioPosition({
     required this.symbol,
     required this.companyName,
@@ -45,6 +55,7 @@ class PortfolioPosition {
     this.identityResolutionMethod,
     this.identityExchangeVerified = false,
     this.identityRiskReady = false,
+    this.athenaPolicyState,
   });
 
   bool get hasVerifiedCanonicalIdentity =>
@@ -61,6 +72,8 @@ class PortfolioPosition {
       identityResolutionMethod!.trim().isNotEmpty &&
       identityExchangeVerified &&
       identityRiskReady;
+
+  bool get hasExplicitAthenaPolicyState => athenaPolicyState != null;
 
   double get investedValue => shares * averagePrice;
 
@@ -94,6 +107,8 @@ class PortfolioPosition {
     String? identityResolutionMethod,
     bool? identityExchangeVerified,
     bool? identityRiskReady,
+    AthenaPortfolioPolicyState? athenaPolicyState,
+    bool clearAthenaPolicyState = false,
   }) {
     return PortfolioPosition(
       symbol: symbol ?? this.symbol,
@@ -122,6 +137,9 @@ class PortfolioPosition {
       identityExchangeVerified:
           identityExchangeVerified ?? this.identityExchangeVerified,
       identityRiskReady: identityRiskReady ?? this.identityRiskReady,
+      athenaPolicyState: clearAthenaPolicyState
+          ? null
+          : (athenaPolicyState ?? this.athenaPolicyState),
     );
   }
 
@@ -147,6 +165,7 @@ class PortfolioPosition {
       'identityResolutionMethod': identityResolutionMethod,
       'identityExchangeVerified': identityExchangeVerified,
       'identityRiskReady': identityRiskReady,
+      'athenaPolicyState': athenaPolicyState?.key,
     };
   }
 
@@ -190,6 +209,9 @@ class PortfolioPosition {
       identityResolutionMethod: map['identityResolutionMethod']?.toString(),
       identityExchangeVerified: map['identityExchangeVerified'] == true,
       identityRiskReady: map['identityRiskReady'] == true,
+      athenaPolicyState: AthenaPortfolioPolicyState.tryParse(
+        map['athenaPolicyState'],
+      ),
     );
   }
 
