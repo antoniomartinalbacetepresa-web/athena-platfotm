@@ -1,5 +1,6 @@
 import '../controllers/recommendation_learning_controller.dart';
 import '../data/datasources/athena_backend_recommendation_learning_data_source.dart';
+import '../data/datasources/athena_backend_recommendation_shadow_candidate_data_source.dart';
 
 class RecommendationDependencies {
   static const String _defaultBackendUrl = String.fromEnvironment(
@@ -8,10 +9,12 @@ class RecommendationDependencies {
   );
 
   final AthenaBackendRecommendationLearningDataSource learningDataSource;
+  final AthenaBackendRecommendationShadowCandidateDataSource shadowCandidateDataSource;
   final RecommendationLearningController learningController;
 
   RecommendationDependencies({
     required this.learningDataSource,
+    required this.shadowCandidateDataSource,
     required this.learningController,
   });
 
@@ -26,9 +29,14 @@ class RecommendationDependencies {
     final learningDataSource = AthenaBackendRecommendationLearningDataSource(
       baseUrl: effectiveBaseUrl,
     );
+    final shadowCandidateDataSource =
+        AthenaBackendRecommendationShadowCandidateDataSource(
+      baseUrl: effectiveBaseUrl,
+    );
 
     return RecommendationDependencies(
       learningDataSource: learningDataSource,
+      shadowCandidateDataSource: shadowCandidateDataSource,
       learningController: RecommendationLearningController(
         provider: learningDataSource,
       ),
@@ -38,5 +46,6 @@ class RecommendationDependencies {
   void dispose() {
     learningController.dispose();
     learningDataSource.dispose();
+    shadowCandidateDataSource.dispose();
   }
 }
