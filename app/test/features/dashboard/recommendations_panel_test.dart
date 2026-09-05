@@ -7,6 +7,9 @@ import 'package:app/features/recommendations/models/recommendation_shadow_candid
 import 'package:app/features/recommendations/services/recommendation_learning_status_provider.dart';
 import 'package:app/features/recommendations/services/recommendation_shadow_candidate_provider.dart';
 
+const _candidateFingerprint =
+    '1111111111111111111111111111111111111111111111111111111111111111';
+
 class FakeLearningStatusProvider implements RecommendationLearningStatusProvider {
   @override
   Future<RecommendationLearningStatus> getStatus({
@@ -70,7 +73,7 @@ class FakeShadowCandidateProvider implements RecommendationShadowCandidateProvid
         symbol: 'AAPL',
         instrumentId: 7,
         asOf: DateTime.utc(2026, 9, 1, 20),
-        candidateFingerprint: '1' * 64,
+        candidateFingerprint: _candidateFingerprint,
         horizons: const {
           30: RecommendationShadowHorizon(
             horizonDays: 30,
