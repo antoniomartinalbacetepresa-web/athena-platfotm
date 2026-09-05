@@ -246,15 +246,18 @@ def test_gate_exposes_machine_readable_engine_connectivity_without_mixing_invest
         "connected": True,
         "influencesCandidate": False,
         "sourceBlock": "sec13f",
-        "status": "independent_parallel_engine_connected",
-        "evidenceReady": True,
+        "status": "independent_parallel_engine_connected_evidence_not_bound",
+        "evidenceReady": False,
+        "evidenceBoundToCandidate": False,
+        "pointInTimeAvailabilityVerified": False,
         "includedInAthenaRecommendation": False,
         "automaticScoring": False,
         "automaticTrading": False,
         "productionEligible": False,
     }
     assert payload["policy"]["investorActivity"] == (
-        "independent_parallel_evidence_not_part_of_athena_recommendation"
+        "independent_parallel_engine_connected_evidence_requires_explicit_pit_"
+        "binding_not_part_of_athena_recommendation"
     )
     assert payload["policy"]["qualityThreshold"] == (
         "not_assumed_until_empirically_calibrated"
