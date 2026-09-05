@@ -20,6 +20,7 @@ from app.services.recommendation_verified_allocation_pipeline_service import (
 
 AS_OF = datetime(2026, 9, 1, 12, tzinfo=timezone.utc)
 VALUATION_FP = "c" * 64
+VALUATION_RECORD_FP = "d" * 64
 POLICY_FP = "b" * 64
 
 
@@ -119,6 +120,32 @@ class _ValuationService:
         return artifact
 
 
+class _ValuationRepository:
+    def __init__(self, *, persisted_artifact=None, substitute_on_validate=False):
+        self.persisted_artifact = persisted_artifact
+        self.substitute_on_validate = substitute_on_validate
+        self.seal_calls = 0
+
+    def seal(self, *, artifact):
+        self.seal_calls += 1
+        persisted = deepcopy(
+            artifact if self.persisted_artifact is None else self.persisted_artifact
+        )
+        return {
+            "valuation_fingerprint": artifact["portfolioValuationEvidenceFingerprint"],
+            "as_of": artifact["asOf"],
+            "base_currency": artifact["baseCurrency"],
+            "artifact": persisted,
+            "persisted_at": "2026-09-01T12:00:01+00:00",
+            "record_fingerprint": VALUATION_RECORD_FP,
+        }
+
+    def validate_record(self, record):
+        if self.substitute_on_validate:
+            return deepcopy(record)
+        return record
+
+
 def _valuation(*, positions=None, total=None):
     rows = positions or []
     computed = sum(item["positionValueInBaseCurrency"] for item in rows)
@@ -141,7 +168,7 @@ def _valuation(*, positions=None, total=None):
     }
 
 
-def _pipeline(valuation):
+def _pipeline(valuation, *, valuation_repository=None):
     contract = _contract()
     allocation = RecommendationAllocationCandidateService(
         policy_repository=_PolicyRepository(),
@@ -150,6 +177,7 @@ def _pipeline(valuation):
     return (
         RecommendationVerifiedAllocationPipelineService(
             valuation_service=_ValuationService(valuation),
+            valuation_repository=valuation_repository or _ValuationRepository(),
             allocation_service=allocation,
         ),
         contract,
@@ -189,6 +217,13 @@ def test_flat_buy_derives_zero_target_position_and_portfolio_total_from_valuatio
     allocation = result["allocationCandidate"]
     assert result["callerSuppliedValuationTotalsAccepted"] is False
     assert result["portfolioValuationBoundToAllocation"] is True
+    assert result["portfolioValuationSealedBeforeAllocation"] is True
+    assert result["portfolioValuationRecordFingerprint"] == VALUATION_RECORD_FP
+    assert result["portfolioValuationPersistence"] == {
+        "sealed": True,
+        "persistedAt": "2026-09-01T12:00:01+00:00",
+        "recordFingerprint": VALUATION_RECORD_FP,
+    }
     assert result["investedPositionsValueInBaseCurrency"] == 12000.0
     assert result["currentPositionValueInBaseCurrency"] == 0.0
     assert result["existingPositionInstrumentIds"] == [20]
@@ -294,6 +329,46 @@ def test_production_escape_from_valuation_fails_closed_before_allocation():
     pipeline, contract = _pipeline(valuation)
 
     with pytest.raises(ValueError, match="producción"):
+        pipeline.build(
+            uncertainty_bound_action_candidate=_action(),
+            allocation_policy_id="allocation-001",
+            economic_contract=contract,
+            reference_capital=10000.0,
+            base_currency="EUR",
+            positions=[],
+            correlation_evidence=[],
+            as_of=AS_OF,
+        )
+
+
+def test_persisted_valuation_must_match_exact_validated_artifact():
+    valuation = _valuation(
+        positions=[{"instrumentId": 20, "positionValueInBaseCurrency": 8000.0}]
+    )
+    tampered = deepcopy(valuation)
+    tampered["investedPositionsValueInBaseCurrency"] = 1.0
+    repository = _ValuationRepository(persisted_artifact=tampered)
+    pipeline, contract = _pipeline(valuation, valuation_repository=repository)
+
+    with pytest.raises(ValueError, match="sellada difiere"):
+        pipeline.build(
+            uncertainty_bound_action_candidate=_action(),
+            allocation_policy_id="allocation-001",
+            economic_contract=contract,
+            reference_capital=10000.0,
+            base_currency="EUR",
+            positions=[],
+            correlation_evidence=[],
+            as_of=AS_OF,
+        )
+
+
+def test_repository_cannot_substitute_validated_sealed_record():
+    valuation = _valuation()
+    repository = _ValuationRepository(substitute_on_validate=True)
+    pipeline, contract = _pipeline(valuation, valuation_repository=repository)
+
+    with pytest.raises(ValueError, match="sustituyó el registro"):
         pipeline.build(
             uncertainty_bound_action_candidate=_action(),
             allocation_policy_id="allocation-001",
