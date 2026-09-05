@@ -6,10 +6,17 @@ import 'package:http/testing.dart';
 
 import 'package:app/features/recommendations/data/datasources/athena_backend_recommendation_shadow_candidate_data_source.dart';
 
+const _candidateFingerprint =
+    '1111111111111111111111111111111111111111111111111111111111111111';
+const _confirmationFingerprint =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _modelFingerprint =
+    '2222222222222222222222222222222222222222222222222222222222222222';
+
 Map<String, dynamic> _candidate() => {
       'artifactVersion': 'shadow-live-candidate-v1',
-      'candidateFingerprint': '1' * 64,
-      'confirmationEvidenceFingerprint': 'a' * 64,
+      'candidateFingerprint': _candidateFingerprint,
+      'confirmationEvidenceFingerprint': _confirmationFingerprint,
       'symbol': 'AAPL',
       'instrumentId': 7,
       'asOf': '2026-09-01T11:00:00Z',
@@ -17,7 +24,7 @@ Map<String, dynamic> _candidate() => {
         '30': {
           'horizonDays': 30,
           'expectedExcessReturn': 0.015,
-          'modelFingerprint': '2' * 64,
+          'modelFingerprint': _modelFingerprint,
           'explanation': {
             'largestAbsoluteContributors': [
               {'feature': 'technicalScore', 'contribution': 0.01},
