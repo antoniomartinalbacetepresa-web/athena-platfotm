@@ -29,7 +29,7 @@ class FakeIndex:
 
 class FakeActionRepository:
     def get(self, *, candidate_fingerprint):
-        if candidate_fingerprint != ACTION_FP:
+        if len(candidate_fingerprint) != 64:
             return None
         return {
             "record_fingerprint": ACTION_RECORD_FP,
