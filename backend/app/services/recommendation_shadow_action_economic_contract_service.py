@@ -104,7 +104,7 @@ class RecommendationShadowActionEconomicContractService:
             raise ValueError("El modelo de cartera del contrato no está permitido.")
 
         states = artifact.get("positionStates")
-        if not isinstance(states, dict) or tuple(states.keys()) != self.POSITION_STATES:
+        if not isinstance(states, dict) or set(states) != set(self.POSITION_STATES):
             raise ValueError("Los estados de posición del contrato fueron alterados.")
         if states.get("flat") != {"targetExposureFraction": 0.0}:
             raise ValueError("El estado flat fue alterado.")
@@ -179,70 +179,72 @@ class RecommendationShadowActionEconomicContractService:
     def _action_semantics(self, reduced_exposure: float) -> dict[str, Any]:
         return {
             "buy": {
-                "meaning": "move_to_full_long_target_exposure",
-                "allowedFrom": ["flat", "reduced_long"],
-                "targetState": "full_long",
+                "meaning": "enter_or_restore_full_long_target_exposure",
                 "targetExposureFraction": 1.0,
+                "requiresExistingPosition": False,
                 "requiresTrade": True,
             },
             "hold": {
-                "meaning": "keep_current_target_exposure_unchanged",
-                "allowedFrom": list(self.POSITION_STATES),
-                "targetState": "unchanged",
-                "targetExposureFraction": "unchanged",
+                "meaning": "preserve_current_target_exposure_without_trade",
+                "targetExposureFraction": None,
+                "requiresExistingPosition": False,
                 "requiresTrade": False,
             },
             "reduce": {
-                "meaning": "move_from_full_long_to_reduced_long_target_exposure",
-                "allowedFrom": ["full_long"],
-                "targetState": "reduced_long",
+                "meaning": "reduce_existing_long_target_exposure",
                 "targetExposureFraction": reduced_exposure,
+                "requiresExistingPosition": True,
                 "requiresTrade": True,
             },
             "sell": {
                 "meaning": "exit_any_long_target_exposure_to_flat",
-                "allowedFrom": ["reduced_long", "full_long"],
-                "targetState": "flat",
                 "targetExposureFraction": 0.0,
+                "requiresExistingPosition": True,
                 "requiresTrade": True,
             },
         }
 
-    def _nonnegative_finite(self, value: object, field: str) -> float:
-        if isinstance(value, bool):
-            raise ValueError(f"{field} debe ser un número finito no negativo.")
-        try:
-            result = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field} debe ser un número finito no negativo.") from exc
-        if not math.isfinite(result) or result < 0.0:
-            raise ValueError(f"{field} debe ser un número finito no negativo.")
-        return result
-
-    def _open_unit_interval(self, value: object, field: str) -> float:
-        result = self._nonnegative_finite(value, field)
-        if result <= 0.0 or result >= 1.0:
-            raise ValueError(f"{field} debe estar estrictamente entre 0 y 1.")
-        return result
-
-    def _nonempty(self, value: object, field: str) -> str:
-        result = str(value or "").strip()
-        if not result:
-            raise ValueError(f"{field} no puede estar vacío.")
-        return result
-
-    def _sha256(self, value: object, field: str) -> str:
-        result = str(value or "").strip().lower()
-        if len(result) != 64 or any(char not in "0123456789abcdef" for char in result):
-            raise ValueError(f"{field} debe ser SHA-256 hexadecimal.")
-        return result
-
-    def _fingerprint(self, payload: dict[str, Any]) -> str:
-        canonical = json.dumps(
+    @classmethod
+    def _fingerprint(cls, payload: dict[str, Any]) -> str:
+        serialized = json.dumps(
             payload,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=True,
             allow_nan=False,
         )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _sha256(value: Any, field: str) -> str:
+        text = str(value or "").strip().lower()
+        if len(text) != 64 or any(ch not in "0123456789abcdef" for ch in text):
+            raise ValueError(f"{field} debe ser SHA-256 válido.")
+        return text
+
+    @staticmethod
+    def _nonempty(value: Any, field: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError(f"{field} no puede estar vacío.")
+        return text
+
+    @staticmethod
+    def _nonnegative_finite(value: Any, field: str) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} debe ser numérico.") from exc
+        if not math.isfinite(parsed) or parsed < 0.0:
+            raise ValueError(f"{field} debe ser finito y no negativo.")
+        return parsed
+
+    @staticmethod
+    def _open_unit_interval(value: Any, field: str) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} debe ser numérico.") from exc
+        if not math.isfinite(parsed) or not 0.0 < parsed < 1.0:
+            raise ValueError(f"{field} debe estar estrictamente entre 0 y 1.")
+        return parsed
