@@ -33,13 +33,32 @@ def _fingerprint(payload: dict) -> str:
     ).hexdigest()
 
 
-def _action_candidate(*, state="flat", action="buy") -> dict:
+def _contract(*, reduced_exposure_fraction=0.40, objective_version="v1"):
+    return RecommendationShadowActionEconomicContractService().build(
+        transaction_cost_bps=5.0,
+        slippage_bps=3.0,
+        reduced_exposure_fraction=reduced_exposure_fraction,
+        objective_name="test",
+        objective_version=objective_version,
+    )
+
+
+def _action_candidate(
+    *,
+    state="flat",
+    action="buy",
+    economic_contract_fingerprint: str | None = None,
+) -> dict:
+    contract_fp = economic_contract_fingerprint or _contract()[
+        "economicContractFingerprint"
+    ]
     core = {
         "artifactVersion": "athena-uncertainty-bound-action-candidate-v1",
         "validatedActionCandidateFingerprint": "1" * 64,
         "actionUncertaintyEvidenceFingerprint": "2" * 64,
         "actionPromotionDecisionId": "decision-001",
         "actionPromotionDecisionFingerprint": "3" * 64,
+        "economicContractFingerprint": contract_fp,
         "candidateFingerprint": "4" * 64,
         "instrumentId": 10,
         "symbol": "AAA",
@@ -96,16 +115,6 @@ class _ContractValidator:
         return artifact
 
 
-def _contract():
-    return RecommendationShadowActionEconomicContractService().build(
-        transaction_cost_bps=5.0,
-        slippage_bps=3.0,
-        reduced_exposure_fraction=0.40,
-        objective_name="test",
-        objective_version="v1",
-    )
-
-
 def _service(contract):
     return RecommendationAllocationCandidateService(
         policy_repository=_PolicyRepository(),
@@ -130,7 +139,9 @@ def _correlation(other_id=20, *, correlation=0.30, sample_count=60, last_date="2
 def test_flat_buy_uses_portfolio_sleeve_not_single_asset_one_and_shows_excess():
     contract = _contract()
     result = _service(contract).build(
-        uncertainty_bound_action_candidate=_action_candidate(),
+        uncertainty_bound_action_candidate=_action_candidate(
+            economic_contract_fingerprint=contract["economicContractFingerprint"]
+        ),
         allocation_policy_id="allocation-001",
         economic_contract=contract,
         reference_capital=10000.0,
@@ -149,6 +160,8 @@ def test_flat_buy_uses_portfolio_sleeve_not_single_asset_one_and_shows_excess():
     assert result["excessOverReferenceCapital"] == 2000.0
     assert result["shortfallVsReferenceCapital"] == 0.0
     assert result["correlationChecks"][0]["passesPolicy"] is True
+    assert result["economicContractFingerprint"] == contract["economicContractFingerprint"]
+    assert result["policy"]["exactEconomicContractBoundToSealedAction"] is True
     assert result["productionEligible"] is False
     assert result["allocationEligible"] is False
     assert result["automaticTrading"] is False
@@ -158,7 +171,9 @@ def test_full_long_reduce_scales_sleeve_and_does_not_require_correlation():
     contract = _contract()
     result = _service(contract).build(
         uncertainty_bound_action_candidate=_action_candidate(
-            state="full_long", action="reduce"
+            state="full_long",
+            action="reduce",
+            economic_contract_fingerprint=contract["economicContractFingerprint"],
         ),
         allocation_policy_id="allocation-001",
         economic_contract=contract,
@@ -184,7 +199,9 @@ def test_sell_requires_real_position_and_targets_zero():
     contract = _contract()
     result = _service(contract).build(
         uncertainty_bound_action_candidate=_action_candidate(
-            state="reduced_long", action="sell"
+            state="reduced_long",
+            action="sell",
+            economic_contract_fingerprint=contract["economicContractFingerprint"],
         ),
         allocation_policy_id="allocation-001",
         economic_contract=contract,
@@ -203,7 +220,9 @@ def test_sell_requires_real_position_and_targets_zero():
     with pytest.raises(ValueError, match="posición real"):
         _service(contract).build(
             uncertainty_bound_action_candidate=_action_candidate(
-                state="reduced_long", action="sell"
+                state="reduced_long",
+                action="sell",
+                economic_contract_fingerprint=contract["economicContractFingerprint"],
             ),
             allocation_policy_id="allocation-001",
             economic_contract=contract,
@@ -222,7 +241,9 @@ def test_increasing_exposure_fails_closed_without_each_verified_correlation():
     contract = _contract()
     with pytest.raises(ValueError, match="Falta correlación"):
         _service(contract).build(
-            uncertainty_bound_action_candidate=_action_candidate(),
+            uncertainty_bound_action_candidate=_action_candidate(
+                economic_contract_fingerprint=contract["economicContractFingerprint"]
+            ),
             allocation_policy_id="allocation-001",
             economic_contract=contract,
             reference_capital=10000.0,
@@ -244,7 +265,11 @@ def test_excessive_or_stale_correlation_blocks_increase():
     ):
         with pytest.raises(ValueError, match=pattern):
             _service(contract).build(
-                uncertainty_bound_action_candidate=_action_candidate(),
+                uncertainty_bound_action_candidate=_action_candidate(
+                    economic_contract_fingerprint=contract[
+                        "economicContractFingerprint"
+                    ]
+                ),
                 allocation_policy_id="allocation-001",
                 economic_contract=contract,
                 reference_capital=10000.0,
@@ -262,7 +287,9 @@ def test_flat_state_cannot_hide_existing_position_and_currency_must_match():
     contract = _contract()
     with pytest.raises(ValueError, match="flat"):
         _service(contract).build(
-            uncertainty_bound_action_candidate=_action_candidate(),
+            uncertainty_bound_action_candidate=_action_candidate(
+                economic_contract_fingerprint=contract["economicContractFingerprint"]
+            ),
             allocation_policy_id="allocation-001",
             economic_contract=contract,
             reference_capital=10000.0,
@@ -276,12 +303,70 @@ def test_flat_state_cannot_hide_existing_position_and_currency_must_match():
         )
     with pytest.raises(ValueError, match="moneda base"):
         _service(contract).build(
-            uncertainty_bound_action_candidate=_action_candidate(),
+            uncertainty_bound_action_candidate=_action_candidate(
+                economic_contract_fingerprint=contract["economicContractFingerprint"]
+            ),
             allocation_policy_id="allocation-001",
             economic_contract=contract,
             reference_capital=10000.0,
             base_currency="USD",
             current_portfolio_value_base=10000.0,
+            current_position_value_base=0.0,
+            portfolio_valuation_evidence_fingerprint=VALUATION_FP,
+            existing_position_instrument_ids=[],
+            correlation_evidence=[],
+            as_of=AS_OF,
+        )
+
+
+def test_substituted_valid_economic_contract_is_rejected():
+    committed_contract = _contract()
+    substituted_contract = _contract(
+        reduced_exposure_fraction=0.50,
+        objective_version="v2",
+    )
+    assert (
+        committed_contract["economicContractFingerprint"]
+        != substituted_contract["economicContractFingerprint"]
+    )
+
+    action = _action_candidate(
+        economic_contract_fingerprint=committed_contract[
+            "economicContractFingerprint"
+        ]
+    )
+    with pytest.raises(ValueError, match="precomprometido"):
+        _service(substituted_contract).build(
+            uncertainty_bound_action_candidate=action,
+            allocation_policy_id="allocation-001",
+            economic_contract=substituted_contract,
+            reference_capital=10000.0,
+            base_currency="EUR",
+            current_portfolio_value_base=5000.0,
+            current_position_value_base=0.0,
+            portfolio_valuation_evidence_fingerprint=VALUATION_FP,
+            existing_position_instrument_ids=[],
+            correlation_evidence=[],
+            as_of=AS_OF,
+        )
+
+
+def test_economic_contract_fingerprint_is_part_of_sealed_action_fingerprint():
+    contract = _contract()
+    action = _action_candidate(
+        economic_contract_fingerprint=contract["economicContractFingerprint"]
+    )
+    tampered = copy.deepcopy(action)
+    tampered["economicContractFingerprint"] = "f" * 64
+
+    with pytest.raises(ValueError, match="modificado"):
+        _service(contract).build(
+            uncertainty_bound_action_candidate=tampered,
+            allocation_policy_id="allocation-001",
+            economic_contract=contract,
+            reference_capital=10000.0,
+            base_currency="EUR",
+            current_portfolio_value_base=5000.0,
             current_position_value_base=0.0,
             portfolio_valuation_evidence_fingerprint=VALUATION_FP,
             existing_position_instrument_ids=[],
