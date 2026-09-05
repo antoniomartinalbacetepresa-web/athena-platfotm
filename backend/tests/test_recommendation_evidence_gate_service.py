@@ -243,11 +243,14 @@ def test_gate_exposes_machine_readable_engine_connectivity_without_mixing_invest
     assert coverage["recommendationCombination"]["influencesCandidate"] is False
     assert coverage["recommendationCombination"]["evidenceReady"] is False
     assert coverage["investorActivity"] == {
-        "connected": False,
+        "connected": True,
         "influencesCandidate": False,
-        "status": "independent_engine_not_yet_connected",
-        "evidenceReady": False,
+        "sourceBlock": "sec13f",
+        "status": "independent_parallel_engine_connected",
+        "evidenceReady": True,
         "includedInAthenaRecommendation": False,
+        "automaticScoring": False,
+        "automaticTrading": False,
         "productionEligible": False,
     }
     assert payload["policy"]["investorActivity"] == (
