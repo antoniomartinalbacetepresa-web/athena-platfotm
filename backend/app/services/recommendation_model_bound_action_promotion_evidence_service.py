@@ -13,14 +13,15 @@ from app.services.recommendation_action_promotion_evidence_service import (
 
 
 class RecommendationModelBoundActionPromotionEvidenceService:
-    """Join precommitted action evidence to exact model identity per horizon.
+    """Join precommitted action evidence to exact model and policy identity.
 
     This is the production-path evidence boundary for action policies. It remains
     non-advisory and cannot publish or execute an action. A later decision layer
-    may persist the accepted evidence, but only after this model binding succeeds.
+    may persist the accepted evidence, but only after model and policy binding succeeds.
     """
 
-    ARTIFACT_VERSION = "athena-model-bound-action-promotion-evidence-v1"
+    ARTIFACT_VERSION = "athena-model-bound-action-promotion-evidence-v2"
+    STATES = ("flat", "reduced_long", "full_long")
 
     def __init__(
         self,
@@ -73,6 +74,28 @@ class RecommendationModelBoundActionPromotionEvidenceService:
         if set(normalized_models) != {str(value) for value in required}:
             raise ValueError("La identidad de modelo no cubre exactamente los horizontes promovidos.")
 
+        evidence_horizons = evidence.get("horizons")
+        if not isinstance(evidence_horizons, dict):
+            raise ValueError("La evidencia de acción carece de horizontes.")
+        policy_map: dict[str, dict[str, str]] = {}
+        for horizon in required:
+            key = str(horizon)
+            horizon_payload = evidence_horizons.get(key)
+            if not isinstance(horizon_payload, dict):
+                raise ValueError("Falta la evidencia de un horizonte promovido.")
+            states = horizon_payload.get("states")
+            if not isinstance(states, dict) or set(states) != set(self.STATES):
+                raise ValueError("La evidencia de acción no cubre exactamente todos los estados.")
+            policy_map[key] = {
+                state: self._sha256(
+                    states[state].get("selectedPolicyFingerprint")
+                    if isinstance(states[state], dict)
+                    else None,
+                    f"selectedPolicyFingerprint.{key}.{state}",
+                )
+                for state in self.STATES
+            }
+
         ready = evidence.get("actionPromotionEvidenceReady") is True
         core = {
             "artifactVersion": self.ARTIFACT_VERSION,
@@ -97,6 +120,7 @@ class RecommendationModelBoundActionPromotionEvidenceService:
             "economicContractFingerprint": confirmation_contract,
             "requiredHorizons": required,
             "modelFingerprintsByHorizon": normalized_models,
+            "policyFingerprintsByHorizonAndState": policy_map,
             "actionPromotionEvidenceReady": ready,
         }
         return {
@@ -122,6 +146,7 @@ class RecommendationModelBoundActionPromotionEvidenceService:
                 "firstSealedFutureReserveRequired": True,
                 "singleModelRevisionPerHorizonRequired": True,
                 "exactModelIdentityMustMatchFutureLiveCandidate": True,
+                "exactPolicyIdentityBoundPerHorizonAndState": True,
                 "portfolioStateStillRequiredForReduceOrSell": True,
                 "evidenceReadyIsNotProductionAuthorization": True,
                 "automaticTrading": False,
