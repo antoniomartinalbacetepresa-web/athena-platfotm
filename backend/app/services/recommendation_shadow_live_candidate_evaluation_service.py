@@ -19,8 +19,9 @@ class RecommendationShadowLiveCandidateEvaluationService:
     """Evaluate persisted continuous predictions using only matured PIT outcomes.
 
     Excess-return predictions are scored only against outcomes whose benchmark
-    leg retains the exact frozen-symbol observation provenance. A legacy scalar
-    excess return without that evidence is not an admissible target.
+    leg retains the exact frozen-symbol observation provenance. Persisted return
+    scalars are also cross-checked so storage corruption cannot silently alter
+    longitudinal OOS evidence.
     """
 
     def __init__(
@@ -126,6 +127,22 @@ class RecommendationShadowLiveCandidateEvaluationService:
                 evaluated_at=evaluated_at,
             )
             realized = self._required_finite(outcome.get("excess_return"), "outcome.excess_return")
+            stored_realized_return = self._required_finite(
+                outcome.get("realized_return"), "outcome.realized_return"
+            )
+            stored_benchmark_return = self._required_finite(
+                outcome.get("benchmark_return"), "outcome.benchmark_return"
+            )
+            recomputed_excess_return = stored_realized_return - stored_benchmark_return
+            if not math.isclose(
+                realized,
+                recomputed_excess_return,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                raise ValueError(
+                    "outcome.excess_return no coincide con realized_return - benchmark_return."
+                )
             error = expected - realized
             if not math.isfinite(error):
                 raise ValueError("El error de predicción no es finito.")
@@ -143,8 +160,8 @@ class RecommendationShadowLiveCandidateEvaluationService:
                 "directionCorrect": direction_correct,
                 "outcomeDueAt": due_at.isoformat(),
                 "outcomeEvaluatedAt": evaluated_at.isoformat(),
-                "benchmarkReturn": self._optional_finite(outcome.get("benchmark_return")),
-                "realizedReturn": self._optional_finite(outcome.get("realized_return")),
+                "benchmarkReturn": stored_benchmark_return,
+                "realizedReturn": stored_realized_return,
                 "benchmarkEvidence": benchmark_evidence,
             }
 
@@ -181,6 +198,7 @@ class RecommendationShadowLiveCandidateEvaluationService:
                 "lookAhead": "outcome_evaluated_at_must_not_exceed_as_of",
                 "target": "realized_excess_return_vs_frozen_snapshot_benchmark",
                 "targetProvenance": "exact_persisted_benchmark_observations_required",
+                "targetIntegrity": "persisted_excess_return_must_equal_realized_return_minus_benchmark_return",
                 "predictions": "immutable_persisted_live_candidate",
                 "actions": "not_evaluated_not_assigned",
                 "automaticModelMutation": False,
