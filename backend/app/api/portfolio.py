@@ -86,9 +86,6 @@ def post_portfolio_valuation_evidence(
     Cash, liabilities and broker NAV are intentionally not inferred.
     """
     service = RecommendationPortfolioValuationEvidenceService()
-    repository = RecommendationPortfolioValuationEvidenceRepository(
-        validator=service,
-    )
     try:
         raw_positions = payload.get("positions")
         if not isinstance(raw_positions, list):
@@ -107,12 +104,17 @@ def post_portfolio_valuation_evidence(
             raise RuntimeError("El validador sustituyó la evidencia de valoración.")
         safe_artifact = _safe_valuation_artifact(artifact)
 
+        repository = RecommendationPortfolioValuationEvidenceRepository(
+            validator=service,
+        )
         record = repository.seal(artifact=safe_artifact)
         if repository.validate_record(record) is not record:
             raise RuntimeError("El repositorio sustituyó la valoración sellada.")
         persisted = record.get("artifact")
         if persisted is not safe_artifact and persisted != safe_artifact:
             raise RuntimeError("La valoración persistida difiere del artefacto validado.")
+        if not isinstance(persisted, dict):
+            raise RuntimeError("La valoración persistida no respeta el contrato de ATHENA.")
         _safe_valuation_artifact(persisted)
 
         return {
