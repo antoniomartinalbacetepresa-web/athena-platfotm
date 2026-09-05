@@ -94,7 +94,8 @@ class RecommendationEvidenceGate:
                 "valuation": "pit_reported_annual_pe_required_for_initial_gate",
                 "calibration": "out_of_sample_validation_required",
                 "investorActivity": (
-                    "independent_parallel_evidence_not_part_of_athena_recommendation"
+                    "independent_parallel_engine_connected_evidence_requires_explicit_pit_"
+                    "binding_not_part_of_athena_recommendation"
                 ),
             },
         }
@@ -195,8 +196,10 @@ class RecommendationEvidenceGate:
                 "connected": True,
                 "influencesCandidate": False,
                 "sourceBlock": "sec13f",
-                "status": "independent_parallel_engine_connected",
-                "evidenceReady": True,
+                "status": "independent_parallel_engine_connected_evidence_not_bound",
+                "evidenceReady": False,
+                "evidenceBoundToCandidate": False,
+                "pointInTimeAvailabilityVerified": False,
                 "includedInAthenaRecommendation": False,
                 "automaticScoring": False,
                 "automaticTrading": False,
@@ -465,6 +468,8 @@ class RecommendationEvidenceGateService:
         *,
         as_of: datetime,
     ) -> bool:
+        if payload.get("status") != "diagnostic_ready":
+            return False
         observations = payload.get("observations")
         observation_count = self._optional_int(payload.get("observationCount"))
         if (
