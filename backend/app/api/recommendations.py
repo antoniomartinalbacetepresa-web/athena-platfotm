@@ -16,6 +16,9 @@ from app.services.recommendation_learning_status_service import (
 from app.services.recommendation_market_signal_service import (
     RecommendationMarketSignalService,
 )
+from app.services.recommendation_shadow_latest_candidate_service import (
+    RecommendationShadowLatestCandidateService,
+)
 from app.services.recommendation_shadow_temporal_split_service import (
     RecommendationShadowTemporalSplitService,
 )
@@ -35,6 +38,7 @@ fundamental_signal_service = RecommendationFundamentalSignalService()
 valuation_signal_service = RecommendationValuationSignalService()
 evidence_gate_service = RecommendationEvidenceGateService()
 temporal_split_service = RecommendationShadowTemporalSplitService()
+latest_shadow_candidate_service = RecommendationShadowLatestCandidateService()
 
 
 def _effective_as_of(as_of: datetime | None) -> datetime:
@@ -252,6 +256,58 @@ def get_evidence_gate_diagnostic(
         "data": payload,
         "advisoryStatus": "diagnostic_only",
     }
+
+
+@router.get("/shadow/latest-candidate")
+def get_latest_shadow_candidate(
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Corte PIT: sólo se devuelve un candidato cuyo asOf y persistencia "
+            "ya eran conocidos en este instante."
+        ),
+    ),
+) -> dict[str, object]:
+    """Expose the latest integrity-validated shadow candidate known at a PIT cutoff."""
+
+    effective_as_of = _effective_as_of(as_of)
+    try:
+        payload = latest_shadow_candidate_service.resolve(as_of=effective_as_of)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar el último candidato shadow de ATHENA.",
+        ) from exc
+
+    if (
+        payload.get("advisoryStatus") != "no_advice"
+        or payload.get("recommendationCandidateReady") is not False
+        or payload.get("productionEligible") is not False
+        or payload.get("automaticTrading") is not False
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="El candidato shadow violó el contrato de seguridad de ATHENA.",
+        )
+    candidate = payload.get("candidate")
+    if candidate is not None:
+        if not isinstance(candidate, dict):
+            raise HTTPException(status_code=500, detail="Candidato shadow inválido.")
+        if (
+            candidate.get("advisoryStatus") != "no_advice"
+            or candidate.get("recommendationCandidateReady") is not False
+            or candidate.get("productionEligible") is not False
+            or candidate.get("action") is not None
+            or candidate.get("score") is not None
+            or candidate.get("conviction") is not None
+        ):
+            raise HTTPException(
+                status_code=500,
+                detail="El artefacto shadow intentó convertirse en recomendación.",
+            )
+    return {"data": payload}
 
 
 @router.get("/learning/shadow-temporal-split")
