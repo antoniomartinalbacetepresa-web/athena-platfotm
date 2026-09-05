@@ -224,7 +224,11 @@ class PortfolioService {
     }
 
     final identityEnriched = await _enrichCanonicalIdentity(position);
-    final verifiedPosition = _validateNewPosition(identityEnriched);
+    final provenanceReady = _withPositionDeclarationProvenance(
+      identityEnriched,
+      sourceProvider: 'user_portfolio_entry',
+    );
+    final verifiedPosition = _validateNewPosition(provenanceReady);
     final normalizedSymbol = verifiedPosition.symbol;
     final alreadyExists = portfolio.positions.any(
       (existing) => existing.symbol.trim().toUpperCase() == normalizedSymbol,
@@ -240,6 +244,22 @@ class PortfolioService {
 
     _portfolio = portfolio.copyWith(positions: updatedPositions);
     await _repository.savePortfolio(_portfolio!);
+  }
+
+  PortfolioPosition _withPositionDeclarationProvenance(
+    PortfolioPosition position, {
+    required String sourceProvider,
+    bool forceRefresh = false,
+  }) {
+    if (!forceRefresh && position.hasVerifiedPositionProvenance) {
+      return position;
+    }
+    final observedAt = DateTime.now().toUtc();
+    return position.copyWith(
+      positionSourceProvider: sourceProvider,
+      positionObservedAt: observedAt,
+      positionRetrievedAt: observedAt,
+    );
   }
 
   Future<PortfolioPosition> _enrichCanonicalIdentity(
@@ -332,6 +352,23 @@ class PortfolioService {
         'La recuperación de la cotización no puede preceder a su observación.',
       );
     }
+
+    final positionProvider = position.positionSourceProvider?.trim();
+    final positionObservedAt = position.positionObservedAt;
+    final positionRetrievedAt = position.positionRetrievedAt;
+    if (positionProvider == null ||
+        positionProvider.isEmpty ||
+        positionObservedAt == null ||
+        positionRetrievedAt == null) {
+      throw StateError(
+        'Una posición nueva requiere provenance de la declaración de cartera.',
+      );
+    }
+    if (positionRetrievedAt.isBefore(positionObservedAt)) {
+      throw StateError(
+        'La recuperación de la declaración no puede preceder a su observación.',
+      );
+    }
     if (_requireCanonicalIdentity && !position.hasVerifiedCanonicalIdentity) {
       throw StateError(
         'Una posición productiva requiere identidad canónica verificable.',
@@ -342,6 +379,7 @@ class PortfolioService {
       symbol: symbol,
       companyName: companyName,
       currentPriceSourceProvider: sourceProvider,
+      positionSourceProvider: positionProvider,
     );
   }
 
@@ -419,7 +457,12 @@ class PortfolioService {
       currentPriceSourceProvider: updatedPosition.currentPriceSourceProvider,
       currentPriceRetrievedAt: updatedPosition.currentPriceRetrievedAt,
     );
-    final validated = _validateNewPosition(candidate);
+    final provenanceReady = _withPositionDeclarationProvenance(
+      candidate,
+      sourceProvider: 'user_portfolio_update',
+      forceRefresh: true,
+    );
+    final validated = _validateNewPosition(provenanceReady);
 
     final updatedPositions = [...portfolio.positions];
     updatedPositions[index] = validated;
