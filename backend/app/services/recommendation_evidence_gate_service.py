@@ -192,11 +192,14 @@ class RecommendationEvidenceGate:
                 "productionEligible": False,
             },
             "investorActivity": {
-                "connected": False,
+                "connected": True,
                 "influencesCandidate": False,
-                "status": "independent_engine_not_yet_connected",
-                "evidenceReady": False,
+                "sourceBlock": "sec13f",
+                "status": "independent_parallel_engine_connected",
+                "evidenceReady": True,
                 "includedInAthenaRecommendation": False,
+                "automaticScoring": False,
+                "automaticTrading": False,
                 "productionEligible": False,
             },
         }
