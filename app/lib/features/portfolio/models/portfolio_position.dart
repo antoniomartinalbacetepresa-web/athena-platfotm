@@ -14,6 +14,13 @@ class PortfolioPosition {
   final String? currentPriceSourceProvider;
   final DateTime? currentPriceRetrievedAt;
 
+  /// Provenance of the declared portfolio state (quantity/cost state), separate
+  /// from acquisition date and market-price provenance. Legacy positions may
+  /// have these fields null and therefore cannot feed PIT valuation evidence.
+  final String? positionSourceProvider;
+  final DateTime? positionObservedAt;
+  final DateTime? positionRetrievedAt;
+
   /// Canonical identity is persisted only after the backend resolves the
   /// position against a verified listing. Legacy positions remain readable
   /// with these fields null and are therefore not risk/correlation ready.
@@ -47,6 +54,9 @@ class PortfolioPosition {
     this.currentPriceUpdatedAt,
     this.currentPriceSourceProvider,
     this.currentPriceRetrievedAt,
+    this.positionSourceProvider,
+    this.positionObservedAt,
+    this.positionRetrievedAt,
     this.databaseInstrumentId,
     this.canonicalInstrumentId,
     this.canonicalIssuerId,
@@ -57,6 +67,17 @@ class PortfolioPosition {
     this.identityRiskReady = false,
     this.athenaPolicyState,
   });
+
+  bool get hasVerifiedPositionProvenance {
+    final source = positionSourceProvider?.trim();
+    final observedAt = positionObservedAt;
+    final retrievedAt = positionRetrievedAt;
+    return source != null &&
+        source.isNotEmpty &&
+        observedAt != null &&
+        retrievedAt != null &&
+        !retrievedAt.isBefore(observedAt);
+  }
 
   bool get hasVerifiedCanonicalIdentity =>
       databaseInstrumentId != null &&
@@ -99,6 +120,9 @@ class PortfolioPosition {
     DateTime? currentPriceUpdatedAt,
     String? currentPriceSourceProvider,
     DateTime? currentPriceRetrievedAt,
+    String? positionSourceProvider,
+    DateTime? positionObservedAt,
+    DateTime? positionRetrievedAt,
     int? databaseInstrumentId,
     String? canonicalInstrumentId,
     String? canonicalIssuerId,
@@ -125,6 +149,10 @@ class PortfolioPosition {
           currentPriceSourceProvider ?? this.currentPriceSourceProvider,
       currentPriceRetrievedAt:
           currentPriceRetrievedAt ?? this.currentPriceRetrievedAt,
+      positionSourceProvider:
+          positionSourceProvider ?? this.positionSourceProvider,
+      positionObservedAt: positionObservedAt ?? this.positionObservedAt,
+      positionRetrievedAt: positionRetrievedAt ?? this.positionRetrievedAt,
       databaseInstrumentId: databaseInstrumentId ?? this.databaseInstrumentId,
       canonicalInstrumentId:
           canonicalInstrumentId ?? this.canonicalInstrumentId,
@@ -157,6 +185,9 @@ class PortfolioPosition {
       'currentPriceUpdatedAt': currentPriceUpdatedAt?.toIso8601String(),
       'currentPriceSourceProvider': currentPriceSourceProvider,
       'currentPriceRetrievedAt': currentPriceRetrievedAt?.toIso8601String(),
+      'positionSourceProvider': positionSourceProvider,
+      'positionObservedAt': positionObservedAt?.toUtc().toIso8601String(),
+      'positionRetrievedAt': positionRetrievedAt?.toUtc().toIso8601String(),
       'databaseInstrumentId': databaseInstrumentId,
       'canonicalInstrumentId': canonicalInstrumentId,
       'canonicalIssuerId': canonicalIssuerId,
@@ -173,6 +204,8 @@ class PortfolioPosition {
     final costBasisDateRaw = map['costBasisDate'];
     final updatedAtRaw = map['currentPriceUpdatedAt'];
     final retrievedAtRaw = map['currentPriceRetrievedAt'];
+    final positionObservedAtRaw = map['positionObservedAt'];
+    final positionRetrievedAtRaw = map['positionRetrievedAt'];
     final identityRetrievedAtRaw = map['identityRetrievedAt'];
     final databaseInstrumentIdRaw = map['databaseInstrumentId'];
 
@@ -196,6 +229,13 @@ class PortfolioPosition {
       currentPriceRetrievedAt: retrievedAtRaw == null
           ? null
           : DateTime.tryParse(retrievedAtRaw.toString()),
+      positionSourceProvider: map['positionSourceProvider']?.toString(),
+      positionObservedAt: positionObservedAtRaw == null
+          ? null
+          : DateTime.tryParse(positionObservedAtRaw.toString())?.toUtc(),
+      positionRetrievedAt: positionRetrievedAtRaw == null
+          ? null
+          : DateTime.tryParse(positionRetrievedAtRaw.toString())?.toUtc(),
       databaseInstrumentId: databaseInstrumentIdRaw is int &&
               databaseInstrumentIdRaw > 0
           ? databaseInstrumentIdRaw
