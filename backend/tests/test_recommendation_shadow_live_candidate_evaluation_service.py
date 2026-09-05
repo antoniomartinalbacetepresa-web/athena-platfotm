@@ -228,15 +228,14 @@ def test_as_of_before_candidate_is_rejected():
 
 
 def test_non_finite_realized_excess_return_is_rejected():
-    outcomes = [
-        _outcome(
-            7,
-            excess=float("nan"),
-            evaluated_at="2025-06-09T00:00:00+00:00",
-        )
-    ]
+    outcome = _outcome(
+        7,
+        excess=0.01,
+        evaluated_at="2025-06-09T00:00:00+00:00",
+    )
+    outcome["excess_return"] = float("nan")
     with pytest.raises(ValueError, match="excess_return debe ser finito"):
-        _service(outcomes=outcomes).evaluate(
+        _service(outcomes=[outcome]).evaluate(
             candidate_id=20,
             as_of=datetime(2025, 6, 10, tzinfo=timezone.utc),
         )
