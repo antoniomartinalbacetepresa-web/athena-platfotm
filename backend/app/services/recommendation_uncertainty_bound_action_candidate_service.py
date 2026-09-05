@@ -83,10 +83,11 @@ class RecommendationUncertaintyBoundActionCandidateService:
             uncertainty.get("confirmationFingerprint"), "uncertainty.confirmationFingerprint"
         ):
             raise ValueError("La incertidumbre pertenece a otra confirmación futura.")
-        if self._sha256(
+        economic_contract_fingerprint = self._sha256(
             decision.get("economicContractFingerprint"),
             "decision.economicContractFingerprint",
-        ) != self._sha256(
+        )
+        if economic_contract_fingerprint != self._sha256(
             uncertainty.get("economicContractFingerprint"),
             "uncertainty.economicContractFingerprint",
         ):
@@ -148,6 +149,7 @@ class RecommendationUncertaintyBoundActionCandidateService:
             ),
             "actionPromotionDecisionId": decision_id,
             "actionPromotionDecisionFingerprint": decision_fingerprint,
+            "economicContractFingerprint": economic_contract_fingerprint,
             "candidateFingerprint": self._sha256(
                 action_candidate.get("candidateFingerprint"), "candidateFingerprint"
             ),
