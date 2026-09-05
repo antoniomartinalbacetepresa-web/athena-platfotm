@@ -160,6 +160,11 @@ class _EvidenceService:
         self.ready = ready
 
     def evaluate_registered(self, *, confirmation_artifact, protocol_id):
+        policy_fingerprints = {
+            "flat": "a" * 64,
+            "reduced_long": "b" * 64,
+            "full_long": "c" * 64,
+        }
         return {
             "actionPromotionEvidenceFingerprint": "3" * 64,
             "protocolId": protocol_id,
@@ -167,6 +172,15 @@ class _EvidenceService:
             "selectionFingerprint": "5" * 64,
             "confirmationFingerprint": "6" * 64,
             "requiredHorizons": [30],
+            "horizons": {
+                "30": {
+                    "horizonDays": 30,
+                    "states": {
+                        state: {"selectedPolicyFingerprint": fingerprint}
+                        for state, fingerprint in policy_fingerprints.items()
+                    },
+                }
+            },
             "actionPromotionEvidenceReady": self.ready,
             "advisoryStatus": "no_advice",
             "recommendationCandidateReady": False,
@@ -211,6 +225,13 @@ def test_model_bound_action_evidence_still_does_not_enable_advice_or_trading():
 
     assert result["modelBoundActionPromotionEvidenceReady"] is True
     assert result["modelFingerprintsByHorizon"] == {"30": "8" * 64}
+    assert result["policyFingerprintsByHorizonAndState"] == {
+        "30": {
+            "flat": "a" * 64,
+            "reduced_long": "b" * 64,
+            "full_long": "c" * 64,
+        }
+    }
     assert result["advisoryStatus"] == "no_advice"
     assert result["recommendationCandidateReady"] is False
     assert result["productionEligible"] is False
