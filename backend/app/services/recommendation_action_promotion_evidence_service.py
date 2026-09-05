@@ -18,7 +18,7 @@ class RecommendationActionPromotionEvidenceService:
     allocation or production authorization and cannot execute any transaction.
     """
 
-    ARTIFACT_VERSION = "athena-action-promotion-evidence-v1"
+    ARTIFACT_VERSION = "athena-action-promotion-evidence-v2"
     CONFIRMATION_VERSION = "shadow-action-threshold-future-confirmation-v1"
     STATES = ("flat", "reduced_long", "full_long")
 
@@ -57,9 +57,12 @@ class RecommendationActionPromotionEvidenceService:
             raise ValueError("El protocolo y la confirmación no cubren los mismos horizontes.")
 
         criteria = protocol.get("criteriaByHorizonAndState")
+        minimum_rows = protocol.get("minimumFutureRowsByHorizon")
         metrics_by_horizon = confirmation.get("horizons")
-        if not isinstance(criteria, dict) or not isinstance(metrics_by_horizon, dict):
-            raise ValueError("Faltan criterios o métricas por horizonte.")
+        if not isinstance(criteria, dict) or not isinstance(minimum_rows, dict):
+            raise ValueError("Faltan criterios o suficiencia muestral precomprometida.")
+        if not isinstance(metrics_by_horizon, dict):
+            raise ValueError("Faltan métricas por horizonte.")
 
         horizon_results: dict[str, Any] = {}
         all_pass = True
@@ -71,18 +74,29 @@ class RecommendationActionPromotionEvidenceService:
                 raise ValueError("Falta un horizonte requerido.")
             if horizon_metrics.get("horizonDays") != horizon:
                 raise ValueError("horizonDays no coincide con su clave.")
+            minimum_future_rows = self._positive_int(
+                minimum_rows.get(key), f"minimumFutureRowsByHorizon.{key}"
+            )
+            source_row_count = self._positive_int(
+                horizon_metrics.get("sourceRowCount"), "sourceRowCount"
+            )
             states = horizon_metrics.get("states")
             if not isinstance(states, dict) or set(states) != set(self.STATES):
                 raise ValueError("La confirmación debe cubrir exactamente todos los estados.")
 
+            horizon_blockers: list[str] = []
+            if source_row_count < minimum_future_rows:
+                horizon_blockers.append("future_sample_below_precommitted_minimum")
             state_results: dict[str, Any] = {}
-            horizon_pass = True
+            horizon_pass = not horizon_blockers
             for state in self.STATES:
                 metric = states.get(state)
                 criterion = horizon_criteria.get(state)
                 if not isinstance(metric, dict) or not isinstance(criterion, dict):
                     raise ValueError("Faltan métricas o criterios de un estado.")
                 row_count = self._positive_int(metric.get("rowCount"), "rowCount")
+                if row_count != source_row_count:
+                    raise ValueError("El conteo de filas del estado no coincide con el horizonte.")
                 policy_fingerprint = self._sha256(
                     metric.get("selectedPolicyFingerprint"),
                     f"selectedPolicyFingerprint.{key}.{state}",
@@ -106,6 +120,8 @@ class RecommendationActionPromotionEvidenceService:
                 if maximum_regret < 0.0:
                     raise ValueError("maximumMeanHindsightRegret no puede ser negativo.")
                 blockers: list[str] = []
+                if source_row_count < minimum_future_rows:
+                    blockers.append("future_sample_below_precommitted_minimum")
                 if incremental < minimum_incremental:
                     blockers.append("incremental_utility_below_precommitted_minimum")
                 if regret > maximum_regret:
@@ -127,6 +143,9 @@ class RecommendationActionPromotionEvidenceService:
             horizon_results[key] = {
                 "horizonDays": horizon,
                 "passesPrecommittedCriteria": horizon_pass,
+                "blockers": horizon_blockers,
+                "sourceRowCount": source_row_count,
+                "minimumFutureRowsRequired": minimum_future_rows,
                 "states": state_results,
             }
 
@@ -171,7 +190,10 @@ class RecommendationActionPromotionEvidenceService:
                 "registeredProtocolRequired": True,
                 "protocolMustPrecedePolicyFreeze": True,
                 "firstSealedFutureReserveRequired": True,
+                "precommittedProductionSampleSizeRequired": True,
+                "researchMaturityCountIsNotProductionSufficiency": True,
                 "codeDefaultPromotionThresholds": False,
+                "codeDefaultProductionSampleSize": False,
                 "passingEvidenceIsNotProductionAuthorization": True,
                 "portfolioStateStillRequiredForReduceOrSell": True,
                 "automaticTrading": False,
