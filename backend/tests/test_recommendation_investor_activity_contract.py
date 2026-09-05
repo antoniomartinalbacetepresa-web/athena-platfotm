@@ -1,7 +1,7 @@
 from app.services.recommendation_evidence_gate_service import RecommendationEvidenceGate
 
 
-def test_investor_activity_is_connected_parallel_evidence_without_score_influence() -> None:
+def test_investor_activity_is_connected_parallel_engine_without_unverified_evidence() -> None:
     gate = RecommendationEvidenceGate(
         status="evidence_incomplete",
         symbol="AAPL",
@@ -34,14 +34,17 @@ def test_investor_activity_is_connected_parallel_evidence_without_score_influenc
         "connected": True,
         "influencesCandidate": False,
         "sourceBlock": "sec13f",
-        "status": "independent_parallel_engine_connected",
-        "evidenceReady": True,
+        "status": "independent_parallel_engine_connected_evidence_not_bound",
+        "evidenceReady": False,
+        "evidenceBoundToCandidate": False,
+        "pointInTimeAvailabilityVerified": False,
         "includedInAthenaRecommendation": False,
         "automaticScoring": False,
         "automaticTrading": False,
         "productionEligible": False,
     }
     assert payload["policy"]["investorActivity"] == (
-        "independent_parallel_evidence_not_part_of_athena_recommendation"
+        "independent_parallel_engine_connected_evidence_requires_explicit_pit_"
+        "binding_not_part_of_athena_recommendation"
     )
     assert payload["productionEligible"] is False
