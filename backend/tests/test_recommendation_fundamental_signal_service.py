@@ -146,6 +146,10 @@ def test_fundamental_signal_uses_only_point_in_time_available_facts(
     facts = {fact.key: fact.value for fact in signal.facts}
     assert facts["revenue"] == pytest.approx(120.0)
     assert 9999.0 not in facts.values()
+    assert (
+        signal.to_api_dict()["policy"]["readiness"]
+        == "all_consumed_derived_features_present_and_finite_no_coverage_threshold"
+    )
 
 
 def test_fundamental_signal_blocks_when_sec_identity_is_missing(tmp_path: Path) -> None:
@@ -204,9 +208,63 @@ def test_fundamental_ratios_require_matching_effective_periods(tmp_path: Path) -
         as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
-    assert signal.status == "diagnostic_ready"
+    assert signal.status == "partial_fundamentals"
     assert signal.net_margin is None
     assert signal.liabilities_to_assets is None
+    assert signal.production_eligible is False
+
+
+def test_fundamental_signal_does_not_treat_seventy_five_percent_as_ready(
+    tmp_path: Path,
+) -> None:
+    database = _database_with_identity(tmp_path)
+    repository = NormalizedDataRepository(database)
+    repository.save_many(
+        [
+            _fundamental(
+                metric=(
+                    "fundamental.us-gaap."
+                    "revenuefromcontractwithcustomerexcludingassessedtax"
+                ),
+                value=100.0,
+                effective_at="2024-09-28",
+                available_at="2024-11-02T00:00:00+00:00",
+            ),
+            _fundamental(
+                metric=(
+                    "fundamental.us-gaap."
+                    "revenuefromcontractwithcustomerexcludingassessedtax"
+                ),
+                value=120.0,
+                effective_at="2025-09-27",
+                available_at="2025-11-01T00:00:00+00:00",
+            ),
+            _fundamental(
+                metric="fundamental.us-gaap.netincomeloss",
+                value=24.0,
+                effective_at="2025-09-27",
+                available_at="2025-11-01T00:00:00+00:00",
+            ),
+            _fundamental(
+                metric="fundamental.us-gaap.assets",
+                value=200.0,
+                effective_at="2025-09-27",
+                available_at="2025-11-01T00:00:00+00:00",
+            ),
+        ]
+    )
+
+    signal = RecommendationFundamentalSignalService(database=database).evaluate(
+        symbol="AAPL",
+        as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    assert signal.coverage_ratio == pytest.approx(0.75)
+    assert signal.revenue_growth == pytest.approx(0.20)
+    assert signal.net_margin == pytest.approx(0.20)
+    assert signal.liabilities_to_assets is None
+    assert signal.status == "partial_fundamentals"
+    assert signal.production_eligible is False
 
 
 def test_fundamental_signal_rejects_naive_as_of(tmp_path: Path) -> None:

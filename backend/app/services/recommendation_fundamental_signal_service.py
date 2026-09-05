@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from math import isfinite
 from statistics import mean
 from typing import Any
 
@@ -67,6 +68,10 @@ class RecommendationFundamentalSignal:
                 "temporal": "explicit_available_at_not_after_as_of",
                 "identity": "unique_active_symbol_and_unique_sec_cik",
                 "comparability": "ratios_require_matching_effective_periods",
+                "readiness": (
+                    "all_consumed_derived_features_present_and_finite_"
+                    "no_coverage_threshold"
+                ),
                 "scoring": "facts_and_ratios_only_until_out_of_sample_calibrated",
             },
         }
@@ -198,14 +203,26 @@ class RecommendationFundamentalSignalService:
         ]
         mean_quality = mean(quality_scores) if quality_scores else None
 
-        status = "diagnostic_ready" if coverage >= 0.75 else "partial_fundamentals"
+        derived_features = (
+            revenue_growth,
+            net_margin,
+            liabilities_to_assets,
+        )
+        derived_contract_ready = all(
+            value is not None and isfinite(value) for value in derived_features
+        )
+        status = (
+            "diagnostic_ready" if derived_contract_ready else "partial_fundamentals"
+        )
         reason = (
-            "Fundamentales SEC point-in-time disponibles con cobertura suficiente; "
-            "los ratios siguen siendo evidencia diagnóstica, no una recomendación."
+            "Los fundamentales SEC point-in-time permiten reconstruir todas las "
+            "variables derivadas que consume ATHENA con periodos comparables y "
+            "valores finitos; siguen siendo evidencia diagnóstica, no recomendación."
             if status == "diagnostic_ready"
             else (
-                "La cobertura fundamental point-in-time es parcial; ATHENA no debe "
-                "inferir métricas ausentes ni elevar esta evidencia a recomendación."
+                "La evidencia fundamental point-in-time no permite reconstruir todavía "
+                "todas las variables derivadas consumidas por ATHENA; no se infieren "
+                "métricas ausentes ni se usa un porcentaje de cobertura arbitrario."
             )
         )
 
@@ -343,7 +360,8 @@ class RecommendationFundamentalSignalService:
         previous = self._numeric_value(history[1].get("value_json"))
         if latest is None or previous is None or previous == 0:
             return None
-        return (latest / previous) - 1.0
+        result = (latest / previous) - 1.0
+        return result if isfinite(result) else None
 
     def _same_period_ratio(
         self,
@@ -357,7 +375,8 @@ class RecommendationFundamentalSignalService:
             return None
         if numerator.unit != denominator.unit or denominator.value == 0:
             return None
-        return numerator.value / denominator.value
+        result = numerator.value / denominator.value
+        return result if isfinite(result) else None
 
     def _numeric_value(self, value_json: object) -> float | None:
         try:
@@ -366,7 +385,8 @@ class RecommendationFundamentalSignalService:
             return None
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        return float(value)
+        numeric = float(value)
+        return numeric if isfinite(numeric) else None
 
     def _optional_text(self, value: object) -> str | None:
         if value is None:
@@ -378,9 +398,10 @@ class RecommendationFundamentalSignalService:
         if value is None:
             return None
         try:
-            return float(value)
+            numeric = float(value)
         except (TypeError, ValueError):
             return None
+        return numeric if isfinite(numeric) else None
 
     def _empty(
         self,
