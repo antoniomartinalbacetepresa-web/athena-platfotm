@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../../recommendations/models/recommendation_allocation_request_context.dart';
 import '../../data/athena_backend_portfolio_allocation_authority_data_source.dart';
 import '../../data/athena_backend_portfolio_allocation_data_source.dart';
+import '../../models/portfolio_allocation_policy.dart';
 import '../../models/portfolio_position.dart';
 
 class PortfolioAllocationController extends ChangeNotifier {
@@ -24,6 +25,23 @@ class PortfolioAllocationController extends ChangeNotifier {
   String? get blockedReason => _blockedReason;
   String? get error => _error;
   bool get isReady => _candidate != null && _blockedReason == null && _error == null;
+
+  Future<void> loadFromRecommendationContextWithPolicy({
+    required RecommendationAllocationRequestContext context,
+    required PortfolioAllocationPolicy allocationPolicy,
+    required double referenceCapital,
+    required List<PortfolioPosition> positions,
+  }) {
+    return load(
+      instrumentId: context.instrumentId,
+      horizonDays: context.horizonDays,
+      allocationPolicyId: allocationPolicy.policyId,
+      referenceCapital: referenceCapital,
+      baseCurrency: allocationPolicy.baseCurrency,
+      positions: positions,
+      asOf: context.requestAsOf,
+    );
+  }
 
   Future<void> loadFromRecommendationContext({
     required RecommendationAllocationRequestContext context,
@@ -64,6 +82,10 @@ class PortfolioAllocationController extends ChangeNotifier {
       }
       if (horizonDays <= 0) {
         throw ArgumentError.value(horizonDays, 'horizonDays');
+      }
+      final normalizedPolicyId = allocationPolicyId.trim();
+      if (normalizedPolicyId.isEmpty) {
+        throw ArgumentError.value(allocationPolicyId, 'allocationPolicyId');
       }
       if (!referenceCapital.isFinite || referenceCapital <= 0) {
         throw ArgumentError.value(referenceCapital, 'referenceCapital');
@@ -124,7 +146,7 @@ class PortfolioAllocationController extends ChangeNotifier {
 
       _candidate = await allocationDataSource.buildAuthorizedCandidate(
         uncertaintyBoundActionCandidateFingerprint: actionFingerprint,
-        allocationPolicyId: allocationPolicyId,
+        allocationPolicyId: normalizedPolicyId,
         referenceCapital: referenceCapital,
         baseCurrency: currency,
         positions: positions,
