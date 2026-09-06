@@ -54,6 +54,12 @@ class RecommendationShadowLiveCandidateRepository:
             confirmation_fingerprint, "confirmation_fingerprint"
         )
         version = self._required_text(artifact_version, "artifact_version")
+        self._assert_artifact_identity(
+            artifact,
+            candidate_fingerprint=fingerprint,
+            confirmation_fingerprint=confirmation,
+            artifact_version=version,
+        )
         artifact_json = self._canonical_json(artifact)
 
         with self._database.connect() as connection:
@@ -192,8 +198,48 @@ class RecommendationShadowLiveCandidateRepository:
             raise ValueError("El candidato live persistido contiene JSON inválido.") from exc
         if not isinstance(artifact, dict):
             raise ValueError("El candidato live persistido no contiene un objeto JSON.")
+        self._assert_artifact_identity(
+            artifact,
+            candidate_fingerprint=self._required_text(
+                result.get("candidate_fingerprint"), "candidate_fingerprint"
+            ),
+            confirmation_fingerprint=self._required_text(
+                result.get("confirmation_fingerprint"), "confirmation_fingerprint"
+            ),
+            artifact_version=self._required_text(
+                result.get("artifact_version"), "artifact_version"
+            ),
+        )
         result["artifact"] = artifact
         return result
+
+    def _assert_artifact_identity(
+        self,
+        artifact: dict[str, Any],
+        *,
+        candidate_fingerprint: str,
+        confirmation_fingerprint: str,
+        artifact_version: str,
+    ) -> None:
+        if not isinstance(artifact, dict):
+            raise ValueError("artifact debe ser un objeto.")
+        if self._required_text(
+            artifact.get("candidateFingerprint"), "artifact.candidateFingerprint"
+        ) != candidate_fingerprint:
+            raise ValueError(
+                "candidate_fingerprint persistido no coincide con el artefacto."
+            )
+        if self._required_text(
+            artifact.get("confirmationEvidenceFingerprint"),
+            "artifact.confirmationEvidenceFingerprint",
+        ) != confirmation_fingerprint:
+            raise ValueError(
+                "confirmation_fingerprint persistido no coincide con el artefacto."
+            )
+        if self._required_text(
+            artifact.get("artifactVersion"), "artifact.artifactVersion"
+        ) != artifact_version:
+            raise ValueError("artifact_version persistido no coincide con el artefacto.")
 
     def _canonical_json(self, value: dict[str, Any]) -> str:
         if not isinstance(value, dict):
