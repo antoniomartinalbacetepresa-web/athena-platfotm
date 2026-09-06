@@ -26,6 +26,12 @@ Map<String, dynamic> _safeResponse() {
       'investedPositionsValueInBaseCurrency': 12500.0,
       'currentPositionValueInBaseCurrency': 2500.0,
       'actionAuthorityBoundToAllocation': true,
+      'economicContractAuthorityBoundToAllocation': true,
+      'callerSuppliedEconomicContractAccepted': false,
+      'economicContractAuthority': {
+        'economicContractFingerprint': _fpB,
+        'resolvedFromAppendOnlyBackendAuthority': true,
+      },
       'callerSuppliedActionArtifactsAccepted': false,
       'portfolioValuationBoundToAllocation': true,
       'portfolioValuationSealedBeforeAllocation': true,
@@ -72,7 +78,7 @@ Map<String, dynamic> _safeResponse() {
 }
 
 void main() {
-  test('maps sealed non-advisory allocation and preserves excess capital', () async {
+  test('maps sealed non-advisory allocation and never sends economic contract', () async {
     late Map<String, dynamic> requestBody;
     final client = MockClient((request) async {
       requestBody = jsonDecode(request.body) as Map<String, dynamic>;
@@ -86,7 +92,6 @@ void main() {
     final result = await source.buildAuthorizedCandidate(
       uncertaintyBoundActionCandidateFingerprint: _fpA,
       allocationPolicyId: 'policy-v1',
-      economicContract: const {'economicContractFingerprint': _fpB},
       referenceCapital: 10000,
       baseCurrency: 'eur',
       positions: const [],
@@ -94,6 +99,7 @@ void main() {
       asOf: DateTime.utc(2026, 9, 5, 12),
     );
 
+    expect(requestBody.containsKey('economicContract'), isFalse);
     expect(requestBody.containsKey('correlationEvidence'), isFalse);
     expect(requestBody.containsKey('currentPortfolioValueInBaseCurrency'), isFalse);
     expect(requestBody['correlationEvidenceFingerprints'], [_fpE]);
@@ -102,6 +108,7 @@ void main() {
     expect(result.investedPositionsValueInBaseCurrency, 12500);
     expect(result.excessOverReferenceCapital, 2500);
     expect(result.shortfallVsReferenceCapital, 0);
+    expect(result.economicContractFingerprint, _fpB);
     expect(result.correlationEvidenceFingerprints, [_fpE]);
   });
 
@@ -118,7 +125,6 @@ void main() {
       () => source.buildAuthorizedCandidate(
         uncertaintyBoundActionCandidateFingerprint: _fpA,
         allocationPolicyId: 'policy-v1',
-        economicContract: const {'economicContractFingerprint': _fpB},
         referenceCapital: 10000,
         baseCurrency: 'EUR',
         positions: const [],
@@ -142,7 +148,33 @@ void main() {
       () => source.buildAuthorizedCandidate(
         uncertaintyBoundActionCandidateFingerprint: _fpA,
         allocationPolicyId: 'policy-v1',
-        economicContract: const {'economicContractFingerprint': _fpB},
+        referenceCapital: 10000,
+        baseCurrency: 'EUR',
+        positions: const [],
+        correlationEvidenceFingerprints: const [_fpE],
+        asOf: DateTime.utc(2026, 9, 5, 12),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('fails closed without append-only economic contract authority', () async {
+    final payload = _safeResponse();
+    final data = payload['data'] as Map<String, dynamic>;
+    data['economicContractAuthority'] = {
+      'economicContractFingerprint': _fpB,
+      'resolvedFromAppendOnlyBackendAuthority': false,
+    };
+    final client = MockClient((_) async => http.Response(jsonEncode(payload), 200));
+    final source = AthenaBackendPortfolioAllocationDataSource(
+      baseUrl: 'http://localhost:8000',
+      client: client,
+    );
+
+    expect(
+      () => source.buildAuthorizedCandidate(
+        uncertaintyBoundActionCandidateFingerprint: _fpA,
+        allocationPolicyId: 'policy-v1',
         referenceCapital: 10000,
         baseCurrency: 'EUR',
         positions: const [],
@@ -168,7 +200,6 @@ void main() {
       () => source.buildAuthorizedCandidate(
         uncertaintyBoundActionCandidateFingerprint: _fpA,
         allocationPolicyId: 'policy-v1',
-        economicContract: const {'economicContractFingerprint': _fpB},
         referenceCapital: 10000,
         baseCurrency: 'EUR',
         positions: const [],
