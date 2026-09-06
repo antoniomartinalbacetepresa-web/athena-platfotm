@@ -9,13 +9,15 @@ import '../../recommendations/models/recommendation_shadow_candidate_snapshot.da
 import '../di/portfolio_allocation_dependencies.dart';
 import '../models/portfolio_allocation_policy.dart';
 import '../models/portfolio_position.dart';
+import '../services/portfolio_reference_capital_canonicalization_service.dart';
 
 /// Panel no operativo que enlaza evidencia shadow real con la frontera de
 /// allocation autorizada del backend.
 ///
-/// El usuario debe seleccionar explícitamente horizonte y política. El shadow
-/// sólo aporta contexto para consultar al backend; nunca se trata como una
-/// recomendación ni como autoridad para asignar capital.
+/// El capital declarado por el usuario conserva su importe y moneda original.
+/// Antes de consultar allocation se normaliza a la única moneda económica de
+/// ATHENA (USD) mediante FX verificable del backend. El shadow sólo aporta
+/// identidad/horizonte/corte PIT y nunca se transforma en autoridad de compra.
 class AthenaAllocationPanel extends StatefulWidget {
   final double referenceCapital;
   final String referenceCapitalCurrency;
@@ -42,8 +44,10 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
       _shadowDataSource;
 
   RecommendationShadowCandidateSnapshot? _shadowSnapshot;
+  PortfolioCanonicalReferenceCapital? _canonicalReferenceCapital;
   int? _selectedHorizonDays;
   bool _isLoadingEvidence = true;
+  bool _isCanonicalizingCapital = false;
   String? _evidenceError;
 
   @override
@@ -56,6 +60,17 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
     _dependencies.policyController.addListener(_onControllerChanged);
     _dependencies.allocationController.addListener(_onControllerChanged);
     _loadEvidence();
+  }
+
+  @override
+  void didUpdateWidget(covariant AthenaAllocationPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.referenceCapital != widget.referenceCapital ||
+        oldWidget.referenceCapitalCurrency != widget.referenceCapitalCurrency ||
+        oldWidget.positions != widget.positions) {
+      _canonicalReferenceCapital = null;
+      _dependencies.allocationController.clear();
+    }
   }
 
   @override
@@ -77,6 +92,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
       _evidenceError = null;
       _shadowSnapshot = null;
       _selectedHorizonDays = null;
+      _canonicalReferenceCapital = null;
     });
     _dependencies.allocationController.clear();
     try {
@@ -108,6 +124,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
 
   void _selectPolicy(String? policyId) {
     _dependencies.allocationController.clear();
+    _canonicalReferenceCapital = null;
     if (policyId == null) {
       _dependencies.policyController.clearSelection();
       return;
@@ -117,6 +134,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
 
   void _selectHorizon(int? horizonDays) {
     _dependencies.allocationController.clear();
+    _canonicalReferenceCapital = null;
     setState(() => _selectedHorizonDays = horizonDays);
   }
 
@@ -125,35 +143,70 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
     final policy = _dependencies.policyController.selectedPolicy;
     final horizonDays = _selectedHorizonDays;
     if (snapshot == null || policy == null || horizonDays == null) return;
-    if (!_referenceCapitalIsValid || !_policyCurrencyMatchesReference) return;
+    if (!_referenceCapitalIsValid || !_policyUsesCanonicalCurrency) return;
+
+    setState(() {
+      _isCanonicalizingCapital = true;
+      _evidenceError = null;
+      _canonicalReferenceCapital = null;
+    });
+    _dependencies.allocationController.clear();
 
     try {
+      final canonical = await _dependencies
+          .referenceCapitalCanonicalizationService
+          .canonicalize(
+        amount: widget.referenceCapital,
+        currency: widget.referenceCapitalCurrency,
+      );
+
+      // The request cutoff is created only after FX retrieval. Therefore the
+      // capital conversion is already known at the PIT boundary sent to the
+      // backend and is never retrospectively injected into an older cutoff.
+      final requestAsOf = DateTime.now().toUtc();
+      final fxRetrievedAt = canonical.fxEvidence?.retrievedAt.toUtc();
+      if (fxRetrievedAt != null && fxRetrievedAt.isAfter(requestAsOf)) {
+        throw StateError(
+          'La evidencia FX fue recuperada después del corte de allocation.',
+        );
+      }
+
       final context = RecommendationAllocationRequestContext.fromShadowSnapshot(
         snapshot: snapshot,
         horizonDays: horizonDays,
-        requestAsOf: snapshot.asOf,
+        requestAsOf: requestAsOf,
       );
       await _dependencies.allocationController
           .loadFromRecommendationContextWithPolicy(
         context: context,
         allocationPolicy: policy,
-        referenceCapital: widget.referenceCapital,
+        referenceCapital: canonical.amountInCanonicalCurrency,
         positions: widget.positions,
       );
+      if (!mounted) return;
+      setState(() => _canonicalReferenceCapital = canonical);
     } catch (error) {
       _dependencies.allocationController.clear();
       if (!mounted) return;
-      setState(() => _evidenceError = error.toString());
+      setState(() {
+        _canonicalReferenceCapital = null;
+        _evidenceError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isCanonicalizingCapital = false);
+      }
     }
   }
 
   bool get _referenceCapitalIsValid =>
       widget.referenceCapital.isFinite && widget.referenceCapital > 0;
 
-  bool get _policyCurrencyMatchesReference {
+  bool get _policyUsesCanonicalCurrency {
     final policy = _dependencies.policyController.selectedPolicy;
     if (policy == null) return false;
-    return policy.baseCurrency == widget.referenceCapitalCurrency.toUpperCase();
+    return policy.baseCurrency ==
+        PortfolioCanonicalReferenceCapital.canonicalCurrency;
   }
 
   List<int> get _availableHorizons {
@@ -166,12 +219,13 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
 
   bool get _canRequestAllocation =>
       !_isLoadingEvidence &&
+      !_isCanonicalizingCapital &&
       !_dependencies.allocationController.isLoading &&
       _shadowSnapshot?.candidate != null &&
       _selectedHorizonDays != null &&
       _dependencies.policyController.selectedPolicy != null &&
       _referenceCapitalIsValid &&
-      _policyCurrencyMatchesReference;
+      _policyUsesCanonicalCurrency;
 
   @override
   Widget build(BuildContext context) {
@@ -211,8 +265,8 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
           const SizedBox(height: 10),
           Text(
             _referenceCapitalIsValid
-                ? 'Capital de referencia: ${_money(widget.referenceCapital, widget.referenceCapitalCurrency)}. '
-                    '${widget.currentCapitalComparable ? 'Capital actualmente no asignado: ${_money(widget.currentUnallocatedCapital ?? 0, widget.referenceCapitalCurrency)}.' : 'El disponible actual no se usa como comparable hasta disponer de valoración histórica verificable.'}'
+                ? 'Capital declarado: ${_money(widget.referenceCapital, widget.referenceCapitalCurrency)}. '
+                    'ATHENA calcula allocation únicamente en USD y conserva la moneda original para presentación.'
                 : 'Define un capital de referencia positivo antes de solicitar una planificación.',
             style: const TextStyle(
               color: AthenaColors.textSecondary,
@@ -220,6 +274,17 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
               height: 1.4,
             ),
           ),
+          if (widget.currentCapitalComparable &&
+              widget.currentUnallocatedCapital != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Capital actualmente no asignado: ${_money(widget.currentUnallocatedCapital!, widget.referenceCapitalCurrency)}.',
+              style: const TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: AthenaSpacing.md),
           if (_isLoadingEvidence || policyController.isLoading)
             const LinearProgressIndicator()
@@ -240,7 +305,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
             ],
             if (_shadowSnapshot != null && shadow == null) ...[
               _message(
-                'No existe candidato shadow conocido en el corte PIT actual. No se solicita allocation.',
+                'No existe candidato shadow conocido en el corte actual. No se solicita allocation.',
               ),
               const SizedBox(height: AthenaSpacing.md),
             ],
@@ -301,17 +366,17 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
                   ),
                 ],
               ),
-              if (selectedPolicy != null && !_policyCurrencyMatchesReference) ...[
+              if (selectedPolicy != null && !_policyUsesCanonicalCurrency) ...[
                 const SizedBox(height: AthenaSpacing.md),
                 _message(
-                  'La política seleccionada usa ${selectedPolicy.baseCurrency}, pero el capital de referencia está registrado en ${widget.referenceCapitalCurrency}. ATHENA bloquea la planificación para no reinterpretar importes entre monedas.',
+                  'La política ${selectedPolicy.policyId} usa ${selectedPolicy.baseCurrency}. La frontera económica de ATHENA sólo admite políticas USD; la moneda del usuario se convierte por FX verificable.',
                   isError: true,
                 ),
               ],
               const SizedBox(height: AthenaSpacing.md),
               ElevatedButton.icon(
                 onPressed: _canRequestAllocation ? _requestAllocation : null,
-                icon: allocationController.isLoading
+                icon: _isCanonicalizingCapital || allocationController.isLoading
                     ? const SizedBox(
                         width: 16,
                         height: 16,
@@ -322,6 +387,10 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
               ),
             ],
           ],
+          if (_canonicalReferenceCapital != null) ...[
+            const SizedBox(height: AthenaSpacing.md),
+            _canonicalCapitalEvidence(_canonicalReferenceCapital!),
+          ],
           if (allocationController.blockedReason != null) ...[
             const SizedBox(height: AthenaSpacing.md),
             _message(
@@ -330,10 +399,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
           ],
           if (allocationController.error != null) ...[
             const SizedBox(height: AthenaSpacing.md),
-            _message(
-              _cleanError(allocationController.error!),
-              isError: true,
-            ),
+            _message(_cleanError(allocationController.error!), isError: true),
           ],
           if (candidate != null) ...[
             const SizedBox(height: AthenaSpacing.lg),
@@ -352,30 +418,22 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
               spacing: 28,
               runSpacing: 18,
               children: [
-                _metric(
-                  'Referencia',
-                  _money(candidate.referenceCapital, candidate.baseCurrency),
-                ),
+                _metric('Referencia canónica',
+                    _money(candidate.referenceCapital, candidate.baseCurrency)),
                 _metric(
                   'Valor actual cartera',
-                  _money(
-                    candidate.currentPositionValueInBaseCurrency,
-                    candidate.baseCurrency,
-                  ),
+                  _money(candidate.currentPositionValueInBaseCurrency,
+                      candidate.baseCurrency),
                 ),
                 _metric(
                   'Exceso sobre referencia',
-                  _money(
-                    candidate.excessOverReferenceCapital,
-                    candidate.baseCurrency,
-                  ),
+                  _money(candidate.excessOverReferenceCapital,
+                      candidate.baseCurrency),
                 ),
                 _metric(
                   'Déficit frente a referencia',
-                  _money(
-                    candidate.shortfallVsReferenceCapital,
-                    candidate.baseCurrency,
-                  ),
+                  _money(candidate.shortfallVsReferenceCapital,
+                      candidate.baseCurrency),
                 ),
                 _metric(
                   'Peso objetivo del instrumento',
@@ -383,17 +441,13 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
                 ),
                 _metric(
                   'Importe objetivo',
-                  _money(
-                    candidate.targetAmountInBaseCurrency,
-                    candidate.baseCurrency,
-                  ),
+                  _money(candidate.targetAmountInBaseCurrency,
+                      candidate.baseCurrency),
                 ),
                 _metric(
                   'Cambio modelado',
-                  _signedMoney(
-                    candidate.deltaAmountInBaseCurrency,
-                    candidate.baseCurrency,
-                  ),
+                  _signedMoney(candidate.deltaAmountInBaseCurrency,
+                      candidate.baseCurrency),
                 ),
                 _metric(
                   'Acción modelada',
@@ -413,7 +467,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
           ],
           const SizedBox(height: AthenaSpacing.md),
           const Text(
-            'Este panel no ejecuta operaciones y no transforma evidencia shadow en consejo. Toda planificación requiere acción sellada, política persistida, valoración y correlaciones verificadas por backend.',
+            'Este panel no ejecuta operaciones ni transforma evidencia shadow en consejo. El backend mantiene la autoridad sobre acción, valoración, correlaciones y contrato económico.',
             style: TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 12,
@@ -422,6 +476,20 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _canonicalCapitalEvidence(PortfolioCanonicalReferenceCapital capital) {
+    if (!capital.usedFx) {
+      return _message(
+        'Capital canónico: ${_money(capital.amountInCanonicalCurrency, PortfolioCanonicalReferenceCapital.canonicalCurrency)} · no requiere FX.',
+      );
+    }
+    final fx = capital.fxEvidence!;
+    return _message(
+      'Capital canónico: ${_money(capital.amountInCanonicalCurrency, PortfolioCanonicalReferenceCapital.canonicalCurrency)} · '
+      '${fx.baseCurrency}/${fx.quoteCurrency} ${fx.rate.toStringAsFixed(6)} · '
+      '${fx.sourceProvider} · recuperado ${_dateTime(fx.retrievedAt.toLocal())}.',
     );
   }
 
@@ -489,14 +557,16 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
 
   static String _dateTime(DateTime value) {
     String two(int number) => number.toString().padLeft(2, '0');
-    return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+    return '${two(value.day)}/${two(value.month)}/${value.year} '
+        '${two(value.hour)}:${two(value.minute)}';
   }
 
   static String _cleanError(String value) {
-    return value
-        .replaceFirst('Exception: ', '')
-        .replaceFirst('Bad state: ', '')
-        .trim();
+    var result = value.trim();
+    for (final prefix in const ['Exception: ', 'Bad state: ', 'Invalid argument(s): ']) {
+      if (result.startsWith(prefix)) result = result.substring(prefix.length);
+    }
+    return result;
   }
 }
 
@@ -506,17 +576,17 @@ class _NonOperationalBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
         color: AthenaColors.cardSecondary,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AthenaRadius.sm),
         border: Border.all(color: AthenaColors.border),
       ),
       child: const Text(
         'NO OPERATIVO',
         style: TextStyle(
           color: AthenaColors.textSecondary,
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: FontWeight.w700,
         ),
       ),
