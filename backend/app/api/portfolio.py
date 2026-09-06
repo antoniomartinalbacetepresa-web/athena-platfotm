@@ -67,6 +67,18 @@ def _safe_non_advisory_allocation(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         if payload.get(field) is not False:
             raise RuntimeError(f"Allocation violó {field}=False.")
+    if payload.get("economicContractAuthorityBoundToAllocation") is not True:
+        raise RuntimeError("Allocation no quedó ligado a autoridad económica.")
+    if payload.get("callerSuppliedEconomicContractAccepted") is not False:
+        raise RuntimeError("Allocation aceptó un contrato económico arbitrario del caller.")
+    economic_authority = payload.get("economicContractAuthority")
+    if not isinstance(economic_authority, dict):
+        raise RuntimeError("Allocation carece de autoridad económica verificable.")
+    if economic_authority.get("resolvedFromAppendOnlyBackendAuthority") is not True:
+        raise RuntimeError("Allocation no resolvió el contrato desde autoridad backend append-only.")
+    fingerprint = str(economic_authority.get("economicContractFingerprint") or "")
+    if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
+        raise RuntimeError("Allocation carece de fingerprint económico SHA-256 válido.")
     if payload.get("correlationAuthorityBoundToAllocation") is not True:
         raise RuntimeError("Allocation no quedó ligado a autoridad de correlación.")
     if payload.get("callerSuppliedCorrelationArtifactsAccepted") is not False:
@@ -254,19 +266,21 @@ def post_portfolio_allocation_candidate(
     """Build a non-advisory allocation candidate from backend-sealed authorities.
 
     The client may reference sealed action/correlation fingerprints and declared
-    positions, but cannot submit action artifacts, portfolio totals or correlation
-    JSON. The backend rebuilds and seals PIT valuation internally before allocation.
+    positions, but cannot submit action artifacts, economic contracts, portfolio
+    totals or correlation JSON. The backend resolves the exact economic contract
+    committed by the sealed action and rebuilds PIT valuation before allocation.
     """
     try:
+        if "economicContract" in payload:
+            raise ValueError(
+                "economicContract no se acepta: el backend lo resuelve desde la autoridad sellada."
+            )
         action_fingerprint = payload.get("uncertaintyBoundActionCandidateFingerprint")
         if not isinstance(action_fingerprint, str):
             raise ValueError("uncertaintyBoundActionCandidateFingerprint es obligatorio.")
         allocation_policy_id = payload.get("allocationPolicyId")
         if not isinstance(allocation_policy_id, str) or not allocation_policy_id.strip():
             raise ValueError("allocationPolicyId es obligatorio.")
-        economic_contract = payload.get("economicContract")
-        if not isinstance(economic_contract, dict):
-            raise ValueError("economicContract debe ser un objeto.")
         reference_capital = payload.get("referenceCapital")
         if isinstance(reference_capital, bool) or not isinstance(reference_capital, (int, float)):
             raise ValueError("referenceCapital debe ser numérico finito y positivo.")
@@ -286,7 +300,6 @@ def post_portfolio_allocation_candidate(
         result = RecommendationAuthorizedAllocationPipelineService().build(
             uncertainty_bound_action_candidate_fingerprint=action_fingerprint,
             allocation_policy_id=allocation_policy_id,
-            economic_contract=economic_contract,
             reference_capital=float(reference_capital),
             base_currency=base_currency,
             positions=positions,
