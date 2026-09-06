@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_economic_contract_authority import (
+    RecommendationEconomicContractAuthority,
+)
 from app.services.recommendation_shadow_action_threshold_calibration_pipeline_service import (
     RecommendationShadowActionThresholdCalibrationPipelineService,
 )
@@ -100,6 +104,33 @@ def test_pipeline_seals_exact_contract_before_readiness_even_when_evidence_block
     assert result["advisoryStatus"] == "no_advice"
     assert result["productionEligible"] is False
     assert result["economicContract"]["constraints"]["automaticTrading"] is False
+
+
+def test_pipeline_persists_contract_for_recovery_by_new_authority_instance(tmp_path):
+    database_path = tmp_path / "economic-contract-authority.db"
+    readiness = _BlockedReadiness()
+    service = RecommendationShadowActionThresholdCalibrationPipelineService(
+        split_service=_SplitService(),
+        economic_contract_authority=RecommendationEconomicContractAuthority(
+            AthenaDatabase(database_path)
+        ),
+        readiness_service=readiness,
+    )
+
+    result = _run(service)
+    fingerprint = result["economicContractFingerprint"]
+
+    recovered = RecommendationEconomicContractAuthority(
+        AthenaDatabase(database_path)
+    ).get(economic_contract_fingerprint=fingerprint)
+
+    assert recovered == result["economicContract"]
+    assert recovered is not result["economicContract"]
+    assert recovered["economicContractFingerprint"] == fingerprint
+    assert recovered["advisoryStatus"] == "no_advice"
+    assert recovered["productionEligible"] is False
+    assert recovered["constraints"]["automaticTrading"] is False
+    assert readiness.calls == 1
 
 
 def test_pipeline_fails_closed_before_readiness_when_authority_cannot_seal():
