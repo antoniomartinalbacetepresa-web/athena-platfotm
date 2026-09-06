@@ -102,9 +102,14 @@ class _ActionRepository:
         return copy.deepcopy(record) if self.substitute else record
 
 
+_DEFAULT_CONTRACT = object()
+
+
 class _EconomicContractAuthority:
-    def __init__(self, contract=None):
-        self.contract = _economic_contract() if contract is None else contract
+    def __init__(self, contract=_DEFAULT_CONTRACT):
+        self.contract = (
+            _economic_contract() if contract is _DEFAULT_CONTRACT else contract
+        )
         self.requested = []
 
     def get(self, *, economic_contract_fingerprint):
