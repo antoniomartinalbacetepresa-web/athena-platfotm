@@ -15,6 +15,8 @@ FP_1 = "a" * 64
 FP_2 = "b" * 64
 RECORD_1 = "c" * 64
 RECORD_2 = "d" * 64
+ACTION_FP = "e" * 64
+ECONOMIC_FP = "f" * 64
 
 
 def _artifact(*, fingerprint=FP_1, left=10, right=20):
@@ -54,6 +56,24 @@ def _record(*, fingerprint=FP_1, record_fingerprint=RECORD_1, left=10, right=20)
     }
 
 
+def _action_record(*, economic_fingerprint=ECONOMIC_FP):
+    return {
+        "artifact": {
+            "uncertaintyBoundActionCandidateFingerprint": ACTION_FP,
+            "economicContractFingerprint": economic_fingerprint,
+        }
+    }
+
+
+def _economic_contract(*, fingerprint=ECONOMIC_FP):
+    return {
+        "economicContractFingerprint": fingerprint,
+        "advisoryStatus": "no_advice",
+        "productionEligible": False,
+        "automaticTrading": False,
+    }
+
+
 class _CorrelationRepository:
     def __init__(self, records=None, *, substitute=False):
         self.records = {
@@ -66,6 +86,32 @@ class _CorrelationRepository:
 
     def validate_record(self, record):
         return copy.deepcopy(record) if self.substitute else record
+
+
+class _ActionRepository:
+    def __init__(self, record=None, *, substitute=False):
+        self.record = _action_record() if record is None else record
+        self.substitute = substitute
+
+    def get(self, *, candidate_fingerprint):
+        if candidate_fingerprint != ACTION_FP:
+            return None
+        return self.record
+
+    def validate_record(self, record):
+        return copy.deepcopy(record) if self.substitute else record
+
+
+class _EconomicContractAuthority:
+    def __init__(self, contract=None):
+        self.contract = _economic_contract() if contract is None else contract
+        self.requested = []
+
+    def get(self, *, economic_contract_fingerprint):
+        self.requested.append(economic_contract_fingerprint)
+        if self.contract is None:
+            return None
+        return self.contract
 
 
 class _VerifiedPipeline:
@@ -87,11 +133,19 @@ class _VerifiedPipeline:
         }
 
 
+def _service(*, correlations=None, action_repository=None, economic_authority=None, inner=None):
+    return RecommendationAuthorizedAllocationPipelineService(
+        correlation_repository=_CorrelationRepository(correlations or []),
+        action_repository=action_repository or _ActionRepository(),
+        economic_contract_authority=economic_authority or _EconomicContractAuthority(),
+        verified_pipeline=inner or _VerifiedPipeline(),
+    )
+
+
 def _build(service, fingerprints):
     return service.build(
-        uncertainty_bound_action_candidate_fingerprint="e" * 64,
+        uncertainty_bound_action_candidate_fingerprint=ACTION_FP,
         allocation_policy_id="allocation-001",
-        economic_contract={"economicContractFingerprint": "f" * 64},
         reference_capital=10000.0,
         base_currency="EUR",
         positions=[],
@@ -100,16 +154,26 @@ def _build(service, fingerprints):
     )
 
 
-def test_authority_resolves_only_sealed_correlation_fingerprints():
+def test_authority_resolves_economic_contract_and_only_sealed_correlation_fingerprints():
     inner = _VerifiedPipeline()
-    service = RecommendationAuthorizedAllocationPipelineService(
-        correlation_repository=_CorrelationRepository([_record()]),
-        verified_pipeline=inner,
+    economic_authority = _EconomicContractAuthority()
+    service = _service(
+        correlations=[_record()],
+        economic_authority=economic_authority,
+        inner=inner,
     )
 
     result = _build(service, [FP_1])
 
+    assert economic_authority.requested == [ECONOMIC_FP]
+    assert inner.calls[0]["economic_contract"] == _economic_contract()
     assert inner.calls[0]["correlation_evidence"] == [_artifact()]
+    assert result["callerSuppliedEconomicContractAccepted"] is False
+    assert result["economicContractAuthorityBoundToAllocation"] is True
+    assert result["economicContractAuthority"] == {
+        "economicContractFingerprint": ECONOMIC_FP,
+        "resolvedFromAppendOnlyBackendAuthority": True,
+    }
     assert result["callerSuppliedCorrelationArtifactsAccepted"] is False
     assert result["correlationAuthorityBoundToAllocation"] is True
     assert result["correlationAuthority"] == [
@@ -125,19 +189,52 @@ def test_authority_resolves_only_sealed_correlation_fingerprints():
     assert result["productionEligible"] is False
     assert result["allocationEligible"] is False
     assert result["automaticTrading"] is False
+    assert result["policy"]["callerSuppliedEconomicContractAccepted"] is False
     assert result["policy"]["callerSuppliedCorrelationJsonAccepted"] is False
 
 
-def test_unknown_or_substituted_correlation_authority_fails_closed():
-    missing = RecommendationAuthorizedAllocationPipelineService(
+def test_missing_substituted_or_tampered_action_authority_fails_closed():
+    missing = _service(action_repository=_ActionRepository(record={}))
+    with pytest.raises(ValueError, match="carece de artefacto"):
+        _build(missing, [])
+
+    substituted = _service(action_repository=_ActionRepository(substitute=True))
+    with pytest.raises(ValueError, match="sustituyó el registro de acción"):
+        _build(substituted, [])
+
+    tampered = _action_record()
+    tampered["artifact"]["uncertaintyBoundActionCandidateFingerprint"] = "9" * 64
+    service = _service(action_repository=_ActionRepository(record=tampered))
+    with pytest.raises(ValueError, match="no corresponde al fingerprint solicitado"):
+        _build(service, [])
+
+
+def test_missing_or_mismatched_economic_contract_authority_fails_closed():
+    missing_authority = _EconomicContractAuthority(contract=None)
+    service = RecommendationAuthorizedAllocationPipelineService(
         correlation_repository=_CorrelationRepository([]),
+        action_repository=_ActionRepository(),
+        economic_contract_authority=missing_authority,
         verified_pipeline=_VerifiedPipeline(),
     )
+    with pytest.raises(ValueError, match="contrato económico.*no está sellado"):
+        _build(service, [])
+
+    mismatch = _EconomicContractAuthority(contract=_economic_contract(fingerprint="9" * 64))
+    service = _service(economic_authority=mismatch)
+    with pytest.raises(ValueError, match="no corresponde al fingerprint de la acción"):
+        _build(service, [])
+
+
+def test_unknown_or_substituted_correlation_authority_fails_closed():
+    missing = _service()
     with pytest.raises(ValueError, match="no está sellada"):
         _build(missing, [FP_1])
 
     substituted = RecommendationAuthorizedAllocationPipelineService(
         correlation_repository=_CorrelationRepository([_record()], substitute=True),
+        action_repository=_ActionRepository(),
+        economic_contract_authority=_EconomicContractAuthority(),
         verified_pipeline=_VerifiedPipeline(),
     )
     with pytest.raises(ValueError, match="sustituyó un registro"):
@@ -147,19 +244,13 @@ def test_unknown_or_substituted_correlation_authority_fails_closed():
 def test_tampered_fingerprint_binding_fails_closed():
     record = _record()
     record["artifact"]["portfolioCorrelationEvidenceFingerprint"] = "9" * 64
-    service = RecommendationAuthorizedAllocationPipelineService(
-        correlation_repository=_CorrelationRepository([record]),
-        verified_pipeline=_VerifiedPipeline(),
-    )
+    service = _service(correlations=[record])
     with pytest.raises(ValueError, match="no corresponde al registro"):
         _build(service, [FP_1])
 
 
 def test_duplicate_fingerprint_or_pair_fails_closed():
-    service = RecommendationAuthorizedAllocationPipelineService(
-        correlation_repository=_CorrelationRepository([_record()]),
-        verified_pipeline=_VerifiedPipeline(),
-    )
+    service = _service(correlations=[_record()])
     with pytest.raises(ValueError, match="fingerprint de correlación duplicado"):
         _build(service, [FP_1, FP_1])
 
@@ -169,18 +260,12 @@ def test_duplicate_fingerprint_or_pair_fails_closed():
         left=20,
         right=10,
     )
-    pair_duplicate = RecommendationAuthorizedAllocationPipelineService(
-        correlation_repository=_CorrelationRepository([_record(), second]),
-        verified_pipeline=_VerifiedPipeline(),
-    )
+    pair_duplicate = _service(correlations=[_record(), second])
     with pytest.raises(ValueError, match="mismo par"):
         _build(pair_duplicate, [FP_1, FP_2])
 
 
 def test_inner_pipeline_cannot_escape_production_gate():
-    service = RecommendationAuthorizedAllocationPipelineService(
-        correlation_repository=_CorrelationRepository([]),
-        verified_pipeline=_VerifiedPipeline(unsafe=True),
-    )
+    service = _service(inner=_VerifiedPipeline(unsafe=True))
     with pytest.raises(ValueError, match="productionEligible"):
         _build(service, [])
