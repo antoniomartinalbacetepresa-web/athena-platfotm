@@ -4,7 +4,7 @@ import 'package:app/features/portfolio/di/portfolio_allocation_dependencies.dart
 
 void main() {
   group('PortfolioAllocationDependencies', () {
-    test('wires all allocation boundaries to the same explicit backend', () {
+    test('wires all allocation boundaries and FX to the same explicit backend', () {
       final dependencies = PortfolioAllocationDependencies.create(
         baseUrl: 'https://athena.example.test/',
       );
@@ -20,6 +20,10 @@ void main() {
       );
       expect(
         dependencies.policyDataSource.baseUrl,
+        'https://athena.example.test',
+      );
+      expect(
+        dependencies.fxDataSource.baseUrl,
         'https://athena.example.test',
       );
       expect(
