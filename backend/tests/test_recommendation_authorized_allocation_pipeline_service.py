@@ -120,15 +120,19 @@ class _EconomicContractAuthority:
 
 
 class _VerifiedPipeline:
-    def __init__(self, *, unsafe=False):
+    def __init__(self, *, unsafe=False, increases_exposure=True):
         self.calls = []
         self.unsafe = unsafe
+        self.increases_exposure = increases_exposure
 
     def build(self, **kwargs):
         self.calls.append(copy.deepcopy(kwargs))
         return {
             "status": "verified_allocation_pipeline_non_advisory",
-            "allocationCandidate": {"status": "allocation_candidate_non_advisory"},
+            "allocationCandidate": {
+                "status": "allocation_candidate_non_advisory",
+                "increasesExposure": self.increases_exposure,
+            },
             "advisoryStatus": "no_advice",
             "recommendationCandidateReady": False,
             "productionEligible": self.unsafe,
@@ -173,6 +177,7 @@ def test_authority_resolves_economic_contract_and_only_sealed_correlation_finger
     assert economic_authority.requested == [ECONOMIC_FP]
     assert inner.calls[0]["economic_contract"] == _economic_contract()
     assert inner.calls[0]["correlation_evidence"] == [_artifact()]
+    assert inner.calls[0]["as_of"] == AS_OF
     assert result["callerSuppliedEconomicContractAccepted"] is False
     assert result["economicContractAuthorityBoundToAllocation"] is True
     assert result["economicContractAuthority"] == {
@@ -196,6 +201,8 @@ def test_authority_resolves_economic_contract_and_only_sealed_correlation_finger
     assert result["automaticTrading"] is False
     assert result["policy"]["callerSuppliedEconomicContractAccepted"] is False
     assert result["policy"]["callerSuppliedCorrelationJsonAccepted"] is False
+    assert result["policy"]["unusedCorrelationAuthoritiesRejected"] is True
+    assert result["policy"]["correlationAuthorityPitCheckedAtBoundary"] is True
 
 
 def test_missing_substituted_or_tampered_action_authority_fails_closed():
@@ -268,6 +275,51 @@ def test_duplicate_fingerprint_or_pair_fails_closed():
     pair_duplicate = _service(correlations=[_record(), second])
     with pytest.raises(ValueError, match="mismo par"):
         _build(pair_duplicate, [FP_1, FP_2])
+
+
+def test_correlation_authority_must_share_pit_cutoff_and_retrieval_boundary():
+    wrong_cutoff = _record()
+    wrong_cutoff["artifact"]["knowledgeCutoff"] = "2026-09-01T11:59:59+00:00"
+    service = _service(correlations=[wrong_cutoff])
+    with pytest.raises(ValueError, match="no comparte el corte PIT"):
+        _build(service, [FP_1])
+
+    future_retrieval = _record()
+    future_retrieval["artifact"]["latestRetrievedAt"] = "2026-09-01T12:00:01+00:00"
+    service = _service(correlations=[future_retrieval])
+    with pytest.raises(ValueError, match="recuperada después del corte PIT"):
+        _build(service, [FP_1])
+
+    missing_provider = _record()
+    missing_provider["artifact"]["sourceProvider"] = ""
+    service = _service(correlations=[missing_provider])
+    with pytest.raises(ValueError, match="correlation.sourceProvider es obligatorio"):
+        _build(service, [FP_1])
+
+
+def test_de_risking_cannot_bind_unused_correlation_authority():
+    inner = _VerifiedPipeline(increases_exposure=False)
+    service = _service(correlations=[_record()], inner=inner)
+
+    with pytest.raises(ValueError, match="autoridades de correlación.*no utiliza"):
+        _build(service, [FP_1])
+
+    clean = _service(inner=_VerifiedPipeline(increases_exposure=False))
+    result = _build(clean, [])
+    assert result["correlationAuthority"] == []
+    assert result["allocationCandidate"]["increasesExposure"] is False
+
+
+def test_inner_pipeline_must_declare_exposure_direction():
+    class _MissingDirectionPipeline(_VerifiedPipeline):
+        def build(self, **kwargs):
+            result = super().build(**kwargs)
+            result["allocationCandidate"].pop("increasesExposure")
+            return result
+
+    service = _service(inner=_MissingDirectionPipeline())
+    with pytest.raises(ValueError, match="increasesExposure.*booleana"):
+        _build(service, [])
 
 
 def test_inner_pipeline_cannot_escape_production_gate():
