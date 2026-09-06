@@ -52,6 +52,7 @@ class FxQuoteService:
                 "retrievedAt": now,
                 "sourceProvider": "identity",
                 "sourceSymbol": None,
+                "retrievalRequired": False,
                 "historicalPointInTimeEligible": False,
             }
 
@@ -88,6 +89,7 @@ class FxQuoteService:
             "retrievedAt": retrieved_at.isoformat(),
             "sourceProvider": source_provider,
             "sourceSymbol": source_symbol,
+            "retrievalRequired": True,
             "historicalPointInTimeEligible": False,
             "policy": {
                 "currentConversionOnly": True,
@@ -146,12 +148,14 @@ class FxQuoteService:
                 "knowledgeCutoff": effective_cutoff.isoformat(),
                 "sourceProvider": "identity",
                 "sourceSymbol": None,
+                "retrievalRequired": False,
                 "historicalPointInTimeEligible": True,
                 "replayedFromPersistence": False,
                 "policy": {
                     "exactObservationDateRequired": True,
-                    "retrievalMustNotExceedKnowledgeCutoff": True,
+                    "retrievalMustNotExceedKnowledgeCutoff": False,
                     "identityConversionRequiresNoMarketObservation": True,
+                    "identityConversionRequiresNoHistoricalRetrieval": True,
                 },
             }
 
@@ -277,6 +281,7 @@ class FxQuoteService:
             "knowledgeCutoff": knowledge_cutoff.isoformat(),
             "sourceProvider": source_provider,
             "sourceSymbol": source_symbol,
+            "retrievalRequired": True,
             "historicalPointInTimeEligible": True,
             "replayedFromPersistence": replayed,
             "policy": {
