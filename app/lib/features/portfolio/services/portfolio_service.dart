@@ -171,10 +171,23 @@ class PortfolioService {
     return normalized;
   }
 
+  String _normalizeReferenceCapitalCurrency(String value) {
+    final normalized = value.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(normalized)) {
+      throw ArgumentError.value(
+        value,
+        'referenceCapitalCurrency',
+        'La moneda del capital de referencia debe ser ISO de tres letras.',
+      );
+    }
+    return normalized;
+  }
+
   Future<void> createPortfolio({
     required String id,
     required String name,
     required double initialCapital,
+    String referenceCapitalCurrency = 'EUR',
   }) async {
     if (!initialCapital.isFinite || initialCapital < 0) {
       throw ArgumentError.value(
@@ -183,11 +196,14 @@ class PortfolioService {
         'El capital de referencia debe ser finito y no negativo.',
       );
     }
+    final normalizedCurrency =
+        _normalizeReferenceCapitalCurrency(referenceCapitalCurrency);
 
     _portfolio = Portfolio(
       id: id,
       name: name,
       initialCapital: initialCapital,
+      referenceCapitalCurrency: normalizedCurrency,
       positions: const [],
       createdAt: DateTime.now(),
     );
@@ -195,7 +211,10 @@ class PortfolioService {
     await _repository.savePortfolio(_portfolio!);
   }
 
-  Future<void> updateReferenceCapital(double referenceCapital) async {
+  Future<void> updateReferenceCapital(
+    double referenceCapital, {
+    String? referenceCapitalCurrency,
+  }) async {
     if (!referenceCapital.isFinite || referenceCapital < 0) {
       throw ArgumentError.value(
         referenceCapital,
@@ -204,16 +223,25 @@ class PortfolioService {
       );
     }
 
+    final existingCurrency = _portfolio?.referenceCapitalCurrency;
+    final currency = _normalizeReferenceCapitalCurrency(
+      referenceCapitalCurrency ?? existingCurrency ?? 'EUR',
+    );
+
     if (_portfolio == null) {
       await createPortfolio(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: 'Mi cartera',
         initialCapital: referenceCapital,
+        referenceCapitalCurrency: currency,
       );
       return;
     }
 
-    _portfolio = _portfolio!.copyWith(initialCapital: referenceCapital);
+    _portfolio = _portfolio!.copyWith(
+      initialCapital: referenceCapital,
+      referenceCapitalCurrency: currency,
+    );
     await _repository.savePortfolio(_portfolio!);
   }
 
