@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from app.repositories.recommendation_economic_contract_authority import (
@@ -80,6 +80,7 @@ class RecommendationAuthorizedAllocationPipelineService:
         correlation_evidence_fingerprints: list[str],
         as_of: datetime,
     ) -> dict[str, Any]:
+        cutoff = self._aware_datetime(as_of, "as_of")
         requested_action_fingerprint = self._sha256(
             uncertainty_bound_action_candidate_fingerprint,
             "uncertaintyBoundActionCandidateFingerprint",
@@ -148,6 +149,22 @@ class RecommendationAuthorizedAllocationPipelineService:
                 if artifact.get(field) is not False:
                     raise ValueError(f"La correlación sellada violó {field}=False.")
 
+            knowledge_cutoff = self._aware_datetime(
+                artifact.get("knowledgeCutoff"), "correlation.knowledgeCutoff"
+            )
+            if knowledge_cutoff != cutoff:
+                raise ValueError(
+                    "La correlación sellada no comparte el corte PIT de la asignación."
+                )
+            latest_retrieved_at = self._aware_datetime(
+                artifact.get("latestRetrievedAt"), "correlation.latestRetrievedAt"
+            )
+            if latest_retrieved_at > cutoff:
+                raise ValueError(
+                    "La correlación sellada fue recuperada después del corte PIT."
+                )
+            self._text(artifact.get("sourceProvider"), "correlation.sourceProvider")
+
             left = self._positive_int(artifact.get("leftInstrumentId"), "leftInstrumentId")
             right = self._positive_int(artifact.get("rightInstrumentId"), "rightInstrumentId")
             pair = tuple(sorted((left, right)))
@@ -175,7 +192,7 @@ class RecommendationAuthorizedAllocationPipelineService:
             base_currency=base_currency,
             positions=positions,
             correlation_evidence=artifacts,
-            as_of=as_of,
+            as_of=cutoff,
         )
         if not isinstance(result, dict):
             raise ValueError("El pipeline verificado no devolvió un artefacto válido.")
@@ -189,6 +206,21 @@ class RecommendationAuthorizedAllocationPipelineService:
         ):
             if result.get(field) is not False:
                 raise ValueError(f"El pipeline verificado violó {field}=False.")
+
+        allocation_candidate = result.get("allocationCandidate")
+        if not isinstance(allocation_candidate, dict):
+            raise ValueError(
+                "El pipeline verificado carece de candidato de asignación verificable."
+            )
+        increases_exposure = allocation_candidate.get("increasesExposure")
+        if not isinstance(increases_exposure, bool):
+            raise ValueError(
+                "El candidato de asignación no declara increasesExposure de forma booleana."
+            )
+        if not increases_exposure and authorities:
+            raise ValueError(
+                "Se recibieron autoridades de correlación que la asignación no utiliza."
+            )
 
         return {
             **result,
@@ -207,9 +239,25 @@ class RecommendationAuthorizedAllocationPipelineService:
                 "callerSuppliedEconomicContractAccepted": False,
                 "correlationMustResolveFromAppendOnlyBackendAuthority": True,
                 "callerSuppliedCorrelationJsonAccepted": False,
+                "unusedCorrelationAuthoritiesRejected": True,
+                "correlationAuthorityPitCheckedAtBoundary": True,
                 "automaticTrading": False,
             },
         }
+
+    def _aware_datetime(self, value: object, field: str) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str) and value.strip():
+            try:
+                parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"{field} debe ser ISO-8601 con zona horaria.") from exc
+        else:
+            raise ValueError(f"{field} debe ser ISO-8601 con zona horaria.")
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return parsed.astimezone(timezone.utc)
 
     def _sha256(self, value: object, field: str) -> str:
         result = str(value or "").strip().lower()
