@@ -58,18 +58,22 @@ def _artifact():
     }
 
 
-def test_repository_persists_and_reloads_candidate_json(tmp_path):
-    database, snapshot_id = _database_with_snapshot(tmp_path)
-    repository = RecommendationShadowLiveCandidateRepository(database)
-    artifact = _artifact()
-
-    candidate_id = repository.save(
+def _save(repository, snapshot_id, artifact):
+    return repository.save(
         snapshot_id=snapshot_id,
         candidate_fingerprint=artifact["candidateFingerprint"],
         confirmation_fingerprint=artifact["confirmationEvidenceFingerprint"],
         artifact_version=artifact["artifactVersion"],
         artifact=artifact,
     )
+
+
+def test_repository_persists_and_reloads_candidate_json(tmp_path):
+    database, snapshot_id = _database_with_snapshot(tmp_path)
+    repository = RecommendationShadowLiveCandidateRepository(database)
+    artifact = _artifact()
+
+    candidate_id = _save(repository, snapshot_id, artifact)
     loaded = repository.get(candidate_id)
 
     assert loaded is not None
@@ -104,13 +108,7 @@ def test_repository_rejects_same_fingerprint_with_different_content(tmp_path):
     database, snapshot_id = _database_with_snapshot(tmp_path)
     repository = RecommendationShadowLiveCandidateRepository(database)
     artifact = _artifact()
-    repository.save(
-        snapshot_id=snapshot_id,
-        candidate_fingerprint=artifact["candidateFingerprint"],
-        confirmation_fingerprint=artifact["confirmationEvidenceFingerprint"],
-        artifact_version=artifact["artifactVersion"],
-        artifact=artifact,
-    )
+    _save(repository, snapshot_id, artifact)
     changed = dict(artifact)
     changed["status"] = "changed"
 
@@ -128,13 +126,7 @@ def test_repository_rejects_second_candidate_for_same_snapshot_and_confirmation(
     database, snapshot_id = _database_with_snapshot(tmp_path)
     repository = RecommendationShadowLiveCandidateRepository(database)
     artifact = _artifact()
-    repository.save(
-        snapshot_id=snapshot_id,
-        candidate_fingerprint=artifact["candidateFingerprint"],
-        confirmation_fingerprint=artifact["confirmationEvidenceFingerprint"],
-        artifact_version=artifact["artifactVersion"],
-        artifact=artifact,
-    )
+    _save(repository, snapshot_id, artifact)
     second = dict(artifact)
     second["candidateFingerprint"] = "e" * 64
 
@@ -146,6 +138,72 @@ def test_repository_rejects_second_candidate_for_same_snapshot_and_confirmation(
             artifact_version=second["artifactVersion"],
             artifact=second,
         )
+
+
+def test_repository_rejects_artifact_identity_mismatch_on_save(tmp_path):
+    database, snapshot_id = _database_with_snapshot(tmp_path)
+    repository = RecommendationShadowLiveCandidateRepository(database)
+    artifact = _artifact()
+
+    with pytest.raises(ValueError, match="candidate_fingerprint persistido"):
+        repository.save(
+            snapshot_id=snapshot_id,
+            candidate_fingerprint="e" * 64,
+            confirmation_fingerprint=artifact["confirmationEvidenceFingerprint"],
+            artifact_version=artifact["artifactVersion"],
+            artifact=artifact,
+        )
+
+
+def test_repository_rejects_persisted_candidate_fingerprint_corruption(tmp_path):
+    database, snapshot_id = _database_with_snapshot(tmp_path)
+    repository = RecommendationShadowLiveCandidateRepository(database)
+    artifact = _artifact()
+    candidate_id = _save(repository, snapshot_id, artifact)
+
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_recommendation_shadow_live_candidates "
+            "SET candidate_fingerprint = ? WHERE id = ?",
+            ("e" * 64, candidate_id),
+        )
+
+    with pytest.raises(ValueError, match="candidate_fingerprint persistido"):
+        repository.get(candidate_id)
+
+
+def test_repository_rejects_persisted_confirmation_fingerprint_corruption(tmp_path):
+    database, snapshot_id = _database_with_snapshot(tmp_path)
+    repository = RecommendationShadowLiveCandidateRepository(database)
+    artifact = _artifact()
+    candidate_id = _save(repository, snapshot_id, artifact)
+
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_recommendation_shadow_live_candidates "
+            "SET confirmation_fingerprint = ? WHERE id = ?",
+            ("e" * 64, candidate_id),
+        )
+
+    with pytest.raises(ValueError, match="confirmation_fingerprint persistido"):
+        repository.get(candidate_id)
+
+
+def test_repository_rejects_persisted_artifact_version_corruption(tmp_path):
+    database, snapshot_id = _database_with_snapshot(tmp_path)
+    repository = RecommendationShadowLiveCandidateRepository(database)
+    artifact = _artifact()
+    candidate_id = _save(repository, snapshot_id, artifact)
+
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_recommendation_shadow_live_candidates "
+            "SET artifact_version = ? WHERE id = ?",
+            ("shadow-live-candidate-corrupt", candidate_id),
+        )
+
+    with pytest.raises(ValueError, match="artifact_version persistido"):
+        repository.get(candidate_id)
 
 
 def test_repository_foreign_key_rejects_unknown_snapshot(tmp_path):
