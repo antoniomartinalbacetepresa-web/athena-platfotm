@@ -38,12 +38,16 @@ def _database_with_candidate(tmp_path):
         evidence_snapshot={"productionEligible": False},
         benchmark_symbol="SPY",
     )
-    artifact = {"candidateFingerprint": "c" * 64}
+    artifact = {
+        "artifactVersion": "shadow-live-candidate-v1",
+        "candidateFingerprint": "c" * 64,
+        "confirmationEvidenceFingerprint": "d" * 64,
+    }
     candidate_id = RecommendationShadowLiveCandidateRepository(database).save(
         snapshot_id=snapshot_id,
-        candidate_fingerprint="c" * 64,
-        confirmation_fingerprint="d" * 64,
-        artifact_version="shadow-live-candidate-v1",
+        candidate_fingerprint=artifact["candidateFingerprint"],
+        confirmation_fingerprint=artifact["confirmationEvidenceFingerprint"],
+        artifact_version=artifact["artifactVersion"],
         artifact=artifact,
     )
     return database, candidate_id
