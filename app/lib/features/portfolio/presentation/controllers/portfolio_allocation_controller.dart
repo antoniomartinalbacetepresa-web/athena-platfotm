@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../recommendations/models/recommendation_allocation_request_context.dart';
 import '../../data/athena_backend_portfolio_allocation_authority_data_source.dart';
 import '../../data/athena_backend_portfolio_allocation_data_source.dart';
 import '../../models/portfolio_position.dart';
@@ -24,6 +25,24 @@ class PortfolioAllocationController extends ChangeNotifier {
   String? get error => _error;
   bool get isReady => _candidate != null && _blockedReason == null && _error == null;
 
+  Future<void> loadFromRecommendationContext({
+    required RecommendationAllocationRequestContext context,
+    required String allocationPolicyId,
+    required double referenceCapital,
+    required String baseCurrency,
+    required List<PortfolioPosition> positions,
+  }) {
+    return load(
+      instrumentId: context.instrumentId,
+      horizonDays: context.horizonDays,
+      allocationPolicyId: allocationPolicyId,
+      referenceCapital: referenceCapital,
+      baseCurrency: baseCurrency,
+      positions: positions,
+      asOf: context.requestAsOf,
+    );
+  }
+
   Future<void> load({
     required int instrumentId,
     required int horizonDays,
@@ -40,6 +59,12 @@ class PortfolioAllocationController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      if (instrumentId <= 0) {
+        throw ArgumentError.value(instrumentId, 'instrumentId');
+      }
+      if (horizonDays <= 0) {
+        throw ArgumentError.value(horizonDays, 'horizonDays');
+      }
       if (!referenceCapital.isFinite || referenceCapital <= 0) {
         throw ArgumentError.value(referenceCapital, 'referenceCapital');
       }
