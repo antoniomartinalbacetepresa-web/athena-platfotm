@@ -62,6 +62,7 @@ def test_fx_current_rate_exposes_provenance_and_direction() -> None:
     assert result["sourceSymbol"] == "USDEUR=X"
     assert result["observedAt"] == "2026-09-02T21:30:00+00:00"
     assert result["retrievedAt"] == "2026-09-02T21:30:01+00:00"
+    assert result["retrievalRequired"] is True
     assert result["historicalPointInTimeEligible"] is False
     assert result["policy"]["historicalBackdatingForbidden"] is True
 
@@ -77,6 +78,7 @@ def test_fx_same_currency_is_identity_without_market_call() -> None:
     assert result["status"] == "fx_identity"
     assert result["rate"] == 1.0
     assert result["sourceProvider"] == "identity"
+    assert result["retrievalRequired"] is False
     assert result["historicalPointInTimeEligible"] is False
 
 
@@ -170,6 +172,7 @@ def test_fx_historical_rate_preserves_observed_retrieved_and_cutoff() -> None:
     assert result["knowledgeCutoff"] == "2026-09-04T13:05:00+00:00"
     assert result["sourceProvider"] == "yahoo"
     assert result["sourceSymbol"] == "USDEUR=X"
+    assert result["retrievalRequired"] is True
     assert result["historicalPointInTimeEligible"] is True
     assert result["policy"]["retrievalMustNotExceedKnowledgeCutoff"] is True
     assert result["policy"]["persistObservationForFutureReplay"] is True
@@ -227,8 +230,11 @@ def test_fx_historical_identity_requires_no_market_data() -> None:
     assert market.history_calls == []
     assert result["status"] == "fx_historical_identity"
     assert result["rate"] == 1.0
+    assert result["retrievalRequired"] is False
     assert result["historicalPointInTimeEligible"] is True
+    assert result["policy"]["retrievalMustNotExceedKnowledgeCutoff"] is False
     assert result["policy"]["identityConversionRequiresNoMarketObservation"] is True
+    assert result["policy"]["identityConversionRequiresNoHistoricalRetrieval"] is True
 
 
 def test_fx_historical_cutoff_must_be_timezone_aware() -> None:
