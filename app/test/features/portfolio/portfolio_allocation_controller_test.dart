@@ -47,11 +47,20 @@ class _FakeAuthorityDataSource
 }
 
 class _FakeAllocationDataSource extends AthenaBackendPortfolioAllocationDataSource {
+  final int returnedInstrumentId;
+  final DateTime? returnedAsOf;
+  final String? returnedBaseCurrency;
+  final String returnedActionFingerprint;
   int calls = 0;
   String? receivedActionFingerprint;
   List<String>? receivedCorrelationFingerprints;
 
-  _FakeAllocationDataSource() : super(baseUrl: 'http://localhost');
+  _FakeAllocationDataSource({
+    this.returnedInstrumentId = 7,
+    this.returnedAsOf,
+    this.returnedBaseCurrency,
+    this.returnedActionFingerprint = _actionFingerprint,
+  }) : super(baseUrl: 'http://localhost');
 
   @override
   Future<AthenaBackendPortfolioAllocationCandidate> buildAuthorizedCandidate({
@@ -68,9 +77,9 @@ class _FakeAllocationDataSource extends AthenaBackendPortfolioAllocationDataSour
     receivedCorrelationFingerprints =
         List<String>.from(correlationEvidenceFingerprints);
     return AthenaBackendPortfolioAllocationCandidate(
-      asOf: asOf.toUtc(),
-      baseCurrency: baseCurrency,
-      instrumentId: 7,
+      asOf: returnedAsOf ?? asOf.toUtc(),
+      baseCurrency: returnedBaseCurrency ?? baseCurrency,
+      instrumentId: returnedInstrumentId,
       action: 'hold',
       policyState: 'full_long',
       referenceCapital: referenceCapital,
@@ -82,7 +91,7 @@ class _FakeAllocationDataSource extends AthenaBackendPortfolioAllocationDataSour
       targetAmountInBaseCurrency: 20,
       deltaAmountInBaseCurrency: 0,
       increasesExposure: false,
-      actionCandidateFingerprint: _actionFingerprint,
+      actionCandidateFingerprint: returnedActionFingerprint,
       economicContractFingerprint: _economicFingerprint,
       valuationFingerprint: _valuationFingerprint,
       allocationCandidateFingerprint: _allocationFingerprint,
@@ -280,6 +289,110 @@ void main() {
     expect(allocation.calls, 0);
     expect(controller.candidate, isNull);
     expect(controller.error, isNotNull);
+    expect(controller.isReady, isFalse);
+  });
+
+  test('mismatched authority identity fails closed before allocation', () async {
+    final authority = _FakeAuthorityDataSource(
+      AthenaBackendPortfolioAllocationAuthorityResolution(
+        asOf: cutoff,
+        instrumentId: 8,
+        horizonDays: 30,
+        ready: true,
+        reason: null,
+        actionCandidateFingerprint: _actionFingerprint,
+        correlationEvidenceFingerprints: const [],
+      ),
+    );
+    final allocation = _FakeAllocationDataSource();
+    final controller = PortfolioAllocationController(
+      authorityDataSource: authority,
+      allocationDataSource: allocation,
+    );
+
+    await controller.load(
+      instrumentId: 7,
+      horizonDays: 30,
+      allocationPolicyId: 'default-long-only',
+      referenceCapital: 100,
+      baseCurrency: 'EUR',
+      positions: const [],
+      asOf: cutoff,
+    );
+
+    expect(authority.calls, 1);
+    expect(allocation.calls, 0);
+    expect(controller.candidate, isNull);
+    expect(controller.error, contains('instrumento, horizonte o corte PIT'));
+    expect(controller.isReady, isFalse);
+  });
+
+  test('mismatched allocation candidate instrument fails closed', () async {
+    final authority = _FakeAuthorityDataSource(
+      AthenaBackendPortfolioAllocationAuthorityResolution(
+        asOf: cutoff,
+        instrumentId: 7,
+        horizonDays: 30,
+        ready: true,
+        reason: null,
+        actionCandidateFingerprint: _actionFingerprint,
+        correlationEvidenceFingerprints: const [_correlationFingerprint],
+      ),
+    );
+    final allocation = _FakeAllocationDataSource(returnedInstrumentId: 8);
+    final controller = PortfolioAllocationController(
+      authorityDataSource: authority,
+      allocationDataSource: allocation,
+    );
+
+    await controller.load(
+      instrumentId: 7,
+      horizonDays: 30,
+      allocationPolicyId: 'default-long-only',
+      referenceCapital: 100,
+      baseCurrency: 'EUR',
+      positions: const [],
+      asOf: cutoff,
+    );
+
+    expect(allocation.calls, 1);
+    expect(controller.candidate, isNull);
+    expect(controller.error, contains('no coincide con la autoridad solicitada'));
+    expect(controller.isReady, isFalse);
+  });
+
+  test('mismatched allocation candidate PIT binding fails closed', () async {
+    final authority = _FakeAuthorityDataSource(
+      AthenaBackendPortfolioAllocationAuthorityResolution(
+        asOf: cutoff,
+        instrumentId: 7,
+        horizonDays: 30,
+        ready: true,
+        reason: null,
+        actionCandidateFingerprint: _actionFingerprint,
+        correlationEvidenceFingerprints: const [_correlationFingerprint],
+      ),
+    );
+    final allocation = _FakeAllocationDataSource(
+      returnedAsOf: cutoff.add(const Duration(seconds: 1)),
+    );
+    final controller = PortfolioAllocationController(
+      authorityDataSource: authority,
+      allocationDataSource: allocation,
+    );
+
+    await controller.load(
+      instrumentId: 7,
+      horizonDays: 30,
+      allocationPolicyId: 'default-long-only',
+      referenceCapital: 100,
+      baseCurrency: 'EUR',
+      positions: const [],
+      asOf: cutoff,
+    );
+
+    expect(controller.candidate, isNull);
+    expect(controller.error, contains('no coincide con la autoridad solicitada'));
     expect(controller.isReady, isFalse);
   });
 }
