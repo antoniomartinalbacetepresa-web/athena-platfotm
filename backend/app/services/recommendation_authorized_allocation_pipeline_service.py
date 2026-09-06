@@ -3,8 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol
 
+from app.repositories.recommendation_economic_contract_authority import (
+    RecommendationEconomicContractAuthority,
+)
 from app.repositories.recommendation_portfolio_correlation_evidence_repository import (
     RecommendationPortfolioCorrelationEvidenceRepository,
+)
+from app.repositories.recommendation_uncertainty_bound_action_candidate_repository import (
+    RecommendationUncertaintyBoundActionCandidateRepository,
 )
 from app.services.recommendation_verified_allocation_pipeline_service import (
     RecommendationVerifiedAllocationPipelineService,
@@ -17,27 +23,47 @@ class _CorrelationRepository(Protocol):
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class _ActionRepository(Protocol):
+    def get(self, *, candidate_fingerprint: str) -> dict[str, Any] | None: ...
+
+    def validate_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class _EconomicContractAuthority(Protocol):
+    def get(self, *, economic_contract_fingerprint: str) -> dict[str, Any] | None: ...
+
+
 class _VerifiedPipeline(Protocol):
     def build(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class RecommendationAuthorizedAllocationPipelineService:
-    """Authority boundary for allocation using only sealed correlation fingerprints.
+    """Authority boundary for allocation using only backend-sealed evidence.
 
-    Raw correlation JSON remains an internal calculator input of the verified pipeline;
-    it is not accepted at this authority boundary. Every correlation must have been
-    computed from backend PIT observations and append-only sealed beforehand.
+    Raw correlation JSON and the economic contract remain internal calculator inputs
+    of the verified pipeline. At this boundary the caller supplies only sealed
+    fingerprints and product-owned parameters. The economic contract is resolved from
+    the exact fingerprint already committed by the sealed action candidate; it can
+    never be supplied, selected, reconstructed or defaulted by the caller.
     """
 
     def __init__(
         self,
         *,
         correlation_repository: _CorrelationRepository | None = None,
+        action_repository: _ActionRepository | None = None,
+        economic_contract_authority: _EconomicContractAuthority | None = None,
         verified_pipeline: _VerifiedPipeline | None = None,
     ) -> None:
         self._correlation_repository = (
             correlation_repository
             or RecommendationPortfolioCorrelationEvidenceRepository()
+        )
+        self._action_repository = (
+            action_repository or RecommendationUncertaintyBoundActionCandidateRepository()
+        )
+        self._economic_contract_authority = (
+            economic_contract_authority or RecommendationEconomicContractAuthority()
         )
         self._verified_pipeline = (
             verified_pipeline or RecommendationVerifiedAllocationPipelineService()
@@ -48,13 +74,50 @@ class RecommendationAuthorizedAllocationPipelineService:
         *,
         uncertainty_bound_action_candidate_fingerprint: str,
         allocation_policy_id: str,
-        economic_contract: dict[str, Any],
         reference_capital: float,
         base_currency: str,
         positions: list[dict[str, Any]],
         correlation_evidence_fingerprints: list[str],
         as_of: datetime,
     ) -> dict[str, Any]:
+        requested_action_fingerprint = self._sha256(
+            uncertainty_bound_action_candidate_fingerprint,
+            "uncertaintyBoundActionCandidateFingerprint",
+        )
+        action_record = self._action_repository.get(
+            candidate_fingerprint=requested_action_fingerprint
+        )
+        if action_record is None:
+            raise ValueError("El candidato de acción no está sellado por el backend.")
+        if self._action_repository.validate_record(action_record) is not action_record:
+            raise ValueError("El repositorio sustituyó el registro de acción sellado.")
+        action_artifact = action_record.get("artifact")
+        if not isinstance(action_artifact, dict):
+            raise ValueError("El registro de acción carece de artefacto válido.")
+        if self._sha256(
+            action_artifact.get("uncertaintyBoundActionCandidateFingerprint"),
+            "action.uncertaintyBoundActionCandidateFingerprint",
+        ) != requested_action_fingerprint:
+            raise ValueError("La acción sellada no corresponde al fingerprint solicitado.")
+        economic_contract_fingerprint = self._sha256(
+            action_artifact.get("economicContractFingerprint"),
+            "action.economicContractFingerprint",
+        )
+        economic_contract = self._economic_contract_authority.get(
+            economic_contract_fingerprint=economic_contract_fingerprint
+        )
+        if economic_contract is None:
+            raise ValueError(
+                "El contrato económico comprometido por la acción no está sellado."
+            )
+        if self._sha256(
+            economic_contract.get("economicContractFingerprint"),
+            "economicContract.economicContractFingerprint",
+        ) != economic_contract_fingerprint:
+            raise ValueError(
+                "La autoridad económica no corresponde al fingerprint de la acción."
+            )
+
         if not isinstance(correlation_evidence_fingerprints, list):
             raise ValueError("correlation_evidence_fingerprints debe ser una lista.")
 
@@ -105,9 +168,7 @@ class RecommendationAuthorizedAllocationPipelineService:
             )
 
         result = self._verified_pipeline.build(
-            uncertainty_bound_action_candidate_fingerprint=(
-                uncertainty_bound_action_candidate_fingerprint
-            ),
+            uncertainty_bound_action_candidate_fingerprint=requested_action_fingerprint,
             allocation_policy_id=allocation_policy_id,
             economic_contract=economic_contract,
             reference_capital=reference_capital,
@@ -131,11 +192,19 @@ class RecommendationAuthorizedAllocationPipelineService:
 
         return {
             **result,
+            "economicContractAuthority": {
+                "economicContractFingerprint": economic_contract_fingerprint,
+                "resolvedFromAppendOnlyBackendAuthority": True,
+            },
+            "economicContractAuthorityBoundToAllocation": True,
+            "callerSuppliedEconomicContractAccepted": False,
             "correlationAuthority": authorities,
             "correlationAuthorityBoundToAllocation": True,
             "callerSuppliedCorrelationArtifactsAccepted": False,
             "policy": {
                 **(result.get("policy") if isinstance(result.get("policy"), dict) else {}),
+                "economicContractMustResolveFromAppendOnlyBackendAuthority": True,
+                "callerSuppliedEconomicContractAccepted": False,
                 "correlationMustResolveFromAppendOnlyBackendAuthority": True,
                 "callerSuppliedCorrelationJsonAccepted": False,
                 "automaticTrading": False,
