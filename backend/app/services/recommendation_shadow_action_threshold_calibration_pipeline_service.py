@@ -5,6 +5,9 @@ import json
 from datetime import datetime
 from typing import Any, Protocol
 
+from app.repositories.recommendation_economic_contract_authority import (
+    RecommendationEconomicContractAuthority,
+)
 from app.services.recommendation_shadow_action_calibration_split_service import (
     RecommendationShadowActionCalibrationSplitService,
 )
@@ -46,6 +49,10 @@ class _EconomicContractService(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class _EconomicContractAuthority(Protocol):
+    def seal(self, *, artifact: dict[str, Any]) -> dict[str, Any]: ...
+
+
 class _ReadinessService(Protocol):
     def assess(
         self,
@@ -73,8 +80,9 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
 
     No caller may inject train/validation rows, candidate thresholds or a selection
     timestamp. Rows come from the split service, economic assumptions become a
-    fingerprinted contract, readiness gates threshold fitting, and the successful
-    validation selection is immediately committed by the freeze service.
+    fingerprinted contract that is sealed in backend authority before use,
+    readiness gates threshold fitting, and the successful validation selection is
+    immediately committed by the freeze service.
     """
 
     ARTIFACT_VERSION = "shadow-action-threshold-calibration-pipeline-v1"
@@ -85,6 +93,7 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
         *,
         split_service: _SplitService | None = None,
         economic_contract_service: _EconomicContractService | None = None,
+        economic_contract_authority: _EconomicContractAuthority | None = None,
         readiness_service: _ReadinessService | None = None,
         utility_panel_service: _UtilityPanelService | None = None,
         freeze_service: _FreezeService | None = None,
@@ -92,6 +101,9 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
         self._split_service = split_service or RecommendationShadowActionCalibrationSplitService()
         self._economic_contract_service = (
             economic_contract_service or RecommendationShadowActionEconomicContractService()
+        )
+        self._economic_contract_authority = (
+            economic_contract_authority or RecommendationEconomicContractAuthority()
         )
         self._readiness_service = (
             readiness_service or RecommendationShadowActionThresholdResearchReadinessService()
@@ -129,6 +141,7 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
             objective_name=objective_name,
             objective_version=objective_version,
         )
+        contract = self._seal_economic_contract(contract)
         readiness = self._readiness_service.assess(
             split=split,
             economic_contract=contract,
@@ -225,6 +238,33 @@ class RecommendationShadowActionThresholdCalibrationPipelineService:
             "conviction": None,
             "policy": self._policy(frozen=False),
         }
+
+    def _seal_economic_contract(self, contract: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(contract, dict):
+            raise ValueError("El contrato económico producido debe ser un objeto.")
+        expected_fingerprint = self._sha256(
+            contract.get("economicContractFingerprint"),
+            "economicContractFingerprint",
+        )
+        sealed = self._economic_contract_authority.seal(artifact=contract)
+        if not isinstance(sealed, dict):
+            raise ValueError("La autoridad no devolvió un contrato económico válido.")
+        sealed_fingerprint = self._sha256(
+            sealed.get("economicContractFingerprint"),
+            "economicContractFingerprint",
+        )
+        if sealed_fingerprint != expected_fingerprint:
+            raise ValueError("La autoridad sustituyó el fingerprint del contrato económico.")
+        if sealed != contract:
+            raise ValueError("La autoridad sustituyó el contrato económico producido.")
+        if sealed.get("advisoryStatus") != "no_advice":
+            raise ValueError("El contrato sellado abandonó no_advice.")
+        if sealed.get("productionEligible") is not False:
+            raise ValueError("El contrato sellado intentó habilitar producción.")
+        constraints = sealed.get("constraints")
+        if not isinstance(constraints, dict) or constraints.get("automaticTrading") is not False:
+            raise ValueError("El contrato sellado intentó habilitar trading automático.")
+        return sealed
 
     def _assert_readiness(
         self,
