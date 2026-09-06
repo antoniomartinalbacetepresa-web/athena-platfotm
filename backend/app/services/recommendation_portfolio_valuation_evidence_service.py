@@ -310,15 +310,32 @@ class RecommendationPortfolioValuationEvidenceService:
         rate = self._positive_finite(payload.get("rate"), "fx.rate")
         observed = self._aware_text(payload.get("observedAt"), "fx.observedAt")
         retrieved = self._aware_text(payload.get("retrievedAt"), "fx.retrievedAt")
-        if observed > retrieved or observed > cutoff or retrieved > cutoff:
-            raise ValueError("La evidencia FX viola el corte PIT.")
+        provider = self._text(payload.get("sourceProvider"), "fx.sourceProvider")
+        source_symbol = payload.get("sourceSymbol")
+        identity_conversion = source_currency == base_currency
+        retrieval_required = payload.get("retrievalRequired")
+
+        if identity_conversion:
+            if (
+                provider != "identity"
+                or source_symbol is not None
+                or retrieval_required is not False
+                or not math.isclose(rate, 1.0, rel_tol=0.0, abs_tol=0.0)
+            ):
+                raise ValueError("La conversión identidad FX no es determinista y verificable.")
+            if observed > cutoff:
+                raise ValueError("La evidencia FX viola el corte PIT.")
+        else:
+            if retrieval_required is not True:
+                raise ValueError("La conversión FX de mercado debe declarar retrievalRequired=true.")
+            if not str(source_symbol or "").strip():
+                raise ValueError("La conversión FX de mercado carece de sourceSymbol.")
+            if observed > retrieved or observed > cutoff or retrieved > cutoff:
+                raise ValueError("La evidencia FX viola el corte PIT.")
+
         observed_on = str(payload.get("observedOn") or observed.date().isoformat())
         if observed_on != expected_date:
             raise ValueError("La evidencia FX no corresponde a la fecha del precio.")
-        provider = self._text(payload.get("sourceProvider"), "fx.sourceProvider")
-        source_symbol = payload.get("sourceSymbol")
-        if source_currency != base_currency and not str(source_symbol or "").strip():
-            raise ValueError("La conversión FX de mercado carece de sourceSymbol.")
         return {
             "rate": rate,
             "sourceProvider": provider,
@@ -326,6 +343,7 @@ class RecommendationPortfolioValuationEvidenceService:
             "observedOn": observed_on,
             "observedAt": observed.isoformat(),
             "retrievedAt": retrieved.isoformat(),
+            "retrievalRequired": retrieval_required,
             "historicalPointInTimeEligible": True,
             "replayedFromPersistence": bool(payload.get("replayedFromPersistence")),
         }
