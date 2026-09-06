@@ -83,8 +83,52 @@ class _FxService:
             "retrievedAt": self.retrieved_at,
             "sourceProvider": "yahoo",
             "sourceSymbol": "USDEUR=X",
+            "retrievalRequired": True,
             "historicalPointInTimeEligible": True,
             "replayedFromPersistence": True,
+        }
+
+
+class _IdentityFxService:
+    def __init__(
+        self,
+        *,
+        retrieved_at="2026-09-06T20:00:00+00:00",
+        provider="identity",
+        rate=1.0,
+        retrieval_required=False,
+        source_symbol=None,
+    ):
+        self.retrieved_at = retrieved_at
+        self.provider = provider
+        self.rate = rate
+        self.retrieval_required = retrieval_required
+        self.source_symbol = source_symbol
+
+    def get_historical_rate(
+        self,
+        *,
+        base_currency,
+        quote_currency,
+        observed_on,
+        knowledge_cutoff=None,
+    ):
+        assert base_currency == "USD"
+        assert quote_currency == "USD"
+        assert knowledge_cutoff == AS_OF
+        return {
+            "status": "fx_historical_identity",
+            "baseCurrency": "USD",
+            "quoteCurrency": "USD",
+            "rate": self.rate,
+            "observedOn": observed_on.isoformat(),
+            "observedAt": "2026-09-05T00:00:00+00:00",
+            "retrievedAt": self.retrieved_at,
+            "sourceProvider": self.provider,
+            "sourceSymbol": self.source_symbol,
+            "retrievalRequired": self.retrieval_required,
+            "historicalPointInTimeEligible": True,
+            "replayedFromPersistence": False,
         }
 
 
@@ -127,10 +171,48 @@ def test_builds_canonical_pit_fx_bound_valuation_without_claiming_cash_or_advice
     assert position["canonicalIdentity"]["canonicalInstrumentId"] == "canonical-aapl-xnas"
     assert position["priceSourceProvider"] == "yahoo"
     assert position["fx"]["sourceSymbol"] == "USDEUR=X"
+    assert position["fx"]["retrievalRequired"] is True
     assert result["advisoryStatus"] == "no_advice"
     assert result["productionEligible"] is False
     assert result["automaticTrading"] is False
     assert service.validate_artifact(result) is result
+
+
+def test_same_currency_historical_valuation_accepts_only_deterministic_identity_fx():
+    service = _service(fx=_IdentityFxService())
+
+    result = service.build(
+        positions=[_position()],
+        base_currency="USD",
+        as_of=AS_OF,
+    )
+
+    assert result["investedPositionsValueInBaseCurrency"] == pytest.approx(400.0)
+    fx = result["positions"][0]["fx"]
+    assert fx["sourceProvider"] == "identity"
+    assert fx["sourceSymbol"] is None
+    assert fx["retrievalRequired"] is False
+    assert fx["rate"] == 1.0
+    assert fx["retrievedAt"] == "2026-09-06T20:00:00+00:00"
+    assert service.validate_artifact(result) is result
+
+
+@pytest.mark.parametrize(
+    ("fx", "message"),
+    [
+        (_IdentityFxService(provider="fake"), "identidad FX"),
+        (_IdentityFxService(rate=1.01), "identidad FX"),
+        (_IdentityFxService(retrieval_required=True), "identidad FX"),
+        (_IdentityFxService(source_symbol="USDUSD=X"), "identidad FX"),
+    ],
+)
+def test_same_currency_identity_fx_spoofing_fails_closed(fx, message):
+    with pytest.raises(ValueError, match=message):
+        _service(fx=fx).build(
+            positions=[_position()],
+            base_currency="USD",
+            as_of=AS_OF,
+        )
 
 
 def test_duplicate_instrument_fails_closed():
@@ -164,6 +246,19 @@ def test_fx_known_after_as_of_fails_closed():
             positions=[_position()],
             base_currency="EUR",
             as_of=AS_OF,
+        )
+
+
+def test_market_fx_missing_retrieval_contract_fails_closed():
+    class _MissingContractFx(_FxService):
+        def get_historical_rate(self, **kwargs):
+            payload = super().get_historical_rate(**kwargs)
+            payload.pop("retrievalRequired")
+            return payload
+
+    with pytest.raises(ValueError, match="retrievalRequired=true"):
+        _service(fx=_MissingContractFx()).build(
+            positions=[_position()], base_currency="EUR", as_of=AS_OF
         )
 
 
