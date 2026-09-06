@@ -9,6 +9,7 @@ import '../../models/portfolio_position.dart';
 import '../../models/portfolio_valuation_summary.dart';
 import '../../services/portfolio_service.dart';
 import '../../widgets/add_position_dialog.dart';
+import '../../widgets/athena_allocation_panel.dart';
 import '../../widgets/set_reference_capital_dialog.dart';
 import '../controllers/portfolio_current_valuation_controller.dart';
 
@@ -357,7 +358,6 @@ class _PortfolioPageState extends State<PortfolioPage> {
                   ),
                   const SizedBox(height: AthenaSpacing.lg),
                   _buildAthenaAllocationState(
-                    hasReferenceCapital: hasReferenceCapital,
                     referenceCapital: referenceCapital,
                     unallocatedCapital: unallocatedCapital,
                     comparable: historicalComparable,
@@ -605,58 +605,16 @@ class _PortfolioPageState extends State<PortfolioPage> {
   }
 
   Widget _buildAthenaAllocationState({
-    required bool hasReferenceCapital,
     required double referenceCapital,
     required double? unallocatedCapital,
     required bool comparable,
   }) {
-    final referenceText = hasReferenceCapital
-        ? 'Capital de referencia: ${_formatCurrency(referenceCapital, _baseCurrency)}. '
-            '${comparable ? 'Capital actualmente no asignado: ${_formatCurrency(unallocatedCapital ?? 0, _baseCurrency)}.' : 'El capital no asignado no se calcula hasta disponer de un coste histórico EUR verificable con FX PIT cuando sea necesario.'}'
-        : 'Define un capital de referencia para que una futura planificación validada pueda expresarse en euros y porcentajes.';
-
-    return _card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                'ASIGNACIÓN ATHENA',
-                style: TextStyle(
-                  color: AthenaColors.text,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              _ValidationBadge(),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            referenceText,
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'ATHENA no propone todavía importes por activo porque el motor de '
-            'recomendaciones sigue en validación. La asignación sólo se habilitará '
-            'con recomendaciones reales, trazables y elegibles para producción.',
-            style: TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
+    return AthenaAllocationPanel(
+      referenceCapital: referenceCapital,
+      referenceCapitalCurrency: _baseCurrency,
+      positions: _positions,
+      currentUnallocatedCapital: unallocatedCapital,
+      currentCapitalComparable: comparable,
     );
   }
 
@@ -779,30 +737,6 @@ class _PortfolioPageState extends State<PortfolioPage> {
   static String _formatDateTime(DateTime value) {
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
-  }
-}
-
-class _ValidationBadge extends StatelessWidget {
-  const _ValidationBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: AthenaColors.cardSecondary,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AthenaColors.border),
-      ),
-      child: const Text(
-        'MOTOR EN VALIDACIÓN',
-        style: TextStyle(
-          color: AthenaColors.textSecondary,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
   }
 }
 
