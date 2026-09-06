@@ -20,6 +20,7 @@ class AthenaBackendPortfolioAllocationCandidate {
   final double deltaAmountInBaseCurrency;
   final bool increasesExposure;
   final String actionCandidateFingerprint;
+  final String economicContractFingerprint;
   final String valuationFingerprint;
   final String allocationCandidateFingerprint;
   final String verifiedPipelineFingerprint;
@@ -41,6 +42,7 @@ class AthenaBackendPortfolioAllocationCandidate {
     required this.deltaAmountInBaseCurrency,
     required this.increasesExposure,
     required this.actionCandidateFingerprint,
+    required this.economicContractFingerprint,
     required this.valuationFingerprint,
     required this.allocationCandidateFingerprint,
     required this.verifiedPipelineFingerprint,
@@ -60,7 +62,6 @@ class AthenaBackendPortfolioAllocationDataSource {
   Future<AthenaBackendPortfolioAllocationCandidate> buildAuthorizedCandidate({
     required String uncertaintyBoundActionCandidateFingerprint,
     required String allocationPolicyId,
-    required Map<String, Object?> economicContract,
     required double referenceCapital,
     required String baseCurrency,
     required List<PortfolioPosition> positions,
@@ -97,7 +98,9 @@ class AthenaBackendPortfolioAllocationDataSource {
     final seenInstrumentIds = <int>{};
     for (final position in positions) {
       final instrumentId = position.databaseInstrumentId;
-      if (!position.hasVerifiedCanonicalIdentity || instrumentId == null || instrumentId <= 0) {
+      if (!position.hasVerifiedCanonicalIdentity ||
+          instrumentId == null ||
+          instrumentId <= 0) {
         throw StateError('Allocation requiere identidad canónica verificable.');
       }
       if (!position.hasVerifiedPositionProvenance) {
@@ -135,7 +138,6 @@ class AthenaBackendPortfolioAllocationDataSource {
       body: jsonEncode({
         'uncertaintyBoundActionCandidateFingerprint': actionFingerprint,
         'allocationPolicyId': policyId,
-        'economicContract': economicContract,
         'referenceCapital': referenceCapital,
         'baseCurrency': currency,
         'positions': payloadPositions,
@@ -150,7 +152,9 @@ class AthenaBackendPortfolioAllocationDataSource {
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic> || decoded['data'] is! Map) {
-      throw const FormatException('La respuesta de allocation no contiene data válido.');
+      throw const FormatException(
+        'La respuesta de allocation no contiene data válido.',
+      );
     }
     final data = Map<String, dynamic>.from(decoded['data'] as Map);
     _validateSafetyContract(data);
@@ -158,18 +162,42 @@ class AthenaBackendPortfolioAllocationDataSource {
     if (data['artifactVersion'] != 'athena-verified-allocation-pipeline-v3' ||
         data['status'] != 'verified_allocation_pipeline_non_advisory' ||
         data['actionAuthorityBoundToAllocation'] != true ||
+        data['economicContractAuthorityBoundToAllocation'] != true ||
+        data['callerSuppliedEconomicContractAccepted'] != false ||
         data['portfolioValuationBoundToAllocation'] != true ||
         data['portfolioValuationSealedBeforeAllocation'] != true ||
         data['callerSuppliedActionArtifactsAccepted'] != false ||
         data['callerSuppliedValuationTotalsAccepted'] != false ||
         data['correlationAuthorityBoundToAllocation'] != true ||
         data['callerSuppliedCorrelationArtifactsAccepted'] != false) {
-      throw const FormatException('Allocation backend no acredita autoridades selladas.');
+      throw const FormatException(
+        'Allocation backend no acredita autoridades selladas.',
+      );
     }
 
-    final returnedAsOf = DateTime.tryParse(data['asOf']?.toString() ?? '')?.toUtc();
+    final economicAuthorityRaw = data['economicContractAuthority'];
+    if (economicAuthorityRaw is! Map) {
+      throw const FormatException(
+        'Allocation backend carece de autoridad económica verificable.',
+      );
+    }
+    final economicAuthority = Map<String, dynamic>.from(economicAuthorityRaw);
+    if (economicAuthority['resolvedFromAppendOnlyBackendAuthority'] != true) {
+      throw const FormatException(
+        'Allocation backend no resolvió el contrato económico desde autoridad append-only.',
+      );
+    }
+    final economicContractFingerprint = _requiredSha256(
+      economicAuthority['economicContractFingerprint']?.toString() ?? '',
+      'economicContractFingerprint',
+    );
+
+    final returnedAsOf =
+        DateTime.tryParse(data['asOf']?.toString() ?? '')?.toUtc();
     if (returnedAsOf == null || returnedAsOf != cutoff) {
-      throw const FormatException('Allocation backend cambió el corte PIT solicitado.');
+      throw const FormatException(
+        'Allocation backend cambió el corte PIT solicitado.',
+      );
     }
     if (data['baseCurrency']?.toString().toUpperCase() != currency) {
       throw const FormatException('Allocation backend cambió la moneda base.');
@@ -177,35 +205,52 @@ class AthenaBackendPortfolioAllocationDataSource {
 
     final allocationRaw = data['allocationCandidate'];
     if (allocationRaw is! Map) {
-      throw const FormatException('Allocation backend carece de candidato verificable.');
+      throw const FormatException(
+        'Allocation backend carece de candidato verificable.',
+      );
     }
     final allocation = Map<String, dynamic>.from(allocationRaw);
     _validateSafetyContract(allocation);
     if (allocation['status'] != 'allocation_candidate_non_advisory' ||
         allocation['allocationEvidenceStructurallyReady'] != true) {
-      throw const FormatException('El candidato de allocation no está estructuralmente verificado.');
+      throw const FormatException(
+        'El candidato de allocation no está estructuralmente verificado.',
+      );
     }
     if (allocation['baseCurrency']?.toString().toUpperCase() != currency ||
-        DateTime.tryParse(allocation['asOf']?.toString() ?? '')?.toUtc() != cutoff) {
-      throw const FormatException('El candidato de allocation no coincide con moneda/asOf solicitados.');
+        DateTime.tryParse(allocation['asOf']?.toString() ?? '')?.toUtc() !=
+            cutoff) {
+      throw const FormatException(
+        'El candidato de allocation no coincide con moneda/asOf solicitados.',
+      );
     }
 
-    final returnedReference = _finitePositive(allocation['referenceCapital'], 'referenceCapital');
+    final returnedReference =
+        _finitePositive(allocation['referenceCapital'], 'referenceCapital');
     if ((returnedReference - referenceCapital).abs() > 1e-9) {
-      throw const FormatException('Allocation backend cambió el capital de referencia.');
+      throw const FormatException(
+        'Allocation backend cambió el capital de referencia.',
+      );
     }
     final actionFp = _requiredSha256(
       data['uncertaintyBoundActionCandidateFingerprint']?.toString() ?? '',
       'returnedActionFingerprint',
     );
     if (actionFp != actionFingerprint ||
-        allocation['uncertaintyBoundActionCandidateFingerprint']?.toString().toLowerCase() != actionFingerprint) {
-      throw const FormatException('Allocation backend cambió la autoridad de acción.');
+        allocation['uncertaintyBoundActionCandidateFingerprint']
+                ?.toString()
+                .toLowerCase() !=
+            actionFingerprint) {
+      throw const FormatException(
+        'Allocation backend cambió la autoridad de acción.',
+      );
     }
 
     final authoritiesRaw = data['correlationAuthority'];
     if (authoritiesRaw is! List) {
-      throw const FormatException('Allocation backend carece de autoridad de correlación.');
+      throw const FormatException(
+        'Allocation backend carece de autoridad de correlación.',
+      );
     }
     final returnedCorrelationFingerprints = <String>[];
     for (final item in authoritiesRaw) {
@@ -213,16 +258,28 @@ class AthenaBackendPortfolioAllocationDataSource {
         throw const FormatException('Autoridad de correlación inválida.');
       }
       returnedCorrelationFingerprints.add(
-        _requiredSha256(item['evidenceFingerprint']?.toString() ?? '', 'correlationAuthority'),
+        _requiredSha256(
+          item['evidenceFingerprint']?.toString() ?? '',
+          'correlationAuthority',
+        ),
       );
-      _requiredSha256(item['recordFingerprint']?.toString() ?? '', 'correlationRecord');
+      _requiredSha256(
+        item['recordFingerprint']?.toString() ?? '',
+        'correlationRecord',
+      );
       if (DateTime.tryParse(item['persistedAt']?.toString() ?? '') == null) {
-        throw const FormatException('Autoridad de correlación sin persistedAt válido.');
+        throw const FormatException(
+          'Autoridad de correlación sin persistedAt válido.',
+        );
       }
     }
     if (returnedCorrelationFingerprints.length != correlationFingerprints.length ||
-        !returnedCorrelationFingerprints.toSet().containsAll(correlationFingerprints)) {
-      throw const FormatException('Allocation backend cambió las autoridades de correlación solicitadas.');
+        !returnedCorrelationFingerprints
+            .toSet()
+            .containsAll(correlationFingerprints)) {
+      throw const FormatException(
+        'Allocation backend cambió las autoridades de correlación solicitadas.',
+      );
     }
 
     return AthenaBackendPortfolioAllocationCandidate(
@@ -257,8 +314,12 @@ class AthenaBackendPortfolioAllocationDataSource {
         allocation['deltaAmountInBaseCurrency'],
         'deltaAmountInBaseCurrency',
       ),
-      increasesExposure: _strictBool(allocation['increasesExposure'], 'increasesExposure'),
+      increasesExposure: _strictBool(
+        allocation['increasesExposure'],
+        'increasesExposure',
+      ),
       actionCandidateFingerprint: actionFp,
+      economicContractFingerprint: economicContractFingerprint,
       valuationFingerprint: _requiredSha256(
         data['portfolioValuationEvidenceFingerprint']?.toString() ?? '',
         'portfolioValuationEvidenceFingerprint',
@@ -271,7 +332,8 @@ class AthenaBackendPortfolioAllocationDataSource {
         data['verifiedAllocationPipelineFingerprint']?.toString() ?? '',
         'verifiedAllocationPipelineFingerprint',
       ),
-      correlationEvidenceFingerprints: List.unmodifiable(returnedCorrelationFingerprints),
+      correlationEvidenceFingerprints:
+          List.unmodifiable(returnedCorrelationFingerprints),
     );
   }
 
@@ -281,7 +343,9 @@ class AthenaBackendPortfolioAllocationDataSource {
         data['productionEligible'] != false ||
         data['allocationEligible'] != false ||
         data['automaticTrading'] != false) {
-      throw const FormatException('Allocation violó el contrato no_advice/fail-closed.');
+      throw const FormatException(
+        'Allocation violó el contrato no_advice/fail-closed.',
+      );
     }
   }
 
@@ -314,17 +378,23 @@ class AthenaBackendPortfolioAllocationDataSource {
 
   static double _unit(dynamic value, String field) {
     final result = _finite(value, field);
-    if (result < 0 || result > 1) throw FormatException('$field debe estar entre 0 y 1.');
+    if (result < 0 || result > 1) {
+      throw FormatException('$field debe estar entre 0 y 1.');
+    }
     return result;
   }
 
   static int _positiveInt(dynamic value, String field) {
-    if (value is! int || value <= 0) throw FormatException('$field debe ser entero positivo.');
+    if (value is! int || value <= 0) {
+      throw FormatException('$field debe ser entero positivo.');
+    }
     return value;
   }
 
   static bool _strictBool(dynamic value, String field) {
-    if (value is! bool) throw FormatException('$field debe ser booleano.');
+    if (value is! bool) {
+      throw FormatException('$field debe ser booleano.');
+    }
     return value;
   }
 
