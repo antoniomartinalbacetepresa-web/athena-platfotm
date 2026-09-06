@@ -2,6 +2,8 @@ import 'package:app/features/portfolio/data/athena_backend_portfolio_allocation_
 import 'package:app/features/portfolio/data/athena_backend_portfolio_allocation_data_source.dart';
 import 'package:app/features/portfolio/models/portfolio_position.dart';
 import 'package:app/features/portfolio/presentation/controllers/portfolio_allocation_controller.dart';
+import 'package:app/features/recommendations/models/recommendation_allocation_request_context.dart';
+import 'package:app/features/recommendations/models/recommendation_shadow_candidate_snapshot.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _actionFingerprint =
@@ -21,6 +23,9 @@ class _FakeAuthorityDataSource
     extends AthenaBackendPortfolioAllocationAuthorityDataSource {
   final AthenaBackendPortfolioAllocationAuthorityResolution resolution;
   int calls = 0;
+  int? receivedInstrumentId;
+  int? receivedHorizonDays;
+  DateTime? receivedAsOf;
   List<int>? receivedHeldInstrumentIds;
 
   _FakeAuthorityDataSource(this.resolution) : super(baseUrl: 'http://localhost');
@@ -33,6 +38,9 @@ class _FakeAuthorityDataSource
     required DateTime asOf,
   }) async {
     calls += 1;
+    receivedInstrumentId = instrumentId;
+    receivedHorizonDays = horizonDays;
+    receivedAsOf = asOf.toUtc();
     receivedHeldInstrumentIds = List<int>.from(heldInstrumentIds);
     return resolution;
   }
@@ -82,6 +90,46 @@ class _FakeAllocationDataSource extends AthenaBackendPortfolioAllocationDataSour
       correlationEvidenceFingerprints: const [_correlationFingerprint],
     );
   }
+}
+
+RecommendationAllocationRequestContext _recommendationContext(DateTime requestAsOf) {
+  final candidateAsOf = requestAsOf.subtract(const Duration(hours: 1));
+  final snapshot = RecommendationShadowCandidateSnapshot(
+    status: 'shadow_candidate_available',
+    asOf: candidateAsOf.add(const Duration(minutes: 1)),
+    candidateAsOf: candidateAsOf,
+    persistedAt: candidateAsOf.add(const Duration(seconds: 30)),
+    recordId: 1,
+    candidate: RecommendationShadowCandidate(
+      symbol: 'TEST',
+      instrumentId: 7,
+      asOf: candidateAsOf,
+      candidateFingerprint: _actionFingerprint,
+      horizons: const {
+        30: RecommendationShadowHorizon(
+          horizonDays: 30,
+          expectedExcessReturn: null,
+          modelFingerprint: null,
+          explanation: {},
+        ),
+      },
+      riskContext: const {},
+      valuationContext: const {},
+      fundamentalContext: const {},
+      advisoryStatus: 'no_advice',
+      recommendationCandidateReady: false,
+      productionEligible: false,
+    ),
+    advisoryStatus: 'no_advice',
+    recommendationCandidateReady: false,
+    productionEligible: false,
+    automaticTrading: false,
+  );
+  return RecommendationAllocationRequestContext.fromShadowSnapshot(
+    snapshot: snapshot,
+    horizonDays: 30,
+    requestAsOf: requestAsOf,
+  );
 }
 
 void main() {
@@ -163,6 +211,41 @@ void main() {
     expect(controller.blockedReason, isNull);
     expect(controller.isReady, isTrue);
     expect(controller.candidate?.economicContractFingerprint, _economicFingerprint);
+  });
+
+  test('recommendation context forwards only instrument horizon and PIT cutoff',
+      () async {
+    final authority = _FakeAuthorityDataSource(
+      AthenaBackendPortfolioAllocationAuthorityResolution(
+        asOf: cutoff,
+        instrumentId: 7,
+        horizonDays: 30,
+        ready: false,
+        reason: 'validated_oos_evidence_not_ready',
+        actionCandidateFingerprint: null,
+        correlationEvidenceFingerprints: const [],
+      ),
+    );
+    final allocation = _FakeAllocationDataSource();
+    final controller = PortfolioAllocationController(
+      authorityDataSource: authority,
+      allocationDataSource: allocation,
+    );
+
+    await controller.loadFromRecommendationContext(
+      context: _recommendationContext(cutoff),
+      allocationPolicyId: 'default-long-only',
+      referenceCapital: 100,
+      baseCurrency: 'EUR',
+      positions: const [],
+    );
+
+    expect(authority.calls, 1);
+    expect(authority.receivedInstrumentId, 7);
+    expect(authority.receivedHorizonDays, 30);
+    expect(authority.receivedAsOf, cutoff);
+    expect(allocation.calls, 0);
+    expect(controller.blockedReason, 'validated_oos_evidence_not_ready');
   });
 
   test('non-finite reference capital fails closed before backend calls', () async {
