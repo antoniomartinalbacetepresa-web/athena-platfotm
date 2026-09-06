@@ -5,6 +5,7 @@ import '../../data/athena_backend_portfolio_allocation_authority_data_source.dar
 import '../../data/athena_backend_portfolio_allocation_data_source.dart';
 import '../../models/portfolio_allocation_policy.dart';
 import '../../models/portfolio_position.dart';
+import '../../services/portfolio_reference_capital_canonicalization_service.dart';
 
 class PortfolioAllocationController extends ChangeNotifier {
   final AthenaBackendPortfolioAllocationAuthorityDataSource authorityDataSource;
@@ -24,25 +25,39 @@ class PortfolioAllocationController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get blockedReason => _blockedReason;
   String? get error => _error;
-  bool get isReady => _candidate != null && _blockedReason == null && _error == null;
+  bool get isReady =>
+      _candidate != null && _blockedReason == null && _error == null;
 
+  /// High-level recommendation -> allocation boundary.
+  ///
+  /// The reference capital supplied here must already be normalized to
+  /// ATHENA's canonical calculation currency. Policies cannot redefine that
+  /// currency: they govern allocation limits, not monetary interpretation.
   Future<void> loadFromRecommendationContextWithPolicy({
     required RecommendationAllocationRequestContext context,
     required PortfolioAllocationPolicy allocationPolicy,
     required double referenceCapital,
     required List<PortfolioPosition> positions,
   }) {
+    if (allocationPolicy.baseCurrency !=
+        PortfolioCanonicalReferenceCapital.canonicalCurrency) {
+      throw StateError(
+        'La política de allocation no usa la moneda económica canónica USD.',
+      );
+    }
     return load(
       instrumentId: context.instrumentId,
       horizonDays: context.horizonDays,
       allocationPolicyId: allocationPolicy.policyId,
       referenceCapital: referenceCapital,
-      baseCurrency: allocationPolicy.baseCurrency,
+      baseCurrency: PortfolioCanonicalReferenceCapital.canonicalCurrency,
       positions: positions,
       asOf: context.requestAsOf,
     );
   }
 
+  /// Lower-level boundary retained for explicit contract/regression work.
+  /// Presentation should prefer [loadFromRecommendationContextWithPolicy].
   Future<void> loadFromRecommendationContext({
     required RecommendationAllocationRequestContext context,
     required String allocationPolicyId,
@@ -110,7 +125,9 @@ class PortfolioAllocationController extends ChangeNotifier {
           );
         }
         if (!position.shares.isFinite || position.shares <= 0) {
-          throw StateError('Allocation requiere cantidades positivas y finitas.');
+          throw StateError(
+            'Allocation requiere cantidades positivas y finitas.',
+          );
         }
         if (!seen.add(id)) {
           throw StateError(
