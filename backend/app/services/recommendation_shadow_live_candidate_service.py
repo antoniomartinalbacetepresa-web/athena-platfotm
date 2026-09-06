@@ -81,6 +81,7 @@ class RecommendationShadowLiveCandidateService:
 
         bundles = self._validated_bundle_map(gated_bundles, confirmation)
         gate_payload = self._gate_payload(normalized_symbol, cutoff)
+        analysis_coverage = self._analysis_coverage(gate_payload)
         if gate_payload.get("status") != "evidence_ready_for_calibration":
             return self._blocked(
                 symbol=normalized_symbol,
@@ -88,6 +89,7 @@ class RecommendationShadowLiveCandidateService:
                 reason="current_point_in_time_evidence_not_ready",
                 confirmation=confirmation,
                 blockers=list(gate_payload.get("blockers") or []),
+                analysis_coverage=analysis_coverage,
             )
 
         current_features = self._feature_map(gate_payload)
@@ -136,6 +138,7 @@ class RecommendationShadowLiveCandidateService:
                 cutoff=cutoff,
                 reason="no_individually_confirmed_horizon_available_for_inference",
                 confirmation=confirmation,
+                analysis_coverage=analysis_coverage,
             )
 
         core = {
@@ -154,6 +157,7 @@ class RecommendationShadowLiveCandidateService:
             "riskContext": self._risk_context(gate_payload),
             "valuationContext": self._valuation_context(gate_payload),
             "fundamentalContext": self._fundamental_context(gate_payload),
+            "analysisCoverage": analysis_coverage,
         }
         fingerprint = self._fingerprint(core)
         return {
@@ -171,6 +175,7 @@ class RecommendationShadowLiveCandidateService:
                 "onlyIndividuallyConfirmedHorizonsInferred": True,
                 "modelParameters": "frozen_and_integrity_verified",
                 "currentEvidence": "same_point_in_time_evidence_gate_contract",
+                "analysisCoverage": "bound_to_same_point_in_time_evidence_gate_and_candidate_fingerprint",
                 "missingFeatures": "frozen_training_median_imputation_disclosed_per_horizon",
                 "featureContributionExplanation": "standardized_linear_contribution",
                 "actionThresholds": "not_calibrated",
@@ -192,6 +197,7 @@ class RecommendationShadowLiveCandidateService:
             raise ValueError("Score y convicción deben permanecer sin calibrar.")
         if artifact.get("artifactVersion") != self.ARTIFACT_VERSION:
             raise ValueError("Versión de live candidate no compatible.")
+        self._validate_analysis_coverage(artifact.get("analysisCoverage"))
         fingerprint = artifact.get("candidateFingerprint")
         if not isinstance(fingerprint, str) or not fingerprint:
             raise ValueError("El live candidate requiere fingerprint.")
@@ -209,6 +215,7 @@ class RecommendationShadowLiveCandidateService:
             "riskContext",
             "valuationContext",
             "fundamentalContext",
+            "analysisCoverage",
         )
         core = {key: artifact.get(key) for key in core_keys}
         if self._fingerprint(core) != fingerprint:
@@ -258,6 +265,49 @@ class RecommendationShadowLiveCandidateService:
         if payload_as_of != cutoff:
             raise RuntimeError("El evidence gate cambió el corte point-in-time.")
         return payload
+
+    def _analysis_coverage(self, gate: dict[str, Any]) -> dict[str, Any]:
+        coverage = gate.get("analysisCoverage")
+        self._validate_analysis_coverage(coverage)
+        return json.loads(json.dumps(coverage, allow_nan=False))
+
+    def _validate_analysis_coverage(self, coverage: object) -> None:
+        if not isinstance(coverage, dict):
+            raise RuntimeError("El evidence gate listo carece de analysisCoverage trazable.")
+        required = {
+            "technical",
+            "risk",
+            "fundamentals",
+            "valuation",
+            "marketMacro",
+            "dataQuality",
+            "calibration",
+            "recommendationCombination",
+            "investorActivity",
+        }
+        if set(coverage) != required:
+            raise RuntimeError("analysisCoverage no coincide con el contrato ATHENA esperado.")
+        for name, raw in coverage.items():
+            if not isinstance(raw, dict):
+                raise RuntimeError(f"analysisCoverage.{name} debe ser un objeto.")
+            if raw.get("connected") not in (True, False):
+                raise RuntimeError(f"analysisCoverage.{name}.connected debe ser booleano.")
+            if raw.get("influencesCandidate") not in (True, False):
+                raise RuntimeError(
+                    f"analysisCoverage.{name}.influencesCandidate debe ser booleano."
+                )
+            if raw.get("productionEligible") is not False:
+                raise RuntimeError(
+                    f"analysisCoverage.{name} intentó habilitar producción."
+                )
+        macro = coverage["marketMacro"]
+        if macro.get("influencesCandidate") is not False:
+            raise RuntimeError("Macro no puede influir sin calibración validada.")
+        investor = coverage["investorActivity"]
+        if investor.get("influencesCandidate") is not False:
+            raise RuntimeError(
+                "Investor activity no puede alterar silenciosamente el candidato ATHENA."
+            )
 
     def _feature_map(self, gate: dict[str, Any]) -> dict[str, float | None]:
         market = gate.get("market")
@@ -399,8 +449,9 @@ class RecommendationShadowLiveCandidateService:
         reason: str,
         confirmation: dict[str, Any],
         blockers: list[Any] | None = None,
+        analysis_coverage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        result = {
             "status": "shadow_live_candidate_blocked",
             "symbol": symbol,
             "asOf": cutoff.isoformat(),
@@ -416,6 +467,9 @@ class RecommendationShadowLiveCandidateService:
             "score": None,
             "conviction": None,
         }
+        if analysis_coverage is not None:
+            result["analysisCoverage"] = analysis_coverage
+        return result
 
     def _assert_shadow(self, payload: dict[str, Any], stage: str) -> None:
         if payload.get("productionEligible") is not False:
