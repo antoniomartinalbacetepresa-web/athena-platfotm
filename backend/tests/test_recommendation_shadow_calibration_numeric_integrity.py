@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.recommendation_shadow_repository import RecommendationShadowRepository
@@ -85,20 +87,32 @@ def _setup_row(tmp_path, *, feature_value=0.08):
     return database, snapshot_id
 
 
-def test_non_finite_optional_feature_is_removed_from_calibration(tmp_path) -> None:
-    database, _ = _setup_row(tmp_path, feature_value=float("nan"))
+@pytest.mark.parametrize(
+    "feature_value",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive_infinity", "negative_infinity"],
+)
+def test_non_finite_optional_feature_is_rejected_before_shadow_persistence(
+    tmp_path,
+    feature_value,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="evidence_snapshot debe ser JSON válido y contener sólo valores finitos",
+    ):
+        _setup_row(tmp_path, feature_value=feature_value)
 
-    result = RecommendationShadowCalibrationDatasetService(database=database).build(
-        as_of=CUT + timedelta(days=8),
-        horizon_days=7,
-        require_benchmark=True,
-    )
+    database = AthenaDatabase(tmp_path / "athena.db")
+    with database.connect() as connection:
+        snapshot_count = connection.execute(
+            "SELECT COUNT(*) FROM athena_recommendation_shadow_snapshots"
+        ).fetchone()[0]
+        outcome_count = connection.execute(
+            "SELECT COUNT(*) FROM athena_recommendation_shadow_outcomes"
+        ).fetchone()[0]
 
-    assert result["rowCount"] == 1
-    assert result["rows"][0]["features"]["return20d"] is None
-    assert result["policy"]["numericIntegrity"] == (
-        "non_finite_values_never_enter_calibration"
-    )
+    assert snapshot_count == 0
+    assert outcome_count == 0
 
 
 def test_non_finite_required_target_rejects_entire_calibration_row(tmp_path) -> None:
