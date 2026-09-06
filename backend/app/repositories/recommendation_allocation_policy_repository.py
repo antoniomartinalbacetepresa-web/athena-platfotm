@@ -87,6 +87,30 @@ class RecommendationAllocationPolicyRepository:
             ).fetchone()
         return self._row(row)
 
+    def list_all(self) -> list[dict[str, Any]]:
+        """Return every immutable policy in deterministic registration order.
+
+        Listing is deliberately passive: it never designates a default or active
+        policy. Product/UI code must make an explicit selection before allocation.
+        Every row is revalidated on read so tampered persistence fails closed.
+        """
+        self.initialize()
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM athena_recommendation_allocation_policies
+                ORDER BY registered_at ASC, id ASC
+                """
+            ).fetchall()
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            record = self._row(row)
+            if record is None:
+                raise RuntimeError("La política persistida no se pudo reconstruir.")
+            records.append(record)
+        return records
+
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(record, dict):
             raise ValueError("El registro de asignación debe ser un objeto.")
