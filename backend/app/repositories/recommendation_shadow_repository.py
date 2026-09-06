@@ -130,6 +130,18 @@ class RecommendationShadowRepository:
         if retrieved > cutoff:
             raise ValueError("entry_retrieved_at no puede superar data_cutoff_at.")
         benchmark = self._optional_symbol(benchmark_symbol)
+        try:
+            evidence_snapshot_json = json.dumps(
+                evidence_snapshot,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "evidence_snapshot debe ser JSON válido y contener sólo valores finitos."
+            ) from exc
         now = datetime.now(timezone.utc).isoformat()
 
         with self._database.connect() as connection:
@@ -161,7 +173,7 @@ class RecommendationShadowRepository:
                     observed.isoformat(),
                     retrieved.isoformat(),
                     benchmark,
-                    json.dumps(evidence_snapshot, sort_keys=True, ensure_ascii=False),
+                    evidence_snapshot_json,
                     now,
                 ),
             )
