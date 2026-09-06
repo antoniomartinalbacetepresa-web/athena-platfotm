@@ -34,6 +34,12 @@ class FakeAuthorizedAllocation:
         return {
             "status": "verified_allocation_pipeline_non_advisory",
             "allocationCandidate": {"status": "allocation_candidate_non_advisory"},
+            "economicContractAuthority": {
+                "economicContractFingerprint": "d" * 64,
+                "resolvedFromAppendOnlyBackendAuthority": True,
+            },
+            "economicContractAuthorityBoundToAllocation": True,
+            "callerSuppliedEconomicContractAccepted": False,
             "correlationAuthority": [],
             "correlationAuthorityBoundToAllocation": True,
             "callerSuppliedCorrelationArtifactsAccepted": False,
@@ -43,11 +49,27 @@ class FakeAuthorizedAllocation:
             "allocationEligible": False,
             "automaticTrading": False,
             "policy": {
+                "economicContractMustResolveFromAppendOnlyBackendAuthority": True,
+                "callerSuppliedEconomicContractAccepted": False,
                 "correlationMustResolveFromAppendOnlyBackendAuthority": True,
                 "callerSuppliedCorrelationJsonAccepted": False,
                 "automaticTrading": False,
             },
         }
+
+
+def _allocation_payload(**overrides):
+    payload = {
+        "uncertaintyBoundActionCandidateFingerprint": "c" * 64,
+        "allocationPolicyId": "policy-001",
+        "referenceCapital": 10000.0,
+        "baseCurrency": "EUR",
+        "positions": [],
+        "correlationEvidenceFingerprints": [],
+        "asOf": AS_OF,
+    }
+    payload.update(overrides)
+    return payload
 
 
 def test_correlation_evidence_api_calculates_and_seals_backend_authority(monkeypatch):
@@ -75,7 +97,7 @@ def test_correlation_evidence_api_calculates_and_seals_backend_authority(monkeyp
     assert FakeCorrelationStore.calls[0]["knowledge_cutoff"] == datetime.fromisoformat(AS_OF)
 
 
-def test_allocation_api_accepts_fingerprints_not_raw_authority_artifacts(monkeypatch):
+def test_allocation_api_accepts_only_sealed_fingerprints_not_raw_authority_artifacts(monkeypatch):
     FakeAuthorizedAllocation.calls = []
     monkeypatch.setattr(
         portfolio_api,
@@ -83,22 +105,16 @@ def test_allocation_api_accepts_fingerprints_not_raw_authority_artifacts(monkeyp
         FakeAuthorizedAllocation,
     )
     result = portfolio_api.post_portfolio_allocation_candidate(
-        {
-            "uncertaintyBoundActionCandidateFingerprint": "c" * 64,
-            "allocationPolicyId": "policy-001",
-            "economicContract": {"economicContractFingerprint": "d" * 64},
-            "referenceCapital": 10000.0,
-            "baseCurrency": "EUR",
-            "positions": [],
-            "correlationEvidenceFingerprints": ["a" * 64],
-            "asOf": AS_OF,
-        }
+        _allocation_payload(correlationEvidenceFingerprints=["a" * 64])
     )
 
     call = FakeAuthorizedAllocation.calls[0]
     assert call["uncertainty_bound_action_candidate_fingerprint"] == "c" * 64
     assert call["correlation_evidence_fingerprints"] == ["a" * 64]
+    assert "economic_contract" not in call
     assert "correlation_evidence" not in call
+    assert result["data"]["economicContractAuthorityBoundToAllocation"] is True
+    assert result["data"]["callerSuppliedEconomicContractAccepted"] is False
     assert result["data"]["correlationAuthorityBoundToAllocation"] is True
     assert result["data"]["callerSuppliedCorrelationArtifactsAccepted"] is False
     assert result["data"]["advisoryStatus"] == "no_advice"
@@ -107,7 +123,8 @@ def test_allocation_api_accepts_fingerprints_not_raw_authority_artifacts(monkeyp
     assert result["data"]["automaticTrading"] is False
 
 
-def test_allocation_api_rejects_raw_correlation_json_without_fingerprint_list(monkeypatch):
+def test_allocation_api_rejects_caller_supplied_economic_contract(monkeypatch):
+    FakeAuthorizedAllocation.calls = []
     monkeypatch.setattr(
         portfolio_api,
         "RecommendationAuthorizedAllocationPipelineService",
@@ -115,17 +132,25 @@ def test_allocation_api_rejects_raw_correlation_json_without_fingerprint_list(mo
     )
     with pytest.raises(HTTPException) as exc_info:
         portfolio_api.post_portfolio_allocation_candidate(
-            {
-                "uncertaintyBoundActionCandidateFingerprint": "c" * 64,
-                "allocationPolicyId": "policy-001",
-                "economicContract": {"economicContractFingerprint": "d" * 64},
-                "referenceCapital": 10000.0,
-                "baseCurrency": "EUR",
-                "positions": [],
-                "correlationEvidence": [{"correlation": 0.1}],
-                "asOf": AS_OF,
-            }
+            _allocation_payload(
+                economicContract={"economicContractFingerprint": "d" * 64}
+            )
         )
+    assert exc_info.value.status_code == 400
+    assert "economicContract no se acepta" in exc_info.value.detail
+    assert FakeAuthorizedAllocation.calls == []
+
+
+def test_allocation_api_rejects_raw_correlation_json_without_fingerprint_list(monkeypatch):
+    monkeypatch.setattr(
+        portfolio_api,
+        "RecommendationAuthorizedAllocationPipelineService",
+        FakeAuthorizedAllocation,
+    )
+    payload = _allocation_payload(correlationEvidence=[{"correlation": 0.1}])
+    payload.pop("correlationEvidenceFingerprints")
+    with pytest.raises(HTTPException) as exc_info:
+        portfolio_api.post_portfolio_allocation_candidate(payload)
     assert exc_info.value.status_code == 400
     assert "correlationEvidenceFingerprints" in exc_info.value.detail
 
@@ -143,18 +168,7 @@ def test_allocation_api_blocks_any_production_escape(monkeypatch):
         UnsafeAllocation,
     )
     with pytest.raises(HTTPException) as exc_info:
-        portfolio_api.post_portfolio_allocation_candidate(
-            {
-                "uncertaintyBoundActionCandidateFingerprint": "c" * 64,
-                "allocationPolicyId": "policy-001",
-                "economicContract": {"economicContractFingerprint": "d" * 64},
-                "referenceCapital": 10000.0,
-                "baseCurrency": "EUR",
-                "positions": [],
-                "correlationEvidenceFingerprints": [],
-                "asOf": AS_OF,
-            }
-        )
+        portfolio_api.post_portfolio_allocation_candidate(_allocation_payload())
     assert exc_info.value.status_code == 409
     assert "productionEligible" in exc_info.value.detail
 
@@ -167,16 +181,7 @@ def test_allocation_api_requires_timezone_aware_as_of(monkeypatch):
     )
     with pytest.raises(HTTPException) as exc_info:
         portfolio_api.post_portfolio_allocation_candidate(
-            {
-                "uncertaintyBoundActionCandidateFingerprint": "c" * 64,
-                "allocationPolicyId": "policy-001",
-                "economicContract": {"economicContractFingerprint": "d" * 64},
-                "referenceCapital": 10000.0,
-                "baseCurrency": "EUR",
-                "positions": [],
-                "correlationEvidenceFingerprints": [],
-                "asOf": "2026-09-05T12:00:00",
-            }
+            _allocation_payload(asOf="2026-09-05T12:00:00")
         )
     assert exc_info.value.status_code == 400
     assert "zona horaria" in exc_info.value.detail
