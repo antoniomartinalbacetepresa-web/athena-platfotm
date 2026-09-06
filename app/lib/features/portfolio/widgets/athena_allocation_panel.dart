@@ -418,10 +418,17 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
               spacing: 28,
               runSpacing: 18,
               children: [
-                _metric('Referencia canónica',
-                    _money(candidate.referenceCapital, candidate.baseCurrency)),
                 _metric(
-                  'Valor actual cartera',
+                  'Referencia canónica',
+                  _money(candidate.referenceCapital, candidate.baseCurrency),
+                ),
+                _metric(
+                  'Valor invertido verificable',
+                  _money(candidate.investedPositionsValueInBaseCurrency,
+                      candidate.baseCurrency),
+                ),
+                _metric(
+                  'Posición del instrumento',
                   _money(candidate.currentPositionValueInBaseCurrency,
                       candidate.baseCurrency),
                 ),
@@ -456,6 +463,15 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
               ],
             ),
             const SizedBox(height: AthenaSpacing.md),
+            const Text(
+              'El valor invertido verificable incluye sólo posiciones valoradas por el backend. No representa efectivo, pasivos ni patrimonio neto total.',
+              style: TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 11,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 6),
             Text(
               'Corte PIT: ${_dateTime(candidate.asOf.toLocal())} · política: ${selectedPolicy?.policyId ?? 'no disponible'} · fingerprint: ${_shortFingerprint(candidate.allocationCandidateFingerprint)}',
               style: const TextStyle(
@@ -489,7 +505,8 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
     return _message(
       'Capital canónico: ${_money(capital.amountInCanonicalCurrency, PortfolioCanonicalReferenceCapital.canonicalCurrency)} · '
       '${fx.baseCurrency}/${fx.quoteCurrency} ${fx.rate.toStringAsFixed(6)} · '
-      '${fx.sourceProvider} · recuperado ${_dateTime(fx.retrievedAt.toLocal())}.',
+      '${fx.sourceProvider} · observado ${_dateTime(fx.observedAt.toLocal())} · '
+      'recuperado ${_dateTime(fx.retrievedAt.toLocal())}.',
     );
   }
 
@@ -563,7 +580,11 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
 
   static String _cleanError(String value) {
     var result = value.trim();
-    for (final prefix in const ['Exception: ', 'Bad state: ', 'Invalid argument(s): ']) {
+    for (final prefix in const [
+      'Exception: ',
+      'Bad state: ',
+      'Invalid argument(s): ',
+    ]) {
       if (result.startsWith(prefix)) result = result.substring(prefix.length);
     }
     return result;
