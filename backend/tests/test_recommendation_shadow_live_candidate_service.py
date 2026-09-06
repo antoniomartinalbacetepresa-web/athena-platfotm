@@ -40,6 +40,89 @@ class FakeGatedFreezeService:
         return bundle
 
 
+def _analysis_coverage():
+    return {
+        "technical": {
+            "connected": True,
+            "influencesCandidate": True,
+            "sourceBlock": "market",
+            "status": "diagnostic_ready",
+            "evidenceReady": True,
+            "productionEligible": False,
+        },
+        "risk": {
+            "connected": True,
+            "influencesCandidate": True,
+            "sourceBlock": "market",
+            "status": "diagnostic_ready",
+            "evidenceReady": True,
+            "productionEligible": False,
+        },
+        "fundamentals": {
+            "connected": True,
+            "influencesCandidate": True,
+            "sourceBlock": "fundamentals",
+            "status": "diagnostic_ready",
+            "evidenceReady": True,
+            "productionEligible": False,
+        },
+        "valuation": {
+            "connected": True,
+            "influencesCandidate": True,
+            "sourceBlock": "valuation",
+            "status": "diagnostic_ready",
+            "evidenceReady": True,
+            "productionEligible": False,
+        },
+        "marketMacro": {
+            "connected": True,
+            "influencesCandidate": False,
+            "sourceBlock": "macro",
+            "status": "diagnostic_ready",
+            "evidenceReady": True,
+            "capturedForCalibration": True,
+            "directionalScoreAssigned": False,
+            "thresholdCalibrated": False,
+            "productionEligible": False,
+        },
+        "dataQuality": {
+            "connected": True,
+            "influencesCandidate": True,
+            "status": "structural_contract_ready",
+            "evidenceReady": True,
+            "thresholdCalibrated": False,
+            "productionEligible": False,
+        },
+        "calibration": {
+            "connected": True,
+            "influencesCandidate": False,
+            "status": "not_validated",
+            "evidenceReady": False,
+            "productionEligible": False,
+        },
+        "recommendationCombination": {
+            "connected": True,
+            "influencesCandidate": False,
+            "status": "blocked_until_calibration",
+            "evidenceReady": False,
+            "productionEligible": False,
+        },
+        "investorActivity": {
+            "connected": True,
+            "influencesCandidate": False,
+            "sourceBlock": "sec13f",
+            "status": "independent_parallel_engine_connected_evidence_not_bound",
+            "evidenceReady": False,
+            "evidenceBoundToCandidate": False,
+            "pointInTimeAvailabilityVerified": False,
+            "includedInAthenaRecommendation": False,
+            "automaticScoring": False,
+            "automaticTrading": False,
+            "productionEligible": False,
+        },
+    }
+
+
 def _gate_payload(as_of: datetime):
     return {
         "status": "evidence_ready_for_calibration",
@@ -48,6 +131,7 @@ def _gate_payload(as_of: datetime):
         "instrumentId": 123,
         "recommendationCandidateReady": False,
         "productionEligible": False,
+        "analysisCoverage": _analysis_coverage(),
         "market": {
             "status": "diagnostic_ready",
             "technicalScore": 0.4,
@@ -167,6 +251,13 @@ def test_live_candidate_infers_only_individually_confirmed_horizons():
     assert result["horizons"]["7"]["expectedExcessReturn"] is not None
     assert result["horizons"]["30"]["expectedExcessReturn"] is None
     assert result["horizons"]["90"]["expectedExcessReturn"] is not None
+    assert result["analysisCoverage"]["technical"]["influencesCandidate"] is True
+    assert result["analysisCoverage"]["risk"]["influencesCandidate"] is True
+    assert result["analysisCoverage"]["fundamentals"]["influencesCandidate"] is True
+    assert result["analysisCoverage"]["valuation"]["influencesCandidate"] is True
+    assert result["analysisCoverage"]["marketMacro"]["connected"] is True
+    assert result["analysisCoverage"]["marketMacro"]["influencesCandidate"] is False
+    assert result["analysisCoverage"]["investorActivity"]["influencesCandidate"] is False
     assert result["action"] is None
     assert result["score"] is None
     assert result["conviction"] is None
@@ -226,6 +317,7 @@ def test_live_candidate_blocks_when_current_pit_evidence_is_not_ready():
     assert result["status"] == "shadow_live_candidate_blocked"
     assert result["reason"] == "current_point_in_time_evidence_not_ready"
     assert result["blockers"] == ["valuation_not_ready"]
+    assert result["analysisCoverage"]["marketMacro"]["influencesCandidate"] is False
 
 
 def test_live_candidate_rejects_model_not_bound_to_confirmed_horizon():
@@ -269,6 +361,36 @@ def test_live_candidate_artifact_detects_tampering():
 
     with pytest.raises(ValueError, match="fue modificado"):
         service.validate_artifact(tampered)
+
+
+def test_live_candidate_analysis_coverage_is_bound_to_candidate_fingerprint():
+    as_of = datetime(2025, 6, 1, tzinfo=timezone.utc)
+    service = _service(as_of)
+    result = service.build(
+        symbol="TEST",
+        as_of=as_of,
+        gated_bundles=[_bundle(7), _bundle(30), _bundle(90)],
+        confirmation_artifact=_confirmation(as_of),
+    )
+    tampered = deepcopy(result)
+    tampered["analysisCoverage"]["marketMacro"]["status"] = "silently_changed"
+
+    with pytest.raises(ValueError, match="fue modificado"):
+        service.validate_artifact(tampered)
+
+
+def test_live_candidate_rejects_macro_silently_influencing_candidate():
+    as_of = datetime(2025, 6, 1, tzinfo=timezone.utc)
+    gate = _gate_payload(as_of)
+    gate["analysisCoverage"]["marketMacro"]["influencesCandidate"] = True
+
+    with pytest.raises(RuntimeError, match="Macro no puede influir"):
+        _service(as_of, gate).build(
+            symbol="TEST",
+            as_of=as_of,
+            gated_bundles=[_bundle(7), _bundle(90)],
+            confirmation_artifact=_confirmation(as_of),
+        )
 
 
 def test_live_candidate_rejects_evidence_gate_attempting_production():
