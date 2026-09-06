@@ -1,15 +1,17 @@
+import '../../market/data/datasources/athena_backend_fx_data_source.dart';
 import '../data/athena_backend_portfolio_allocation_authority_data_source.dart';
 import '../data/athena_backend_portfolio_allocation_data_source.dart';
 import '../data/athena_backend_portfolio_allocation_policy_data_source.dart';
 import '../presentation/controllers/portfolio_allocation_controller.dart';
 import '../presentation/controllers/portfolio_allocation_policy_controller.dart';
+import '../services/portfolio_reference_capital_canonicalization_service.dart';
 
 /// Construye la frontera Flutter de allocation contra un único backend ATHENA.
 ///
-/// No selecciona política, no construye recomendaciones y no introduce
-/// defaults económicos. Su única responsabilidad es garantizar que resolución
-/// de autoridades, políticas persistidas y candidato de allocation compartan
-/// exactamente el mismo backend configurado.
+/// Resolución de autoridades, políticas, candidato de allocation y FX de
+/// normalización comparten exactamente el mismo backend configurado. La moneda
+/// económica canónica es USD; la moneda original del usuario permanece como
+/// dato de presentación/provenance y nunca se reinterpreta silenciosamente.
 class PortfolioAllocationDependencies {
   static const String _defaultBackendUrl = String.fromEnvironment(
     'ATHENA_BACKEND_URL',
@@ -19,6 +21,9 @@ class PortfolioAllocationDependencies {
   final AthenaBackendPortfolioAllocationAuthorityDataSource authorityDataSource;
   final AthenaBackendPortfolioAllocationDataSource allocationDataSource;
   final AthenaBackendPortfolioAllocationPolicyDataSource policyDataSource;
+  final AthenaBackendFxDataSource fxDataSource;
+  final PortfolioReferenceCapitalCanonicalizationService
+      referenceCapitalCanonicalizationService;
   final PortfolioAllocationController allocationController;
   final PortfolioAllocationPolicyController policyController;
 
@@ -26,6 +31,8 @@ class PortfolioAllocationDependencies {
     required this.authorityDataSource,
     required this.allocationDataSource,
     required this.policyDataSource,
+    required this.fxDataSource,
+    required this.referenceCapitalCanonicalizationService,
     required this.allocationController,
     required this.policyController,
   });
@@ -56,11 +63,21 @@ class PortfolioAllocationDependencies {
     final policyDataSource = AthenaBackendPortfolioAllocationPolicyDataSource(
       baseUrl: normalizedBaseUrl,
     );
+    final fxDataSource = AthenaBackendFxDataSource(
+      baseUrl: normalizedBaseUrl,
+    );
+    final referenceCapitalCanonicalizationService =
+        PortfolioReferenceCapitalCanonicalizationService(
+      loadCurrentFxRate: fxDataSource.getCurrentRate,
+    );
 
     return PortfolioAllocationDependencies(
       authorityDataSource: authorityDataSource,
       allocationDataSource: allocationDataSource,
       policyDataSource: policyDataSource,
+      fxDataSource: fxDataSource,
+      referenceCapitalCanonicalizationService:
+          referenceCapitalCanonicalizationService,
       allocationController: PortfolioAllocationController(
         authorityDataSource: authorityDataSource,
         allocationDataSource: allocationDataSource,
@@ -77,5 +94,6 @@ class PortfolioAllocationDependencies {
     authorityDataSource.dispose();
     allocationDataSource.dispose();
     policyDataSource.dispose();
+    fxDataSource.dispose();
   }
 }
