@@ -143,6 +143,13 @@ class PortfolioAllocationController extends ChangeNotifier {
         heldInstrumentIds: heldInstrumentIds,
         asOf: cutoff,
       );
+      if (authority.asOf.toUtc() != cutoff ||
+          authority.instrumentId != instrumentId ||
+          authority.horizonDays != horizonDays) {
+        throw StateError(
+          'La autoridad de allocation no coincide con instrumento, horizonte o corte PIT solicitados.',
+        );
+      }
       if (!authority.ready) {
         final reason = authority.reason?.trim();
         if (reason == null || reason.isEmpty) {
@@ -161,7 +168,7 @@ class PortfolioAllocationController extends ChangeNotifier {
         );
       }
 
-      _candidate = await allocationDataSource.buildAuthorizedCandidate(
+      final candidate = await allocationDataSource.buildAuthorizedCandidate(
         uncertaintyBoundActionCandidateFingerprint: actionFingerprint,
         allocationPolicyId: normalizedPolicyId,
         referenceCapital: referenceCapital,
@@ -171,6 +178,16 @@ class PortfolioAllocationController extends ChangeNotifier {
             authority.correlationEvidenceFingerprints,
         asOf: cutoff,
       );
+      if (candidate.instrumentId != instrumentId ||
+          candidate.asOf.toUtc() != cutoff ||
+          candidate.baseCurrency.trim().toUpperCase() != currency ||
+          candidate.actionCandidateFingerprint.trim().toLowerCase() !=
+              actionFingerprint.trim().toLowerCase()) {
+        throw StateError(
+          'El candidato de allocation no coincide con la autoridad solicitada.',
+        );
+      }
+      _candidate = candidate;
     } catch (error) {
       _candidate = null;
       _blockedReason = null;
