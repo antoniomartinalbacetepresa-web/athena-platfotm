@@ -109,6 +109,19 @@ def _service(candidate, minimum_evaluated_folds=3):
     )
 
 
+def _assert_no_uncommitted_stability_verdict(result) -> None:
+    summary = result["summary"]
+    assert summary["stabilityAssessment"] == (
+        "not_assessed_without_precommitted_criteria"
+    )
+    assert summary["stabilityThresholdApplied"] is False
+    assert "stableDirectionally" not in summary
+    assert result["policy"]["stability"] == (
+        "descriptive_metrics_only_no_uncommitted_thresholds"
+    )
+    assert result["policy"]["stabilityThresholds"] == "none_in_walk_forward_research"
+
+
 def test_walk_forward_aggregates_multiple_out_of_sample_folds() -> None:
     candidate = FakeCandidateService(
         [
@@ -126,7 +139,7 @@ def test_walk_forward_aggregates_multiple_out_of_sample_folds() -> None:
     assert result["blockedFoldCount"] == 0
     assert result["summary"]["baselineWinRate"] == 2 / 3
     assert result["summary"]["medianRelativeMseImprovement"] > 0
-    assert result["summary"]["stableDirectionally"] is True
+    _assert_no_uncommitted_stability_verdict(result)
     assert result["advisoryStatus"] == "no_advice"
     assert result["productionEligible"] is False
     assert result["policy"]["actions"] == "not_assigned"
@@ -164,7 +177,7 @@ def test_walk_forward_reuses_exact_frozen_split_for_macro_and_candidate() -> Non
         assert macro_service.calls[index]["test"] == frozen_split["test"]
 
 
-def test_walk_forward_does_not_call_weak_performance_production_ready() -> None:
+def test_walk_forward_weak_performance_remains_descriptive_not_a_stability_verdict() -> None:
     candidate = FakeCandidateService(
         [
             _evaluated(0.012, 0.010),
@@ -177,7 +190,27 @@ def test_walk_forward_does_not_call_weak_performance_production_ready() -> None:
     result = service.evaluate(folds=_folds(), horizon_days=90)
 
     assert result["summary"]["baselineWinRate"] == 1 / 3
-    assert result["summary"]["stableDirectionally"] is False
+    assert result["summary"]["medianRelativeMseImprovement"] < 0
+    _assert_no_uncommitted_stability_verdict(result)
+    assert result["productionEligible"] is False
+
+
+def test_walk_forward_does_not_create_stability_verdict_even_when_all_folds_win() -> None:
+    candidate = FakeCandidateService(
+        [
+            _evaluated(0.007, 0.010, 0.70),
+            _evaluated(0.006, 0.010, 0.75),
+            _evaluated(0.005, 0.010, 0.80),
+        ]
+    )
+    service = _service(candidate)
+
+    result = service.evaluate(folds=_folds(), horizon_days=180)
+
+    assert result["summary"]["baselineWinRate"] == 1.0
+    assert result["summary"]["medianRelativeMseImprovement"] > 0
+    _assert_no_uncommitted_stability_verdict(result)
+    assert result["advisoryStatus"] == "no_advice"
     assert result["productionEligible"] is False
 
 
