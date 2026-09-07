@@ -21,6 +21,8 @@ def _draft(*, protocol_id: str = "prod-promotion-v1") -> dict:
             str(horizon): {
                 "minimumConfirmationRowCount": 20,
                 "minimumNonOverlappingConfirmationWindowCount": 5,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.0,
                 "minimumRelativeMseImprovement": 0.0,
                 "requireBeatZeroExcessMseBaseline": False,
@@ -42,12 +44,11 @@ def test_registration_timestamp_is_repository_generated_and_persisted(tmp_path):
     assert before <= registered_at <= after
     assert record["protocol"]["registeredAt"] == record["registered_at"]
     assert record["protocol"]["protocolFingerprint"] == record["protocol_fingerprint"]
-    assert record["protocol"]["criteriaByHorizon"]["7"]["minimumConfirmationRowCount"] == 20
-    assert (
-        record["protocol"]["criteriaByHorizon"]["7"]
-        ["minimumNonOverlappingConfirmationWindowCount"]
-        == 5
-    )
+    criterion = record["protocol"]["criteriaByHorizon"]["7"]
+    assert criterion["minimumConfirmationRowCount"] == 20
+    assert criterion["minimumNonOverlappingConfirmationWindowCount"] == 5
+    assert criterion["minimumResolvedIssuerCoverageRatio"] == 0.90
+    assert criterion["maximumResolvedIssuerConcentrationRatio"] == 0.25
     assert repo.get(protocol_id="prod-promotion-v1") == record
 
 
@@ -131,12 +132,36 @@ def test_temporal_breadth_is_required_and_must_be_positive(tmp_path):
         repo.register(protocol_draft=zero)
 
 
+def test_issuer_criteria_are_required_bounded_and_finite(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    missing_coverage = _draft(protocol_id="missing-issuer-coverage")
+    del missing_coverage["criteriaByHorizon"]["30"]["minimumResolvedIssuerCoverageRatio"]
+    with pytest.raises(ValueError, match="minimumResolvedIssuerCoverageRatio"):
+        repo.register(protocol_draft=missing_coverage)
+
+    invalid_concentration = _draft(protocol_id="bad-issuer-concentration")
+    invalid_concentration["criteriaByHorizon"]["30"][
+        "maximumResolvedIssuerConcentrationRatio"
+    ] = 1.01
+    with pytest.raises(ValueError, match="maximumResolvedIssuerConcentrationRatio"):
+        repo.register(protocol_draft=invalid_concentration)
+
+    non_finite_coverage = _draft(protocol_id="nan-issuer-coverage")
+    non_finite_coverage["criteriaByHorizon"]["30"][
+        "minimumResolvedIssuerCoverageRatio"
+    ] = float("nan")
+    with pytest.raises(ValueError, match="finito"):
+        repo.register(protocol_draft=non_finite_coverage)
+
+
 def test_tampered_persisted_protocol_fails_closed_on_read(tmp_path):
     database = AthenaDatabase(tmp_path / "athena.db")
     repo = RecommendationProductionPromotionProtocolRepository(database)
     record = repo.register(protocol_draft=_draft())
     changed = copy.deepcopy(record["protocol"])
-    changed["criteriaByHorizon"]["30"]["minimumSignAccuracy"] = 1.0
+    changed["criteriaByHorizon"]["30"]["minimumResolvedIssuerCoverageRatio"] = 1.0
 
     import json
 
