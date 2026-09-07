@@ -37,10 +37,11 @@ class _AuthorizationRepository(Protocol):
 class RecommendationProductionAuthorizationService:
     """Final offline governance boundary for a productive recommendation.
 
-    The boundary is deliberately absent from FastAPI write routes. A productive
-    artifact can only be minted after exact OOS calibration, exact promoted action,
-    precommitted uncertainty evidence and explicit human review all agree on the
-    same immutable chain. It never authorizes allocation or automatic trading.
+    A productive artifact can only be minted after exact OOS calibration,
+    exact promoted action, precommitted uncertainty evidence, exact portfolio
+    policy state and explicit human review all agree on the same immutable
+    chain. This boundary is deliberately absent from FastAPI write routes and
+    never authorizes allocation or automatic trading.
     """
 
     CALIBRATED_VERSION = "athena-calibrated-live-candidate-v1"
@@ -122,25 +123,27 @@ class RecommendationProductionAuthorizationService:
             raise ValueError("El candidato calibrado no coincide con la decisión OOS.")
 
         action = self._validated_action(validated_action_candidate)
+        calibrated_candidate_fp = self._sha256(
+            calibrated.get("calibratedCandidateFingerprint"),
+            "calibratedCandidateFingerprint",
+        )
         if self._sha256(
             action.get("calibratedCandidateFingerprint"),
             "action.calibratedCandidateFingerprint",
-        ) != self._sha256(
-            calibrated.get("calibratedCandidateFingerprint"),
-            "calibratedCandidateFingerprint",
-        ):
+        ) != calibrated_candidate_fp:
             raise ValueError("La acción pertenece a otro candidato calibrado.")
 
         uncertainty_bound = self._validated_uncertainty_bound(
             uncertainty_bound_action_candidate
         )
+        validated_action_fp = self._sha256(
+            action.get("validatedActionCandidateFingerprint"),
+            "validatedActionCandidateFingerprint",
+        )
         if self._sha256(
             uncertainty_bound.get("validatedActionCandidateFingerprint"),
             "uncertainty.validatedActionCandidateFingerprint",
-        ) != self._sha256(
-            action.get("validatedActionCandidateFingerprint"),
-            "validatedActionCandidateFingerprint",
-        ):
+        ) != validated_action_fp:
             raise ValueError("La incertidumbre pertenece a otro candidato de acción.")
 
         action_decision_id = self._text(
@@ -177,7 +180,7 @@ class RecommendationProductionAuthorizationService:
         ):
             raise ValueError("La incertidumbre no coincide con la decisión de acciones.")
 
-        self._require_same_identity_and_horizon(
+        chain = self._require_same_identity_and_horizon(
             calibrated=calibrated,
             action=action,
             uncertainty_bound=uncertainty_bound,
@@ -213,22 +216,21 @@ class RecommendationProductionAuthorizationService:
             "status": "production_recommendation_authorized",
             "productionPromotionDecisionId": production_decision.get("decisionId"),
             "productionPromotionDecisionFingerprint": production_decision_fp,
-            "calibratedCandidateFingerprint": self._sha256(
-                calibrated.get("calibratedCandidateFingerprint"),
-                "calibratedCandidateFingerprint",
-            ),
-            "validatedActionCandidateFingerprint": self._sha256(
-                action.get("validatedActionCandidateFingerprint"),
-                "validatedActionCandidateFingerprint",
-            ),
+            "calibratedCandidateFingerprint": calibrated_candidate_fp,
+            "validatedActionCandidateFingerprint": validated_action_fp,
             "uncertaintyBoundActionCandidateFingerprint": self._sha256(
                 uncertainty_bound.get("uncertaintyBoundActionCandidateFingerprint"),
                 "uncertaintyBoundActionCandidateFingerprint",
             ),
             "actionPromotionDecisionId": action_decision_id,
             "actionPromotionDecisionFingerprint": action_decision_fp,
-            "candidateFingerprint": self._sha256(
-                action.get("candidateFingerprint"), "candidateFingerprint"
+            "candidateFingerprint": chain["candidateFingerprint"],
+            "portfolioPolicyStateFingerprint": chain[
+                "portfolioPolicyStateFingerprint"
+            ],
+            "economicContractFingerprint": self._sha256(
+                uncertainty_bound.get("economicContractFingerprint"),
+                "economicContractFingerprint",
             ),
             "instrumentId": self._text(action.get("instrumentId"), "instrumentId"),
             "symbol": self._text(action.get("symbol"), "symbol"),
@@ -258,7 +260,10 @@ class RecommendationProductionAuthorizationService:
         )
 
     def _validated_action(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(payload, dict) or payload.get("artifactVersion") != self.ACTION_VERSION:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("artifactVersion") != self.ACTION_VERSION
+        ):
             raise ValueError("Versión de candidato de acción no compatible.")
         if payload.get("status") != "validated_action_candidate_non_advisory":
             raise ValueError("Se exige un candidato de acción validado no advisory.")
@@ -292,6 +297,10 @@ class RecommendationProductionAuthorizationService:
         if self._fingerprint(core) != supplied:
             raise ValueError("El candidato de acción fue modificado.")
         self._finite(payload.get("expectedExcessReturn"), "expectedExcessReturn")
+        self._sha256(
+            payload.get("portfolioPolicyStateFingerprint"),
+            "portfolioPolicyStateFingerprint",
+        )
         self._action(payload.get("action"))
         return payload
 
@@ -340,6 +349,14 @@ class RecommendationProductionAuthorizationService:
         )
         if self._fingerprint(core) != supplied:
             raise ValueError("La acción ligada a incertidumbre fue modificada.")
+        self._sha256(
+            payload.get("portfolioPolicyStateFingerprint"),
+            "portfolioPolicyStateFingerprint",
+        )
+        self._sha256(
+            payload.get("economicContractFingerprint"),
+            "economicContractFingerprint",
+        )
         self._action(payload.get("action"))
         return payload
 
@@ -349,14 +366,36 @@ class RecommendationProductionAuthorizationService:
         calibrated: dict[str, Any],
         action: dict[str, Any],
         uncertainty_bound: dict[str, Any],
-    ) -> None:
-        if self._sha256(
+    ) -> dict[str, str]:
+        calibrated_candidate_fp = self._sha256(
+            calibrated.get("candidateFingerprint"),
+            "calibrated.candidateFingerprint",
+        )
+        action_candidate_fp = self._sha256(
             action.get("candidateFingerprint"), "action.candidateFingerprint"
-        ) != self._sha256(
+        )
+        uncertainty_candidate_fp = self._sha256(
             uncertainty_bound.get("candidateFingerprint"),
             "uncertainty.candidateFingerprint",
+        )
+        if not (
+            calibrated_candidate_fp
+            == action_candidate_fp
+            == uncertainty_candidate_fp
         ):
-            raise ValueError("La incertidumbre pertenece a otro candidato live.")
+            raise ValueError("La cadena productiva mezcla candidatos live distintos.")
+
+        action_portfolio_state_fp = self._sha256(
+            action.get("portfolioPolicyStateFingerprint"),
+            "action.portfolioPolicyStateFingerprint",
+        )
+        uncertainty_portfolio_state_fp = self._sha256(
+            uncertainty_bound.get("portfolioPolicyStateFingerprint"),
+            "uncertainty.portfolioPolicyStateFingerprint",
+        )
+        if action_portfolio_state_fp != uncertainty_portfolio_state_fp:
+            raise ValueError("La cadena productiva cambió el estado sellado de cartera.")
+
         for field in ("instrumentId", "symbol", "asOf"):
             values = {
                 str(calibrated.get(field) or "").strip(),
@@ -365,6 +404,7 @@ class RecommendationProductionAuthorizationService:
             }
             if "" in values or len(values) != 1:
                 raise ValueError(f"La cadena productiva no conserva {field}.")
+
         action_horizon = self._positive_int(action.get("horizonDays"), "horizonDays")
         uncertainty_horizon = self._positive_int(
             uncertainty_bound.get("horizonDays"), "uncertainty.horizonDays"
@@ -384,6 +424,11 @@ class RecommendationProductionAuthorizationService:
             uncertainty_bound.get("action")
         ):
             raise ValueError("La incertidumbre cambió la acción.")
+
+        return {
+            "candidateFingerprint": calibrated_candidate_fp,
+            "portfolioPolicyStateFingerprint": action_portfolio_state_fp,
+        }
 
     def _require_non_productive_source(
         self, payload: dict[str, Any], label: str
