@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.services.recommendation_professional_dossier_service import (
+    RecommendationProfessionalDossierService,
+)
 from app.services.recommendation_production_read_service import (
     RecommendationProductionReadService,
 )
@@ -15,6 +18,9 @@ router = APIRouter(
 )
 
 production_read_service = RecommendationProductionReadService()
+professional_dossier_service = RecommendationProfessionalDossierService(
+    production_read_service=production_read_service,
+)
 
 
 def _effective_as_of(as_of: datetime | None) -> datetime:
@@ -87,6 +93,61 @@ def get_latest_production_state(
             raise HTTPException(
                 status_code=500,
                 detail="Contrato de allocation productivo inválido.",
+            )
+
+    return {"data": payload}
+
+
+@router.get("/professional-dossier")
+def get_professional_dossier(
+    symbol: str | None = Query(None, min_length=1),
+    instrument_id: int | None = Query(None, ge=1, alias="instrumentId"),
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Corte PIT del dossier profesional. Sólo proyecta evidencia productiva "
+            "sellada que ya era conocida en ese instante."
+        ),
+    ),
+) -> dict[str, object]:
+    """Project the read-only professional dossier from sealed production evidence."""
+
+    effective_as_of = _effective_as_of(as_of)
+    try:
+        payload = professional_dossier_service.build(
+            as_of=effective_as_of,
+            symbol=symbol,
+            instrument_id=instrument_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir el dossier profesional verificable de ATHENA.",
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=500, detail="Dossier profesional inválido.")
+    if (
+        payload.get("readOnly") is not True
+        or payload.get("automaticTrading") is not False
+        or payload.get("executionEligible") is not False
+        or payload.get("orderRoutingEligible") is not False
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="El dossier profesional violó el contrato de seguridad de ATHENA.",
+        )
+
+    modules = payload.get("professionalModules")
+    if not isinstance(modules, dict):
+        raise HTTPException(status_code=500, detail="Módulos profesionales inválidos.")
+    for module in modules.values():
+        if not isinstance(module, dict) or module.get("productionEligible") is not False:
+            raise HTTPException(
+                status_code=500,
+                detail="Un módulo profesional no evidenciado fue marcado como productivo.",
             )
 
     return {"data": payload}
