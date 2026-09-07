@@ -11,9 +11,11 @@ from app.database.athena_database import AthenaDatabase
 class RecommendationProductionAuthorizationRepository:
     """Append-only registry for explicitly authorized production recommendations.
 
-    This repository is intentionally not exposed by a network write endpoint.
-    Authorization timestamps and fingerprints are generated server-side so an
-    offline governance caller cannot backdate or mutate an authorization.
+    The registry has no network write endpoint. Authorization timestamps and
+    fingerprints are generated here so an offline governance caller cannot
+    backdate or mutate an authorization. The sealed JSON also preserves the
+    exact live-candidate, portfolio-state and economic-contract identities needed
+    by any later allocation boundary.
     """
 
     ARTIFACT_VERSION = "athena-production-recommendation-authorization-v1"
@@ -221,6 +223,7 @@ class RecommendationProductionAuthorizationRepository:
             raise ValueError("La promoción automática debe permanecer deshabilitada.")
         if payload.get("automaticTrading") is not False:
             raise ValueError("El trading automático debe permanecer deshabilitado.")
+
         action = self._non_empty(payload.get("action"), "action").lower()
         if action not in {"buy", "hold", "reduce", "sell"}:
             raise ValueError("Acción productiva no soportada.")
@@ -230,6 +233,7 @@ class RecommendationProductionAuthorizationRepository:
         reason = self._non_empty(payload.get("authorizationReason"), "authorizationReason")
         if len(reason) < 20:
             raise ValueError("authorizationReason debe documentar la decisión de gobierno.")
+
         return {
             "artifactVersion": self.ARTIFACT_VERSION,
             "authorizationId": self._non_empty(
@@ -265,6 +269,14 @@ class RecommendationProductionAuthorizationRepository:
             ),
             "candidateFingerprint": self._sha256(
                 payload.get("candidateFingerprint"), "candidateFingerprint"
+            ),
+            "portfolioPolicyStateFingerprint": self._sha256(
+                payload.get("portfolioPolicyStateFingerprint"),
+                "portfolioPolicyStateFingerprint",
+            ),
+            "economicContractFingerprint": self._sha256(
+                payload.get("economicContractFingerprint"),
+                "economicContractFingerprint",
             ),
             "instrumentId": self._non_empty(payload.get("instrumentId"), "instrumentId"),
             "symbol": self._non_empty(payload.get("symbol"), "symbol"),
