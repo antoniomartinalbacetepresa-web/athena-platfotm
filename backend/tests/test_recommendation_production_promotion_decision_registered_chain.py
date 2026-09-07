@@ -34,11 +34,13 @@ def _protocol_draft() -> dict:
         "requiredHorizons": [7, 30],
         "criteriaByHorizon": {
             "7": {
+                "minimumConfirmationRowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
             },
             "30": {
+                "minimumConfirmationRowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -103,6 +105,8 @@ def test_registered_protocol_to_oos_evidence_to_immutable_decision_chain(tmp_pat
         protocol_id=protocol_record["protocol_id"],
     )
     assert evidence["productionPromotionEvidenceReady"] is True
+    assert evidence["horizons"]["7"]["minimumConfirmationRowCount"] == 20
+    assert evidence["horizons"]["30"]["minimumConfirmationRowCount"] == 20
 
     decision_repository = RecommendationProductionPromotionDecisionRepository(database)
     decision_service = RecommendationProductionPromotionDecisionService(decision_repository)
