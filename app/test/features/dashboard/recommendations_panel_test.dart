@@ -145,6 +145,8 @@ class FakeProductionStateProvider implements RecommendationProductionStateProvid
       authorizedAt: DateTime.utc(2026, 9, 1, 20, 10),
       authorizationFingerprint: _recommendationFingerprint,
       economicContractFingerprint: _economicFingerprint,
+      horizonDays: 30,
+      expectedExcessReturn: 0.0425,
     );
     final allocation = withAllocation
         ? RecommendationProductionAllocation(
@@ -259,6 +261,12 @@ void main() {
     expect(find.text('COMPRAR · AAPL'), findsOneWidget);
     expect(find.textContaining('Autorización productiva verificada'), findsOneWidget);
     expect(find.text('Estado de cartera: flat'), findsOneWidget);
+    expect(find.textContaining('Horizonte validado: 30 días'), findsOneWidget);
+    expect(find.textContaining('exceso esperado OOS +4.25%'), findsOneWidget);
+    expect(
+      find.textContaining('no es una probabilidad ni una garantía'),
+      findsOneWidget,
+    );
     expect(
       find.text('No habilita ejecución de órdenes ni trading automático.'),
       findsOneWidget,
