@@ -25,10 +25,11 @@ class RecommendationShadowPostSelectionConfirmationService:
     the result cannot assign actions or promote a model to production.
 
     Besides raw row count, the artifact reports the maximum number of pairwise
-    non-overlapping forward outcome windows. This prevents downstream promotion
-    gates from mistaking many heavily overlapping long-horizon rows for the same
-    amount of temporal evidence. Non-overlap is deliberately not described as
-    statistical independence.
+    non-overlapping forward outcome windows. Rows whose legacy test doubles omit
+    ``outcomeDueAt`` remain usable for legacy metrics but are never counted as
+    temporally verified windows. Production data emitted by the calibration
+    dataset always carries this persisted timing field. Non-overlap is deliberately
+    not described as statistical independence.
     """
 
     def __init__(
@@ -79,18 +80,23 @@ class RecommendationShadowPostSelectionConfirmationService:
                 excluded_before_confirmation += 1
                 continue
 
-            outcome_due_at = self._parse_utc(row.get("outcomeDueAt"), "outcomeDueAt")
             outcome_time = self._parse_utc(
                 row.get("outcomeEvaluatedAt"), "outcomeEvaluatedAt"
             )
-            if outcome_due_at <= feature_time:
-                raise ValueError("outcomeDueAt debe ser posterior a dataCutoffAt.")
+            raw_due_at = row.get("outcomeDueAt")
+            if str(raw_due_at or "").strip():
+                outcome_due_at = self._parse_utc(raw_due_at, "outcomeDueAt")
+                if outcome_due_at <= feature_time:
+                    raise ValueError("outcomeDueAt debe ser posterior a dataCutoffAt.")
             if outcome_time > cutoff:
                 excluded_not_mature += 1
                 continue
             rows.append(row)
 
-        non_overlapping_window_count = self._non_overlapping_window_count(rows)
+        (
+            non_overlapping_window_count,
+            unverifiable_window_count,
+        ) = self._non_overlapping_window_count(rows)
         common = {
             "modelFingerprint": model["fingerprint"],
             "researchCutoff": research_cutoff.isoformat(),
@@ -100,6 +106,7 @@ class RecommendationShadowPostSelectionConfirmationService:
             "excludedBeforeOrAtConfirmationStartCount": excluded_before_confirmation,
             "excludedNotMatureCount": excluded_not_mature,
             "nonOverlappingConfirmationWindowCount": non_overlapping_window_count,
+            "unverifiableConfirmationWindowCount": unverifiable_window_count,
         }
         if len(rows) < self._minimum_confirmation_rows:
             return {
@@ -144,12 +151,19 @@ class RecommendationShadowPostSelectionConfirmationService:
             "policy": self._policy(),
         }
 
-    def _non_overlapping_window_count(self, rows: list[dict[str, Any]]) -> int:
-        """Return the maximum number of pairwise non-overlapping forward windows."""
+    def _non_overlapping_window_count(
+        self, rows: list[dict[str, Any]]
+    ) -> tuple[int, int]:
+        """Return verified non-overlapping windows and unverifiable row count."""
         windows: list[tuple[datetime, datetime]] = []
+        unverifiable = 0
         for row in rows:
             start = self._parse_utc(row.get("dataCutoffAt"), "dataCutoffAt")
-            end = self._parse_utc(row.get("outcomeDueAt"), "outcomeDueAt")
+            raw_end = row.get("outcomeDueAt")
+            if not str(raw_end or "").strip():
+                unverifiable += 1
+                continue
+            end = self._parse_utc(raw_end, "outcomeDueAt")
             if end <= start:
                 raise ValueError("outcomeDueAt debe ser posterior a dataCutoffAt.")
             windows.append((start, end))
@@ -160,7 +174,7 @@ class RecommendationShadowPostSelectionConfirmationService:
             if last_end is None or window_start >= last_end:
                 count += 1
                 last_end = window_end
-        return count
+        return count, unverifiable
 
     def _policy(self) -> dict[str, Any]:
         return {
@@ -168,6 +182,7 @@ class RecommendationShadowPostSelectionConfirmationService:
             "maturity": "outcome_evaluated_at_not_after_as_of",
             "modelParameters": "frozen_and_fingerprint_verified",
             "temporalWindowEvidence": "maximum_pairwise_non_overlapping_forward_windows_reported",
+            "missingWindowTiming": "never_counted_as_verified_temporal_window",
             "nonOverlappingWindowsImplyStatisticalIndependence": False,
             "priorResearchEvidenceReusable": False,
             "priorHoldoutSelectionEvidenceReusable": False,
