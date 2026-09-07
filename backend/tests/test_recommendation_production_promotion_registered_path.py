@@ -25,6 +25,20 @@ def _fingerprint(payload: dict) -> str:
     ).hexdigest()
 
 
+def _issuer_coverage() -> dict:
+    return {
+        "rowCount": 30,
+        "resolvedIssuerRowCount": 29,
+        "unresolvedIssuerRowCount": 1,
+        "resolvedIssuerCoverageRatio": 29 / 30,
+        "distinctResolvedIssuerCount": 15,
+        "maximumRowsPerResolvedIssuer": 2,
+        "maximumResolvedIssuerConcentrationRatio": 2 / 29,
+        "statisticalIndependence": "not_claimed",
+        "thresholdsApplied": False,
+    }
+
+
 def _confirmation(*, research_cutoff: str) -> dict:
     core = {
         "artifactVersion": "shadow-post-selection-multi-horizon-v1",
@@ -46,6 +60,7 @@ def _confirmation(*, research_cutoff: str) -> dict:
                 "confirmationRowCount": 30,
                 "nonOverlappingConfirmationWindowCount": 22,
                 "unverifiableConfirmationWindowCount": 0,
+                "issuerCoverage": _issuer_coverage(),
                 "metrics": {"signAccuracy": 0.60, "mse": 0.02},
                 "relativeMseImprovement": 0.10,
                 "beatsZeroBaselineOnMse": True,
@@ -71,6 +86,8 @@ def _draft() -> dict:
             "7": {
                 "minimumConfirmationRowCount": 20,
                 "minimumNonOverlappingConfirmationWindowCount": 20,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -96,6 +113,8 @@ def test_registered_path_proves_persistence_without_enabling_advice(tmp_path):
     assert result["productionPromotionEvidenceReady"] is True
     assert result["horizons"]["7"]["minimumConfirmationRowCount"] == 20
     assert result["horizons"]["7"]["minimumNonOverlappingConfirmationWindowCount"] == 20
+    assert result["horizons"]["7"]["minimumResolvedIssuerCoverageRatio"] == 0.90
+    assert result["horizons"]["7"]["maximumResolvedIssuerConcentrationRatio"] == 0.25
     assert result["protocolPersistence"]["registered"] is True
     assert result["protocolPersistence"]["protocolFingerprint"] == record[
         "protocol_fingerprint"
@@ -104,6 +123,8 @@ def test_registered_path_proves_persistence_without_enabling_advice(tmp_path):
     assert result["policy"]["callerSuppliedRegistrationTimeAccepted"] is False
     assert result["policy"]["minimumConfirmationSampleMustBePrecommitted"] is True
     assert result["policy"]["minimumTemporalBreadthMustBePrecommitted"] is True
+    assert result["policy"]["issuerCoverageMustBePrecommitted"] is True
+    assert result["policy"]["issuerConcentrationMustBePrecommitted"] is True
     assert result["advisoryStatus"] == "no_advice"
     assert result["recommendationCandidateReady"] is False
     assert result["productionEligible"] is False
