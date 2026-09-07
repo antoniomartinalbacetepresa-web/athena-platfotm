@@ -10,6 +10,10 @@ from app.services.market_weighting_readiness_service import (
 )
 
 
+_IDENTITY_FINGERPRINT = "1" * 64
+_VALIDATION_FINGERPRINT = "2" * 64
+
+
 def _report(
     *,
     identity_coverage: float = 0.97,
@@ -42,6 +46,10 @@ def _report(
         canonical_listing_no_domestic_issuer_count=no_domestic_listing_count,
         canonical_listing_market_cap_count=canonical_listing_cap_count,
         median_fallback_market_cap_count=median_fallback_cap_count,
+        identity_evidence_fingerprint=_IDENTITY_FINGERPRINT,
+        external_validation_fingerprint=(
+            _VALIDATION_FINGERPRINT if external_validation_passed else None
+        ),
     )
 
 
@@ -54,12 +62,15 @@ def test_weighting_readiness_requires_all_evidence() -> None:
     assert report.external_validation_evidence_complete is True
     api = report.to_api_dict()
     assert api["method"] == "canonical_domestic_listing_else_median_with_domicile"
+    assert api["identityEvidenceFingerprint"] == _IDENTITY_FINGERPRINT
     assert api["canonicalMarketCapDiagnostics"] == {
         "canonicalListingCount": 4500,
         "medianFallbackCount": 500,
         "fallbackIsDiagnosticOnly": True,
     }
     assert api["canonicalListingValidation"]["domesticListingCoverageComplete"] is True
+    assert api["externalValidation"]["validationFingerprint"] == _VALIDATION_FINGERPRINT
+    assert api["externalValidation"]["boundIdentityEvidenceFingerprint"] == _IDENTITY_FINGERPRINT
 
 
 def test_weighting_readiness_keeps_external_validation_as_hard_gate() -> None:
@@ -70,6 +81,7 @@ def test_weighting_readiness_keeps_external_validation_as_hard_gate() -> None:
     api = report.to_api_dict()
     assert api["externalValidation"]["passed"] is False
     assert api["externalValidation"]["evidenceComplete"] is False
+    assert api["externalValidation"]["validationFingerprint"] is None
     assert api["ready"] is False
 
 
@@ -80,11 +92,26 @@ def test_weighting_readiness_requires_external_validation_reference() -> None:
     assert report.external_validation_evidence_complete is False
     assert report.ready is False
     assert report.blockers == ("external_market_cap_validation_required",)
-    assert report.to_api_dict()["externalValidation"] == {
-        "passed": True,
-        "reference": None,
-        "evidenceComplete": False,
-    }
+    validation = report.to_api_dict()["externalValidation"]
+    assert validation["passed"] is True
+    assert validation["reference"] is None
+    assert validation["evidenceComplete"] is False
+
+
+def test_weighting_readiness_requires_bound_validation_fingerprint() -> None:
+    report = replace(_report(), external_validation_fingerprint=None)
+
+    assert report.external_validation_evidence_complete is False
+    assert report.ready is False
+    assert report.blockers == ("external_market_cap_validation_required",)
+
+
+def test_weighting_readiness_requires_identity_evidence_fingerprint() -> None:
+    report = replace(_report(), identity_evidence_fingerprint=None)
+
+    assert report.external_validation_evidence_complete is False
+    assert report.ready is False
+    assert report.blockers == ("external_market_cap_validation_required",)
 
 
 def test_weighting_readiness_blocks_ambiguous_canonical_listings() -> None:
