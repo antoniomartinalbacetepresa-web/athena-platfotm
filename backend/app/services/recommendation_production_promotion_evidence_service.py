@@ -134,6 +134,14 @@ class RecommendationProductionPromotionEvidenceService:
             confirmation_row_count = self._positive_int(
                 evidence.get("confirmationRowCount"), "confirmationRowCount"
             )
+            non_overlapping_window_count = self._non_negative_int(
+                evidence.get("nonOverlappingConfirmationWindowCount"),
+                "nonOverlappingConfirmationWindowCount",
+            )
+            unverifiable_window_count = self._non_negative_int(
+                evidence.get("unverifiableConfirmationWindowCount"),
+                "unverifiableConfirmationWindowCount",
+            )
             relative_mse_improvement = self._finite_float(
                 evidence.get("relativeMseImprovement"), "relativeMseImprovement"
             )
@@ -141,6 +149,15 @@ class RecommendationProductionPromotionEvidenceService:
 
             if confirmation_row_count < criteria["minimumConfirmationRowCount"]:
                 blockers.append("confirmation_sample_below_precommitted_minimum")
+            if (
+                non_overlapping_window_count
+                < criteria["minimumNonOverlappingConfirmationWindowCount"]
+            ):
+                blockers.append(
+                    "confirmation_temporal_breadth_below_precommitted_minimum"
+                )
+            if unverifiable_window_count > 0:
+                blockers.append("confirmation_contains_unverifiable_temporal_windows")
             if sign_accuracy is not None and sign_accuracy < criteria["minimumSignAccuracy"]:
                 blockers.append("sign_accuracy_below_precommitted_minimum")
             if relative_mse_improvement < criteria["minimumRelativeMseImprovement"]:
@@ -162,6 +179,11 @@ class RecommendationProductionPromotionEvidenceService:
                 "confirmationStart": evidence.get("confirmationStart"),
                 "confirmationRowCount": confirmation_row_count,
                 "minimumConfirmationRowCount": criteria["minimumConfirmationRowCount"],
+                "nonOverlappingConfirmationWindowCount": non_overlapping_window_count,
+                "minimumNonOverlappingConfirmationWindowCount": criteria[
+                    "minimumNonOverlappingConfirmationWindowCount"
+                ],
+                "unverifiableConfirmationWindowCount": unverifiable_window_count,
                 "signAccuracy": sign_accuracy,
                 "relativeMseImprovement": relative_mse_improvement,
                 "beatsZeroBaselineOnMse": evidence.get("beatsZeroBaselineOnMse"),
@@ -196,6 +218,9 @@ class RecommendationProductionPromotionEvidenceService:
                 "sameResearchGateRequired": True,
                 "sealedConfirmationFingerprintRequired": True,
                 "minimumConfirmationSampleMustBePrecommitted": True,
+                "minimumTemporalBreadthMustBePrecommitted": True,
+                "unverifiableTemporalWindowsBlockPromotionEvidence": True,
+                "nonOverlappingWindowsDoNotClaimStatisticalIndependence": True,
                 "confirmationEvidenceCanRetuneCriteria": False,
                 "passingEvidenceIsNotProductionAuthorization": True,
             },
@@ -249,6 +274,10 @@ class RecommendationProductionPromotionEvidenceService:
                 item.get("minimumConfirmationRowCount"),
                 "minimumConfirmationRowCount",
             )
+            minimum_non_overlapping_window_count = self._positive_int(
+                item.get("minimumNonOverlappingConfirmationWindowCount"),
+                "minimumNonOverlappingConfirmationWindowCount",
+            )
             sign_accuracy = self._bounded_float(
                 item.get("minimumSignAccuracy"),
                 "minimumSignAccuracy",
@@ -264,6 +293,9 @@ class RecommendationProductionPromotionEvidenceService:
                 raise ValueError("requireBeatZeroExcessMseBaseline debe ser booleano.")
             criteria[key] = {
                 "minimumConfirmationRowCount": minimum_row_count,
+                "minimumNonOverlappingConfirmationWindowCount": (
+                    minimum_non_overlapping_window_count
+                ),
                 "minimumSignAccuracy": sign_accuracy,
                 "minimumRelativeMseImprovement": minimum_improvement,
                 "requireBeatZeroExcessMseBaseline": beat_baseline,
@@ -321,6 +353,11 @@ class RecommendationProductionPromotionEvidenceService:
     def _positive_int(self, value: object, field: str) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{field} debe ser un entero positivo.")
+        return value
+
+    def _non_negative_int(self, value: object, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field} debe ser un entero no negativo.")
         return value
 
     def _finite_float(self, value: object, field: str) -> float:
