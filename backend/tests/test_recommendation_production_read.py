@@ -17,7 +17,6 @@ FP_A = "a" * 64
 FP_B = "b" * 64
 FP_C = "c" * 64
 FP_D = "d" * 64
-FP_E = "e" * 64
 
 
 class FakeRecommendationRepository:
@@ -51,7 +50,8 @@ def _recommendation(*, authorized_at: str = "2026-09-01T12:00:00+00:00") -> dict
         "allocationEligible": False,
         "automaticTrading": False,
         "authorizationFingerprint": FP_A,
-        "instrumentId": "instrument-1",
+        # v1 recommendation authorizations persist this canonical DB id as text.
+        "instrumentId": "7",
         "symbol": "AAPL",
         "action": "buy",
         "economicContractFingerprint": FP_B,
@@ -61,7 +61,7 @@ def _recommendation(*, authorized_at: str = "2026-09-01T12:00:00+00:00") -> dict
     return {"authorization": authorization}
 
 
-def _allocation(*, recommendation_fp: str = FP_A) -> dict[str, object]:
+def _allocation(*, recommendation_fp: str = FP_A, instrument_id: int = 7) -> dict[str, object]:
     authorization = {
         "status": "production_allocation_authorized",
         "advisoryStatus": "production_allocation",
@@ -72,7 +72,8 @@ def _allocation(*, recommendation_fp: str = FP_A) -> dict[str, object]:
         "automaticTrading": False,
         "authorizationFingerprint": FP_C,
         "recommendationAuthorizationFingerprint": recommendation_fp,
-        "instrumentId": "instrument-1",
+        # Allocation authorization uses the canonical integer DB identity.
+        "instrumentId": instrument_id,
         "symbol": "AAPL",
         "action": "buy",
         "economicContractFingerprint": FP_B,
@@ -147,6 +148,30 @@ def test_returns_only_authorizations_known_at_cutoff(tmp_path) -> None:
     assert after["allocation"]["authorizationFingerprint"] == FP_C
     assert after["automaticTrading"] is False
     assert after["readOnly"] is True
+
+
+def test_canonicalizes_v1_text_recommendation_id_against_integer_allocation(tmp_path) -> None:
+    service = _service(tmp_path, recommendation=_recommendation(), allocation=_allocation())
+    result = service.resolve_latest(
+        as_of=datetime(2026, 9, 1, 13, 0, tzinfo=timezone.utc),
+        instrument_id=7,
+    )
+    assert result["recommendation"] is not None
+    assert result["allocation"] is not None
+    assert result["productionAllocationAvailable"] is True
+
+
+def test_rejects_allocation_with_different_instrument_identity(tmp_path) -> None:
+    service = _service(
+        tmp_path,
+        recommendation=_recommendation(),
+        allocation=_allocation(instrument_id=8),
+    )
+    with pytest.raises(ValueError, match="instrumentId"):
+        service.resolve_latest(
+            as_of=datetime(2026, 9, 1, 13, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+        )
 
 
 def test_rejects_allocation_recomposed_from_another_recommendation(tmp_path) -> None:
