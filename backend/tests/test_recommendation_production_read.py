@@ -83,7 +83,14 @@ def _allocation(*, recommendation_fp: str = FP_A, instrument_id: int = 7) -> dic
     return {"authorization": authorization}
 
 
-def _service(tmp_path, *, recommendation=None, allocation=None):
+def _service(
+    tmp_path,
+    *,
+    recommendation=None,
+    allocation=None,
+    recommendation_created_at: str | None = None,
+    allocation_created_at: str | None = None,
+):
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
     with database.connect() as connection:
@@ -92,31 +99,40 @@ def _service(tmp_path, *, recommendation=None, allocation=None):
             CREATE TABLE athena_recommendation_production_authorizations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 authorization_id TEXT NOT NULL,
-                authorized_at TEXT NOT NULL
+                authorized_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );
             CREATE TABLE athena_recommendation_production_allocation_authorizations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 authorization_id TEXT NOT NULL,
                 recommendation_authorization_fingerprint TEXT NOT NULL,
-                authorized_at TEXT NOT NULL
+                authorized_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );
             """
         )
         if recommendation is not None:
+            authorized_at = recommendation["authorization"]["authorizedAt"]
             connection.execute(
                 "INSERT INTO athena_recommendation_production_authorizations "
-                "(authorization_id, authorized_at) VALUES (?, ?)",
-                ("rec-1", recommendation["authorization"]["authorizedAt"]),
+                "(authorization_id, authorized_at, created_at) VALUES (?, ?, ?)",
+                (
+                    "rec-1",
+                    authorized_at,
+                    recommendation_created_at or authorized_at,
+                ),
             )
         if allocation is not None:
+            authorized_at = allocation["authorization"]["authorizedAt"]
             connection.execute(
                 "INSERT INTO athena_recommendation_production_allocation_authorizations "
-                "(authorization_id, recommendation_authorization_fingerprint, authorized_at) "
-                "VALUES (?, ?, ?)",
+                "(authorization_id, recommendation_authorization_fingerprint, authorized_at, created_at) "
+                "VALUES (?, ?, ?, ?)",
                 (
                     "alloc-1",
                     allocation["authorization"]["recommendationAuthorizationFingerprint"],
-                    allocation["authorization"]["authorizedAt"],
+                    authorized_at,
+                    allocation_created_at or authorized_at,
                 ),
             )
     return RecommendationProductionReadService(
@@ -148,6 +164,53 @@ def test_returns_only_authorizations_known_at_cutoff(tmp_path) -> None:
     assert after["allocation"]["authorizationFingerprint"] == FP_C
     assert after["automaticTrading"] is False
     assert after["readOnly"] is True
+
+
+def test_recommendation_is_not_visible_before_persistence_time(tmp_path) -> None:
+    service = _service(
+        tmp_path,
+        recommendation=_recommendation(authorized_at="2026-09-01T12:00:00+00:00"),
+        recommendation_created_at="2026-09-01T12:05:00+00:00",
+    )
+
+    between_authorization_and_persistence = service.resolve_latest(
+        as_of=datetime(2026, 9, 1, 12, 2, tzinfo=timezone.utc),
+        symbol="AAPL",
+    )
+    assert between_authorization_and_persistence["recommendation"] is None
+    assert between_authorization_and_persistence["productionRecommendationAvailable"] is False
+
+    after_persistence = service.resolve_latest(
+        as_of=datetime(2026, 9, 1, 12, 6, tzinfo=timezone.utc),
+        symbol="AAPL",
+    )
+    assert after_persistence["recommendation"] is not None
+    assert after_persistence["productionRecommendationAvailable"] is True
+
+
+def test_allocation_is_not_visible_before_persistence_time(tmp_path) -> None:
+    service = _service(
+        tmp_path,
+        recommendation=_recommendation(),
+        allocation=_allocation(),
+        recommendation_created_at="2026-09-01T12:00:01+00:00",
+        allocation_created_at="2026-09-01T12:35:00+00:00",
+    )
+
+    between_authorization_and_persistence = service.resolve_latest(
+        as_of=datetime(2026, 9, 1, 12, 32, tzinfo=timezone.utc),
+        symbol="AAPL",
+    )
+    assert between_authorization_and_persistence["recommendation"] is not None
+    assert between_authorization_and_persistence["allocation"] is None
+    assert between_authorization_and_persistence["productionAllocationAvailable"] is False
+
+    after_persistence = service.resolve_latest(
+        as_of=datetime(2026, 9, 1, 12, 36, tzinfo=timezone.utc),
+        symbol="AAPL",
+    )
+    assert after_persistence["allocation"] is not None
+    assert after_persistence["productionAllocationAvailable"] is True
 
 
 def test_global_latest_requires_no_invented_instrument_scope(tmp_path) -> None:
