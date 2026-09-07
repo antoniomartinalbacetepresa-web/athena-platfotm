@@ -23,6 +23,12 @@ class RecommendationShadowPostSelectionConfirmationService:
 
     The frozen model is never refit, feature engineering is never relearned, and
     the result cannot assign actions or promote a model to production.
+
+    Besides raw row count, the artifact reports the maximum number of pairwise
+    non-overlapping forward outcome windows. This prevents downstream promotion
+    gates from mistaking many heavily overlapping long-horizon rows for the same
+    amount of temporal evidence. Non-overlap is deliberately not described as
+    statistical independence.
     """
 
     def __init__(
@@ -69,9 +75,12 @@ class RecommendationShadowPostSelectionConfirmationService:
         excluded_not_mature = 0
         for row in dataset.get("rows", []):
             feature_time = self._parse_utc(row.get("dataCutoffAt"), "dataCutoffAt")
+            outcome_due_at = self._parse_utc(row.get("outcomeDueAt"), "outcomeDueAt")
             outcome_time = self._parse_utc(
                 row.get("outcomeEvaluatedAt"), "outcomeEvaluatedAt"
             )
+            if outcome_due_at <= feature_time:
+                raise ValueError("outcomeDueAt debe ser posterior a dataCutoffAt.")
             if feature_time <= start:
                 excluded_before_confirmation += 1
                 continue
@@ -80,6 +89,7 @@ class RecommendationShadowPostSelectionConfirmationService:
                 continue
             rows.append(row)
 
+        non_overlapping_window_count = self._non_overlapping_window_count(rows)
         common = {
             "modelFingerprint": model["fingerprint"],
             "researchCutoff": research_cutoff.isoformat(),
@@ -88,6 +98,7 @@ class RecommendationShadowPostSelectionConfirmationService:
             "horizonDays": int(model["horizonDays"]),
             "excludedBeforeOrAtConfirmationStartCount": excluded_before_confirmation,
             "excludedNotMatureCount": excluded_not_mature,
+            "nonOverlappingConfirmationWindowCount": non_overlapping_window_count,
         }
         if len(rows) < self._minimum_confirmation_rows:
             return {
@@ -132,11 +143,31 @@ class RecommendationShadowPostSelectionConfirmationService:
             "policy": self._policy(),
         }
 
+    def _non_overlapping_window_count(self, rows: list[dict[str, Any]]) -> int:
+        """Return the maximum number of pairwise non-overlapping forward windows."""
+        windows: list[tuple[datetime, datetime]] = []
+        for row in rows:
+            start = self._parse_utc(row.get("dataCutoffAt"), "dataCutoffAt")
+            end = self._parse_utc(row.get("outcomeDueAt"), "outcomeDueAt")
+            if end <= start:
+                raise ValueError("outcomeDueAt debe ser posterior a dataCutoffAt.")
+            windows.append((start, end))
+
+        count = 0
+        last_end: datetime | None = None
+        for window_start, window_end in sorted(windows, key=lambda item: (item[1], item[0])):
+            if last_end is None or window_start >= last_end:
+                count += 1
+                last_end = window_end
+        return count
+
     def _policy(self) -> dict[str, Any]:
         return {
-            "independence": "features_strictly_after_post_selection_confirmation_start",
+            "postSelectionTemporalSeparation": "features_strictly_after_confirmation_start",
             "maturity": "outcome_evaluated_at_not_after_as_of",
             "modelParameters": "frozen_and_fingerprint_verified",
+            "temporalWindowEvidence": "maximum_pairwise_non_overlapping_forward_windows_reported",
+            "nonOverlappingWindowsImplyStatisticalIndependence": False,
             "priorResearchEvidenceReusable": False,
             "priorHoldoutSelectionEvidenceReusable": False,
             "refit": False,
