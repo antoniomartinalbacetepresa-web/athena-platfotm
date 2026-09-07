@@ -1,5 +1,6 @@
 import '../controllers/recommendation_learning_controller.dart';
 import '../data/datasources/athena_backend_recommendation_learning_data_source.dart';
+import '../data/datasources/athena_backend_recommendation_production_data_source.dart';
 import '../data/datasources/athena_backend_recommendation_shadow_candidate_data_source.dart';
 
 class RecommendationDependencies {
@@ -10,11 +11,13 @@ class RecommendationDependencies {
 
   final AthenaBackendRecommendationLearningDataSource learningDataSource;
   final AthenaBackendRecommendationShadowCandidateDataSource shadowCandidateDataSource;
+  final AthenaBackendRecommendationProductionDataSource productionDataSource;
   final RecommendationLearningController learningController;
 
   RecommendationDependencies({
     required this.learningDataSource,
     required this.shadowCandidateDataSource,
+    required this.productionDataSource,
     required this.learningController,
   });
 
@@ -33,10 +36,14 @@ class RecommendationDependencies {
         AthenaBackendRecommendationShadowCandidateDataSource(
       baseUrl: effectiveBaseUrl,
     );
+    final productionDataSource = AthenaBackendRecommendationProductionDataSource(
+      baseUrl: effectiveBaseUrl,
+    );
 
     return RecommendationDependencies(
       learningDataSource: learningDataSource,
       shadowCandidateDataSource: shadowCandidateDataSource,
+      productionDataSource: productionDataSource,
       learningController: RecommendationLearningController(
         provider: learningDataSource,
       ),
@@ -47,5 +54,6 @@ class RecommendationDependencies {
     learningController.dispose();
     learningDataSource.dispose();
     shadowCandidateDataSource.dispose();
+    productionDataSource.dispose();
   }
 }
