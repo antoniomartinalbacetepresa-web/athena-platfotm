@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -234,7 +235,7 @@ class RecommendationProductionAuthorizationRepository:
         if len(reason) < 20:
             raise ValueError("authorizationReason debe documentar la decisión de gobierno.")
 
-        return {
+        result = {
             "artifactVersion": self.ARTIFACT_VERSION,
             "authorizationId": self._non_empty(
                 payload.get("authorizationId"), "authorizationId"
@@ -308,6 +309,11 @@ class RecommendationProductionAuthorizationRepository:
                 "automaticTrading": False,
             },
         }
+        if "expectedExcessReturn" in payload:
+            result["expectedExcessReturn"] = self._finite(
+                payload.get("expectedExcessReturn"), "expectedExcessReturn"
+            )
+        return result
 
     def _row(self, row: Any) -> dict[str, Any] | None:
         if row is None:
@@ -363,6 +369,14 @@ class RecommendationProductionAuthorizationRepository:
         ):
             raise ValueError(f"{field} debe ser SHA-256 válido.")
         return normalized
+
+    def _finite(self, value: object, field: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} debe ser numérico.")
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError(f"{field} debe ser finito.")
+        return parsed
 
     def _non_empty(self, value: object, field: str) -> str:
         parsed = str(value or "").strip()
