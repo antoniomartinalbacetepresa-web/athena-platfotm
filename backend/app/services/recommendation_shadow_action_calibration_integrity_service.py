@@ -9,8 +9,9 @@ class RecommendationShadowActionCalibrationIntegrityService:
 
     Fingerprints protect persisted bytes from accidental mutation, but a caller
     must not be able to construct a new self-consistent artifact whose rows
-    violate the point-in-time partition semantics. This validator therefore
-    re-checks the temporal and shadow contracts independently of the producer.
+    violate point-in-time partition or canonical-instrument semantics. This
+    validator therefore re-checks temporal, identity and shadow contracts
+    independently of the producer.
     """
 
     EXPECTED_VERSION = "shadow-action-calibration-split-v1"
@@ -55,11 +56,12 @@ class RecommendationShadowActionCalibrationIntegrityService:
         ) != len(validation_rows):
             raise ValueError("validationRowCount no coincide con las filas devueltas.")
 
-        seen: set[tuple[int, int]] = set()
-        previous_key: tuple[datetime, str, int, int] | None = None
+        seen_candidate_horizons: set[tuple[int, int]] = set()
+        seen_instrument_observations: set[tuple[int, str, int]] = set()
+        previous_key: tuple[datetime, int, str, int, int] | None = None
         for partition, rows in (("train", train_rows), ("validation", validation_rows)):
             for row in rows:
-                identity, sort_key = self._validate_row(
+                candidate_identity, observation_identity, sort_key = self._validate_row(
                     row=row,
                     partition=partition,
                     train_end=train_end,
@@ -67,9 +69,14 @@ class RecommendationShadowActionCalibrationIntegrityService:
                     as_of=as_of,
                     requested_horizons=requested_horizons,
                 )
-                if identity in seen:
+                if candidate_identity in seen_candidate_horizons:
                     raise ValueError("Una fila candidate/horizon aparece más de una vez.")
-                seen.add(identity)
+                seen_candidate_horizons.add(candidate_identity)
+                if observation_identity in seen_instrument_observations:
+                    raise ValueError(
+                        "Una observación instrumentId/cutoff/horizon aparece más de una vez."
+                    )
+                seen_instrument_observations.add(observation_identity)
                 if previous_key is not None and sort_key < previous_key:
                     raise ValueError("Las filas del split no mantienen orden cronológico.")
                 previous_key = sort_key
@@ -102,8 +109,13 @@ class RecommendationShadowActionCalibrationIntegrityService:
         validation_end: datetime,
         as_of: datetime,
         requested_horizons: set[int],
-    ) -> tuple[tuple[int, int], tuple[datetime, str, int, int]]:
+    ) -> tuple[
+        tuple[int, int],
+        tuple[int, str, int],
+        tuple[datetime, int, str, int, int],
+    ]:
         candidate_id = self._positive_int(row.get("candidateId"), "candidateId")
+        instrument_id = self._positive_int(row.get("instrumentId"), "instrumentId")
         horizon = self._positive_int(row.get("horizonDays"), "horizonDays")
         if requested_horizons and horizon not in requested_horizons:
             raise ValueError("Una fila usa un horizonte no solicitado.")
@@ -132,7 +144,12 @@ class RecommendationShadowActionCalibrationIntegrityService:
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol:
             raise ValueError("Una fila de calibración carece de symbol.")
-        return (candidate_id, horizon), (candidate_as_of, symbol, candidate_id, horizon)
+        cutoff_key = candidate_as_of.isoformat()
+        return (
+            (candidate_id, horizon),
+            (instrument_id, cutoff_key, horizon),
+            (candidate_as_of, instrument_id, symbol, candidate_id, horizon),
+        )
 
     def _assert_shadow_contract(self, payload: dict[str, Any]) -> None:
         if payload.get("advisoryStatus") != "no_advice":
