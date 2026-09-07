@@ -150,6 +150,18 @@ def test_returns_only_authorizations_known_at_cutoff(tmp_path) -> None:
     assert after["readOnly"] is True
 
 
+def test_global_latest_requires_no_invented_instrument_scope(tmp_path) -> None:
+    service = _service(tmp_path, recommendation=_recommendation(), allocation=_allocation())
+    result = service.resolve_latest(
+        as_of=datetime(2026, 9, 1, 13, 0, tzinfo=timezone.utc),
+    )
+    assert result["symbol"] is None
+    assert result["instrumentId"] is None
+    assert result["recommendation"]["symbol"] == "AAPL"
+    assert result["productionRecommendationAvailable"] is True
+    assert result["productionAllocationAvailable"] is True
+
+
 def test_canonicalizes_v1_text_recommendation_id_against_integer_allocation(tmp_path) -> None:
     service = _service(tmp_path, recommendation=_recommendation(), allocation=_allocation())
     result = service.resolve_latest(
@@ -189,12 +201,10 @@ def test_rejects_allocation_recomposed_from_another_recommendation(tmp_path) -> 
     assert result["productionAllocationAvailable"] is False
 
 
-def test_requires_instrument_scope_and_timezone(tmp_path) -> None:
+def test_requires_timezone_even_for_global_latest(tmp_path) -> None:
     service = _service(tmp_path)
-    with pytest.raises(ValueError, match="symbol o instrument_id"):
-        service.resolve_latest(as_of=datetime.now(timezone.utc))
     with pytest.raises(ValueError, match="zona horaria"):
-        service.resolve_latest(as_of=datetime(2026, 9, 1, 12, 0), symbol="AAPL")
+        service.resolve_latest(as_of=datetime(2026, 9, 1, 12, 0))
 
 
 def test_get_endpoint_is_read_only_and_fails_closed(monkeypatch) -> None:
@@ -202,7 +212,7 @@ def test_get_endpoint_is_read_only_and_fails_closed(monkeypatch) -> None:
         def resolve_latest(self, **kwargs):
             return {
                 "asOf": "2026-09-01T13:00:00+00:00",
-                "symbol": "AAPL",
+                "symbol": None,
                 "instrumentId": None,
                 "recommendation": None,
                 "allocation": None,
@@ -215,7 +225,7 @@ def test_get_endpoint_is_read_only_and_fails_closed(monkeypatch) -> None:
     monkeypatch.setattr(production_api, "production_read_service", FakeService())
     response = TestClient(app).get(
         "/api/v1/recommendations/production/latest",
-        params={"symbol": "AAPL", "as_of": "2026-09-01T13:00:00+00:00"},
+        params={"as_of": "2026-09-01T13:00:00+00:00"},
     )
     assert response.status_code == 200
     assert response.json()["data"]["productionRecommendationAvailable"] is False
