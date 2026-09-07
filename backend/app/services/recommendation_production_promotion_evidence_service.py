@@ -142,6 +142,9 @@ class RecommendationProductionPromotionEvidenceService:
                 evidence.get("unverifiableConfirmationWindowCount"),
                 "unverifiableConfirmationWindowCount",
             )
+            issuer_coverage = self._validated_issuer_coverage(
+                evidence.get("issuerCoverage"), confirmation_row_count
+            )
             relative_mse_improvement = self._finite_float(
                 evidence.get("relativeMseImprovement"), "relativeMseImprovement"
             )
@@ -158,6 +161,16 @@ class RecommendationProductionPromotionEvidenceService:
                 )
             if unverifiable_window_count > 0:
                 blockers.append("confirmation_contains_unverifiable_temporal_windows")
+            if (
+                issuer_coverage["resolvedIssuerCoverageRatio"]
+                < criteria["minimumResolvedIssuerCoverageRatio"]
+            ):
+                blockers.append("issuer_coverage_below_precommitted_minimum")
+            if (
+                issuer_coverage["maximumResolvedIssuerConcentrationRatio"]
+                > criteria["maximumResolvedIssuerConcentrationRatio"]
+            ):
+                blockers.append("issuer_concentration_above_precommitted_maximum")
             if sign_accuracy is not None and sign_accuracy < criteria["minimumSignAccuracy"]:
                 blockers.append("sign_accuracy_below_precommitted_minimum")
             if relative_mse_improvement < criteria["minimumRelativeMseImprovement"]:
@@ -184,6 +197,13 @@ class RecommendationProductionPromotionEvidenceService:
                     "minimumNonOverlappingConfirmationWindowCount"
                 ],
                 "unverifiableConfirmationWindowCount": unverifiable_window_count,
+                "issuerCoverage": issuer_coverage,
+                "minimumResolvedIssuerCoverageRatio": criteria[
+                    "minimumResolvedIssuerCoverageRatio"
+                ],
+                "maximumResolvedIssuerConcentrationRatio": criteria[
+                    "maximumResolvedIssuerConcentrationRatio"
+                ],
                 "signAccuracy": sign_accuracy,
                 "relativeMseImprovement": relative_mse_improvement,
                 "beatsZeroBaselineOnMse": evidence.get("beatsZeroBaselineOnMse"),
@@ -221,6 +241,9 @@ class RecommendationProductionPromotionEvidenceService:
                 "minimumTemporalBreadthMustBePrecommitted": True,
                 "unverifiableTemporalWindowsBlockPromotionEvidence": True,
                 "nonOverlappingWindowsDoNotClaimStatisticalIndependence": True,
+                "issuerCoverageMustBePrecommitted": True,
+                "issuerConcentrationMustBePrecommitted": True,
+                "issuerDiversityDoesNotClaimStatisticalIndependence": True,
                 "confirmationEvidenceCanRetuneCriteria": False,
                 "passingEvidenceIsNotProductionAuthorization": True,
             },
@@ -278,6 +301,23 @@ class RecommendationProductionPromotionEvidenceService:
                 item.get("minimumNonOverlappingConfirmationWindowCount"),
                 "minimumNonOverlappingConfirmationWindowCount",
             )
+            if minimum_non_overlapping_window_count > minimum_row_count:
+                raise ValueError(
+                    "minimumNonOverlappingConfirmationWindowCount no puede superar "
+                    "minimumConfirmationRowCount."
+                )
+            minimum_issuer_coverage = self._bounded_float(
+                item.get("minimumResolvedIssuerCoverageRatio"),
+                "minimumResolvedIssuerCoverageRatio",
+                0.0,
+                1.0,
+            )
+            maximum_issuer_concentration = self._bounded_float(
+                item.get("maximumResolvedIssuerConcentrationRatio"),
+                "maximumResolvedIssuerConcentrationRatio",
+                0.0,
+                1.0,
+            )
             sign_accuracy = self._bounded_float(
                 item.get("minimumSignAccuracy"),
                 "minimumSignAccuracy",
@@ -296,6 +336,8 @@ class RecommendationProductionPromotionEvidenceService:
                 "minimumNonOverlappingConfirmationWindowCount": (
                     minimum_non_overlapping_window_count
                 ),
+                "minimumResolvedIssuerCoverageRatio": minimum_issuer_coverage,
+                "maximumResolvedIssuerConcentrationRatio": maximum_issuer_concentration,
                 "minimumSignAccuracy": sign_accuracy,
                 "minimumRelativeMseImprovement": minimum_improvement,
                 "requireBeatZeroExcessMseBaseline": beat_baseline,
@@ -343,6 +385,75 @@ class RecommendationProductionPromotionEvidenceService:
         self._parse_utc(core.get("researchCutoff"), "researchCutoff")
         self._parse_utc(core.get("asOf"), "asOf")
         return dict(payload)
+
+    def _validated_issuer_coverage(
+        self, payload: object, confirmation_row_count: int
+    ) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("issuerCoverage es obligatorio en evidencia de confirmación.")
+        row_count = self._positive_int(payload.get("rowCount"), "issuerCoverage.rowCount")
+        resolved = self._non_negative_int(
+            payload.get("resolvedIssuerRowCount"),
+            "issuerCoverage.resolvedIssuerRowCount",
+        )
+        unresolved = self._non_negative_int(
+            payload.get("unresolvedIssuerRowCount"),
+            "issuerCoverage.unresolvedIssuerRowCount",
+        )
+        distinct = self._non_negative_int(
+            payload.get("distinctResolvedIssuerCount"),
+            "issuerCoverage.distinctResolvedIssuerCount",
+        )
+        maximum_rows = self._non_negative_int(
+            payload.get("maximumRowsPerResolvedIssuer"),
+            "issuerCoverage.maximumRowsPerResolvedIssuer",
+        )
+        coverage = self._bounded_float(
+            payload.get("resolvedIssuerCoverageRatio"),
+            "issuerCoverage.resolvedIssuerCoverageRatio",
+            0.0,
+            1.0,
+        )
+        concentration = self._bounded_float(
+            payload.get("maximumResolvedIssuerConcentrationRatio"),
+            "issuerCoverage.maximumResolvedIssuerConcentrationRatio",
+            0.0,
+            1.0,
+        )
+        if row_count != confirmation_row_count:
+            raise ValueError("issuerCoverage.rowCount no coincide con confirmationRowCount.")
+        if resolved + unresolved != row_count:
+            raise ValueError("issuerCoverage no reconcilia filas resueltas y no resueltas.")
+        if distinct > resolved or maximum_rows > resolved:
+            raise ValueError("issuerCoverage contiene conteos canónicos inconsistentes.")
+        expected_coverage = resolved / row_count
+        expected_concentration = maximum_rows / resolved if resolved else 1.0
+        if not math.isclose(coverage, expected_coverage, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError("issuerCoverage.resolvedIssuerCoverageRatio es inconsistente.")
+        if not math.isclose(
+            concentration,
+            expected_concentration,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "issuerCoverage.maximumResolvedIssuerConcentrationRatio es inconsistente."
+            )
+        if payload.get("statisticalIndependence") != "not_claimed":
+            raise ValueError("issuerCoverage no puede afirmar independencia estadística.")
+        if payload.get("thresholdsApplied") is not False:
+            raise ValueError("issuerCoverage no puede aplicar thresholds retrospectivos.")
+        return {
+            "rowCount": row_count,
+            "resolvedIssuerRowCount": resolved,
+            "unresolvedIssuerRowCount": unresolved,
+            "resolvedIssuerCoverageRatio": coverage,
+            "distinctResolvedIssuerCount": distinct,
+            "maximumRowsPerResolvedIssuer": maximum_rows,
+            "maximumResolvedIssuerConcentrationRatio": concentration,
+            "statisticalIndependence": "not_claimed",
+            "thresholdsApplied": False,
+        }
 
     def _non_empty_string(self, value: object, field: str) -> str:
         parsed = str(value or "").strip()
