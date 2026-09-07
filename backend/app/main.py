@@ -13,6 +13,9 @@ from app.api.portfolio_allocation_policy import (
 )
 from app.api.recommendation_catalysts import router as recommendation_catalysts_router
 from app.api.recommendation_factor_risk import router as recommendation_factor_risk_router
+from app.api.recommendation_factor_risk_candidate_impact import (
+    router as recommendation_factor_risk_candidate_impact_router,
+)
 from app.api.recommendation_production import router as recommendation_production_router
 from app.api.recommendation_professional_research import (
     router as recommendation_professional_research_router,
@@ -61,6 +64,7 @@ app.include_router(recommendation_professional_research_router)
 app.include_router(recommendation_thesis_invalidation_router)
 app.include_router(recommendation_catalysts_router)
 app.include_router(recommendation_factor_risk_router)
+app.include_router(recommendation_factor_risk_candidate_impact_router)
 app.include_router(recommendation_shadow_operations_router)
 
 
