@@ -22,6 +22,11 @@ class RecommendationShadowWalkForwardService:
     Macro preprocessing is fitted only on the frozen fold's training partition
     and remains diagnostic: macro values are not appended to the candidate model
     here and cannot silently influence scores, actions, or production eligibility.
+
+    Walk-forward aggregation is descriptive only. This service deliberately does
+    not translate fold win rates or median improvements into a stability verdict:
+    any such acceptance criterion must be explicitly precommitted and validated
+    in the production-promotion protocol rather than invented in research code.
     """
 
     def __init__(
@@ -162,11 +167,6 @@ class RecommendationShadowWalkForwardService:
         median_improvement = float(median(improvements))
         median_sign_accuracy = float(median(sign_accuracies))
 
-        # These are descriptive diagnostics, not production promotion thresholds.
-        # Keeping them separate prevents a provisional research heuristic from
-        # becoming an investment decision rule by accident.
-        stable_directionally = win_rate >= (2.0 / 3.0) and median_improvement > 0
-
         return {
             "status": "shadow_walk_forward_evaluated",
             "horizonDays": horizon_days,
@@ -182,7 +182,8 @@ class RecommendationShadowWalkForwardService:
                 "medianMae": float(median(maes)),
                 "minimumRelativeMseImprovement": min(improvements),
                 "maximumRelativeMseImprovement": max(improvements),
-                "stableDirectionally": stable_directionally,
+                "stabilityAssessment": "not_assessed_without_precommitted_criteria",
+                "stabilityThresholdApplied": False,
             },
             "folds": results,
             "advisoryStatus": "no_advice",
@@ -241,7 +242,8 @@ class RecommendationShadowWalkForwardService:
             "evaluation": "multiple_ordered_purged_temporal_folds",
             "foldUniverse": "single_frozen_split_reused_by_all_fold_consumers",
             "benchmark": "zero_excess_return_baseline_per_fold",
-            "stability": "reported_diagnostically_not_used_for_promotion",
+            "stability": "descriptive_metrics_only_no_uncommitted_thresholds",
+            "stabilityThresholds": "none_in_walk_forward_research",
             "macroResearchPreprocessing": "fit_inside_each_fold_train_only",
             "macroCandidateInfluence": "disabled_until_oos_comparison_is_validated",
             "actions": "not_assigned",
