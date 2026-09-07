@@ -48,6 +48,12 @@ class RecommendationProductionState {
     if (value.instrumentId <= 0 || value.symbol.trim().isEmpty) return false;
     if (!_actions.contains(value.action)) return false;
     if (value.policyState.trim().isEmpty) return false;
+    final horizonDays = value.horizonDays;
+    if (horizonDays != null && horizonDays <= 0) return false;
+    final expectedExcessReturn = value.expectedExcessReturn;
+    if (expectedExcessReturn != null && !expectedExcessReturn.isFinite) {
+      return false;
+    }
     if (!value.asOf.isUtc || !value.authorizedAt.isUtc) return false;
     if (value.asOf.isAfter(asOf) || value.authorizedAt.isAfter(asOf)) return false;
     if (value.authorizedAt.isBefore(value.asOf)) return false;
@@ -111,6 +117,16 @@ class RecommendationProductionRecommendation {
   final String authorizationFingerprint;
   final String economicContractFingerprint;
 
+  /// Productive horizon already sealed by the backend authorization chain.
+  /// Null only for legacy v1 artifacts created before the Flutter contract
+  /// started surfacing the field explicitly.
+  final int? horizonDays;
+
+  /// Exact OOS-validated expected excess-return signal persisted by backend.
+  /// It is not a probability, confidence score or guarantee. Null represents
+  /// a legacy authorization that did not persist this explainability field.
+  final double? expectedExcessReturn;
+
   const RecommendationProductionRecommendation({
     required this.instrumentId,
     required this.symbol,
@@ -120,6 +136,8 @@ class RecommendationProductionRecommendation {
     required this.authorizedAt,
     required this.authorizationFingerprint,
     required this.economicContractFingerprint,
+    this.horizonDays,
+    this.expectedExcessReturn,
   });
 }
 
