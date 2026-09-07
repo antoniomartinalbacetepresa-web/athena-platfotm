@@ -185,9 +185,13 @@ def test_investment_journal_api_happy_path() -> None:
     assert data["policy"]["persistentAppendOnlyStorage"] is False
 
 
-def test_investment_journal_api_rejects_naive_time() -> None:
+@pytest.mark.parametrize("target", ["recordedAt", "asOf", "referenceAvailableAt"])
+def test_investment_journal_api_rejects_naive_times_with_400(target: str) -> None:
     payload = _api_payload()
-    payload["recordedAt"] = "2026-01-09T12:00:00"
+    if target == "referenceAvailableAt":
+        payload["references"][0]["availableAt"] = "2026-01-09T11:00:00"
+    else:
+        payload[target] = "2026-01-09T12:00:00"
 
     response = TestClient(app).post(
         "/api/v1/recommendations/professional-research/investment-journal/snapshot",
