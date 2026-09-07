@@ -3,12 +3,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/features/dashboard/presentation/widgets/recommendations_panel.dart';
 import 'package:app/features/recommendations/models/recommendation_learning_status.dart';
+import 'package:app/features/recommendations/models/recommendation_production_state.dart';
 import 'package:app/features/recommendations/models/recommendation_shadow_candidate_snapshot.dart';
 import 'package:app/features/recommendations/services/recommendation_learning_status_provider.dart';
+import 'package:app/features/recommendations/services/recommendation_production_state_provider.dart';
 import 'package:app/features/recommendations/services/recommendation_shadow_candidate_provider.dart';
 
 const _candidateFingerprint =
     '1111111111111111111111111111111111111111111111111111111111111111';
+const _recommendationFingerprint =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _allocationFingerprint =
+    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _economicFingerprint =
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
 class FakeLearningStatusProvider implements RecommendationLearningStatusProvider {
   @override
@@ -101,25 +109,101 @@ class FakeShadowCandidateProvider implements RecommendationShadowCandidateProvid
   }
 }
 
+class FakeProductionStateProvider implements RecommendationProductionStateProvider {
+  final bool withRecommendation;
+  final bool withAllocation;
+
+  FakeProductionStateProvider({
+    this.withRecommendation = false,
+    this.withAllocation = false,
+  });
+
+  @override
+  Future<RecommendationProductionState> getLatest({
+    DateTime? asOf,
+    String? symbol,
+    int? instrumentId,
+  }) async {
+    final cutoff = DateTime.utc(2026, 9, 1, 20, 30);
+    if (!withRecommendation) {
+      return RecommendationProductionState(
+        asOf: cutoff,
+        recommendation: null,
+        allocation: null,
+        productionRecommendationAvailable: false,
+        productionAllocationAvailable: false,
+        automaticTrading: false,
+        readOnly: true,
+      );
+    }
+    final recommendation = RecommendationProductionRecommendation(
+      instrumentId: 7,
+      symbol: 'AAPL',
+      action: 'buy',
+      policyState: 'flat',
+      asOf: DateTime.utc(2026, 9, 1, 20),
+      authorizedAt: DateTime.utc(2026, 9, 1, 20, 10),
+      authorizationFingerprint: _recommendationFingerprint,
+      economicContractFingerprint: _economicFingerprint,
+    );
+    final allocation = withAllocation
+        ? RecommendationProductionAllocation(
+            instrumentId: 7,
+            symbol: 'AAPL',
+            action: 'buy',
+            asOf: DateTime.utc(2026, 9, 1, 20),
+            authorizedAt: DateTime.utc(2026, 9, 1, 20, 15),
+            authorizationFingerprint: _allocationFingerprint,
+            recommendationAuthorizationFingerprint: _recommendationFingerprint,
+            economicContractFingerprint: _economicFingerprint,
+            baseCurrency: 'EUR',
+            referenceCapital: 10000,
+            targetAmountInBaseCurrency: 1500,
+            deltaAmountInBaseCurrency: 1500,
+          )
+        : null;
+    return RecommendationProductionState(
+      asOf: cutoff,
+      recommendation: recommendation,
+      allocation: allocation,
+      productionRecommendationAvailable: true,
+      productionAllocationAvailable: allocation != null,
+      automaticTrading: false,
+      readOnly: true,
+    );
+  }
+}
+
+Widget _panel({
+  bool withShadow = true,
+  bool withProduction = false,
+  bool withAllocation = false,
+}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: SizedBox(
+        width: 900,
+        height: 650,
+        child: RecommendationsPanel(
+          learningStatusProvider: FakeLearningStatusProvider(),
+          shadowCandidateProvider: FakeShadowCandidateProvider(
+            withCandidate: withShadow,
+          ),
+          productionStateProvider: FakeProductionStateProvider(
+            withRecommendation: withProduction,
+            withAllocation: withAllocation,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 void main() {
   testWidgets(
     'muestra aprendizaje y candidato shadow real sin consejo ficticio',
     (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 900,
-              height: 650,
-              child: RecommendationsPanel(
-                learningStatusProvider: FakeLearningStatusProvider(),
-                shadowCandidateProvider: FakeShadowCandidateProvider(),
-              ),
-            ),
-          ),
-        ),
-      );
-
+      await tester.pumpWidget(_panel());
       await tester.pumpAndSettle();
 
       expect(find.text('RECOMENDACIONES ATHENA'), findsOneWidget);
@@ -128,10 +212,14 @@ void main() {
         find.text('ATHENA ya está midiendo candidatos con resultados reales.'),
         findsOneWidget,
       );
+      expect(
+        find.text('No existe una recomendación productiva autorizada conocida por ATHENA.'),
+        findsOneWidget,
+      );
       expect(find.text('Candidato shadow verificable · AAPL'), findsOneWidget);
       expect(find.textContaining('30d: +1.50% exceso esperado'), findsOneWidget);
       expect(find.textContaining('technicalScore +1.00 pp'), findsOneWidget);
-      expect(find.textContaining('No constituyen una recomendación'), findsOneWidget);
+      expect(find.textContaining('No constituye una recomendación'), findsOneWidget);
       expect(find.text('Candidatos shadow'), findsOneWidget);
       expect(find.text('Candidatos evaluados'), findsOneWidget);
       expect(find.text('Observaciones maduras'), findsOneWidget);
@@ -140,28 +228,12 @@ void main() {
       expect(find.text('Microsoft'), findsNothing);
       expect(find.text('NVIDIA'), findsNothing);
       expect(find.text('COMPRAR'), findsNothing);
-      expect(find.text('MOTOR EN VALIDACIÓN'), findsNothing);
     },
   );
 
-  testWidgets('muestra ausencia verificable sin inventar candidato', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 900,
-            height: 650,
-            child: RecommendationsPanel(
-              learningStatusProvider: FakeLearningStatusProvider(),
-              shadowCandidateProvider: FakeShadowCandidateProvider(
-                withCandidate: false,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
+  testWidgets('muestra ausencia verificable sin inventar candidato ni recomendación',
+      (tester) async {
+    await tester.pumpWidget(_panel(withShadow: false));
     await tester.pumpAndSettle();
 
     expect(
@@ -170,6 +242,44 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      find.text('No existe una recomendación productiva autorizada conocida por ATHENA.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('exceso esperado'), findsNothing);
+    expect(find.text('COMPRAR'), findsNothing);
+  });
+
+  testWidgets('muestra sólo la recomendación productiva autorizada y trazable',
+      (tester) async {
+    await tester.pumpWidget(_panel(withProduction: true));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PRODUCTIVO AUTORIZADO'), findsOneWidget);
+    expect(find.text('COMPRAR · AAPL'), findsOneWidget);
+    expect(find.textContaining('Autorización productiva verificada'), findsOneWidget);
+    expect(find.text('Estado de cartera: flat'), findsOneWidget);
+    expect(
+      find.text('No habilita ejecución de órdenes ni trading automático.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Asignación autorizada:'), findsNothing);
+  });
+
+  testWidgets('muestra allocation sólo cuando existe autorización separada',
+      (tester) async {
+    await tester.pumpWidget(
+      _panel(withProduction: true, withAllocation: true),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('PRODUCTIVO AUTORIZADO'), findsOneWidget);
+    expect(find.textContaining('Asignación autorizada: 1500.00 EUR'), findsOneWidget);
+    expect(find.textContaining('sobre 10000.00 EUR de referencia'), findsOneWidget);
+    expect(find.textContaining('cambio +1500.00 EUR'), findsOneWidget);
+    expect(
+      find.textContaining('Ejecución automática deshabilitada'),
+      findsOneWidget,
+    );
   });
 }
