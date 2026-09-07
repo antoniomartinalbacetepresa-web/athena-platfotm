@@ -113,7 +113,9 @@ class RecommendationProductionReadService:
                 continue
             if symbol is not None and str(authorization.get("symbol") or "").strip().upper() != symbol:
                 continue
-            if instrument_id is not None and authorization.get("instrumentId") != instrument_id:
+            if instrument_id is not None and self._canonical_instrument_id(
+                authorization.get("instrumentId"), "recommendation.instrumentId"
+            ) != instrument_id:
                 continue
             self._validate_recommendation_contract(authorization)
             return authorization
@@ -129,6 +131,9 @@ class RecommendationProductionReadService:
         recommendation_fp = self._sha256(
             recommendation.get("authorizationFingerprint"),
             "recommendation.authorizationFingerprint",
+        )
+        recommendation_instrument_id = self._canonical_instrument_id(
+            recommendation.get("instrumentId"), "recommendation.instrumentId"
         )
         with self._database.connect() as connection:
             rows = connection.execute(
@@ -159,7 +164,9 @@ class RecommendationProductionReadService:
                 continue
             if authorization.get("recommendationAuthorizationFingerprint") != recommendation_fp:
                 raise ValueError("Allocation productivo no corresponde a la recomendación autorizada.")
-            if authorization.get("instrumentId") != recommendation.get("instrumentId"):
+            if self._canonical_instrument_id(
+                authorization.get("instrumentId"), "allocation.instrumentId"
+            ) != recommendation_instrument_id:
                 raise ValueError("Allocation productivo cambió instrumentId.")
             if str(authorization.get("symbol") or "").strip().upper() != str(
                 recommendation.get("symbol") or ""
@@ -188,6 +195,7 @@ class RecommendationProductionReadService:
             raise ValueError("La recomendación no puede autorizar allocation por sí sola.")
         if value.get("automaticTrading") is not False:
             raise ValueError("El trading automático debe permanecer deshabilitado.")
+        self._canonical_instrument_id(value.get("instrumentId"), "recommendation.instrumentId")
         self._sha256(value.get("authorizationFingerprint"), "authorizationFingerprint")
 
     def _validate_allocation_contract(self, value: dict[str, Any]) -> None:
@@ -200,6 +208,7 @@ class RecommendationProductionReadService:
         for field in ("executionEligible", "orderRoutingEligible", "automaticTrading"):
             if value.get(field) is not False:
                 raise ValueError(f"{field} debe permanecer deshabilitado.")
+        self._canonical_instrument_id(value.get("instrumentId"), "allocation.instrumentId")
         self._sha256(value.get("authorizationFingerprint"), "authorizationFingerprint")
 
     def _aware(self, value: datetime, field: str) -> datetime:
@@ -231,6 +240,22 @@ class RecommendationProductionReadService:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError("instrument_id debe ser entero positivo.")
         return value
+
+    def _canonical_instrument_id(self, value: object, field: str) -> int:
+        if isinstance(value, bool):
+            raise ValueError(f"{field} debe ser entero positivo.")
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, str):
+            raw = value.strip()
+            if not raw or not raw.isdigit():
+                raise ValueError(f"{field} debe ser entero positivo.")
+            parsed = int(raw)
+        else:
+            raise ValueError(f"{field} debe ser entero positivo.")
+        if parsed <= 0:
+            raise ValueError(f"{field} debe ser entero positivo.")
+        return parsed
 
     def _sha256(self, value: object, field: str) -> str:
         result = str(value or "").strip().lower()
