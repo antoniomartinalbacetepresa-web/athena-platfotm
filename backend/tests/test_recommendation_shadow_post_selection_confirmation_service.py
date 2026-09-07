@@ -26,12 +26,21 @@ class FakeDatasetService:
         }
 
 
-def _row(*, index: int, cutoff: datetime, evaluated: datetime, horizon: int = 30):
+def _row(
+    *,
+    index: int,
+    cutoff: datetime,
+    evaluated: datetime,
+    horizon: int = 30,
+    due: datetime | None = None,
+):
     signal = (index - 20) / 100.0
+    outcome_due_at = due if due is not None else evaluated
     return {
         "snapshotId": index + 1,
         "symbol": "TEST",
         "dataCutoffAt": cutoff.isoformat(),
+        "outcomeDueAt": outcome_due_at.isoformat(),
         "outcomeEvaluatedAt": evaluated.isoformat(),
         "horizonDays": horizon,
         "features": {
@@ -110,6 +119,7 @@ def test_confirmation_excludes_research_and_preselection_holdout_evidence():
 
     assert result["status"] == "shadow_post_selection_confirmation_evaluated"
     assert result["confirmationRowCount"] == 6
+    assert result["nonOverlappingConfirmationWindowCount"] == 6
     assert result["excludedBeforeOrAtConfirmationStartCount"] == 50
     assert result["postSelectionConfirmationEvidenceReady"] is True
     assert result["productionEligible"] is False
@@ -117,6 +127,94 @@ def test_confirmation_excludes_research_and_preselection_holdout_evidence():
     assert result["policy"]["priorHoldoutSelectionEvidenceReusable"] is False
     assert result["policy"]["refit"] is False
     assert result["policy"]["thresholdCalibration"] is False
+    assert result["policy"]["nonOverlappingWindowsImplyStatisticalIndependence"] is False
+
+
+def test_confirmation_reports_maximum_pairwise_non_overlapping_forward_windows():
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    research_cutoff = start + timedelta(days=60)
+    confirmation_start = start + timedelta(days=100)
+    as_of = start + timedelta(days=200)
+    research = [
+        _row(index=i, cutoff=start + timedelta(days=i), evaluated=start + timedelta(days=i + 1))
+        for i in range(40)
+    ]
+    confirmation = [
+        _row(
+            index=80,
+            cutoff=confirmation_start + timedelta(days=1),
+            due=confirmation_start + timedelta(days=31),
+            evaluated=confirmation_start + timedelta(days=31),
+        ),
+        _row(
+            index=81,
+            cutoff=confirmation_start + timedelta(days=2),
+            due=confirmation_start + timedelta(days=32),
+            evaluated=confirmation_start + timedelta(days=32),
+        ),
+        _row(
+            index=82,
+            cutoff=confirmation_start + timedelta(days=31),
+            due=confirmation_start + timedelta(days=61),
+            evaluated=confirmation_start + timedelta(days=61),
+        ),
+        _row(
+            index=83,
+            cutoff=confirmation_start + timedelta(days=32),
+            due=confirmation_start + timedelta(days=62),
+            evaluated=confirmation_start + timedelta(days=62),
+        ),
+        _row(
+            index=84,
+            cutoff=confirmation_start + timedelta(days=61),
+            due=confirmation_start + timedelta(days=91),
+            evaluated=confirmation_start + timedelta(days=91),
+        ),
+    ]
+    frozen, service = _frozen_and_service(
+        research + confirmation,
+        research_cutoff=research_cutoff,
+        minimum_confirmation_rows=5,
+    )
+
+    result = service.evaluate(
+        frozen_model=frozen,
+        confirmation_start=confirmation_start,
+        as_of=as_of,
+    )
+
+    assert result["confirmationRowCount"] == 5
+    assert result["nonOverlappingConfirmationWindowCount"] == 3
+    assert result["postSelectionConfirmationEvidenceReady"] is True
+
+
+def test_confirmation_rejects_invalid_forward_window():
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    research_cutoff = start + timedelta(days=60)
+    confirmation_start = start + timedelta(days=100)
+    research = [
+        _row(index=i, cutoff=start + timedelta(days=i), evaluated=start + timedelta(days=i + 1))
+        for i in range(40)
+    ]
+    bad_cutoff = confirmation_start + timedelta(days=1)
+    bad = _row(
+        index=80,
+        cutoff=bad_cutoff,
+        due=bad_cutoff,
+        evaluated=bad_cutoff + timedelta(days=1),
+    )
+    frozen, service = _frozen_and_service(
+        research + [bad],
+        research_cutoff=research_cutoff,
+        minimum_confirmation_rows=1,
+    )
+
+    with pytest.raises(ValueError, match="outcomeDueAt"):
+        service.evaluate(
+            frozen_model=frozen,
+            confirmation_start=confirmation_start,
+            as_of=confirmation_start + timedelta(days=30),
+        )
 
 
 def test_confirmation_excludes_outcomes_not_known_at_as_of():
@@ -186,6 +284,7 @@ def test_confirmation_blocks_when_fresh_sample_is_too_small():
 
     assert result["status"] == "insufficient_post_selection_confirmation_data"
     assert result["confirmationRowCount"] == 2
+    assert result["nonOverlappingConfirmationWindowCount"] == 2
     assert result["postSelectionConfirmationEvidenceReady"] is False
     assert result["productionEligible"] is False
 
