@@ -23,6 +23,22 @@ def _fingerprint(payload: dict) -> str:
     ).hexdigest()
 
 
+def _issuer_coverage(*, rows: int, resolved: int, distinct: int, maximum_rows: int) -> dict:
+    return {
+        "rowCount": rows,
+        "resolvedIssuerRowCount": resolved,
+        "unresolvedIssuerRowCount": rows - resolved,
+        "resolvedIssuerCoverageRatio": resolved / rows,
+        "distinctResolvedIssuerCount": distinct,
+        "maximumRowsPerResolvedIssuer": maximum_rows,
+        "maximumResolvedIssuerConcentrationRatio": (
+            maximum_rows / resolved if resolved else 1.0
+        ),
+        "statisticalIndependence": "not_claimed",
+        "thresholdsApplied": False,
+    }
+
+
 def _confirmation() -> dict:
     core = {
         "artifactVersion": "shadow-post-selection-multi-horizon-v1",
@@ -44,6 +60,9 @@ def _confirmation() -> dict:
                 "confirmationRowCount": 30,
                 "nonOverlappingConfirmationWindowCount": 22,
                 "unverifiableConfirmationWindowCount": 0,
+                "issuerCoverage": _issuer_coverage(
+                    rows=30, resolved=28, distinct=14, maximum_rows=2
+                ),
                 "metrics": {"signAccuracy": 0.60, "mse": 0.02},
                 "relativeMseImprovement": 0.10,
                 "beatsZeroBaselineOnMse": True,
@@ -57,6 +76,9 @@ def _confirmation() -> dict:
                 "confirmationRowCount": 25,
                 "nonOverlappingConfirmationWindowCount": 20,
                 "unverifiableConfirmationWindowCount": 0,
+                "issuerCoverage": _issuer_coverage(
+                    rows=25, resolved=24, distinct=12, maximum_rows=2
+                ),
                 "metrics": {"signAccuracy": 0.58, "mse": 0.03},
                 "relativeMseImprovement": 0.08,
                 "beatsZeroBaselineOnMse": True,
@@ -83,6 +105,8 @@ def _protocol(service: RecommendationProductionPromotionEvidenceService) -> dict
             "7": {
                 "minimumConfirmationRowCount": 20,
                 "minimumNonOverlappingConfirmationWindowCount": 20,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -90,6 +114,8 @@ def _protocol(service: RecommendationProductionPromotionEvidenceService) -> dict
             "30": {
                 "minimumConfirmationRowCount": 20,
                 "minimumNonOverlappingConfirmationWindowCount": 18,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -140,14 +166,22 @@ def test_precommitted_protocol_can_mark_evidence_ready_without_enabling_producti
     assert result["policy"]["minimumTemporalBreadthMustBePrecommitted"] is True
     assert result["policy"]["unverifiableTemporalWindowsBlockPromotionEvidence"] is True
     assert result["policy"]["nonOverlappingWindowsDoNotClaimStatisticalIndependence"] is True
+    assert result["policy"]["issuerCoverageMustBePrecommitted"] is True
+    assert result["policy"]["issuerConcentrationMustBePrecommitted"] is True
+    assert result["policy"]["issuerDiversityDoesNotClaimStatisticalIndependence"] is True
     assert result["horizons"]["7"]["minimumConfirmationRowCount"] == 20
     assert result["horizons"]["7"]["minimumNonOverlappingConfirmationWindowCount"] == 20
+    assert result["horizons"]["7"]["minimumResolvedIssuerCoverageRatio"] == 0.90
+    assert result["horizons"]["7"]["maximumResolvedIssuerConcentrationRatio"] == 0.25
 
 
 def test_confirmation_sample_below_precommitted_minimum_fails_gate() -> None:
     service = RecommendationProductionPromotionEvidenceService()
     confirmation = deepcopy(_confirmation())
     confirmation["horizons"]["7"]["confirmationRowCount"] = 19
+    confirmation["horizons"]["7"]["issuerCoverage"] = _issuer_coverage(
+        rows=19, resolved=18, distinct=9, maximum_rows=2
+    )
     _resign_confirmation(confirmation)
 
     result = service.evaluate(
@@ -201,6 +235,42 @@ def test_unverifiable_temporal_windows_fail_gate_even_when_other_metrics_pass() 
         in result["horizons"]["7"]["blockers"]
     )
     assert result["productionEligible"] is False
+    assert result["automaticTrading"] is False
+
+
+def test_issuer_coverage_below_precommitted_minimum_fails_gate() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    confirmation = deepcopy(_confirmation())
+    confirmation["horizons"]["7"]["issuerCoverage"] = _issuer_coverage(
+        rows=30, resolved=20, distinct=10, maximum_rows=2
+    )
+    _resign_confirmation(confirmation)
+
+    result = service.evaluate(
+        confirmation_artifact=confirmation,
+        promotion_protocol=_protocol(service),
+    )
+
+    assert result["productionPromotionEvidenceReady"] is False
+    assert "issuer_coverage_below_precommitted_minimum" in result["horizons"]["7"]["blockers"]
+    assert result["productionEligible"] is False
+
+
+def test_issuer_concentration_above_precommitted_maximum_fails_gate() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    confirmation = deepcopy(_confirmation())
+    confirmation["horizons"]["7"]["issuerCoverage"] = _issuer_coverage(
+        rows=30, resolved=28, distinct=14, maximum_rows=15
+    )
+    _resign_confirmation(confirmation)
+
+    result = service.evaluate(
+        confirmation_artifact=confirmation,
+        promotion_protocol=_protocol(service),
+    )
+
+    assert result["productionPromotionEvidenceReady"] is False
+    assert "issuer_concentration_above_precommitted_maximum" in result["horizons"]["7"]["blockers"]
     assert result["automaticTrading"] is False
 
 
@@ -285,7 +355,22 @@ def test_protocol_cannot_omit_or_zero_precommitted_temporal_breadth() -> None:
         service.fingerprint_protocol(core)
 
 
-def test_confirmation_cannot_omit_temporal_verifiability_fields() -> None:
+def test_protocol_cannot_omit_precommitted_issuer_criteria() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    protocol = _protocol(service)
+    core = {key: value for key, value in protocol.items() if key != "protocolFingerprint"}
+    del core["criteriaByHorizon"]["7"]["minimumResolvedIssuerCoverageRatio"]
+    with pytest.raises(ValueError, match="minimumResolvedIssuerCoverageRatio"):
+        service.fingerprint_protocol(core)
+
+    protocol = _protocol(service)
+    core = {key: value for key, value in protocol.items() if key != "protocolFingerprint"}
+    del core["criteriaByHorizon"]["7"]["maximumResolvedIssuerConcentrationRatio"]
+    with pytest.raises(ValueError, match="maximumResolvedIssuerConcentrationRatio"):
+        service.fingerprint_protocol(core)
+
+
+def test_confirmation_cannot_omit_temporal_or_issuer_verifiability_fields() -> None:
     service = RecommendationProductionPromotionEvidenceService()
     confirmation = deepcopy(_confirmation())
     del confirmation["horizons"]["7"]["nonOverlappingConfirmationWindowCount"]
@@ -302,6 +387,16 @@ def test_confirmation_cannot_omit_temporal_verifiability_fields() -> None:
     _resign_confirmation(confirmation)
 
     with pytest.raises(ValueError, match="unverifiableConfirmationWindowCount"):
+        service.evaluate(
+            confirmation_artifact=confirmation,
+            promotion_protocol=_protocol(service),
+        )
+
+    confirmation = deepcopy(_confirmation())
+    del confirmation["horizons"]["7"]["issuerCoverage"]
+    _resign_confirmation(confirmation)
+
+    with pytest.raises(ValueError, match="issuerCoverage"):
         service.evaluate(
             confirmation_artifact=confirmation,
             promotion_protocol=_protocol(service),
