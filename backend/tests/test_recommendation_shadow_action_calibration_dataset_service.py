@@ -55,7 +55,16 @@ class FakeEvaluationService:
 
 
 def _candidate_row():
-    return {"id": 20, "candidate_fingerprint": CANDIDATE_FP}
+    return {
+        "id": 20,
+        "candidate_fingerprint": CANDIDATE_FP,
+        "artifact": {
+            "candidateFingerprint": CANDIDATE_FP,
+            "instrumentId": 101,
+            "symbol": "TEST",
+            "asOf": "2026-06-01T00:00:00+00:00",
+        },
+    }
 
 
 def _attestation():
@@ -154,12 +163,12 @@ def _evaluation(status="evaluated"):
     }
 
 
-def _service(*, attestation=_DEFAULT, decision=None, evaluation=None):
+def _service(*, attestation=_DEFAULT, decision=None, evaluation=None, rows=None):
     attestation_service = FakeAttestationService(attestation)
     decision_service = FakeDecisionService(decision or _decision())
     evaluation_service = FakeEvaluationService(evaluation or _evaluation())
     service = RecommendationShadowActionCalibrationDatasetService(
-        candidate_repository=FakeCandidateRepository(),
+        candidate_repository=FakeCandidateRepository(rows=rows),
         attestation_service=attestation_service,
         decision_research_service=decision_service,
         evaluation_service=evaluation_service,
@@ -181,9 +190,13 @@ def test_dataset_admits_only_attested_ex_ante_inputs_with_matured_pit_outcome():
     assert row["liveCycleAttestationFingerprint"] == ATTESTATION_FP
     assert row["decisionResearchFingerprint"] == DECISION_FP
     assert row["uncertaintyFingerprint"] == UNCERTAINTY_FP
+    assert row["instrumentId"] == 101
     assert row["horizonDays"] == 30
     assert row["expectedExcessReturn"] == pytest.approx(0.06)
     assert row["realizedExcessReturn"] == pytest.approx(0.04)
+    assert result["policy"]["canonicalInstrumentIdentity"] == (
+        "persisted_candidate_instrument_id_required"
+    )
     assert result["policy"]["researchHoldoutReuse"] is False
     assert result["actionThresholds"] is None
     assert result["action"] is None
@@ -202,6 +215,31 @@ def test_dataset_excludes_unattested_legacy_candidate_before_decision_or_outcome
     assert result["rowCount"] == 0
     assert result["unattestedCandidateCount"] == 1
     assert decision_service.calls == []
+    assert evaluation_service.calls == []
+
+
+def test_dataset_fails_closed_if_persisted_instrument_identity_is_missing():
+    row = _candidate_row()
+    row["artifact"].pop("instrumentId")
+    service, _, decision_service, evaluation_service = _service(rows=[row])
+
+    with pytest.raises(ValueError, match="instrumentId"):
+        service.build(
+            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
+        )
+    assert decision_service.calls == []
+    assert evaluation_service.calls == []
+
+
+def test_dataset_fails_closed_if_persisted_symbol_diverges_from_decision():
+    row = _candidate_row()
+    row["artifact"]["symbol"] = "OTHER"
+    service, _, _, evaluation_service = _service(rows=[row])
+
+    with pytest.raises(ValueError, match="símbolo"):
+        service.build(
+            as_of=datetime(2026, 8, 1, tzinfo=timezone.utc), horizons=[30]
+        )
     assert evaluation_service.calls == []
 
 
