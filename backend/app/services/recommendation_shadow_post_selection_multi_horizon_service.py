@@ -23,6 +23,11 @@ class RecommendationShadowPostSelectionMultiHorizonService:
     is a research-only evidence artifact: it can document whether a protocol has
     survived genuinely later data, but it cannot assign actions, calibrate action
     thresholds on that evidence, or promote anything to production.
+
+    Temporal-verifiability counters and canonical issuer-coverage evidence emitted
+    by each post-selection confirmation are carried into the sealed multi-horizon
+    artifact. Production gates can therefore evaluate the exact evidence lineage
+    rather than relying on manually reconstructed confirmation payloads.
     """
 
     ARTIFACT_VERSION = "shadow-post-selection-multi-horizon-v1"
@@ -154,6 +159,13 @@ class RecommendationShadowPostSelectionMultiHorizonService:
                 "selectionFingerprint": result.get("selectionFingerprint"),
                 "confirmationStart": result.get("confirmationStart"),
                 "confirmationRowCount": result.get("confirmationRowCount", 0),
+                "nonOverlappingConfirmationWindowCount": result.get(
+                    "nonOverlappingConfirmationWindowCount", 0
+                ),
+                "unverifiableConfirmationWindowCount": result.get(
+                    "unverifiableConfirmationWindowCount", 0
+                ),
+                "issuerCoverage": result.get("issuerCoverage"),
                 "metrics": result.get("metrics"),
                 "zeroExcessReturnBaseline": result.get("zeroExcessReturnBaseline"),
                 "relativeMseImprovement": result.get("relativeMseImprovement"),
@@ -310,6 +322,8 @@ class RecommendationShadowPostSelectionMultiHorizonService:
             "uniqueModelPerHorizon": True,
             "selectionBoundary": "immutable_persisted_per_frozen_model",
             "confirmationEvidence": "strictly_post_selection_and_mature",
+            "temporalVerifiabilityEvidence": "propagated_and_fingerprinted_per_horizon",
+            "issuerCoverageEvidence": "propagated_and_fingerprinted_per_horizon",
             "protocolThresholds": "provisional_research_safeguards_not_investment_thresholds",
             "confirmationDataCanFitActionThresholds": False,
             "actions": "not_assigned",
