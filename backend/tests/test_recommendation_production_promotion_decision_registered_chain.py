@@ -35,12 +35,14 @@ def _protocol_draft() -> dict:
         "criteriaByHorizon": {
             "7": {
                 "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
             },
             "30": {
                 "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -68,6 +70,8 @@ def _confirmation() -> dict:
                 "selectionFingerprint": "8" * 64,
                 "confirmationStart": "2099-01-02T00:00:00+00:00",
                 "confirmationRowCount": 30,
+                "nonOverlappingConfirmationWindowCount": 22,
+                "unverifiableConfirmationWindowCount": 0,
                 "metrics": {"signAccuracy": 0.60, "mse": 0.02},
                 "relativeMseImprovement": 0.10,
                 "beatsZeroBaselineOnMse": True,
@@ -79,6 +83,8 @@ def _confirmation() -> dict:
                 "selectionFingerprint": "4" * 64,
                 "confirmationStart": "2099-01-02T00:00:00+00:00",
                 "confirmationRowCount": 30,
+                "nonOverlappingConfirmationWindowCount": 20,
+                "unverifiableConfirmationWindowCount": 0,
                 "metrics": {"signAccuracy": 0.59, "mse": 0.03},
                 "relativeMseImprovement": 0.09,
                 "beatsZeroBaselineOnMse": True,
@@ -107,6 +113,8 @@ def test_registered_protocol_to_oos_evidence_to_immutable_decision_chain(tmp_pat
     assert evidence["productionPromotionEvidenceReady"] is True
     assert evidence["horizons"]["7"]["minimumConfirmationRowCount"] == 20
     assert evidence["horizons"]["30"]["minimumConfirmationRowCount"] == 20
+    assert evidence["horizons"]["7"]["minimumNonOverlappingConfirmationWindowCount"] == 20
+    assert evidence["horizons"]["30"]["minimumNonOverlappingConfirmationWindowCount"] == 20
 
     decision_repository = RecommendationProductionPromotionDecisionRepository(database)
     decision_service = RecommendationProductionPromotionDecisionService(decision_repository)
