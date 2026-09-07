@@ -44,6 +44,8 @@ def _confirmation(*, research_cutoff: str) -> dict:
                 "selectionFingerprint": "selection-7",
                 "confirmationStart": "2099-01-02T00:00:00+00:00",
                 "confirmationRowCount": 30,
+                "nonOverlappingConfirmationWindowCount": 22,
+                "unverifiableConfirmationWindowCount": 0,
                 "metrics": {"signAccuracy": 0.60, "mse": 0.02},
                 "relativeMseImprovement": 0.10,
                 "beatsZeroBaselineOnMse": True,
@@ -68,6 +70,7 @@ def _draft() -> dict:
         "criteriaByHorizon": {
             "7": {
                 "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -92,6 +95,7 @@ def test_registered_path_proves_persistence_without_enabling_advice(tmp_path):
 
     assert result["productionPromotionEvidenceReady"] is True
     assert result["horizons"]["7"]["minimumConfirmationRowCount"] == 20
+    assert result["horizons"]["7"]["minimumNonOverlappingConfirmationWindowCount"] == 20
     assert result["protocolPersistence"]["registered"] is True
     assert result["protocolPersistence"]["protocolFingerprint"] == record[
         "protocol_fingerprint"
@@ -99,6 +103,7 @@ def test_registered_path_proves_persistence_without_enabling_advice(tmp_path):
     assert result["policy"]["registeredProtocolRequiredForProductionPath"] is True
     assert result["policy"]["callerSuppliedRegistrationTimeAccepted"] is False
     assert result["policy"]["minimumConfirmationSampleMustBePrecommitted"] is True
+    assert result["policy"]["minimumTemporalBreadthMustBePrecommitted"] is True
     assert result["advisoryStatus"] == "no_advice"
     assert result["recommendationCandidateReady"] is False
     assert result["productionEligible"] is False
