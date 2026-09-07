@@ -18,6 +18,8 @@ def _draft(*, rows: int = 20, windows: int = 12) -> dict:
             "30": {
                 "minimumConfirmationRowCount": rows,
                 "minimumNonOverlappingConfirmationWindowCount": windows,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
