@@ -48,6 +48,10 @@ class RecommendationProductionState {
     if (value.instrumentId <= 0 || value.symbol.trim().isEmpty) return false;
     if (!_actions.contains(value.action)) return false;
     if (value.policyState.trim().isEmpty) return false;
+    final authorizationReason = value.authorizationReason;
+    if (authorizationReason != null && authorizationReason.trim().isEmpty) {
+      return false;
+    }
     final horizonDays = value.horizonDays;
     if (horizonDays != null && horizonDays <= 0) return false;
     final expectedExcessReturn = value.expectedExcessReturn;
@@ -117,6 +121,11 @@ class RecommendationProductionRecommendation {
   final String authorizationFingerprint;
   final String economicContractFingerprint;
 
+  /// Human governance rationale sealed inside the backend authorization.
+  /// This is not a reconstructed model explanation. Null is retained only for
+  /// legacy/injected Flutter artifacts that predate the surfaced field.
+  final String? authorizationReason;
+
   /// Productive horizon already sealed by the backend authorization chain.
   /// Null only for legacy v1 artifacts created before the Flutter contract
   /// started surfacing the field explicitly.
@@ -136,6 +145,7 @@ class RecommendationProductionRecommendation {
     required this.authorizedAt,
     required this.authorizationFingerprint,
     required this.economicContractFingerprint,
+    this.authorizationReason,
     this.horizonDays,
     this.expectedExcessReturn,
   });
