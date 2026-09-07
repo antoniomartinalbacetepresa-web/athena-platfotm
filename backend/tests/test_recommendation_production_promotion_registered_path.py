@@ -67,6 +67,7 @@ def _draft() -> dict:
         "requiredHorizons": [7],
         "criteriaByHorizon": {
             "7": {
+                "minimumConfirmationRowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -90,12 +91,14 @@ def test_registered_path_proves_persistence_without_enabling_advice(tmp_path):
     )
 
     assert result["productionPromotionEvidenceReady"] is True
+    assert result["horizons"]["7"]["minimumConfirmationRowCount"] == 20
     assert result["protocolPersistence"]["registered"] is True
     assert result["protocolPersistence"]["protocolFingerprint"] == record[
         "protocol_fingerprint"
     ]
     assert result["policy"]["registeredProtocolRequiredForProductionPath"] is True
     assert result["policy"]["callerSuppliedRegistrationTimeAccepted"] is False
+    assert result["policy"]["minimumConfirmationSampleMustBePrecommitted"] is True
     assert result["advisoryStatus"] == "no_advice"
     assert result["recommendationCandidateReady"] is False
     assert result["productionEligible"] is False
