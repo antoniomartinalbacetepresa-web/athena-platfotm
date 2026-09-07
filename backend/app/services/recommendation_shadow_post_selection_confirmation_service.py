@@ -4,6 +4,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
+from app.repositories.issuer_identity_repository import IssuerIdentityRepository
 from app.services.recommendation_shadow_calibration_dataset_service import (
     RecommendationShadowCalibrationDatasetService,
 )
@@ -30,6 +31,10 @@ class RecommendationShadowPostSelectionConfirmationService:
     temporally verified windows. Production data emitted by the calibration
     dataset always carries this persisted timing field. Non-overlap is deliberately
     not described as statistical independence.
+
+    Issuer coverage is measured on these same post-selection rows rather than on
+    a previously inspected calibration sample. Unresolved canonical issuer identity
+    remains unresolved and never gets inferred from ticker or company name.
     """
 
     def __init__(
@@ -37,6 +42,7 @@ class RecommendationShadowPostSelectionConfirmationService:
         *,
         dataset_service: RecommendationShadowCalibrationDatasetService | None = None,
         frozen_model_service: RecommendationShadowIndependentHoldoutService | None = None,
+        issuer_repository: IssuerIdentityRepository | None = None,
         minimum_confirmation_rows: int = 20,
     ) -> None:
         if minimum_confirmation_rows <= 0:
@@ -45,6 +51,7 @@ class RecommendationShadowPostSelectionConfirmationService:
         self._frozen_model_service = frozen_model_service or RecommendationShadowIndependentHoldoutService(
             dataset_service=self._dataset_service
         )
+        self._issuer_repository = issuer_repository or IssuerIdentityRepository()
         self._minimum_confirmation_rows = int(minimum_confirmation_rows)
 
     def evaluate(
@@ -97,6 +104,7 @@ class RecommendationShadowPostSelectionConfirmationService:
             non_overlapping_window_count,
             unverifiable_window_count,
         ) = self._non_overlapping_window_count(rows)
+        issuer_coverage = self._issuer_coverage(rows)
         common = {
             "modelFingerprint": model["fingerprint"],
             "researchCutoff": research_cutoff.isoformat(),
@@ -107,6 +115,7 @@ class RecommendationShadowPostSelectionConfirmationService:
             "excludedNotMatureCount": excluded_not_mature,
             "nonOverlappingConfirmationWindowCount": non_overlapping_window_count,
             "unverifiableConfirmationWindowCount": unverifiable_window_count,
+            "issuerCoverage": issuer_coverage,
         }
         if len(rows) < self._minimum_confirmation_rows:
             return {
@@ -151,6 +160,74 @@ class RecommendationShadowPostSelectionConfirmationService:
             "policy": self._policy(),
         }
 
+    def _issuer_coverage(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        resolved_counts: dict[int, int] = {}
+        resolved_rows = 0
+        unresolved_rows = 0
+        for row in rows:
+            raw_instrument_id = row.get("instrumentId")
+            if isinstance(raw_instrument_id, bool):
+                unresolved_rows += 1
+                continue
+            try:
+                instrument_id = int(raw_instrument_id)
+            except (TypeError, ValueError):
+                unresolved_rows += 1
+                continue
+            if instrument_id <= 0:
+                unresolved_rows += 1
+                continue
+
+            evidence = self._issuer_repository.get_issuer_for_instrument(instrument_id)
+            if evidence is None:
+                unresolved_rows += 1
+                continue
+            issuer_id = evidence.get("issuer_id")
+            confidence = evidence.get("confidence")
+            source = str(evidence.get("evidence_source") or "").strip()
+            method = str(evidence.get("resolution_method") or "").strip()
+            if isinstance(issuer_id, bool):
+                raise ValueError("issuer_id canónico inválido en confirmación.")
+            try:
+                normalized_issuer_id = int(issuer_id)
+                normalized_confidence = float(confidence)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Evidencia issuer inválida en confirmación.") from exc
+            if (
+                normalized_issuer_id <= 0
+                or not math.isfinite(normalized_confidence)
+                or normalized_confidence < 0.0
+                or normalized_confidence > 1.0
+                or not source
+                or not method
+            ):
+                raise ValueError("Evidencia issuer inválida en confirmación.")
+            resolved_rows += 1
+            resolved_counts[normalized_issuer_id] = (
+                resolved_counts.get(normalized_issuer_id, 0) + 1
+            )
+
+        row_count = len(rows)
+        maximum_rows = max(resolved_counts.values(), default=0)
+        resolved_coverage_ratio = resolved_rows / row_count if row_count else 0.0
+        maximum_resolved_concentration_ratio = (
+            maximum_rows / resolved_rows if resolved_rows else 1.0
+        )
+        for value in (resolved_coverage_ratio, maximum_resolved_concentration_ratio):
+            if not math.isfinite(value):
+                raise ValueError("Métrica issuer no finita en confirmación.")
+        return {
+            "rowCount": row_count,
+            "resolvedIssuerRowCount": resolved_rows,
+            "unresolvedIssuerRowCount": unresolved_rows,
+            "resolvedIssuerCoverageRatio": resolved_coverage_ratio,
+            "distinctResolvedIssuerCount": len(resolved_counts),
+            "maximumRowsPerResolvedIssuer": maximum_rows,
+            "maximumResolvedIssuerConcentrationRatio": maximum_resolved_concentration_ratio,
+            "statisticalIndependence": "not_claimed",
+            "thresholdsApplied": False,
+        }
+
     def _non_overlapping_window_count(
         self, rows: list[dict[str, Any]]
     ) -> tuple[int, int]:
@@ -184,6 +261,10 @@ class RecommendationShadowPostSelectionConfirmationService:
             "temporalWindowEvidence": "maximum_pairwise_non_overlapping_forward_windows_reported",
             "missingWindowTiming": "never_counted_as_verified_temporal_window",
             "nonOverlappingWindowsImplyStatisticalIndependence": False,
+            "issuerCoverageEvidence": "measured_on_same_post_selection_confirmation_rows",
+            "unresolvedIssuerIdentity": "preserved_never_inferred_from_symbol_or_name",
+            "issuerCoverageThresholds": "not_selected_here",
+            "issuerCoverageImpliesStatisticalIndependence": False,
             "priorResearchEvidenceReusable": False,
             "priorHoldoutSelectionEvidenceReusable": False,
             "refit": False,
