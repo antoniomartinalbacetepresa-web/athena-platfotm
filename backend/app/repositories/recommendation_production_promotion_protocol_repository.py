@@ -232,9 +232,18 @@ class RecommendationProductionPromotionProtocolRepository:
                 item.get("minimumRelativeMseImprovement"),
                 "minimumRelativeMseImprovement",
             )
+            if mse_improvement <= 0.0:
+                raise ValueError(
+                    "minimumRelativeMseImprovement debe ser estrictamente positivo "
+                    "para una promoción productiva."
+                )
             beat_baseline = item.get("requireBeatZeroExcessMseBaseline")
             if not isinstance(beat_baseline, bool):
                 raise ValueError("requireBeatZeroExcessMseBaseline debe ser booleano.")
+            if beat_baseline is not True:
+                raise ValueError(
+                    "requireBeatZeroExcessMseBaseline debe ser true para una promoción productiva."
+                )
             criteria[key] = {
                 "minimumConfirmationRowCount": minimum_row_count,
                 "minimumNonOverlappingConfirmationWindowCount": (
