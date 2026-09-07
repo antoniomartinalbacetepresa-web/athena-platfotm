@@ -42,6 +42,8 @@ def _confirmation() -> dict:
                 "selectionFingerprint": "selection-7",
                 "confirmationStart": "2026-02-01T00:00:00+00:00",
                 "confirmationRowCount": 30,
+                "nonOverlappingConfirmationWindowCount": 22,
+                "unverifiableConfirmationWindowCount": 0,
                 "metrics": {"signAccuracy": 0.60, "mse": 0.02},
                 "relativeMseImprovement": 0.10,
                 "beatsZeroBaselineOnMse": True,
@@ -53,6 +55,8 @@ def _confirmation() -> dict:
                 "selectionFingerprint": "selection-30",
                 "confirmationStart": "2026-02-01T00:00:00+00:00",
                 "confirmationRowCount": 25,
+                "nonOverlappingConfirmationWindowCount": 20,
+                "unverifiableConfirmationWindowCount": 0,
                 "metrics": {"signAccuracy": 0.58, "mse": 0.03},
                 "relativeMseImprovement": 0.08,
                 "beatsZeroBaselineOnMse": True,
@@ -78,12 +82,14 @@ def _protocol(service: RecommendationProductionPromotionEvidenceService) -> dict
         "criteriaByHorizon": {
             "7": {
                 "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
             },
             "30": {
                 "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 18,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -131,7 +137,11 @@ def test_precommitted_protocol_can_mark_evidence_ready_without_enabling_producti
         "explicit_precommitted_protocol_no_code_defaults"
     )
     assert result["policy"]["minimumConfirmationSampleMustBePrecommitted"] is True
+    assert result["policy"]["minimumTemporalBreadthMustBePrecommitted"] is True
+    assert result["policy"]["unverifiableTemporalWindowsBlockPromotionEvidence"] is True
+    assert result["policy"]["nonOverlappingWindowsDoNotClaimStatisticalIndependence"] is True
     assert result["horizons"]["7"]["minimumConfirmationRowCount"] == 20
+    assert result["horizons"]["7"]["minimumNonOverlappingConfirmationWindowCount"] == 20
 
 
 def test_confirmation_sample_below_precommitted_minimum_fails_gate() -> None:
@@ -148,6 +158,48 @@ def test_confirmation_sample_below_precommitted_minimum_fails_gate() -> None:
     assert result["productionPromotionEvidenceReady"] is False
     assert result["horizons"]["7"]["passesPrecommittedCriteria"] is False
     assert "confirmation_sample_below_precommitted_minimum" in result["horizons"]["7"]["blockers"]
+    assert result["productionEligible"] is False
+    assert result["automaticTrading"] is False
+
+
+def test_temporal_breadth_below_precommitted_minimum_fails_gate() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    confirmation = deepcopy(_confirmation())
+    confirmation["horizons"]["7"]["nonOverlappingConfirmationWindowCount"] = 19
+    _resign_confirmation(confirmation)
+
+    result = service.evaluate(
+        confirmation_artifact=confirmation,
+        promotion_protocol=_protocol(service),
+    )
+
+    assert result["productionPromotionEvidenceReady"] is False
+    assert result["horizons"]["7"]["passesPrecommittedCriteria"] is False
+    assert (
+        "confirmation_temporal_breadth_below_precommitted_minimum"
+        in result["horizons"]["7"]["blockers"]
+    )
+    assert result["productionEligible"] is False
+    assert result["automaticTrading"] is False
+
+
+def test_unverifiable_temporal_windows_fail_gate_even_when_other_metrics_pass() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    confirmation = deepcopy(_confirmation())
+    confirmation["horizons"]["7"]["unverifiableConfirmationWindowCount"] = 1
+    _resign_confirmation(confirmation)
+
+    result = service.evaluate(
+        confirmation_artifact=confirmation,
+        promotion_protocol=_protocol(service),
+    )
+
+    assert result["productionPromotionEvidenceReady"] is False
+    assert result["horizons"]["7"]["passesPrecommittedCriteria"] is False
+    assert (
+        "confirmation_contains_unverifiable_temporal_windows"
+        in result["horizons"]["7"]["blockers"]
+    )
     assert result["productionEligible"] is False
     assert result["automaticTrading"] is False
 
@@ -184,7 +236,6 @@ def test_non_finite_confirmation_metric_fails_closed_even_if_resigned() -> None:
     confirmation["horizons"]["7"]["metrics"]["signAccuracy"] = float("nan")
     confirmation["confirmationEvidenceFingerprint"] = "re-signed"
 
-    # The service must reject NaN before any comparison can treat it as evidence.
     with pytest.raises(ValueError):
         service.evaluate(
             confirmation_artifact=confirmation,
@@ -215,3 +266,43 @@ def test_protocol_cannot_omit_precommitted_confirmation_sample_size() -> None:
 
     with pytest.raises(ValueError, match="minimumConfirmationRowCount"):
         service.fingerprint_protocol(core)
+
+
+def test_protocol_cannot_omit_or_zero_precommitted_temporal_breadth() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    protocol = _protocol(service)
+    core = {key: value for key, value in protocol.items() if key != "protocolFingerprint"}
+    del core["criteriaByHorizon"]["7"]["minimumNonOverlappingConfirmationWindowCount"]
+
+    with pytest.raises(ValueError, match="minimumNonOverlappingConfirmationWindowCount"):
+        service.fingerprint_protocol(core)
+
+    protocol = _protocol(service)
+    core = {key: value for key, value in protocol.items() if key != "protocolFingerprint"}
+    core["criteriaByHorizon"]["7"]["minimumNonOverlappingConfirmationWindowCount"] = 0
+
+    with pytest.raises(ValueError, match="minimumNonOverlappingConfirmationWindowCount"):
+        service.fingerprint_protocol(core)
+
+
+def test_confirmation_cannot_omit_temporal_verifiability_fields() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    confirmation = deepcopy(_confirmation())
+    del confirmation["horizons"]["7"]["nonOverlappingConfirmationWindowCount"]
+    _resign_confirmation(confirmation)
+
+    with pytest.raises(ValueError, match="nonOverlappingConfirmationWindowCount"):
+        service.evaluate(
+            confirmation_artifact=confirmation,
+            promotion_protocol=_protocol(service),
+        )
+
+    confirmation = deepcopy(_confirmation())
+    del confirmation["horizons"]["7"]["unverifiableConfirmationWindowCount"]
+    _resign_confirmation(confirmation)
+
+    with pytest.raises(ValueError, match="unverifiableConfirmationWindowCount"):
+        service.evaluate(
+            confirmation_artifact=confirmation,
+            promotion_protocol=_protocol(service),
+        )
