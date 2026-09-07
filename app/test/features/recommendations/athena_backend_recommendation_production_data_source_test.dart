@@ -12,6 +12,8 @@ const _allocationFingerprint =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const _economicFingerprint =
     'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+const _authorizationReason =
+    'Evidencia OOS validada y revisión humana confirmada para este artefacto.';
 
 Map<String, dynamic> _recommendation() => {
       'status': 'production_recommendation_authorized',
@@ -28,6 +30,7 @@ Map<String, dynamic> _recommendation() => {
       'economicContractFingerprint': _economicFingerprint,
       'asOf': '2026-09-01T11:00:00Z',
       'authorizedAt': '2026-09-01T11:30:00Z',
+      'authorizationReason': _authorizationReason,
       'horizonDays': 30,
       'expectedExcessReturn': 0.0425,
     };
@@ -68,7 +71,7 @@ Map<String, dynamic> _state({bool withAllocation = true}) => {
 
 void main() {
   group('AthenaBackendRecommendationProductionDataSource', () {
-    test('mapea recomendación, señal OOS y allocation ligados sin habilitar ejecución', () async {
+    test('mapea recomendación, motivo sellado, señal OOS y allocation ligados sin habilitar ejecución', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/recommendations/production/latest');
         expect(request.url.queryParameters['as_of'], isNotNull);
@@ -85,6 +88,7 @@ void main() {
       expect(result.recommendation?.instrumentId, 7);
       expect(result.recommendation?.symbol, 'AAPL');
       expect(result.recommendation?.action, 'buy');
+      expect(result.recommendation?.authorizationReason, _authorizationReason);
       expect(result.recommendation?.horizonDays, 30);
       expect(result.recommendation?.expectedExcessReturn, 0.0425);
       expect(result.allocation?.baseCurrency, 'EUR');
@@ -93,7 +97,7 @@ void main() {
       expect(result.readOnly, isTrue);
     });
 
-    test('mantiene compatibilidad con autorización sin señal explicativa', () async {
+    test('mantiene compatibilidad con autorización sin señal explicativa cuantitativa', () async {
       final data = _state(withAllocation: false);
       final recommendation = data['recommendation'] as Map<String, dynamic>;
       recommendation.remove('horizonDays');
@@ -108,8 +112,24 @@ void main() {
       final result = await source.getLatest();
 
       expect(result.isSafe, isTrue);
+      expect(result.recommendation?.authorizationReason, _authorizationReason);
       expect(result.recommendation?.horizonDays, isNull);
       expect(result.recommendation?.expectedExcessReturn, isNull);
+    });
+
+    test('rechaza autorización productiva sin motivo sellado', () async {
+      for (final value in [null, '', '   ']) {
+        final data = _state();
+        (data['recommendation'] as Map<String, dynamic>)['authorizationReason'] = value;
+        final client = MockClient((_) async =>
+            http.Response(jsonEncode({'data': data}), 200));
+        final source = AthenaBackendRecommendationProductionDataSource(
+          baseUrl: 'https://api.athena.test',
+          client: client,
+        );
+
+        expect(source.getLatest(), throwsFormatException, reason: '$value');
+      }
     });
 
     test('rechaza señal productiva no finita', () async {
