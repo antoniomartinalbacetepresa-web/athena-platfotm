@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.services.recommendation_shadow_walk_forward_service import (
     RecommendationShadowWalkForwardService,
 )
@@ -193,7 +195,9 @@ def test_walk_forward_aggregates_macro_comparison_without_creating_a_verdict():
     comparison = result["macroComparison"]
     assert comparison["status"] == "shadow_macro_walk_forward_comparison_evaluated"
     assert comparison["pairedFoldCount"] == 2
-    assert comparison["summary"]["medianMseDeltaAugmentedMinusBase"] == -0.11
+    assert comparison["summary"]["medianMseDeltaAugmentedMinusBase"] == pytest.approx(
+        -0.11
+    )
     assert comparison["summary"]["assessment"] == (
         "not_assessed_without_precommitted_criteria"
     )
