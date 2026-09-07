@@ -88,15 +88,21 @@ class RecommendationProductionReadService:
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT authorization_id
+                SELECT authorization_id, created_at
                 FROM athena_recommendation_production_authorizations
                 WHERE authorized_at <= ?
+                  AND created_at <= ?
                 ORDER BY authorized_at DESC, id DESC
                 """,
-                (cutoff.isoformat(),),
+                (cutoff.isoformat(), cutoff.isoformat()),
             ).fetchall()
 
         for row in rows:
+            persisted_at = self._aware_text(
+                row["created_at"], "recommendation.created_at"
+            )
+            if persisted_at > cutoff:
+                continue
             record = self._recommendation_repository.get(
                 authorization_id=str(row["authorization_id"])
             )
@@ -138,16 +144,22 @@ class RecommendationProductionReadService:
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT authorization_id
+                SELECT authorization_id, created_at
                 FROM athena_recommendation_production_allocation_authorizations
                 WHERE recommendation_authorization_fingerprint = ?
                   AND authorized_at <= ?
+                  AND created_at <= ?
                 ORDER BY authorized_at DESC, id DESC
                 """,
-                (recommendation_fp, cutoff.isoformat()),
+                (recommendation_fp, cutoff.isoformat(), cutoff.isoformat()),
             ).fetchall()
 
         for row in rows:
+            persisted_at = self._aware_text(
+                row["created_at"], "allocation.created_at"
+            )
+            if persisted_at > cutoff:
+                continue
             record = self._allocation_repository.get(
                 authorization_id=str(row["authorization_id"])
             )
