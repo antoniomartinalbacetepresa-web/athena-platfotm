@@ -142,6 +142,10 @@ class AthenaBackendRecommendationProductionDataSource
         json['economicContractFingerprint'],
         'recommendation.economicContractFingerprint',
       ),
+      authorizationReason: _string(
+        json['authorizationReason'],
+        'recommendation.authorizationReason',
+      ),
       horizonDays: _optionalPositiveInt(
         json['horizonDays'],
         'recommendation.horizonDays',
