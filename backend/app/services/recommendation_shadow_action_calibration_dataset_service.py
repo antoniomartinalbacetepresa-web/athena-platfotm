@@ -41,8 +41,10 @@ class RecommendationShadowActionCalibrationDatasetService:
 
     Only candidates carrying the immutable trusted persisted-live-cycle attestation
     may contribute rows. Labels are admitted only after their PIT outcomes matured
-    by ``as_of``. The service deliberately does not fit action thresholds, scores,
-    conviction or BUY/HOLD/REDUCE/SELL.
+    by ``as_of``. Every admitted row is bound back to the persisted canonical
+    ``instrumentId`` so aliases/listings cannot silently erase known identity at
+    the calibration boundary. The service deliberately does not fit action
+    thresholds, scores, conviction or BUY/HOLD/REDUCE/SELL.
     """
 
     DATASET_VERSION = "shadow-action-calibration-v2"
@@ -91,6 +93,7 @@ class RecommendationShadowActionCalibrationDatasetService:
             "noPredictionRowCount": 0,
         }
         seen_candidate_fingerprints: set[str] = set()
+        seen_observation_identities: set[tuple[int, str, int]] = set()
 
         for stored in self._candidate_repository.list_all():
             candidate_id = self._positive_int(stored.get("id"), "candidate.id")
@@ -102,6 +105,25 @@ class RecommendationShadowActionCalibrationDatasetService:
                 raise ValueError("Existe un candidateFingerprint live duplicado.")
             seen_candidate_fingerprints.add(stored_fingerprint)
 
+            persisted_artifact = stored.get("artifact")
+            if not isinstance(persisted_artifact, dict):
+                raise ValueError("El candidato persistido carece de artefacto canónico.")
+            if self._sha256(
+                persisted_artifact.get("candidateFingerprint"),
+                "stored.artifact.candidateFingerprint",
+            ) != stored_fingerprint:
+                raise ValueError("El artefacto persistido cambió candidateFingerprint.")
+            instrument_id = self._positive_int(
+                persisted_artifact.get("instrumentId"),
+                "stored.artifact.instrumentId",
+            )
+            persisted_symbol = self._required_text(
+                persisted_artifact.get("symbol"), "stored.artifact.symbol"
+            ).upper()
+            persisted_as_of = self._parse_aware(
+                persisted_artifact.get("asOf"), "stored.artifact.asOf"
+            )
+
             attestation = self._attestation_service.get_for_candidate(
                 candidate_id=candidate_id
             )
@@ -109,7 +131,9 @@ class RecommendationShadowActionCalibrationDatasetService:
                 counters["unattestedCandidateCount"] += 1
                 continue
             self._assert_attestation_shadow(attestation)
-            if self._positive_int(attestation.get("candidateId"), "attestation.candidateId") != candidate_id:
+            if self._positive_int(
+                attestation.get("candidateId"), "attestation.candidateId"
+            ) != candidate_id:
                 raise ValueError("La atestación live cambió candidateId.")
             if self._sha256(
                 attestation.get("candidateFingerprint"),
@@ -146,9 +170,19 @@ class RecommendationShadowActionCalibrationDatasetService:
                 decision.get("symbol"), "decision.symbol"
             ).upper()
             candidate_as_of = self._parse_aware(decision.get("asOf"), "decision.asOf")
-            if self._required_text(attestation.get("symbol"), "attestation.symbol").upper() != candidate_symbol:
+            if persisted_symbol != candidate_symbol:
+                raise ValueError("Decision research cambió el símbolo del candidato persistido.")
+            if persisted_as_of != candidate_as_of:
+                raise ValueError("Decision research cambió el cutoff del candidato persistido.")
+            if (
+                self._required_text(attestation.get("symbol"), "attestation.symbol").upper()
+                != candidate_symbol
+            ):
                 raise ValueError("La atestación cambió el símbolo del candidato live.")
-            if self._parse_aware(attestation.get("asOf"), "attestation.asOf") != candidate_as_of:
+            if (
+                self._parse_aware(attestation.get("asOf"), "attestation.asOf")
+                != candidate_as_of
+            ):
                 raise ValueError("La atestación cambió el asOf del candidato live.")
             if normalized_symbol is not None and candidate_symbol != normalized_symbol:
                 counters["skippedSymbolCount"] += 1
@@ -176,9 +210,17 @@ class RecommendationShadowActionCalibrationDatasetService:
                 "evaluation.candidateFingerprint",
             ) != candidate_fingerprint:
                 raise ValueError("La evaluación cambió el candidato de decision research.")
-            if self._required_text(evaluation.get("symbol"), "evaluation.symbol").upper() != candidate_symbol:
+            if (
+                self._required_text(evaluation.get("symbol"), "evaluation.symbol").upper()
+                != candidate_symbol
+            ):
                 raise ValueError("La evaluación cambió el símbolo de decision research.")
-            if self._parse_aware(evaluation.get("candidateAsOf"), "evaluation.candidateAsOf") != candidate_as_of:
+            if (
+                self._parse_aware(
+                    evaluation.get("candidateAsOf"), "evaluation.candidateAsOf"
+                )
+                != candidate_as_of
+            ):
                 raise ValueError("La evaluación cambió el asOf del candidato live.")
             evaluation_horizons = evaluation.get("horizons")
             if not isinstance(evaluation_horizons, dict):
@@ -191,9 +233,15 @@ class RecommendationShadowActionCalibrationDatasetService:
                     continue
                 if not isinstance(research, dict) or not isinstance(outcome, dict):
                     raise ValueError("Un horizonte de calibración tiene formato inválido.")
-                if self._positive_int(research.get("horizonDays"), "research.horizonDays") != horizon:
+                if (
+                    self._positive_int(research.get("horizonDays"), "research.horizonDays")
+                    != horizon
+                ):
                     raise ValueError("El horizonte de decision research es inconsistente.")
-                if self._positive_int(outcome.get("horizonDays"), "outcome.horizonDays") != horizon:
+                if (
+                    self._positive_int(outcome.get("horizonDays"), "outcome.horizonDays")
+                    != horizon
+                ):
                     raise ValueError("El horizonte del outcome es inconsistente.")
                 if research.get("status") == "not_applicable_no_live_prediction":
                     counters["noPredictionRowCount"] += 1
@@ -208,9 +256,13 @@ class RecommendationShadowActionCalibrationDatasetService:
                 scenarios = research.get("scenarios")
                 direction = research.get("directionDiagnostics")
                 if not isinstance(uncertainty, dict) or not isinstance(scenarios, dict):
-                    raise ValueError("Decision research listo carece de incertidumbre o escenarios.")
+                    raise ValueError(
+                        "Decision research listo carece de incertidumbre o escenarios."
+                    )
                 if not isinstance(direction, dict):
-                    raise ValueError("Decision research listo carece de diagnósticos direccionales.")
+                    raise ValueError(
+                        "Decision research listo carece de diagnósticos direccionales."
+                    )
                 due_at = self._parse_aware(outcome.get("outcomeDueAt"), "outcomeDueAt")
                 evaluated_at = self._parse_aware(
                     outcome.get("outcomeEvaluatedAt"), "outcomeEvaluatedAt"
@@ -219,6 +271,17 @@ class RecommendationShadowActionCalibrationDatasetService:
                     raise ValueError("Un outcome fue evaluado antes de su vencimiento.")
                 if evaluated_at > cutoff:
                     raise ValueError("Un outcome futuro atravesó el corte de calibración.")
+
+                observation_identity = (
+                    instrument_id,
+                    candidate_as_of.isoformat(),
+                    horizon,
+                )
+                if observation_identity in seen_observation_identities:
+                    raise ValueError(
+                        "Existe una observación OOS duplicada para instrumentId/cutoff/horizonte."
+                    )
+                seen_observation_identities.add(observation_identity)
 
                 row = {
                     "candidateId": candidate_id,
@@ -229,31 +292,83 @@ class RecommendationShadowActionCalibrationDatasetService:
                     ),
                     "decisionResearchFingerprint": decision_fingerprint,
                     "uncertaintyFingerprint": uncertainty_fingerprint,
+                    "instrumentId": instrument_id,
                     "symbol": candidate_symbol,
                     "candidateAsOf": candidate_as_of.isoformat(),
                     "horizonDays": horizon,
-                    "expectedExcessReturn": self._finite(research.get("expectedExcessReturn"), "expectedExcessReturn"),
-                    "researchStrength": self._finite(research.get("researchStrength"), "researchStrength"),
-                    "conservativeResearchStrength": self._finite(research.get("conservativeResearchStrength"), "conservativeResearchStrength"),
-                    "riskAdjustedResearchStrength": self._optional_finite(research.get("riskAdjustedResearchStrength"), "riskAdjustedResearchStrength"),
-                    "residualRmse": self._positive_finite(uncertainty.get("rmse"), "uncertainty.rmse"),
-                    "residualMae": self._positive_finite(uncertainty.get("mae"), "uncertainty.mae"),
-                    "uncertaintyObservationCount": self._positive_int(uncertainty.get("observationCount"), "uncertainty.observationCount"),
-                    "lowerEmpiricalExcessReturn": self._finite(scenarios.get("lowerEmpiricalExcessReturn"), "lowerEmpiricalExcessReturn"),
-                    "medianEmpiricalExcessReturn": self._finite(scenarios.get("medianEmpiricalExcessReturn"), "medianEmpiricalExcessReturn"),
-                    "upperEmpiricalExcessReturn": self._finite(scenarios.get("upperEmpiricalExcessReturn"), "upperEmpiricalExcessReturn"),
-                    "pointEstimatePositive": self._boolean(direction.get("pointEstimatePositive"), "pointEstimatePositive"),
-                    "medianScenarioPositive": self._boolean(direction.get("medianScenarioPositive"), "medianScenarioPositive"),
-                    "lowerScenarioPositive": self._boolean(direction.get("lowerScenarioPositive"), "lowerScenarioPositive"),
-                    "upperScenarioNegative": self._boolean(direction.get("upperScenarioNegative"), "upperScenarioNegative"),
-                    "riskScore": self._optional_finite(risk_context.get("riskScore"), "riskScore"),
-                    "annualizedVolatility": self._optional_finite(risk_context.get("annualizedVolatility"), "annualizedVolatility"),
-                    "maxDrawdown60d": self._optional_finite(risk_context.get("maxDrawdown60d"), "maxDrawdown60d"),
-                    "realizedExcessReturn": self._finite(outcome.get("realizedExcessReturn"), "realizedExcessReturn"),
-                    "realizedReturn": self._optional_finite(outcome.get("realizedReturn"), "realizedReturn"),
-                    "benchmarkReturn": self._optional_finite(outcome.get("benchmarkReturn"), "benchmarkReturn"),
-                    "predictionError": self._finite(outcome.get("predictionError"), "predictionError"),
-                    "directionCorrect": self._boolean(outcome.get("directionCorrect"), "directionCorrect"),
+                    "expectedExcessReturn": self._finite(
+                        research.get("expectedExcessReturn"), "expectedExcessReturn"
+                    ),
+                    "researchStrength": self._finite(
+                        research.get("researchStrength"), "researchStrength"
+                    ),
+                    "conservativeResearchStrength": self._finite(
+                        research.get("conservativeResearchStrength"),
+                        "conservativeResearchStrength",
+                    ),
+                    "riskAdjustedResearchStrength": self._optional_finite(
+                        research.get("riskAdjustedResearchStrength"),
+                        "riskAdjustedResearchStrength",
+                    ),
+                    "residualRmse": self._positive_finite(
+                        uncertainty.get("rmse"), "uncertainty.rmse"
+                    ),
+                    "residualMae": self._positive_finite(
+                        uncertainty.get("mae"), "uncertainty.mae"
+                    ),
+                    "uncertaintyObservationCount": self._positive_int(
+                        uncertainty.get("observationCount"),
+                        "uncertainty.observationCount",
+                    ),
+                    "lowerEmpiricalExcessReturn": self._finite(
+                        scenarios.get("lowerEmpiricalExcessReturn"),
+                        "lowerEmpiricalExcessReturn",
+                    ),
+                    "medianEmpiricalExcessReturn": self._finite(
+                        scenarios.get("medianEmpiricalExcessReturn"),
+                        "medianEmpiricalExcessReturn",
+                    ),
+                    "upperEmpiricalExcessReturn": self._finite(
+                        scenarios.get("upperEmpiricalExcessReturn"),
+                        "upperEmpiricalExcessReturn",
+                    ),
+                    "pointEstimatePositive": self._boolean(
+                        direction.get("pointEstimatePositive"), "pointEstimatePositive"
+                    ),
+                    "medianScenarioPositive": self._boolean(
+                        direction.get("medianScenarioPositive"), "medianScenarioPositive"
+                    ),
+                    "lowerScenarioPositive": self._boolean(
+                        direction.get("lowerScenarioPositive"), "lowerScenarioPositive"
+                    ),
+                    "upperScenarioNegative": self._boolean(
+                        direction.get("upperScenarioNegative"), "upperScenarioNegative"
+                    ),
+                    "riskScore": self._optional_finite(
+                        risk_context.get("riskScore"), "riskScore"
+                    ),
+                    "annualizedVolatility": self._optional_finite(
+                        risk_context.get("annualizedVolatility"),
+                        "annualizedVolatility",
+                    ),
+                    "maxDrawdown60d": self._optional_finite(
+                        risk_context.get("maxDrawdown60d"), "maxDrawdown60d"
+                    ),
+                    "realizedExcessReturn": self._finite(
+                        outcome.get("realizedExcessReturn"), "realizedExcessReturn"
+                    ),
+                    "realizedReturn": self._optional_finite(
+                        outcome.get("realizedReturn"), "realizedReturn"
+                    ),
+                    "benchmarkReturn": self._optional_finite(
+                        outcome.get("benchmarkReturn"), "benchmarkReturn"
+                    ),
+                    "predictionError": self._finite(
+                        outcome.get("predictionError"), "predictionError"
+                    ),
+                    "directionCorrect": self._boolean(
+                        outcome.get("directionCorrect"), "directionCorrect"
+                    ),
                     "outcomeDueAt": due_at.isoformat(),
                     "outcomeEvaluatedAt": evaluated_at.isoformat(),
                 }
@@ -262,7 +377,11 @@ class RecommendationShadowActionCalibrationDatasetService:
 
         rows.sort(
             key=lambda row: (
-                row["candidateAsOf"], row["symbol"], row["candidateId"], row["horizonDays"]
+                row["candidateAsOf"],
+                row["instrumentId"],
+                row["symbol"],
+                row["candidateId"],
+                row["horizonDays"],
             )
         )
         core = {
@@ -274,7 +393,11 @@ class RecommendationShadowActionCalibrationDatasetService:
             "rows": rows,
         }
         return {
-            "status": "shadow_action_calibration_dataset_available" if rows else "shadow_action_calibration_dataset_pending",
+            "status": (
+                "shadow_action_calibration_dataset_available"
+                if rows
+                else "shadow_action_calibration_dataset_pending"
+            ),
             **core,
             "datasetFingerprint": self._fingerprint(core),
             **counters,
@@ -290,6 +413,8 @@ class RecommendationShadowActionCalibrationDatasetService:
                 "evidenceSource": "trusted_persisted_live_cycle_attestation_v1_only",
                 "legacyUnattestedCandidates": "excluded_not_assumed_trusted",
                 "decisionInputs": "persisted_candidate_plus_sealed_ex_ante_uncertainty",
+                "canonicalInstrumentIdentity": "persisted_candidate_instrument_id_required",
+                "duplicateObservationIdentity": "instrument_id_candidate_as_of_horizon_rejected",
                 "labels": "matured_pit_outcomes_available_by_as_of",
                 "researchHoldoutReuse": False,
                 "actionThresholds": "not_fit",
@@ -305,7 +430,10 @@ class RecommendationShadowActionCalibrationDatasetService:
     def _assert_attestation_shadow(self, payload: dict[str, Any]) -> None:
         if payload.get("status") != "shadow_live_cycle_attestation_available":
             raise ValueError("La atestación live no está disponible.")
-        if payload.get("advisoryStatus") != "no_advice" or payload.get("productionEligible") is not False:
+        if (
+            payload.get("advisoryStatus") != "no_advice"
+            or payload.get("productionEligible") is not False
+        ):
             raise ValueError("La atestación live violó el contrato shadow.")
         if payload.get("recommendationCandidateReady") is not False:
             raise ValueError("La atestación live no puede habilitar recomendaciones.")
@@ -317,17 +445,27 @@ class RecommendationShadowActionCalibrationDatasetService:
             raise ValueError("La atestación live carece de revalidación gated-freeze.")
 
     def _assert_decision_shadow(self, payload: dict[str, Any]) -> None:
-        if payload.get("advisoryStatus") != "no_advice" or payload.get("productionEligible") is not False:
+        if (
+            payload.get("advisoryStatus") != "no_advice"
+            or payload.get("productionEligible") is not False
+        ):
             raise ValueError("Decision research violó el contrato shadow.")
         if payload.get("recommendationCandidateReady") is not False:
             raise ValueError("Decision research no puede habilitar recomendaciones.")
         if payload.get("actionThresholdCalibrationResearchEligible") is not False:
             raise ValueError("Decision research no puede promover calibración automáticamente.")
-        if payload.get("action") is not None or payload.get("score") is not None or payload.get("conviction") is not None:
+        if (
+            payload.get("action") is not None
+            or payload.get("score") is not None
+            or payload.get("conviction") is not None
+        ):
             raise ValueError("Decision research no puede contener decisión calibrada.")
 
     def _assert_evaluation_shadow(self, payload: dict[str, Any]) -> None:
-        if payload.get("advisoryStatus") != "no_advice" or payload.get("productionEligible") is not False:
+        if (
+            payload.get("advisoryStatus") != "no_advice"
+            or payload.get("productionEligible") is not False
+        ):
             raise ValueError("La evaluación violó el contrato shadow.")
         if payload.get("recommendationCandidateReady") is not False:
             raise ValueError("La evaluación no puede habilitar recomendaciones.")
