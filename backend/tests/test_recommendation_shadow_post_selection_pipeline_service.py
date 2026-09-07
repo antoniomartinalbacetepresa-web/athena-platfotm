@@ -35,6 +35,7 @@ def _row(*, index: int, cutoff: datetime, evaluated: datetime):
         "snapshotId": index + 1,
         "symbol": "TEST",
         "dataCutoffAt": cutoff.isoformat(),
+        "outcomeDueAt": evaluated.isoformat(),
         "outcomeEvaluatedAt": evaluated.isoformat(),
         "horizonDays": 30,
         "features": {
