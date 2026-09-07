@@ -75,15 +75,16 @@ class RecommendationShadowPostSelectionConfirmationService:
         excluded_not_mature = 0
         for row in dataset.get("rows", []):
             feature_time = self._parse_utc(row.get("dataCutoffAt"), "dataCutoffAt")
+            if feature_time <= start:
+                excluded_before_confirmation += 1
+                continue
+
             outcome_due_at = self._parse_utc(row.get("outcomeDueAt"), "outcomeDueAt")
             outcome_time = self._parse_utc(
                 row.get("outcomeEvaluatedAt"), "outcomeEvaluatedAt"
             )
             if outcome_due_at <= feature_time:
                 raise ValueError("outcomeDueAt debe ser posterior a dataCutoffAt.")
-            if feature_time <= start:
-                excluded_before_confirmation += 1
-                continue
             if outcome_time > cutoff:
                 excluded_not_mature += 1
                 continue
