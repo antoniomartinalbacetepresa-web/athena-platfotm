@@ -6,18 +6,22 @@ import '../../../../core/widgets/dashboard_panel.dart';
 import '../../../recommendations/controllers/recommendation_learning_controller.dart';
 import '../../../recommendations/di/recommendation_dependencies.dart';
 import '../../../recommendations/models/recommendation_learning_status.dart';
+import '../../../recommendations/models/recommendation_production_state.dart';
 import '../../../recommendations/models/recommendation_shadow_candidate_snapshot.dart';
 import '../../../recommendations/services/recommendation_learning_status_provider.dart';
+import '../../../recommendations/services/recommendation_production_state_provider.dart';
 import '../../../recommendations/services/recommendation_shadow_candidate_provider.dart';
 
 class RecommendationsPanel extends StatefulWidget {
   final RecommendationLearningStatusProvider? learningStatusProvider;
   final RecommendationShadowCandidateProvider? shadowCandidateProvider;
+  final RecommendationProductionStateProvider? productionStateProvider;
 
   const RecommendationsPanel({
     super.key,
     this.learningStatusProvider,
     this.shadowCandidateProvider,
+    this.productionStateProvider,
   });
 
   @override
@@ -28,17 +32,26 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
   RecommendationDependencies? _dependencies;
   late final RecommendationLearningController _controller;
   late final RecommendationShadowCandidateProvider _shadowCandidateProvider;
+  late final RecommendationProductionStateProvider _productionStateProvider;
   late final bool _controllerOwnedByDependencies;
   RecommendationShadowCandidateSnapshot? _shadowSnapshot;
+  RecommendationProductionState? _productionState;
   bool _shadowLoading = true;
   bool _shadowError = false;
+  bool _productionLoading = true;
+  bool _productionError = false;
+
+  bool get _hasProductiveRecommendation =>
+      _productionState?.productionRecommendationAvailable == true &&
+      _productionState?.recommendation != null;
 
   @override
   void initState() {
     super.initState();
 
     if (widget.learningStatusProvider == null ||
-        widget.shadowCandidateProvider == null) {
+        widget.shadowCandidateProvider == null ||
+        widget.productionStateProvider == null) {
       _dependencies = RecommendationDependencies.create();
     }
 
@@ -53,27 +66,26 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
     _shadowCandidateProvider = widget.shadowCandidateProvider ??
         _dependencies!.shadowCandidateDataSource;
+    _productionStateProvider =
+        widget.productionStateProvider ?? _dependencies!.productionDataSource;
 
     _controller.addListener(_onControllerChanged);
     _controller.load();
     _loadShadowCandidate();
+    _loadProductionState();
   }
 
   Future<void> _loadShadowCandidate() async {
     try {
       final snapshot = await _shadowCandidateProvider.getLatest();
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _shadowSnapshot = snapshot.isShadowSafe ? snapshot : null;
         _shadowError = !snapshot.isShadowSafe;
         _shadowLoading = false;
       });
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _shadowSnapshot = null;
         _shadowError = true;
@@ -82,10 +94,27 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
     }
   }
 
-  void _onControllerChanged() {
-    if (mounted) {
-      setState(() {});
+  Future<void> _loadProductionState() async {
+    try {
+      final state = await _productionStateProvider.getLatest();
+      if (!mounted) return;
+      setState(() {
+        _productionState = state.isSafe ? state : null;
+        _productionError = !state.isSafe;
+        _productionLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _productionState = null;
+        _productionError = true;
+        _productionLoading = false;
+      });
     }
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -100,6 +129,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final productive = _hasProductiveRecommendation;
+    final badgeColor = productive ? AthenaColors.success : AthenaColors.warning;
     return DashboardPanel(
       child: Column(
         children: [
@@ -125,16 +156,14 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: AthenaColors.warning.withValues(alpha: 0.12),
+                    color: badgeColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: AthenaColors.warning.withValues(alpha: 0.45),
-                    ),
+                    border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
                   ),
-                  child: const Text(
-                    'APRENDIZAJE SHADOW',
+                  child: Text(
+                    productive ? 'PRODUCTIVO AUTORIZADO' : 'APRENDIZAJE SHADOW',
                     style: TextStyle(
-                      color: AthenaColors.warning,
+                      color: badgeColor,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -160,13 +189,9 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         child: Padding(
           padding: EdgeInsets.all(AthenaSpacing.lg),
           child: Text(
-            'No se pudo verificar el aprendizaje de ATHENA.\n'
-            'No se mostrarán señales mientras el estado no sea verificable.',
+            'No se pudo verificar el aprendizaje de ATHENA. No se mostrarán señales.',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 15,
-            ),
+            style: TextStyle(color: AthenaColors.textSecondary, fontSize: 15),
           ),
         ),
       );
@@ -200,6 +225,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildProductionEvidence(),
+          const SizedBox(height: AthenaSpacing.lg),
           Text(
             hasEvidence
                 ? 'ATHENA ya está midiendo candidatos con resultados reales.'
@@ -213,8 +240,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
           const SizedBox(height: AthenaSpacing.sm),
           Text(
             hasEvidence
-                ? 'Las observaciones maduras se comparan con el exceso de retorno real frente al benchmark congelado. Aún no implican una señal de inversión.'
-                : 'Los resultados de 7, 30, 90, 180 y 365 días se incorporarán únicamente cuando hayan vencido y sean conocidos por ATHENA.',
+                ? 'Las observaciones maduras se comparan con el exceso de retorno real frente al benchmark congelado.'
+                : 'Los horizontes 7/30/90/180/365 se evalúan sólo cuando vencen y son conocibles.',
             style: const TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 14,
@@ -236,12 +263,91 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
           ),
           const SizedBox(height: AthenaSpacing.lg),
           Text(
-            hasEvidence
-                ? 'Estado: evidencia fuera de muestra acumulándose. Recomendaciones productivas aún bloqueadas.'
-                : 'Estado: esperando evidencia fuera de muestra suficiente. Recomendaciones productivas bloqueadas.',
-            style: const TextStyle(
-              color: AthenaColors.warning,
+            _hasProductiveRecommendation
+                ? 'Estado: existe autorización productiva verificable. Ejecución automática deshabilitada.'
+                : hasEvidence
+                    ? 'Estado: evidencia fuera de muestra acumulándose. Producción bloqueada hasta autorización válida.'
+                    : 'Estado: esperando evidencia fuera de muestra suficiente. Producción bloqueada.',
+            style: TextStyle(
+              color: _hasProductiveRecommendation
+                  ? AthenaColors.success
+                  : AthenaColors.warning,
               fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductionEvidence() {
+    if (_productionLoading) {
+      return const Text(
+        'Verificando autorizaciones productivas…',
+        style: TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+      );
+    }
+    if (_productionError) {
+      return const Text(
+        'El estado productivo no pudo verificarse; no se muestra ninguna recomendación.',
+        style: TextStyle(color: AthenaColors.warning, fontSize: 13),
+      );
+    }
+    final state = _productionState;
+    final recommendation = state?.recommendation;
+    if (state == null || recommendation == null) {
+      return const Text(
+        'No existe una recomendación productiva autorizada conocida por ATHENA.',
+        style: TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+      );
+    }
+
+    final allocation = state.allocation;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AthenaSpacing.md),
+      decoration: BoxDecoration(
+        color: AthenaColors.cardSecondary,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AthenaColors.success.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_actionLabel(recommendation.action)} · ${recommendation.symbol}',
+            style: const TextStyle(
+              color: AthenaColors.text,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Autorización productiva verificada · ${_formatDateTime(recommendation.authorizedAt)}',
+            style: const TextStyle(color: AthenaColors.success, fontSize: 12),
+          ),
+          const SizedBox(height: AthenaSpacing.sm),
+          Text(
+            'Estado de cartera: ${recommendation.policyState}',
+            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+          ),
+          if (allocation != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Asignación autorizada: ${_formatMoney(allocation.targetAmountInBaseCurrency, allocation.baseCurrency)} '
+              'sobre ${_formatMoney(allocation.referenceCapital, allocation.baseCurrency)} de referencia '
+              '· cambio ${_formatSignedMoney(allocation.deltaAmountInBaseCurrency, allocation.baseCurrency)}',
+              style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+            ),
+          ],
+          const SizedBox(height: AthenaSpacing.sm),
+          const Text(
+            'No habilita ejecución de órdenes ni trading automático.',
+            style: TextStyle(
+              color: AthenaColors.warning,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -294,7 +400,7 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Estimaciones fuera de producción. No constituyen una recomendación ni una orden de inversión.',
+            'Fuera de producción. No constituye una recomendación ni una orden.',
             style: TextStyle(
               color: AthenaColors.warning,
               fontSize: 12,
@@ -327,24 +433,18 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
   List<Widget> _explanationWidgets(RecommendationShadowHorizon horizon) {
     final raw = horizon.explanation['largestAbsoluteContributors'];
-    if (raw is! List || raw.isEmpty) {
-      return const <Widget>[];
-    }
+    if (raw is! List || raw.isEmpty) return const <Widget>[];
     final labels = <String>[];
     for (final item in raw.take(3)) {
-      if (item is! Map) {
-        continue;
-      }
+      if (item is! Map) continue;
       final feature = item['feature']?.toString().trim() ?? '';
       final contribution = _finiteDouble(item['contribution']);
-      if (feature.isEmpty || contribution == null) {
-        continue;
-      }
-      labels.add('$feature ${contribution >= 0 ? '+' : ''}${(contribution * 100).toStringAsFixed(2)} pp');
+      if (feature.isEmpty || contribution == null) continue;
+      labels.add(
+        '$feature ${contribution >= 0 ? '+' : ''}${(contribution * 100).toStringAsFixed(2)} pp',
+      );
     }
-    if (labels.isEmpty) {
-      return const <Widget>[];
-    }
+    if (labels.isEmpty) return const <Widget>[];
     return [
       const SizedBox(height: AthenaSpacing.sm),
       Text(
@@ -373,10 +473,7 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         children: [
           Text(
             label,
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 12,
-            ),
+            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 6),
           Text(
@@ -394,33 +491,55 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
   String _displayCount(int? value) => value?.toString() ?? '—';
 
-  String _formatReturn(double? value) {
-    if (value == null || !value.isFinite) {
-      return '—';
+  String _actionLabel(String action) {
+    switch (action) {
+      case 'buy':
+        return 'COMPRAR';
+      case 'hold':
+        return 'MANTENER';
+      case 'reduce':
+        return 'REDUCIR';
+      case 'sell':
+        return 'VENDER';
+      default:
+        return action.toUpperCase();
     }
+  }
+
+  String _formatDateTime(DateTime value) =>
+      '${value.toUtc().day.toString().padLeft(2, '0')}/'
+      '${value.toUtc().month.toString().padLeft(2, '0')}/'
+      '${value.toUtc().year} '
+      '${value.toUtc().hour.toString().padLeft(2, '0')}:'
+      '${value.toUtc().minute.toString().padLeft(2, '0')} UTC';
+
+  String _formatMoney(double value, String currency) =>
+      '${value.toStringAsFixed(2)} $currency';
+
+  String _formatSignedMoney(double value, String currency) =>
+      '${value >= 0 ? '+' : ''}${value.toStringAsFixed(2)} $currency';
+
+  String _formatReturn(double? value) {
+    if (value == null || !value.isFinite) return '—';
     final percentage = value * 100;
     return '${percentage >= 0 ? '+' : ''}${percentage.toStringAsFixed(2)}%';
   }
 
   double? _finiteDouble(dynamic value) {
-    if (value is bool) {
-      return null;
-    }
-    final parsed = value is num ? value.toDouble() : double.tryParse(value?.toString() ?? '');
+    if (value is bool) return null;
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
     return parsed != null && parsed.isFinite ? parsed : null;
   }
 
   int? _nonNegativeInt(dynamic value) {
-    if (value is bool) {
-      return null;
-    }
+    if (value is bool) return null;
     int? parsed;
     if (value is int) {
       parsed = value;
     } else if (value is num) {
-      if (!value.isFinite || value != value.truncateToDouble()) {
-        return null;
-      }
+      if (!value.isFinite || value != value.truncateToDouble()) return null;
       parsed = value.toInt();
     } else if (value is String) {
       parsed = int.tryParse(value.trim());
