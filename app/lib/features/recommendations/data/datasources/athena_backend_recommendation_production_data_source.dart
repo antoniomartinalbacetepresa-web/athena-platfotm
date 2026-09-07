@@ -142,6 +142,14 @@ class AthenaBackendRecommendationProductionDataSource
         json['economicContractFingerprint'],
         'recommendation.economicContractFingerprint',
       ),
+      horizonDays: _optionalPositiveInt(
+        json['horizonDays'],
+        'recommendation.horizonDays',
+      ),
+      expectedExcessReturn: _optionalFinite(
+        json['expectedExcessReturn'],
+        'recommendation.expectedExcessReturn',
+      ),
     );
   }
 
@@ -246,6 +254,11 @@ class AthenaBackendRecommendationProductionDataSource
     return parsed;
   }
 
+  int? _optionalPositiveInt(dynamic value, String field) {
+    if (value == null) return null;
+    return _instrumentId(value, field);
+  }
+
   String _action(dynamic value) {
     final result = _string(value, 'action').toLowerCase();
     if (!const {'buy', 'hold', 'reduce', 'sell'}.contains(result)) {
@@ -277,6 +290,11 @@ class AthenaBackendRecommendationProductionDataSource
       throw FormatException('$field debe ser finito.');
     }
     return parsed;
+  }
+
+  double? _optionalFinite(dynamic value, String field) {
+    if (value == null) return null;
+    return _finite(value, field);
   }
 
   double _positiveFinite(dynamic value, String field) {
