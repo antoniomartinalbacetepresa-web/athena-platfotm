@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/features/dashboard/presentation/widgets/recommendations_panel.dart';
+import 'package:app/features/recommendations/data/datasources/athena_backend_professional_dossier_data_source.dart';
 import 'package:app/features/recommendations/models/recommendation_learning_status.dart';
 import 'package:app/features/recommendations/models/recommendation_production_state.dart';
 import 'package:app/features/recommendations/models/recommendation_shadow_candidate_snapshot.dart';
@@ -176,10 +177,46 @@ class FakeProductionStateProvider implements RecommendationProductionStateProvid
   }
 }
 
+class FakeProfessionalDossierDataSource
+    extends AthenaBackendProfessionalDossierDataSource {
+  final bool fail;
+
+  FakeProfessionalDossierDataSource({this.fail = false})
+      : super(baseUrl: 'http://test');
+
+  @override
+  Future<ProfessionalDossier> getLatest({
+    DateTime? asOf,
+    String? symbol,
+    int? instrumentId,
+  }) async {
+    if (fail) throw Exception('dossier unavailable');
+    return ProfessionalDossier(
+      asOf: DateTime.utc(2026, 9, 1, 20, 30),
+      advisoryStatus: 'no_advice',
+      productionEligible: false,
+      allocationEligible: false,
+      executionEligible: false,
+      orderRoutingEligible: false,
+      automaticTrading: false,
+      readOnly: true,
+      modules: Map.unmodifiable({
+        for (final name in ProfessionalDossier.moduleNames)
+          name: const ProfessionalModuleState(
+            status: 'not_yet_evidenced',
+            productionEligible: false,
+            reason: 'No sealed PIT evidence is available.',
+          ),
+      }),
+    );
+  }
+}
+
 Widget _panel({
   bool withShadow = true,
   bool withProduction = false,
   bool withAllocation = false,
+  bool withDossierFailure = false,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -195,6 +232,9 @@ Widget _panel({
             withRecommendation: withProduction,
             withAllocation: withAllocation,
           ),
+          professionalDossierDataSource: FakeProfessionalDossierDataSource(
+            fail: withDossierFailure,
+          ),
         ),
       ),
     ),
@@ -203,13 +243,26 @@ Widget _panel({
 
 void main() {
   testWidgets(
-    'muestra aprendizaje y candidato shadow real sin consejo ficticio',
+    'muestra aprendizaje, candidato shadow y dossier sin consejo ficticio',
     (tester) async {
       await tester.pumpWidget(_panel());
       await tester.pumpAndSettle();
 
       expect(find.text('RECOMENDACIONES ATHENA'), findsOneWidget);
       expect(find.text('APRENDIZAJE SHADOW'), findsOneWidget);
+      expect(find.text('DOSSIER PROFESIONAL PIT'), findsOneWidget);
+      expect(find.textContaining('NO_ADVICE · sólo lectura'), findsOneWidget);
+      expect(find.text('EXPECTATIONS GAP'), findsOneWidget);
+      expect(find.text('REVERSE VALUATION'), findsOneWidget);
+      expect(find.text('ASIMETRÍA DE ESCENARIOS'), findsOneWidget);
+      expect(find.text('CATALIZADORES'), findsOneWidget);
+      expect(find.text('INVALIDACIÓN DE TESIS'), findsOneWidget);
+      expect(find.text('RIESGO FACTORIAL'), findsOneWidget);
+      expect(find.text('PERFORMANCE ATTRIBUTION'), findsOneWidget);
+      expect(find.text('DIARIO DE INVERSIÓN'), findsOneWidget);
+      expect(find.text("DEVIL'S ADVOCATE"), findsOneWidget);
+      expect(find.text('ATHENA RADAR'), findsOneWidget);
+      expect(find.text('SIN EVIDENCIA SELLADA'), findsNWidgets(10));
       expect(
         find.text('ATHENA ya está midiendo candidatos con resultados reales.'),
         findsOneWidget,
@@ -232,6 +285,21 @@ void main() {
       expect(find.text('COMPRAR'), findsNothing);
     },
   );
+
+  testWidgets('falla cerrado si el dossier profesional no puede verificarse',
+      (tester) async {
+    await tester.pumpWidget(_panel(withDossierFailure: true));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'El dossier profesional no pudo verificarse y no se muestran módulos.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('EXPECTATIONS GAP'), findsNothing);
+    expect(find.text('SIN EVIDENCIA SELLADA'), findsNothing);
+  });
 
   testWidgets('muestra ausencia verificable sin inventar candidato ni recomendación',
       (tester) async {

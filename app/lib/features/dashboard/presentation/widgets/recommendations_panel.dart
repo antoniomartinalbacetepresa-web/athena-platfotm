@@ -4,6 +4,7 @@ import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_spacing.dart';
 import '../../../../core/widgets/dashboard_panel.dart';
 import '../../../recommendations/controllers/recommendation_learning_controller.dart';
+import '../../../recommendations/data/datasources/athena_backend_professional_dossier_data_source.dart';
 import '../../../recommendations/di/recommendation_dependencies.dart';
 import '../../../recommendations/models/recommendation_learning_status.dart';
 import '../../../recommendations/models/recommendation_production_state.dart';
@@ -16,12 +17,14 @@ class RecommendationsPanel extends StatefulWidget {
   final RecommendationLearningStatusProvider? learningStatusProvider;
   final RecommendationShadowCandidateProvider? shadowCandidateProvider;
   final RecommendationProductionStateProvider? productionStateProvider;
+  final AthenaBackendProfessionalDossierDataSource? professionalDossierDataSource;
 
   const RecommendationsPanel({
     super.key,
     this.learningStatusProvider,
     this.shadowCandidateProvider,
     this.productionStateProvider,
+    this.professionalDossierDataSource,
   });
 
   @override
@@ -29,17 +32,35 @@ class RecommendationsPanel extends StatefulWidget {
 }
 
 class _RecommendationsPanelState extends State<RecommendationsPanel> {
+  static const _professionalModuleLabels = <String, String>{
+    'expectationsGap': 'EXPECTATIONS GAP',
+    'reverseValuation': 'REVERSE VALUATION',
+    'scenarioAsymmetry': 'ASIMETRÍA DE ESCENARIOS',
+    'catalysts': 'CATALIZADORES',
+    'thesisInvalidation': 'INVALIDACIÓN DE TESIS',
+    'factorRisk': 'RIESGO FACTORIAL',
+    'performanceAttribution': 'PERFORMANCE ATTRIBUTION',
+    'investmentJournal': 'DIARIO DE INVERSIÓN',
+    'devilsAdvocate': "DEVIL'S ADVOCATE",
+    'athenaRadar': 'ATHENA RADAR',
+  };
+
   RecommendationDependencies? _dependencies;
   late final RecommendationLearningController _controller;
   late final RecommendationShadowCandidateProvider _shadowCandidateProvider;
   late final RecommendationProductionStateProvider _productionStateProvider;
+  late final AthenaBackendProfessionalDossierDataSource
+      _professionalDossierDataSource;
   late final bool _controllerOwnedByDependencies;
   RecommendationShadowCandidateSnapshot? _shadowSnapshot;
   RecommendationProductionState? _productionState;
+  ProfessionalDossier? _professionalDossier;
   bool _shadowLoading = true;
   bool _shadowError = false;
   bool _productionLoading = true;
   bool _productionError = false;
+  bool _professionalDossierLoading = true;
+  bool _professionalDossierError = false;
 
   bool get _hasProductiveRecommendation =>
       _productionState?.productionRecommendationAvailable == true &&
@@ -51,7 +72,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
 
     if (widget.learningStatusProvider == null ||
         widget.shadowCandidateProvider == null ||
-        widget.productionStateProvider == null) {
+        widget.productionStateProvider == null ||
+        widget.professionalDossierDataSource == null) {
       _dependencies = RecommendationDependencies.create();
     }
 
@@ -68,11 +90,14 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         _dependencies!.shadowCandidateDataSource;
     _productionStateProvider =
         widget.productionStateProvider ?? _dependencies!.productionDataSource;
+    _professionalDossierDataSource = widget.professionalDossierDataSource ??
+        _dependencies!.professionalDossierDataSource;
 
     _controller.addListener(_onControllerChanged);
     _controller.load();
     _loadShadowCandidate();
     _loadProductionState();
+    _loadProfessionalDossier();
   }
 
   Future<void> _loadShadowCandidate() async {
@@ -109,6 +134,25 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         _productionState = null;
         _productionError = true;
         _productionLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadProfessionalDossier() async {
+    try {
+      final dossier = await _professionalDossierDataSource.getLatest();
+      if (!mounted) return;
+      setState(() {
+        _professionalDossier = dossier.isSafe ? dossier : null;
+        _professionalDossierError = !dossier.isSafe;
+        _professionalDossierLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _professionalDossier = null;
+        _professionalDossierError = true;
+        _professionalDossierLoading = false;
       });
     }
   }
@@ -227,6 +271,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         children: [
           _buildProductionEvidence(),
           const SizedBox(height: AthenaSpacing.lg),
+          _buildProfessionalDossierEvidence(),
+          const SizedBox(height: AthenaSpacing.lg),
           Text(
             hasEvidence
                 ? 'ATHENA ya está midiendo candidatos con resultados reales.'
@@ -275,6 +321,109 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
               fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfessionalDossierEvidence() {
+    if (_professionalDossierLoading) {
+      return const Text(
+        'Verificando dossier profesional PIT…',
+        style: TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+      );
+    }
+    if (_professionalDossierError) {
+      return const Text(
+        'El dossier profesional no pudo verificarse y no se muestran módulos.',
+        style: TextStyle(color: AthenaColors.warning, fontSize: 13),
+      );
+    }
+    final dossier = _professionalDossier;
+    if (dossier == null) {
+      return const Text(
+        'No existe un dossier profesional verificable.',
+        style: TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AthenaSpacing.md),
+      decoration: BoxDecoration(
+        color: AthenaColors.cardSecondary,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AthenaColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'DOSSIER PROFESIONAL PIT',
+            style: TextStyle(
+              color: AthenaColors.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${dossier.advisoryStatus.toUpperCase()} · sólo lectura · corte ${_formatDateTime(dossier.asOf)}',
+            style: const TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Los módulos sin evidencia sellada permanecen visibles como no evidenciados y no alteran la recomendación.',
+            style: TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: AthenaSpacing.md),
+          Wrap(
+            spacing: AthenaSpacing.sm,
+            runSpacing: AthenaSpacing.sm,
+            children: _professionalModuleLabels.entries.map((entry) {
+              final module = dossier.modules[entry.key]!;
+              return Container(
+                constraints: const BoxConstraints(minWidth: 190),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AthenaSpacing.sm,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AthenaColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      entry.value,
+                      style: const TextStyle(
+                        color: AthenaColors.text,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _professionalStatusLabel(module.status),
+                      style: const TextStyle(
+                        color: AthenaColors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(growable: false),
           ),
         ],
       ),
@@ -509,6 +658,11 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
         ],
       ),
     );
+  }
+
+  String _professionalStatusLabel(String status) {
+    if (status == 'not_yet_evidenced') return 'SIN EVIDENCIA SELLADA';
+    return status.replaceAll('_', ' ').toUpperCase();
   }
 
   String _displayCount(int? value) => value?.toString() ?? '—';
