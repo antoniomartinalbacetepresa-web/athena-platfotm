@@ -9,9 +9,16 @@ from app.services.recommendation_shadow_action_calibration_integrity_service imp
 )
 
 
-def _row(candidate_id: int, candidate_as_of: str, evaluated_at: str):
+def _row(
+    candidate_id: int,
+    candidate_as_of: str,
+    evaluated_at: str,
+    *,
+    instrument_id: int | None = None,
+):
     return {
         "candidateId": candidate_id,
+        "instrumentId": candidate_id if instrument_id is None else instrument_id,
         "horizonDays": 30,
         "symbol": "TEST",
         "candidateAsOf": candidate_as_of,
@@ -82,6 +89,34 @@ def test_rejects_duplicate_identity_across_partitions():
     artifact = _artifact()
     artifact["validationRows"][0]["candidateId"] = 1
     with pytest.raises(ValueError, match="más de una vez"):
+        RecommendationShadowActionCalibrationIntegrityService().validate(artifact)
+
+
+def test_rejects_missing_canonical_instrument_identity():
+    artifact = _artifact()
+    artifact["validationRows"][0].pop("instrumentId")
+    with pytest.raises(ValueError, match="instrumentId"):
+        RecommendationShadowActionCalibrationIntegrityService().validate(artifact)
+
+
+def test_rejects_duplicate_instrument_cutoff_horizon_even_with_distinct_candidate_ids():
+    artifact = _artifact()
+    artifact["trainRows"] = [
+        _row(
+            10,
+            "2026-01-01T00:00:00+00:00",
+            "2026-02-02T00:00:00+00:00",
+            instrument_id=99,
+        ),
+        _row(
+            11,
+            "2026-01-01T00:00:00+00:00",
+            "2026-02-02T00:00:00+00:00",
+            instrument_id=99,
+        ),
+    ]
+    artifact["trainRowCount"] = 2
+    with pytest.raises(ValueError, match="instrumentId/cutoff/horizon"):
         RecommendationShadowActionCalibrationIntegrityService().validate(artifact)
 
 
