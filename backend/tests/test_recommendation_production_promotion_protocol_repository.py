@@ -24,8 +24,8 @@ def _draft(*, protocol_id: str = "prod-promotion-v1") -> dict:
                 "minimumResolvedIssuerCoverageRatio": 0.90,
                 "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.0,
-                "minimumRelativeMseImprovement": 0.0,
-                "requireBeatZeroExcessMseBaseline": False,
+                "minimumRelativeMseImprovement": 0.01,
+                "requireBeatZeroExcessMseBaseline": True,
             }
             for horizon in (7, 30, 90, 180, 365)
         },
@@ -49,6 +49,8 @@ def test_registration_timestamp_is_repository_generated_and_persisted(tmp_path):
     assert criterion["minimumNonOverlappingConfirmationWindowCount"] == 5
     assert criterion["minimumResolvedIssuerCoverageRatio"] == 0.90
     assert criterion["maximumResolvedIssuerConcentrationRatio"] == 0.25
+    assert criterion["minimumRelativeMseImprovement"] == 0.01
+    assert criterion["requireBeatZeroExcessMseBaseline"] is True
     assert repo.get(protocol_id="prod-promotion-v1") == record
 
 
@@ -93,6 +95,28 @@ def test_non_finite_or_incomplete_criteria_are_rejected_before_persistence(tmp_p
     del missing["criteriaByHorizon"]["180"]
     with pytest.raises(ValueError, match="Faltan criterios"):
         repo.register(protocol_draft=missing)
+
+
+def test_production_protocol_cannot_accept_non_improving_baseline_evidence(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    zero = _draft(protocol_id="zero-improvement")
+    zero["criteriaByHorizon"]["30"]["minimumRelativeMseImprovement"] = 0.0
+    with pytest.raises(ValueError, match="estrictamente positivo"):
+        repo.register(protocol_draft=zero)
+
+    negative = _draft(protocol_id="negative-improvement")
+    negative["criteriaByHorizon"]["30"]["minimumRelativeMseImprovement"] = -0.01
+    with pytest.raises(ValueError, match="estrictamente positivo"):
+        repo.register(protocol_draft=negative)
+
+    baseline_optional = _draft(protocol_id="optional-baseline")
+    baseline_optional["criteriaByHorizon"]["30"][
+        "requireBeatZeroExcessMseBaseline"
+    ] = False
+    with pytest.raises(ValueError, match="debe ser true"):
+        repo.register(protocol_draft=baseline_optional)
 
 
 def test_confirmation_sample_size_is_required_and_must_be_positive(tmp_path):
