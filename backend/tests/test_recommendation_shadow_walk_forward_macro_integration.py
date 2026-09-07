@@ -69,6 +69,34 @@ class FakeSplitService:
         return split
 
 
+class FakeMacroComparisonService:
+    def __init__(self):
+        self.calls = []
+
+    def compare(self, *, split, macro_preprocessing, base_evaluation):
+        self.calls.append(
+            {
+                "split": split,
+                "macro_preprocessing": macro_preprocessing,
+                "base_evaluation": base_evaluation,
+            }
+        )
+        fold_index = len(self.calls) - 1
+        return {
+            "status": "shadow_macro_candidate_comparison_evaluated",
+            "deltaAugmentedMinusBase": {
+                "mse": -0.10 - (0.02 * fold_index),
+                "mae": -0.05 - (0.01 * fold_index),
+                "signAccuracy": 0.05 + (0.01 * fold_index),
+            },
+            "assessment": "not_assessed_without_precommitted_criteria",
+            "thresholdApplied": False,
+            "candidateInfluence": False,
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+        }
+
+
 def _dt(year, month, day):
     return datetime(year, month, day, tzinfo=timezone.utc)
 
@@ -118,7 +146,7 @@ def test_walk_forward_fits_macro_preprocessing_inside_each_purged_fold_train_onl
 
     assert result["policy"]["macroResearchPreprocessing"] == "fit_inside_each_fold_train_only"
     assert result["policy"]["macroCandidateInfluence"] == (
-        "disabled_until_oos_comparison_is_validated"
+        "disabled_until_oos_comparison_is_precommitted_and_validated"
     )
     assert result["advisoryStatus"] == "no_advice"
     assert result["productionEligible"] is False
@@ -139,3 +167,41 @@ def test_walk_forward_macro_research_uses_the_exact_same_frozen_split_as_candida
     assert len(split_service.results) == 2
     for candidate_split, built_split in zip(candidate.calls, split_service.results):
         assert candidate_split is built_split
+
+
+def test_walk_forward_aggregates_macro_comparison_without_creating_a_verdict():
+    candidate = FakeCandidateService()
+    split_service = FakeSplitService()
+    macro_comparison = FakeMacroComparisonService()
+    service = RecommendationShadowWalkForwardService(
+        candidate_service=candidate,
+        split_service=split_service,
+        macro_comparison_service=macro_comparison,
+        minimum_evaluated_folds=2,
+    )
+
+    result = service.evaluate(folds=_folds(), horizon_days=180)
+
+    assert len(macro_comparison.calls) == 2
+    for index, call in enumerate(macro_comparison.calls):
+        assert call["split"] is split_service.results[index]
+        assert call["base_evaluation"]["productionEligible"] is False
+        assert call["macro_preprocessing"]["status"] == (
+            "shadow_macro_fold_preprocessing_fitted"
+        )
+
+    comparison = result["macroComparison"]
+    assert comparison["status"] == "shadow_macro_walk_forward_comparison_evaluated"
+    assert comparison["pairedFoldCount"] == 2
+    assert comparison["summary"]["medianMseDeltaAugmentedMinusBase"] == -0.11
+    assert comparison["summary"]["assessment"] == (
+        "not_assessed_without_precommitted_criteria"
+    )
+    assert comparison["summary"]["thresholdApplied"] is False
+    assert comparison["candidateInfluence"] is False
+    assert comparison["advisoryStatus"] == "no_advice"
+    assert comparison["productionEligible"] is False
+    assert "macroHelps" not in comparison["summary"]
+    assert result["policy"]["macroOosComparison"] == (
+        "paired_base_vs_base_plus_macro_same_frozen_rows"
+    )
