@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -40,6 +41,14 @@ def _aware_utc(value: datetime, field: str) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
+
+
 def _assert_contract(payload: dict[str, object]) -> None:
     if payload.get("advisoryStatus") != "no_advice":
         raise HTTPException(status_code=500, detail="Factor Risk violó el contrato no-advice.")
@@ -59,22 +68,100 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Factor Risk perdió la garantía de identidad.")
     if policy.get("fx") != "usd_fx_is_explicit_factor_not_silently_netting_currency_risk":
         raise HTTPException(status_code=500, detail="Factor Risk perdió la garantía explícita de FX.")
-
-    exposures = payload.get("weightedExposures")
-    if not isinstance(exposures, dict):
-        raise HTTPException(status_code=500, detail="Factor Risk devolvió exposiciones inválidas.")
-    for name, value in exposures.items():
-        if not isinstance(name, str) or isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise HTTPException(status_code=500, detail="Factor Risk devolvió exposición no numérica.")
+    if policy.get("missingFactorCoverage") != "reported_explicitly_never_imputed_as_zero":
+        raise HTTPException(status_code=500, detail="Factor Risk perdió la garantía contra imputación silenciosa.")
+    if policy.get("thresholds") != "not_calibrated":
+        raise HTTPException(status_code=500, detail="Factor Risk intentó usar umbrales no calibrados.")
 
     count = payload.get("positionCount")
     invested = payload.get("investedWeight")
     cash = payload.get("cashWeight")
     if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
         raise HTTPException(status_code=500, detail="Factor Risk devolvió positionCount inválido.")
-    for value in (invested, cash, payload.get("grossFactorExposure"), payload.get("maxAbsoluteFactorExposure")):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise HTTPException(status_code=500, detail="Factor Risk devolvió métricas inválidas.")
+    for value in (
+        invested,
+        cash,
+        payload.get("grossFactorExposure"),
+        payload.get("maxAbsoluteFactorExposure"),
+    ):
+        if not _finite_number(value):
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió métricas no finitas.")
+    if abs(float(invested) + float(cash) - 1.0) > 1e-9:
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió pesos de cartera incoherentes.")
+
+    exposures = payload.get("weightedExposures")
+    coverage = payload.get("factorCoverageWeights")
+    fully_covered = payload.get("fullyCoveredFactors")
+    if not isinstance(exposures, dict) or not isinstance(coverage, dict):
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió exposiciones/cobertura inválidas.")
+    if set(exposures) != set(coverage):
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió cobertura factorial incompleta.")
+    for name, value in exposures.items():
+        if not isinstance(name, str) or not _finite_number(value):
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió exposición no finita.")
+        coverage_value = coverage.get(name)
+        if not _finite_number(coverage_value):
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió cobertura no finita.")
+        if float(coverage_value) < -1e-12 or float(coverage_value) > float(invested) + 1e-9:
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió cobertura fuera de rango.")
+    if not isinstance(fully_covered, list) or any(
+        not isinstance(name, str) or name not in exposures for name in fully_covered
+    ):
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió fullyCoveredFactors inválido.")
+    expected_fully_covered = {
+        name
+        for name, value in coverage.items()
+        if float(invested) > 0.0 and abs(float(value) - float(invested)) <= 1e-9
+    }
+    if set(fully_covered) != expected_fully_covered:
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió cobertura completa incoherente.")
+
+    positions = payload.get("positions")
+    if not isinstance(positions, list) or len(positions) != count:
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió evidencia de posiciones inválida.")
+    seen_ids: set[int] = set()
+    seen_symbols: set[str] = set()
+    for position in positions:
+        if not isinstance(position, dict):
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió evidencia PIT inválida.")
+        instrument_id = position.get("instrumentId")
+        symbol = position.get("symbol")
+        source = position.get("source")
+        source_ref = position.get("sourceRef")
+        available_at = position.get("exposureAvailableAt")
+        factors = position.get("factors")
+        weight = position.get("weight")
+        if (
+            isinstance(instrument_id, bool)
+            or not isinstance(instrument_id, int)
+            or instrument_id <= 0
+            or not isinstance(symbol, str)
+            or not symbol.strip()
+            or not isinstance(source, str)
+            or not source.strip()
+            or not isinstance(source_ref, str)
+            or not source_ref.strip()
+            or not isinstance(available_at, str)
+            or not available_at.strip()
+            or not isinstance(factors, dict)
+            or not factors
+            or not _finite_number(weight)
+        ):
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió provenance PIT incompleta.")
+        normalized_symbol = symbol.strip().upper()
+        if instrument_id in seen_ids or normalized_symbol in seen_symbols:
+            raise HTTPException(status_code=500, detail="Factor Risk devolvió identidad duplicada.")
+        seen_ids.add(instrument_id)
+        seen_symbols.add(normalized_symbol)
+        for factor, value in factors.items():
+            if not isinstance(factor, str) or factor not in exposures or not _finite_number(value):
+                raise HTTPException(status_code=500, detail="Factor Risk devolvió evidencia factorial inválida.")
+
+    dominant = payload.get("dominantFactor")
+    if dominant is not None and (
+        not isinstance(dominant, str) or dominant not in set(fully_covered)
+    ):
+        raise HTTPException(status_code=500, detail="Factor Risk devolvió dominantFactor sin cobertura completa.")
 
 
 @router.post("/factor-risk")
