@@ -175,10 +175,7 @@ class RecommendationProductionPromotionEvidenceService:
                 blockers.append("sign_accuracy_below_precommitted_minimum")
             if relative_mse_improvement < criteria["minimumRelativeMseImprovement"]:
                 blockers.append("relative_mse_improvement_below_precommitted_minimum")
-            if (
-                criteria["requireBeatZeroExcessMseBaseline"]
-                and evidence.get("beatsZeroBaselineOnMse") is not True
-            ):
+            if evidence.get("beatsZeroBaselineOnMse") is not True:
                 blockers.append("zero_excess_mse_baseline_not_beaten")
 
             passes = not blockers
@@ -244,6 +241,8 @@ class RecommendationProductionPromotionEvidenceService:
                 "issuerCoverageMustBePrecommitted": True,
                 "issuerConcentrationMustBePrecommitted": True,
                 "issuerDiversityDoesNotClaimStatisticalIndependence": True,
+                "minimumRelativeMseImprovementMustBeStrictlyPositive": True,
+                "zeroExcessMseBaselineMustBeBeaten": True,
                 "confirmationEvidenceCanRetuneCriteria": False,
                 "passingEvidenceIsNotProductionAuthorization": True,
             },
@@ -328,9 +327,18 @@ class RecommendationProductionPromotionEvidenceService:
                 item.get("minimumRelativeMseImprovement"),
                 "minimumRelativeMseImprovement",
             )
+            if minimum_improvement <= 0.0:
+                raise ValueError(
+                    "minimumRelativeMseImprovement debe ser estrictamente positivo "
+                    "para una promoción productiva."
+                )
             beat_baseline = item.get("requireBeatZeroExcessMseBaseline")
             if not isinstance(beat_baseline, bool):
                 raise ValueError("requireBeatZeroExcessMseBaseline debe ser booleano.")
+            if beat_baseline is not True:
+                raise ValueError(
+                    "requireBeatZeroExcessMseBaseline debe ser true para una promoción productiva."
+                )
             criteria[key] = {
                 "minimumConfirmationRowCount": minimum_row_count,
                 "minimumNonOverlappingConfirmationWindowCount": (
