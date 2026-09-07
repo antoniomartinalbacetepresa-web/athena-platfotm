@@ -19,6 +19,8 @@ class RecommendationProductionReadService:
     that were already persisted and known by the requested cutoff, after re-running
     the repositories' integrity validation. Allocation is returned only when it binds
     to the recommendation authorization selected for the same instrument/context.
+    Optional symbol/instrument filters narrow the view; without them the latest valid
+    production authorization known at the PIT cutoff is returned.
     """
 
     def __init__(
@@ -50,8 +52,6 @@ class RecommendationProductionReadService:
         cutoff = self._aware(as_of, "as_of")
         normalized_symbol = self._optional_symbol(symbol)
         normalized_instrument_id = self._optional_instrument_id(instrument_id)
-        if normalized_symbol is None and normalized_instrument_id is None:
-            raise ValueError("Debe indicarse symbol o instrument_id para una lectura productiva.")
 
         recommendation = self._latest_recommendation(
             cutoff=cutoff,
