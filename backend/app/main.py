@@ -19,6 +19,9 @@ from app.api.recommendation_research import router as recommendation_research_ro
 from app.api.recommendation_shadow_operations import (
     router as recommendation_shadow_operations_router,
 )
+from app.api.recommendation_thesis_invalidation import (
+    router as recommendation_thesis_invalidation_router,
+)
 from app.api.recommendations import router as recommendations_router
 from app.api.sec import router as sec_router
 from app.api.sources import router as sources_router
@@ -53,6 +56,7 @@ app.include_router(recommendations_router)
 app.include_router(recommendation_production_router)
 app.include_router(recommendation_research_router)
 app.include_router(recommendation_professional_research_router)
+app.include_router(recommendation_thesis_invalidation_router)
 app.include_router(recommendation_shadow_operations_router)
 
 
