@@ -65,6 +65,9 @@ def _evaluate(
         "required_return": 0.10,
         "exit_pe": 20.0,
         "reference_eps_cagr": 0.15,
+        "expectation_kind": "company_guidance",
+        "expectation_metric": "eps_cagr",
+        "expectation_horizon_years": 5,
         "expectation_available_at": AVAILABLE_AT,
         "expectation_source": "sec_company_guidance",
         "expectation_source_ref": "filing:0000320193-25-000079#guidance",
@@ -73,7 +76,7 @@ def _evaluate(
     return service.evaluate(**kwargs)  # type: ignore[arg-type]
 
 
-def test_expectations_gap_compares_pit_reference_with_price_implied_hurdle() -> None:
+def test_expectations_gap_compares_typed_pit_reference_with_price_implied_hurdle() -> None:
     upstream = _ReverseService(_payload(implied_eps_cagr=0.12))
     result = _evaluate(RecommendationExpectationsGapService(reverse_valuation_service=upstream))
 
@@ -87,7 +90,12 @@ def test_expectations_gap_compares_pit_reference_with_price_implied_hurdle() -> 
     assert payload["isWeightingReady"] is False
     assert payload["policy"]["automaticTrading"] is False
     assert payload["policy"]["automaticProductionPromotion"] is False
+    assert payload["policy"]["comparability"] == "exact_metric_and_horizon_required"
+    assert payload["policy"]["crossKindAggregation"] == "forbidden_until_separately_calibrated"
     assert payload["referenceExpectation"] == {
+        "kind": "company_guidance",
+        "metric": "eps_cagr",
+        "horizonYears": 5,
         "epsCagr": 0.15,
         "availableAt": AVAILABLE_AT.isoformat(),
         "source": "sec_company_guidance",
@@ -102,6 +110,47 @@ def test_expectations_gap_compares_pit_reference_with_price_implied_hurdle() -> 
             "exit_pe": 20.0,
         }
     ]
+
+
+def test_expectations_gap_rejects_incomparable_expectation_kinds_metrics_and_horizons() -> None:
+    upstream = _ReverseService(_payload())
+    service = RecommendationExpectationsGapService(reverse_valuation_service=upstream)
+
+    with pytest.raises(ValueError, match="expectation_kind no soportado"):
+        _evaluate(service, expectation_kind="blended_guess")
+    with pytest.raises(ValueError, match="expectation_metric debe ser eps_cagr"):
+        _evaluate(service, expectation_metric="revenue_cagr")
+    with pytest.raises(ValueError, match="coincidir exactamente"):
+        _evaluate(service, expectation_horizon_years=3)
+    assert upstream.calls == []
+
+
+def test_expectations_gap_accepts_each_kind_without_cross_kind_aggregation() -> None:
+    for kind in (
+        "company_guidance",
+        "analyst_consensus",
+        "internal_model",
+        "historical_run_rate",
+    ):
+        result = _evaluate(
+            RecommendationExpectationsGapService(
+                reverse_valuation_service=_ReverseService(_payload())
+            ),
+            expectation_kind=kind,
+        )
+        payload = result.to_api_dict()
+        assert payload["referenceExpectation"]["kind"] == kind
+        assert payload["policy"]["crossKindAggregation"] == "forbidden_until_separately_calibrated"
+
+
+def test_expectations_gap_rejects_invalid_reference_horizon_before_upstream() -> None:
+    upstream = _ReverseService(_payload())
+    service = RecommendationExpectationsGapService(reverse_valuation_service=upstream)
+
+    for value in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="entero positivo"):
+            _evaluate(service, expectation_horizon_years=value)
+    assert upstream.calls == []
 
 
 def test_expectations_gap_rejects_lookahead_before_upstream_call() -> None:
@@ -188,6 +237,8 @@ def test_expectations_gap_preserves_not_ready_state_without_inventing_gap() -> N
     payload = result.to_api_dict()
     assert payload["isWeightingReady"] is False
     assert payload["advisoryStatus"] == "no_advice"
+    assert payload["referenceExpectation"]["kind"] == "company_guidance"
+    assert payload["referenceExpectation"]["horizonYears"] == 5
 
 
 def test_expectations_gap_validates_reference_growth_range_before_upstream() -> None:
