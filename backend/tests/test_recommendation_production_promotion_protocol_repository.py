@@ -20,6 +20,7 @@ def _draft(*, protocol_id: str = "prod-promotion-v1") -> dict:
         "criteriaByHorizon": {
             str(horizon): {
                 "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 5,
                 "minimumSignAccuracy": 0.0,
                 "minimumRelativeMseImprovement": 0.0,
                 "requireBeatZeroExcessMseBaseline": False,
@@ -42,6 +43,11 @@ def test_registration_timestamp_is_repository_generated_and_persisted(tmp_path):
     assert record["protocol"]["registeredAt"] == record["registered_at"]
     assert record["protocol"]["protocolFingerprint"] == record["protocol_fingerprint"]
     assert record["protocol"]["criteriaByHorizon"]["7"]["minimumConfirmationRowCount"] == 20
+    assert (
+        record["protocol"]["criteriaByHorizon"]["7"]
+        ["minimumNonOverlappingConfirmationWindowCount"]
+        == 5
+    )
     assert repo.get(protocol_id="prod-promotion-v1") == record
 
 
@@ -99,6 +105,28 @@ def test_confirmation_sample_size_is_required_and_must_be_positive(tmp_path):
 
     zero = _draft(protocol_id="zero-sample")
     zero["criteriaByHorizon"]["30"]["minimumConfirmationRowCount"] = 0
+    with pytest.raises(ValueError, match="entero positivo"):
+        repo.register(protocol_draft=zero)
+
+
+def test_temporal_breadth_is_required_and_must_be_positive(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    missing = _draft(protocol_id="missing-temporal-breadth")
+    del missing["criteriaByHorizon"]["30"][
+        "minimumNonOverlappingConfirmationWindowCount"
+    ]
+    with pytest.raises(
+        ValueError,
+        match="minimumNonOverlappingConfirmationWindowCount",
+    ):
+        repo.register(protocol_draft=missing)
+
+    zero = _draft(protocol_id="zero-temporal-breadth")
+    zero["criteriaByHorizon"]["30"][
+        "minimumNonOverlappingConfirmationWindowCount"
+    ] = 0
     with pytest.raises(ValueError, match="entero positivo"):
         repo.register(protocol_draft=zero)
 
