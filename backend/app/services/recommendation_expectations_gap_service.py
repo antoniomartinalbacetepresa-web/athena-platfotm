@@ -18,6 +18,17 @@ class _ReverseValuationService(Protocol):
     ) -> object: ...
 
 
+_EXPECTATION_KINDS = frozenset(
+    {
+        "company_guidance",
+        "analyst_consensus",
+        "internal_model",
+        "historical_run_rate",
+    }
+)
+_EXPECTATION_METRIC = "eps_cagr"
+
+
 @dataclass(frozen=True)
 class RecommendationExpectationsGap:
     status: str
@@ -27,6 +38,9 @@ class RecommendationExpectationsGap:
     implied_eps_cagr: float | None
     reference_eps_cagr: float
     expectations_gap: float | None
+    expectation_kind: str
+    expectation_metric: str
+    expectation_horizon_years: int
     expectation_available_at: str
     expectation_source: str
     expectation_source_ref: str
@@ -41,6 +55,9 @@ class RecommendationExpectationsGap:
             "asOf": self.as_of,
             "impliedEpsCagr": self.implied_eps_cagr,
             "referenceExpectation": {
+                "kind": self.expectation_kind,
+                "metric": self.expectation_metric,
+                "horizonYears": self.expectation_horizon_years,
                 "epsCagr": self.reference_eps_cagr,
                 "availableAt": self.expectation_available_at,
                 "source": self.expectation_source,
@@ -53,7 +70,9 @@ class RecommendationExpectationsGap:
             "reason": self.reason,
             "policy": {
                 "temporal": "reference_expectation_available_at_must_be_lte_as_of",
-                "referenceExpectation": "explicit_caller_supplied_with_provenance_no_hidden_consensus",
+                "referenceExpectation": "explicit_typed_caller_supplied_with_provenance_no_hidden_consensus",
+                "comparability": "exact_metric_and_horizon_required",
+                "crossKindAggregation": "forbidden_until_separately_calibrated",
                 "gapFormula": "reference_eps_cagr_minus_price_implied_eps_cagr",
                 "interpretation": "signed_expectations_difference_not_buy_sell_signal",
                 "automaticTrading": False,
@@ -64,13 +83,17 @@ class RecommendationExpectationsGap:
 
 
 class RecommendationExpectationsGapService:
-    """Compare a PIT growth expectation with the price-implied growth hurdle.
+    """Compare one typed PIT growth expectation with a price-implied hurdle.
 
     The reference expectation is deliberately supplied explicitly by the caller
-    together with its availability timestamp and provenance. This prevents ATHENA
-    from silently using today's analyst consensus when evaluating a historical
-    point in time. The output is a research diagnostic only: it does not assign
-    actions, scores, conviction or production eligibility.
+    together with its semantic kind, metric, horizon, availability timestamp and
+    provenance. Guidance, analyst consensus, internal models and historical
+    run-rates are not interchangeable evidence, so this service never combines
+    them. The current diagnostic only compares EPS CAGR evidence whose horizon is
+    exactly the same as the reverse-valuation horizon.
+
+    The output is research-only: no action, score, conviction, weighting or
+    production eligibility is assigned here.
     """
 
     def __init__(self, *, reverse_valuation_service: _ReverseValuationService) -> None:
@@ -85,6 +108,9 @@ class RecommendationExpectationsGapService:
         required_return: float,
         exit_pe: float,
         reference_eps_cagr: float,
+        expectation_kind: str,
+        expectation_metric: str,
+        expectation_horizon_years: int,
         expectation_available_at: datetime,
         expectation_source: str,
         expectation_source_ref: str,
@@ -103,6 +129,28 @@ class RecommendationExpectationsGapService:
                 "expectation_available_at no puede ser posterior a as_of; evitar look-ahead es obligatorio."
             )
 
+        valuation_horizon = self._positive_int(horizon_years, "horizon_years")
+        reference_horizon = self._positive_int(
+            expectation_horizon_years,
+            "expectation_horizon_years",
+        )
+        if reference_horizon != valuation_horizon:
+            raise ValueError(
+                "expectation_horizon_years debe coincidir exactamente con horizon_years; "
+                "comparar horizontes distintos falsearía Expectations Gap."
+            )
+
+        kind = self._required_text(expectation_kind, "expectation_kind").lower()
+        if kind not in _EXPECTATION_KINDS:
+            allowed = ", ".join(sorted(_EXPECTATION_KINDS))
+            raise ValueError(f"expectation_kind no soportado; valores permitidos: {allowed}.")
+
+        metric = self._required_text(expectation_metric, "expectation_metric").lower()
+        if metric != _EXPECTATION_METRIC:
+            raise ValueError(
+                "expectation_metric debe ser eps_cagr para ser comparable con la valoración inversa actual."
+            )
+
         reference_growth = self._finite(reference_eps_cagr, "reference_eps_cagr")
         if reference_growth <= -1.0 or reference_growth > 10.0:
             raise ValueError("reference_eps_cagr debe estar en (-1, 10].")
@@ -113,7 +161,7 @@ class RecommendationExpectationsGapService:
         diagnostic = self._reverse_valuation_service.evaluate(
             symbol=normalized_symbol,
             as_of=cutoff,
-            horizon_years=horizon_years,
+            horizon_years=valuation_horizon,
             required_return=required_return,
             exit_pe=exit_pe,
         )
@@ -135,6 +183,9 @@ class RecommendationExpectationsGapService:
                 implied_eps_cagr=implied_growth,
                 reference_eps_cagr=reference_growth,
                 expectations_gap=None,
+                expectation_kind=kind,
+                expectation_metric=metric,
+                expectation_horizon_years=reference_horizon,
                 expectation_available_at=available_at.isoformat(),
                 expectation_source=source,
                 expectation_source_ref=source_ref,
@@ -157,14 +208,17 @@ class RecommendationExpectationsGapService:
             implied_eps_cagr=implied_growth,
             reference_eps_cagr=reference_growth,
             expectations_gap=gap,
+            expectation_kind=kind,
+            expectation_metric=metric,
+            expectation_horizon_years=reference_horizon,
             expectation_available_at=available_at.isoformat(),
             expectation_source=source,
             expectation_source_ref=source_ref,
             production_eligible=False,
             reason=(
-                "Diferencia entre una expectativa de crecimiento EPS disponible en el corte PIT "
-                "y el crecimiento exigido por el precio bajo el escenario explícito; no es señal "
-                "de compra/venta ni recomendación."
+                "Diferencia entre una expectativa EPS CAGR tipada, comparable y disponible "
+                "en el corte PIT y el crecimiento exigido por el precio bajo el escenario "
+                "explícito; no es señal de compra/venta ni recomendación."
             ),
         )
 
@@ -200,8 +254,19 @@ class RecommendationExpectationsGapService:
     def _required_text(self, value: object, field: str) -> str:
         text = str(value or "").strip()
         if not text:
-            raise ValueError(f"{field} es obligatorio para preservar provenance.")
+            raise ValueError(f"{field} es obligatorio para preservar provenance y semántica.")
         return text
+
+    def _positive_int(self, value: object, field: str) -> int:
+        if isinstance(value, bool):
+            raise ValueError(f"{field} debe ser un entero positivo.")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} debe ser un entero positivo.") from exc
+        if parsed <= 0 or isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"{field} debe ser un entero positivo.")
+        return parsed
 
     def _finite(self, value: object, field: str) -> float:
         if isinstance(value, bool):
