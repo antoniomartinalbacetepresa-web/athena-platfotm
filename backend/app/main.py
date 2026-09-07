@@ -16,6 +16,9 @@ from app.api.recommendation_factor_risk import router as recommendation_factor_r
 from app.api.recommendation_factor_risk_candidate_impact import (
     router as recommendation_factor_risk_candidate_impact_router,
 )
+from app.api.recommendation_investment_journal import (
+    router as recommendation_investment_journal_router,
+)
 from app.api.recommendation_performance_attribution import (
     router as recommendation_performance_attribution_router,
 )
@@ -69,6 +72,7 @@ app.include_router(recommendation_catalysts_router)
 app.include_router(recommendation_factor_risk_router)
 app.include_router(recommendation_factor_risk_candidate_impact_router)
 app.include_router(recommendation_performance_attribution_router)
+app.include_router(recommendation_investment_journal_router)
 app.include_router(recommendation_shadow_operations_router)
 
 
