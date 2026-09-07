@@ -304,6 +304,8 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
     }
 
     final allocation = state.allocation;
+    final horizonDays = recommendation.horizonDays;
+    final expectedExcessReturn = recommendation.expectedExcessReturn;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AthenaSpacing.md),
@@ -333,6 +335,26 @@ class _RecommendationsPanelState extends State<RecommendationsPanel> {
             'Estado de cartera: ${recommendation.policyState}',
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
           ),
+          if (horizonDays != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              expectedExcessReturn != null
+                  ? 'Horizonte validado: $horizonDays días · exceso esperado OOS ${_formatReturn(expectedExcessReturn)}'
+                  : 'Horizonte validado: $horizonDays días',
+              style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 13),
+            ),
+          ],
+          if (expectedExcessReturn != null) ...[
+            const SizedBox(height: 4),
+            const Text(
+              'Señal fuera de muestra validada; no es una probabilidad ni una garantía de rentabilidad.',
+              style: TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ],
           if (allocation != null) ...[
             const SizedBox(height: 6),
             Text(
