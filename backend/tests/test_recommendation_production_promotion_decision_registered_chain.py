@@ -26,6 +26,20 @@ def _fingerprint(payload: dict) -> str:
     ).hexdigest()
 
 
+def _issuer_coverage() -> dict:
+    return {
+        "rowCount": 30,
+        "resolvedIssuerRowCount": 29,
+        "unresolvedIssuerRowCount": 1,
+        "resolvedIssuerCoverageRatio": 29 / 30,
+        "distinctResolvedIssuerCount": 15,
+        "maximumRowsPerResolvedIssuer": 2,
+        "maximumResolvedIssuerConcentrationRatio": 2 / 29,
+        "statisticalIndependence": "not_claimed",
+        "thresholdsApplied": False,
+    }
+
+
 def _protocol_draft() -> dict:
     return {
         "artifactVersion": "athena-production-promotion-protocol-v1",
@@ -36,6 +50,8 @@ def _protocol_draft() -> dict:
             "7": {
                 "minimumConfirmationRowCount": 20,
                 "minimumNonOverlappingConfirmationWindowCount": 20,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -43,6 +59,8 @@ def _protocol_draft() -> dict:
             "30": {
                 "minimumConfirmationRowCount": 20,
                 "minimumNonOverlappingConfirmationWindowCount": 20,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -72,6 +90,7 @@ def _confirmation() -> dict:
                 "confirmationRowCount": 30,
                 "nonOverlappingConfirmationWindowCount": 22,
                 "unverifiableConfirmationWindowCount": 0,
+                "issuerCoverage": _issuer_coverage(),
                 "metrics": {"signAccuracy": 0.60, "mse": 0.02},
                 "relativeMseImprovement": 0.10,
                 "beatsZeroBaselineOnMse": True,
@@ -85,6 +104,7 @@ def _confirmation() -> dict:
                 "confirmationRowCount": 30,
                 "nonOverlappingConfirmationWindowCount": 20,
                 "unverifiableConfirmationWindowCount": 0,
+                "issuerCoverage": _issuer_coverage(),
                 "metrics": {"signAccuracy": 0.59, "mse": 0.03},
                 "relativeMseImprovement": 0.09,
                 "beatsZeroBaselineOnMse": True,
@@ -115,6 +135,8 @@ def test_registered_protocol_to_oos_evidence_to_immutable_decision_chain(tmp_pat
     assert evidence["horizons"]["30"]["minimumConfirmationRowCount"] == 20
     assert evidence["horizons"]["7"]["minimumNonOverlappingConfirmationWindowCount"] == 20
     assert evidence["horizons"]["30"]["minimumNonOverlappingConfirmationWindowCount"] == 20
+    assert evidence["horizons"]["7"]["minimumResolvedIssuerCoverageRatio"] == 0.90
+    assert evidence["horizons"]["30"]["maximumResolvedIssuerConcentrationRatio"] == 0.25
 
     decision_repository = RecommendationProductionPromotionDecisionRepository(database)
     decision_service = RecommendationProductionPromotionDecisionService(decision_repository)
