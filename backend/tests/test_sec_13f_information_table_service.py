@@ -184,6 +184,30 @@ def test_rejects_retrieval_before_publication_and_non_utc_retrieval() -> None:
         )
 
 
+def test_rejects_impossible_position_filing_publication_order() -> None:
+    service = Sec13fInformationTableService()
+
+    position_after_filing = _filing()
+    position_after_filing["reportDate"] = "2026-08-15"
+    with pytest.raises(ValueError, match="position date cannot follow filing date"):
+        service.parse(
+            XML,
+            filing=position_after_filing,
+            retrieved_at=_retrieved(),
+            source_url=_url(),
+        )
+
+    filing_after_publication = _filing()
+    filing_after_publication["filingDate"] = "2026-08-15"
+    with pytest.raises(ValueError, match="filing date cannot follow publication date"):
+        service.parse(
+            XML,
+            filing=filing_after_publication,
+            retrieved_at=datetime(2026, 8, 15, 17, 0, tzinfo=timezone.utc),
+            source_url=_url(),
+        )
+
+
 def test_rejects_unapproved_or_insecure_source_urls() -> None:
     service = Sec13fInformationTableService()
 
