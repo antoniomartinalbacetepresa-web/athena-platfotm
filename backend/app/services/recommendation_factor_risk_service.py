@@ -37,7 +37,10 @@ class RecommendationFactorRisk:
     position_count: int
     invested_weight: float
     cash_weight: float
+    positions: tuple[dict[str, Any], ...]
     weighted_exposures: dict[str, float]
+    factor_coverage_weights: dict[str, float]
+    fully_covered_factors: tuple[str, ...]
     gross_factor_exposure: float
     max_absolute_factor_exposure: float
     dominant_factor: str | None
@@ -50,7 +53,10 @@ class RecommendationFactorRisk:
             "positionCount": self.position_count,
             "investedWeight": self.invested_weight,
             "cashWeight": self.cash_weight,
+            "positions": [dict(position) for position in self.positions],
             "weightedExposures": dict(self.weighted_exposures),
+            "factorCoverageWeights": dict(self.factor_coverage_weights),
+            "fullyCoveredFactors": list(self.fully_covered_factors),
             "grossFactorExposure": self.gross_factor_exposure,
             "maxAbsoluteFactorExposure": self.max_absolute_factor_exposure,
             "dominantFactor": self.dominant_factor,
@@ -61,8 +67,11 @@ class RecommendationFactorRisk:
                 "temporal": "all_factor_exposures_available_at_must_be_lte_as_of",
                 "identity": "duplicate_instrument_or_symbol_forbidden",
                 "finiteData": "all_weights_and_exposures_must_be_finite",
-                "provenance": "every_position_requires_source_and_source_ref",
+                "provenance": "every_position_requires_source_and_source_ref_and_is_returned_for_audit",
+                "missingFactorCoverage": "reported_explicitly_never_imputed_as_zero",
                 "fx": "usd_fx_is_explicit_factor_not_silently_netting_currency_risk",
+                "dominantFactor": "only_selected_from_factors_covering_all_invested_weight",
+                "thresholds": "not_calibrated",
                 "interpretation": "portfolio_factor_diagnostic_not_position_sizing_or_trade_advice",
                 "automaticTrading": False,
                 "automaticProductionPromotion": False,
@@ -75,8 +84,8 @@ class RecommendationFactorRiskService:
 
     Factor exposures are explicit caller-supplied research evidence. This service
     does not infer missing exposures, fill unavailable factors, estimate covariance,
-    size positions or issue buy/sell/hold decisions. The output remains research-only
-    until the factor definitions and portfolio impact are validated out of sample.
+    size positions or issue buy/sell/hold decisions. Missing factor coverage is
+    reported explicitly instead of being silently treated as a zero exposure.
     """
 
     def evaluate(
@@ -94,7 +103,9 @@ class RecommendationFactorRiskService:
         seen_ids: set[int] = set()
         seen_symbols: set[str] = set()
         weighted = {factor: 0.0 for factor in sorted(_ALLOWED_FACTORS)}
+        coverage = {factor: 0.0 for factor in sorted(_ALLOWED_FACTORS)}
         invested_weight = 0.0
+        position_evidence: list[dict[str, Any]] = []
 
         for position in positions:
             instrument_id = self._positive_int(position.instrument_id, "instrument_id")
@@ -118,8 +129,8 @@ class RecommendationFactorRiskService:
                 raise ValueError(
                     "exposure_available_at no puede ser posterior a as_of; evitar look-ahead es obligatorio."
                 )
-            self._required_text(position.source, "source")
-            self._required_text(position.source_ref, "source_ref")
+            source = self._required_text(position.source, "source")
+            source_ref = self._required_text(position.source_ref, "source_ref")
 
             if not isinstance(position.factors, Mapping) or not position.factors:
                 raise ValueError("factors debe contener al menos una exposición explícita.")
@@ -141,25 +152,60 @@ class RecommendationFactorRiskService:
                     weighted[factor] + weight * exposure,
                     f"weighted:{factor}",
                 )
+                coverage[factor] = self._finite(
+                    coverage[factor] + weight,
+                    f"coverage:{factor}",
+                )
+
+            position_evidence.append(
+                {
+                    "instrumentId": instrument_id,
+                    "symbol": symbol,
+                    "weight": weight,
+                    "exposureAvailableAt": available_at.isoformat(),
+                    "source": source,
+                    "sourceRef": source_ref,
+                    "factors": dict(sorted(normalized_factors.items())),
+                }
+            )
 
         invested_weight = min(max(invested_weight, 0.0), 1.0)
         cash_weight = self._finite(1.0 - invested_weight, "cash_weight")
-        non_zero = {factor: value for factor, value in weighted.items() if abs(value) > 1e-15}
-        gross = self._finite(sum(abs(value) for value in weighted.values()), "gross_factor_exposure")
+        fully_covered = tuple(
+            factor
+            for factor in sorted(_ALLOWED_FACTORS)
+            if invested_weight > 0.0 and abs(coverage[factor] - invested_weight) <= 1e-12
+        )
+        fully_covered_values = {factor: weighted[factor] for factor in fully_covered}
+        gross = self._finite(
+            sum(abs(value) for value in fully_covered_values.values()),
+            "gross_factor_exposure",
+        )
         maximum = self._finite(
-            max((abs(value) for value in weighted.values()), default=0.0),
+            max((abs(value) for value in fully_covered_values.values()), default=0.0),
             "max_absolute_factor_exposure",
         )
         dominant = None
-        if non_zero:
-            dominant = max(non_zero, key=lambda factor: (abs(non_zero[factor]), factor))
+        non_zero_fully_covered = {
+            factor: value
+            for factor, value in fully_covered_values.items()
+            if abs(value) > 1e-15
+        }
+        if non_zero_fully_covered:
+            dominant = max(
+                non_zero_fully_covered,
+                key=lambda factor: (abs(non_zero_fully_covered[factor]), factor),
+            )
 
         return RecommendationFactorRisk(
             as_of=cutoff.isoformat(),
             position_count=len(positions),
             invested_weight=invested_weight,
             cash_weight=cash_weight,
+            positions=tuple(position_evidence),
             weighted_exposures=weighted,
+            factor_coverage_weights=coverage,
+            fully_covered_factors=fully_covered,
             gross_factor_exposure=gross,
             max_absolute_factor_exposure=maximum,
             dominant_factor=dominant,
