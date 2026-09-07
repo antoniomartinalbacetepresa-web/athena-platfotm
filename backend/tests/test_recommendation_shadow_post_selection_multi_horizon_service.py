@@ -49,6 +49,19 @@ def _confirmed(horizon: int, *, improvement: float = 0.20, sign_accuracy: float 
         "horizonDays": horizon,
         "confirmationStart": "2025-02-01T00:00:00+00:00",
         "confirmationRowCount": 25,
+        "nonOverlappingConfirmationWindowCount": 12,
+        "unverifiableConfirmationWindowCount": 0,
+        "issuerCoverage": {
+            "rowCount": 25,
+            "resolvedIssuerRowCount": 24,
+            "unresolvedIssuerRowCount": 1,
+            "resolvedIssuerCoverageRatio": 0.96,
+            "distinctResolvedIssuerCount": 12,
+            "maximumRowsPerResolvedIssuer": 2,
+            "maximumResolvedIssuerConcentrationRatio": 2.0 / 24.0,
+            "statisticalIndependence": "not_claimed",
+            "thresholdsApplied": False,
+        },
         "postSelectionConfirmationEvidenceReady": True,
         "metrics": {"mse": 0.8, "mae": 0.7, "signAccuracy": sign_accuracy},
         "zeroExcessReturnBaseline": {"mse": 1.0, "mae": 0.8, "signAccuracy": 0.5},
@@ -98,6 +111,18 @@ def test_three_confirmed_horizons_can_pass_research_confirmation_protocol():
     assert payload["productionEligible"] is False
     assert payload["advisoryStatus"] == "no_advice"
     assert payload["policy"]["confirmationDataCanFitActionThresholds"] is False
+    assert payload["policy"]["temporalVerifiabilityEvidence"] == (
+        "propagated_and_fingerprinted_per_horizon"
+    )
+    assert payload["policy"]["issuerCoverageEvidence"] == (
+        "propagated_and_fingerprinted_per_horizon"
+    )
+    assert payload["horizons"]["7"]["nonOverlappingConfirmationWindowCount"] == 12
+    assert payload["horizons"]["7"]["unverifiableConfirmationWindowCount"] == 0
+    assert payload["horizons"]["7"]["issuerCoverage"]["resolvedIssuerRowCount"] == 24
+    assert payload["horizons"]["7"]["issuerCoverage"]["statisticalIndependence"] == (
+        "not_claimed"
+    )
     assert len(payload["confirmationEvidenceFingerprint"]) == 64
     assert service.validate_artifact(payload) == payload
 
@@ -187,6 +212,23 @@ def test_tampered_confirmation_artifact_is_rejected():
     )
     tampered = deepcopy(payload)
     tampered["horizons"]["7"]["relativeMseImprovement"] = 0.99
+
+    with pytest.raises(ValueError, match="fue modificada"):
+        service.validate_artifact(tampered)
+
+
+def test_tampered_issuer_coverage_is_rejected_by_sealed_artifact():
+    horizons = [7, 30, 90]
+    service = _service(
+        {f"model-{horizon}": _confirmed(horizon) for horizon in horizons}
+    )
+    payload = service.evaluate(
+        gated_bundles=[_bundle(horizon) for horizon in horizons],
+        horizons=horizons,
+        as_of=datetime(2025, 6, 1, tzinfo=timezone.utc),
+    )
+    tampered = deepcopy(payload)
+    tampered["horizons"]["7"]["issuerCoverage"]["resolvedIssuerCoverageRatio"] = 1.0
 
     with pytest.raises(ValueError, match="fue modificada"):
         service.validate_artifact(tampered)
