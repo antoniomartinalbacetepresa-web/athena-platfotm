@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.market_weighting_external_validation_repository import (
+    MarketWeightingExternalValidationRepository,
+)
 from app.services.canonical_listing_selection_service import CanonicalListingSelectionService
 from app.services.canonical_market_cap_service import CanonicalMarketCapService
 from app.services.issuer_identity_coverage_service import IssuerIdentityCoverageService
@@ -24,6 +30,8 @@ class MarketWeightingReadinessReport:
     canonical_listing_no_domestic_issuer_count: int = 0
     canonical_listing_market_cap_count: int = 0
     median_fallback_market_cap_count: int = 0
+    identity_evidence_fingerprint: str | None = None
+    external_validation_fingerprint: str | None = None
 
     @property
     def all_regions_represented(self) -> bool:
@@ -34,8 +42,11 @@ class MarketWeightingReadinessReport:
 
     @property
     def external_validation_evidence_complete(self) -> bool:
-        return self.external_validation_passed and bool(
-            str(self.external_validation_reference or "").strip()
+        return (
+            self.external_validation_passed
+            and bool(str(self.external_validation_reference or "").strip())
+            and bool(str(self.identity_evidence_fingerprint or "").strip())
+            and bool(str(self.external_validation_fingerprint or "").strip())
         )
 
     @property
@@ -70,6 +81,7 @@ class MarketWeightingReadinessReport:
             "canonicalIssuerCount": self.canonical_issuer_count,
             "regionMarketCapUsd": dict(self.region_market_cap_usd),
             "allRegionsRepresented": self.all_regions_represented,
+            "identityEvidenceFingerprint": self.identity_evidence_fingerprint,
             "canonicalListingValidation": {
                 "ambiguousIssuerCount": self.canonical_listing_ambiguous_issuer_count,
                 "noDomesticListingIssuerCount": self.canonical_listing_no_domestic_issuer_count,
@@ -89,6 +101,10 @@ class MarketWeightingReadinessReport:
             "externalValidation": {
                 "passed": self.external_validation_passed,
                 "reference": self.external_validation_reference,
+                "validationFingerprint": self.external_validation_fingerprint,
+                "boundIdentityEvidenceFingerprint": self.identity_evidence_fingerprint
+                if self.external_validation_passed
+                else None,
                 "evidenceComplete": self.external_validation_evidence_complete,
             },
             "blockers": list(self.blockers),
@@ -96,7 +112,12 @@ class MarketWeightingReadinessReport:
 
 
 class MarketWeightingReadinessService:
-    """Evaluates whether canonical regional market-cap weights may be activated."""
+    """Evaluates whether canonical regional market-cap weights may be activated.
+
+    External validation is read only from append-only persisted evidence bound to
+    the exact identity/readiness fingerprint.  There is deliberately no boolean
+    constructor override that can bypass this gate in production.
+    """
 
     DEFAULT_MINIMUM_IDENTITY_MARKET_CAP_COVERAGE = 0.95
     DEFAULT_MINIMUM_DOMICILE_MARKET_CAP_COVERAGE = 0.90
@@ -109,8 +130,7 @@ class MarketWeightingReadinessService:
         minimum_identity_market_cap_coverage: float = DEFAULT_MINIMUM_IDENTITY_MARKET_CAP_COVERAGE,
         minimum_domicile_market_cap_coverage: float = DEFAULT_MINIMUM_DOMICILE_MARKET_CAP_COVERAGE,
         minimum_canonical_issuer_count: int = DEFAULT_MINIMUM_CANONICAL_ISSUER_COUNT,
-        external_validation_passed: bool = False,
-        external_validation_reference: str | None = None,
+        external_validation_repository: MarketWeightingExternalValidationRepository | None = None,
     ) -> None:
         if not 0 < minimum_identity_market_cap_coverage <= 1:
             raise ValueError("minimum_identity_market_cap_coverage debe estar entre 0 y 1.")
@@ -123,18 +143,31 @@ class MarketWeightingReadinessService:
         self._minimum_identity_market_cap_coverage = float(minimum_identity_market_cap_coverage)
         self._minimum_domicile_market_cap_coverage = float(minimum_domicile_market_cap_coverage)
         self._minimum_canonical_issuer_count = int(minimum_canonical_issuer_count)
-        self._external_validation_passed = bool(external_validation_passed)
-        self._external_validation_reference = (
-            str(external_validation_reference).strip()
-            if external_validation_reference is not None
-            and str(external_validation_reference).strip()
-            else None
+        self._external_validation_repository = (
+            external_validation_repository
+            if external_validation_repository is not None
+            else MarketWeightingExternalValidationRepository(database=self._database)
         )
 
-    def get_report(self) -> MarketWeightingReadinessReport:
+    def get_report(self, *, as_of: datetime | None = None) -> MarketWeightingReadinessReport:
         identity = IssuerIdentityCoverageService(database=self._database).get_report()
         canonical = CanonicalMarketCapService(database=self._database).get_report()
         canonical_listings = CanonicalListingSelectionService(database=self._database).get_report()
+
+        evidence_fingerprint = self._identity_evidence_fingerprint(
+            identity_market_cap_coverage=identity.market_cap_coverage,
+            domicile_market_cap_coverage=canonical.domicile_market_cap_coverage,
+            canonical_issuer_count=canonical.canonical_issuer_count,
+            region_market_cap_usd=dict(canonical.region_market_cap_usd),
+            ambiguous_listing_count=canonical_listings.ambiguous_issuer_count,
+            no_domestic_listing_count=canonical_listings.no_domestic_listing_count,
+            canonical_listing_market_cap_count=canonical.canonical_listing_market_cap_count,
+            median_fallback_market_cap_count=canonical.median_fallback_market_cap_count,
+        )
+        validation = self._external_validation_repository.get_latest_for_evidence(
+            identity_evidence_fingerprint=evidence_fingerprint,
+            as_of=as_of,
+        )
 
         return MarketWeightingReadinessReport(
             identity_market_cap_coverage=identity.market_cap_coverage,
@@ -144,10 +177,58 @@ class MarketWeightingReadinessService:
             minimum_identity_market_cap_coverage=self._minimum_identity_market_cap_coverage,
             minimum_domicile_market_cap_coverage=self._minimum_domicile_market_cap_coverage,
             minimum_canonical_issuer_count=self._minimum_canonical_issuer_count,
-            external_validation_passed=self._external_validation_passed,
-            external_validation_reference=self._external_validation_reference,
+            external_validation_passed=validation is not None,
+            external_validation_reference=(
+                str(validation["reference"]) if validation is not None else None
+            ),
             canonical_listing_ambiguous_issuer_count=canonical_listings.ambiguous_issuer_count,
             canonical_listing_no_domestic_issuer_count=canonical_listings.no_domestic_listing_count,
             canonical_listing_market_cap_count=canonical.canonical_listing_market_cap_count,
             median_fallback_market_cap_count=canonical.median_fallback_market_cap_count,
+            identity_evidence_fingerprint=evidence_fingerprint,
+            external_validation_fingerprint=(
+                str(validation["validationFingerprint"])
+                if validation is not None
+                else None
+            ),
         )
+
+    def _identity_evidence_fingerprint(
+        self,
+        *,
+        identity_market_cap_coverage: float,
+        domicile_market_cap_coverage: float,
+        canonical_issuer_count: int,
+        region_market_cap_usd: dict[str, float],
+        ambiguous_listing_count: int,
+        no_domestic_listing_count: int,
+        canonical_listing_market_cap_count: int,
+        median_fallback_market_cap_count: int,
+    ) -> str:
+        evidence = {
+            "method": "canonical_domestic_listing_else_median_with_domicile",
+            "identityMarketCapCoverage": float(identity_market_cap_coverage),
+            "domicileMarketCapCoverage": float(domicile_market_cap_coverage),
+            "canonicalIssuerCount": int(canonical_issuer_count),
+            "regionMarketCapUsd": {
+                key: float(region_market_cap_usd.get(key, 0.0))
+                for key in ("america", "europe", "asia")
+            },
+            "canonicalListingAmbiguousIssuerCount": int(ambiguous_listing_count),
+            "canonicalListingNoDomesticIssuerCount": int(no_domestic_listing_count),
+            "canonicalListingMarketCapCount": int(canonical_listing_market_cap_count),
+            "medianFallbackMarketCapCount": int(median_fallback_market_cap_count),
+            "thresholds": {
+                "minimumIdentityMarketCapCoverage": self._minimum_identity_market_cap_coverage,
+                "minimumDomicileMarketCapCoverage": self._minimum_domicile_market_cap_coverage,
+                "minimumCanonicalIssuerCount": self._minimum_canonical_issuer_count,
+            },
+        }
+        payload = json.dumps(
+            evidence,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
