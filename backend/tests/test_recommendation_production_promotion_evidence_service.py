@@ -77,11 +77,13 @@ def _protocol(service: RecommendationProductionPromotionEvidenceService) -> dict
         "requiredHorizons": [7, 30],
         "criteriaByHorizon": {
             "7": {
+                "minimumConfirmationRowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
             },
             "30": {
+                "minimumConfirmationRowCount": 20,
                 "minimumSignAccuracy": 0.55,
                 "minimumRelativeMseImprovement": 0.05,
                 "requireBeatZeroExcessMseBaseline": True,
@@ -89,6 +91,25 @@ def _protocol(service: RecommendationProductionPromotionEvidenceService) -> dict
         },
     }
     return {**core, "protocolFingerprint": service.fingerprint_protocol(core)}
+
+
+def _resign_confirmation(confirmation: dict) -> dict:
+    core_keys = (
+        "artifactVersion",
+        "researchGateFingerprint",
+        "researchCutoff",
+        "asOf",
+        "requestedHorizons",
+        "confirmedHorizonCount",
+        "passingHorizonCount",
+        "confirmationPassRatio",
+        "postSelectionProtocolEvidenceReady",
+        "horizons",
+        "thresholds",
+    )
+    core = {key: confirmation.get(key) for key in core_keys}
+    confirmation["confirmationEvidenceFingerprint"] = _fingerprint(core)
+    return confirmation
 
 
 def test_precommitted_protocol_can_mark_evidence_ready_without_enabling_production() -> None:
@@ -109,6 +130,26 @@ def test_precommitted_protocol_can_mark_evidence_ready_without_enabling_producti
     assert result["policy"]["criteriaSource"] == (
         "explicit_precommitted_protocol_no_code_defaults"
     )
+    assert result["policy"]["minimumConfirmationSampleMustBePrecommitted"] is True
+    assert result["horizons"]["7"]["minimumConfirmationRowCount"] == 20
+
+
+def test_confirmation_sample_below_precommitted_minimum_fails_gate() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    confirmation = deepcopy(_confirmation())
+    confirmation["horizons"]["7"]["confirmationRowCount"] = 19
+    _resign_confirmation(confirmation)
+
+    result = service.evaluate(
+        confirmation_artifact=confirmation,
+        promotion_protocol=_protocol(service),
+    )
+
+    assert result["productionPromotionEvidenceReady"] is False
+    assert result["horizons"]["7"]["passesPrecommittedCriteria"] is False
+    assert "confirmation_sample_below_precommitted_minimum" in result["horizons"]["7"]["blockers"]
+    assert result["productionEligible"] is False
+    assert result["automaticTrading"] is False
 
 
 def test_protocol_registered_after_research_cutoff_fails_closed() -> None:
@@ -141,20 +182,6 @@ def test_non_finite_confirmation_metric_fails_closed_even_if_resigned() -> None:
     service = RecommendationProductionPromotionEvidenceService()
     confirmation = deepcopy(_confirmation())
     confirmation["horizons"]["7"]["metrics"]["signAccuracy"] = float("nan")
-    core_keys = (
-        "artifactVersion",
-        "researchGateFingerprint",
-        "researchCutoff",
-        "asOf",
-        "requestedHorizons",
-        "confirmedHorizonCount",
-        "passingHorizonCount",
-        "confirmationPassRatio",
-        "postSelectionProtocolEvidenceReady",
-        "horizons",
-        "thresholds",
-    )
-    core = {key: confirmation.get(key) for key in core_keys}
     confirmation["confirmationEvidenceFingerprint"] = "re-signed"
 
     # The service must reject NaN before any comparison can treat it as evidence.
@@ -178,3 +205,13 @@ def test_protocol_has_no_implicit_default_thresholds() -> None:
 
     with pytest.raises(ValueError, match="Faltan criterios precomprometidos"):
         service.fingerprint_protocol(incomplete)
+
+
+def test_protocol_cannot_omit_precommitted_confirmation_sample_size() -> None:
+    service = RecommendationProductionPromotionEvidenceService()
+    protocol = _protocol(service)
+    core = {key: value for key, value in protocol.items() if key != "protocolFingerprint"}
+    del core["criteriaByHorizon"]["7"]["minimumConfirmationRowCount"]
+
+    with pytest.raises(ValueError, match="minimumConfirmationRowCount"):
+        service.fingerprint_protocol(core)
