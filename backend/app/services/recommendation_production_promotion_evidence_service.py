@@ -131,11 +131,16 @@ class RecommendationProductionPromotionEvidenceService:
                     metrics.get("signAccuracy"), "signAccuracy"
                 )
 
+            confirmation_row_count = self._positive_int(
+                evidence.get("confirmationRowCount"), "confirmationRowCount"
+            )
             relative_mse_improvement = self._finite_float(
                 evidence.get("relativeMseImprovement"), "relativeMseImprovement"
             )
             criteria = protocol["criteriaByHorizon"][key]
 
+            if confirmation_row_count < criteria["minimumConfirmationRowCount"]:
+                blockers.append("confirmation_sample_below_precommitted_minimum")
             if sign_accuracy is not None and sign_accuracy < criteria["minimumSignAccuracy"]:
                 blockers.append("sign_accuracy_below_precommitted_minimum")
             if relative_mse_improvement < criteria["minimumRelativeMseImprovement"]:
@@ -155,7 +160,8 @@ class RecommendationProductionPromotionEvidenceService:
                 "modelFingerprint": evidence.get("modelFingerprint"),
                 "selectionFingerprint": evidence.get("selectionFingerprint"),
                 "confirmationStart": evidence.get("confirmationStart"),
-                "confirmationRowCount": evidence.get("confirmationRowCount"),
+                "confirmationRowCount": confirmation_row_count,
+                "minimumConfirmationRowCount": criteria["minimumConfirmationRowCount"],
                 "signAccuracy": sign_accuracy,
                 "relativeMseImprovement": relative_mse_improvement,
                 "beatsZeroBaselineOnMse": evidence.get("beatsZeroBaselineOnMse"),
@@ -189,6 +195,7 @@ class RecommendationProductionPromotionEvidenceService:
                 "registrationMustPrecedeOrEqualResearchCutoff": True,
                 "sameResearchGateRequired": True,
                 "sealedConfirmationFingerprintRequired": True,
+                "minimumConfirmationSampleMustBePrecommitted": True,
                 "confirmationEvidenceCanRetuneCriteria": False,
                 "passingEvidenceIsNotProductionAuthorization": True,
             },
@@ -238,6 +245,10 @@ class RecommendationProductionPromotionEvidenceService:
             item = criteria_payload.get(key)
             if not isinstance(item, dict):
                 raise ValueError(f"Faltan criterios precomprometidos para {horizon} días.")
+            minimum_row_count = self._positive_int(
+                item.get("minimumConfirmationRowCount"),
+                "minimumConfirmationRowCount",
+            )
             sign_accuracy = self._bounded_float(
                 item.get("minimumSignAccuracy"),
                 "minimumSignAccuracy",
@@ -252,6 +263,7 @@ class RecommendationProductionPromotionEvidenceService:
             if not isinstance(beat_baseline, bool):
                 raise ValueError("requireBeatZeroExcessMseBaseline debe ser booleano.")
             criteria[key] = {
+                "minimumConfirmationRowCount": minimum_row_count,
                 "minimumSignAccuracy": sign_accuracy,
                 "minimumRelativeMseImprovement": minimum_improvement,
                 "requireBeatZeroExcessMseBaseline": beat_baseline,
@@ -305,6 +317,11 @@ class RecommendationProductionPromotionEvidenceService:
         if not parsed:
             raise ValueError(f"{field} es obligatorio.")
         return parsed
+
+    def _positive_int(self, value: object, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{field} debe ser un entero positivo.")
+        return value
 
     def _finite_float(self, value: object, field: str) -> float:
         try:
