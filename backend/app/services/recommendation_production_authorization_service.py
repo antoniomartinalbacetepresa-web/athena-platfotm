@@ -236,6 +236,9 @@ class RecommendationProductionAuthorizationService:
             "symbol": self._text(action.get("symbol"), "symbol"),
             "asOf": self._text(action.get("asOf"), "asOf"),
             "horizonDays": horizon,
+            "expectedExcessReturn": self._finite(
+                action.get("expectedExcessReturn"), "expectedExcessReturn"
+            ),
             "modelFingerprint": model_fingerprint,
             "policyState": self._text(action.get("policyState"), "policyState"),
             "policyFingerprint": self._sha256(
