@@ -201,6 +201,15 @@ class RecommendationProductionPromotionProtocolRepository:
                 item.get("minimumConfirmationRowCount"),
                 "minimumConfirmationRowCount",
             )
+            minimum_non_overlapping_window_count = self._positive_int(
+                item.get("minimumNonOverlappingConfirmationWindowCount"),
+                "minimumNonOverlappingConfirmationWindowCount",
+            )
+            if minimum_non_overlapping_window_count > minimum_row_count:
+                raise ValueError(
+                    "minimumNonOverlappingConfirmationWindowCount no puede superar "
+                    "minimumConfirmationRowCount."
+                )
             sign_accuracy = self._bounded_float(
                 item.get("minimumSignAccuracy"),
                 "minimumSignAccuracy",
@@ -216,6 +225,9 @@ class RecommendationProductionPromotionProtocolRepository:
                 raise ValueError("requireBeatZeroExcessMseBaseline debe ser booleano.")
             criteria[key] = {
                 "minimumConfirmationRowCount": minimum_row_count,
+                "minimumNonOverlappingConfirmationWindowCount": (
+                    minimum_non_overlapping_window_count
+                ),
                 "minimumSignAccuracy": sign_accuracy,
                 "minimumRelativeMseImprovement": mse_improvement,
                 "requireBeatZeroExcessMseBaseline": beat_baseline,
