@@ -7,6 +7,9 @@ from typing import Any
 from app.services.recommendation_shadow_linear_candidate_service import (
     RecommendationShadowLinearCandidateService,
 )
+from app.services.recommendation_shadow_macro_candidate_comparison_service import (
+    RecommendationShadowMacroCandidateComparisonService,
+)
 from app.services.recommendation_shadow_macro_fold_preprocessing_service import (
     RecommendationShadowMacroFoldPreprocessingService,
 )
@@ -18,15 +21,16 @@ from app.services.recommendation_shadow_temporal_split_service import (
 class RecommendationShadowWalkForwardService:
     """Evaluate one shadow candidate across ordered purged temporal folds.
 
-    Each fold is built exactly once, then reused by every research consumer.
-    Macro preprocessing is fitted only on the frozen fold's training partition
-    and remains diagnostic: macro values are not appended to the candidate model
-    here and cannot silently influence scores, actions, or production eligibility.
+    Each fold is built exactly once and reused by every research consumer. Macro
+    preprocessing is fitted only on the frozen fold's training partition. A
+    separate research-only candidate may then compare base vs base+macro on the
+    exact same frozen rows, but the comparison remains descriptive and cannot
+    influence scores, actions, promotion, or production eligibility.
 
     Walk-forward aggregation is descriptive only. This service deliberately does
-    not translate fold win rates or median improvements into a stability verdict:
-    any such acceptance criterion must be explicitly precommitted and validated
-    in the production-promotion protocol rather than invented in research code.
+    not translate fold win rates or metric deltas into stability or usefulness
+    verdicts: any acceptance criterion must be explicitly precommitted and
+    validated elsewhere rather than invented in research code.
     """
 
     def __init__(
@@ -35,6 +39,8 @@ class RecommendationShadowWalkForwardService:
         candidate_service: RecommendationShadowLinearCandidateService | None = None,
         split_service: RecommendationShadowTemporalSplitService | None = None,
         macro_preprocessing_service: RecommendationShadowMacroFoldPreprocessingService
+        | None = None,
+        macro_comparison_service: RecommendationShadowMacroCandidateComparisonService
         | None = None,
         minimum_evaluated_folds: int = 3,
     ) -> None:
@@ -54,6 +60,11 @@ class RecommendationShadowWalkForwardService:
             macro_preprocessing_service
             if macro_preprocessing_service is not None
             else RecommendationShadowMacroFoldPreprocessingService()
+        )
+        self._macro_comparison_service = (
+            macro_comparison_service
+            if macro_comparison_service is not None
+            else RecommendationShadowMacroCandidateComparisonService()
         )
         self._minimum_evaluated_folds = int(minimum_evaluated_folds)
 
@@ -82,6 +93,11 @@ class RecommendationShadowWalkForwardService:
                 test_rows=list(split["test"]),
             )
             evaluation = self._candidate_service.evaluate_frozen_split(split=split)
+            macro_comparison = self._macro_comparison_service.compare(
+                split=split,
+                macro_preprocessing=macro_preprocessing,
+                base_evaluation=evaluation,
+            )
             results.append(
                 {
                     "foldIndex": index,
@@ -110,6 +126,7 @@ class RecommendationShadowWalkForwardService:
                         "candidateInfluence": False,
                         "productionEligible": False,
                     },
+                    "macroComparison": macro_comparison,
                     "evaluation": evaluation,
                 }
             )
@@ -120,6 +137,7 @@ class RecommendationShadowWalkForwardService:
             if item["evaluation"].get("status") == "shadow_linear_candidate_evaluated"
         ]
         blocked = len(results) - len(evaluated)
+        macro_summary = self._aggregate_macro_comparisons(results)
         if len(evaluated) < self._minimum_evaluated_folds:
             return {
                 "status": "insufficient_walk_forward_evidence",
@@ -128,6 +146,7 @@ class RecommendationShadowWalkForwardService:
                 "evaluatedFoldCount": len(evaluated),
                 "blockedFoldCount": blocked,
                 "minimumEvaluatedFolds": self._minimum_evaluated_folds,
+                "macroComparison": macro_summary,
                 "folds": results,
                 "advisoryStatus": "no_advice",
                 "productionEligible": False,
@@ -185,10 +204,71 @@ class RecommendationShadowWalkForwardService:
                 "stabilityAssessment": "not_assessed_without_precommitted_criteria",
                 "stabilityThresholdApplied": False,
             },
+            "macroComparison": macro_summary,
             "folds": results,
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "policy": self._policy(),
+        }
+
+    def _aggregate_macro_comparisons(
+        self,
+        results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        paired = [
+            item
+            for item in results
+            if (item.get("macroComparison") or {}).get("status")
+            == "shadow_macro_candidate_comparison_evaluated"
+        ]
+        if not paired:
+            return {
+                "status": "insufficient_macro_candidate_comparison_data",
+                "pairedFoldCount": 0,
+                "assessment": "not_assessed_without_precommitted_criteria",
+                "thresholdApplied": False,
+                "candidateInfluence": False,
+                "advisoryStatus": "no_advice",
+                "productionEligible": False,
+            }
+
+        metrics = []
+        for item in paired:
+            comparison = item["macroComparison"]
+            delta = comparison["deltaAugmentedMinusBase"]
+            metrics.append(
+                {
+                    "foldIndex": item["foldIndex"],
+                    "mseDeltaAugmentedMinusBase": float(delta["mse"]),
+                    "maeDeltaAugmentedMinusBase": float(delta["mae"]),
+                    "signAccuracyDeltaAugmentedMinusBase": float(
+                        delta["signAccuracy"]
+                    ),
+                }
+            )
+        mse_deltas = [item["mseDeltaAugmentedMinusBase"] for item in metrics]
+        mae_deltas = [item["maeDeltaAugmentedMinusBase"] for item in metrics]
+        sign_deltas = [
+            item["signAccuracyDeltaAugmentedMinusBase"] for item in metrics
+        ]
+        return {
+            "status": "shadow_macro_walk_forward_comparison_evaluated",
+            "pairedFoldCount": len(metrics),
+            "foldMetrics": metrics,
+            "summary": {
+                "medianMseDeltaAugmentedMinusBase": float(median(mse_deltas)),
+                "medianMaeDeltaAugmentedMinusBase": float(median(mae_deltas)),
+                "medianSignAccuracyDeltaAugmentedMinusBase": float(
+                    median(sign_deltas)
+                ),
+                "minimumMseDeltaAugmentedMinusBase": min(mse_deltas),
+                "maximumMseDeltaAugmentedMinusBase": max(mse_deltas),
+                "assessment": "not_assessed_without_precommitted_criteria",
+                "thresholdApplied": False,
+            },
+            "candidateInfluence": False,
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
         }
 
     def _validate_folds(
@@ -245,7 +325,9 @@ class RecommendationShadowWalkForwardService:
             "stability": "descriptive_metrics_only_no_uncommitted_thresholds",
             "stabilityThresholds": "none_in_walk_forward_research",
             "macroResearchPreprocessing": "fit_inside_each_fold_train_only",
-            "macroCandidateInfluence": "disabled_until_oos_comparison_is_validated",
+            "macroOosComparison": "paired_base_vs_base_plus_macro_same_frozen_rows",
+            "macroComparisonAssessment": "descriptive_only_no_uncommitted_thresholds",
+            "macroCandidateInfluence": "disabled_until_oos_comparison_is_precommitted_and_validated",
             "actions": "not_assigned",
             "automaticModelMutation": False,
             "productionEligibility": False,
