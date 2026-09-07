@@ -162,9 +162,13 @@ class Sec13fInformationTableService:
         if not accession or not filing_date or not report_date or not acceptance_raw:
             raise ValueError("SEC 13F filing metadata is incomplete.")
 
-        self._parse_iso_date(filing_date, "filingDate")
-        self._parse_iso_date(report_date, "reportDate")
+        filing_day = self._parse_iso_date(filing_date, "filingDate")
+        report_day = self._parse_iso_date(report_date, "reportDate")
         acceptance = self._parse_sec_acceptance(acceptance_raw)
+        if report_day > filing_day:
+            raise ValueError("SEC 13F position date cannot follow filing date.")
+        if filing_day > acceptance.date():
+            raise ValueError("SEC 13F filing date cannot follow publication date.")
         if acceptance > retrieved_at:
             raise ValueError("SEC 13F retrieval precedes filing publication.")
 
@@ -177,9 +181,9 @@ class Sec13fInformationTableService:
         }
 
     @staticmethod
-    def _parse_iso_date(value: str, field: str) -> None:
+    def _parse_iso_date(value: str, field: str):
         try:
-            datetime.strptime(value, "%Y-%m-%d")
+            return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError as exc:
             raise ValueError(f"SEC 13F {field} is invalid.") from exc
 
