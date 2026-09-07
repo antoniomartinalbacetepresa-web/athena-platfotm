@@ -210,6 +210,18 @@ class RecommendationProductionPromotionProtocolRepository:
                     "minimumNonOverlappingConfirmationWindowCount no puede superar "
                     "minimumConfirmationRowCount."
                 )
+            minimum_issuer_coverage = self._bounded_float(
+                item.get("minimumResolvedIssuerCoverageRatio"),
+                "minimumResolvedIssuerCoverageRatio",
+                0.0,
+                1.0,
+            )
+            maximum_issuer_concentration = self._bounded_float(
+                item.get("maximumResolvedIssuerConcentrationRatio"),
+                "maximumResolvedIssuerConcentrationRatio",
+                0.0,
+                1.0,
+            )
             sign_accuracy = self._bounded_float(
                 item.get("minimumSignAccuracy"),
                 "minimumSignAccuracy",
@@ -228,6 +240,8 @@ class RecommendationProductionPromotionProtocolRepository:
                 "minimumNonOverlappingConfirmationWindowCount": (
                     minimum_non_overlapping_window_count
                 ),
+                "minimumResolvedIssuerCoverageRatio": minimum_issuer_coverage,
+                "maximumResolvedIssuerConcentrationRatio": maximum_issuer_concentration,
                 "minimumSignAccuracy": sign_accuracy,
                 "minimumRelativeMseImprovement": mse_improvement,
                 "requireBeatZeroExcessMseBaseline": beat_baseline,
