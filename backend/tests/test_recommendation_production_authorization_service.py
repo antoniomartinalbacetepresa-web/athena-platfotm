@@ -195,11 +195,13 @@ def _service() -> tuple[RecommendationProductionAuthorizationService, _FakeAutho
     )
 
 
-def test_authorization_requires_exact_chain_and_stays_non_operational_for_allocation() -> None:
-    _, calibrated, _, action, uncertainty_bound = _chain()
-    service, repository = _service()
-
-    record = service.authorize(
+def _authorize(
+    service: RecommendationProductionAuthorizationService,
+    calibrated: dict,
+    action: dict,
+    uncertainty_bound: dict,
+) -> dict:
+    return service.authorize(
         authorization_id="auth-1",
         production_promotion_decision_id="prod-decision-1",
         calibrated_candidate=calibrated,
@@ -210,6 +212,13 @@ def test_authorization_requires_exact_chain_and_stays_non_operational_for_alloca
         human_review_confirmed=True,
     )
 
+
+def test_authorization_requires_exact_chain_and_stays_non_operational_for_allocation() -> None:
+    _, calibrated, _, action, uncertainty_bound = _chain()
+    service, repository = _service()
+
+    record = _authorize(service, calibrated, action, uncertainty_bound)
+
     authorization = record["authorization"]
     assert authorization["status"] == "production_recommendation_authorized"
     assert authorization["productionEligible"] is True
@@ -218,6 +227,15 @@ def test_authorization_requires_exact_chain_and_stays_non_operational_for_alloca
     assert authorization["automaticProductionPromotion"] is False
     assert authorization["automaticTrading"] is False
     assert authorization["authorizationMethod"] == "offline_local_operator"
+    assert authorization["candidateFingerprint"] == calibrated["candidateFingerprint"]
+    assert (
+        authorization["portfolioPolicyStateFingerprint"]
+        == action["portfolioPolicyStateFingerprint"]
+    )
+    assert (
+        authorization["economicContractFingerprint"]
+        == uncertainty_bound["economicContractFingerprint"]
+    )
     assert repository.draft is authorization
 
 
@@ -245,16 +263,97 @@ def test_authorization_rejects_tampered_uncertainty_action() -> None:
     tampered["action"] = "sell"
 
     with pytest.raises(ValueError, match="modificada"):
-        service.authorize(
-            authorization_id="auth-1",
-            production_promotion_decision_id="prod-decision-1",
-            calibrated_candidate=calibrated,
-            validated_action_candidate=action,
-            uncertainty_bound_action_candidate=tampered,
-            operator_id="local-governance-operator",
-            authorization_reason="Revisión humana de toda la cadena OOS sellada.",
-            human_review_confirmed=True,
-        )
+        _authorize(service, calibrated, action, tampered)
+
+
+def test_authorization_rejects_resealed_action_from_another_live_candidate() -> None:
+    _, calibrated, _, action, uncertainty_bound = _chain()
+    service, _ = _service()
+    other_candidate = _fp("other-live-candidate")
+
+    action_core_keys = (
+        "artifactVersion",
+        "candidateFingerprint",
+        "calibratedCandidateFingerprint",
+        "actionPromotionDecisionId",
+        "actionPromotionDecisionFingerprint",
+        "portfolioPolicyStateFingerprint",
+        "instrumentId",
+        "symbol",
+        "asOf",
+        "horizonDays",
+        "modelFingerprint",
+        "policyState",
+        "policyFingerprint",
+        "expectedExcessReturn",
+        "action",
+    )
+    forged_action = dict(action)
+    forged_action["candidateFingerprint"] = other_candidate
+    forged_action["validatedActionCandidateFingerprint"] = _artifact_fp(
+        {key: forged_action.get(key) for key in action_core_keys}
+    )
+
+    uncertainty_core_keys = (
+        "artifactVersion",
+        "validatedActionCandidateFingerprint",
+        "actionUncertaintyEvidenceFingerprint",
+        "actionPromotionDecisionId",
+        "actionPromotionDecisionFingerprint",
+        "economicContractFingerprint",
+        "candidateFingerprint",
+        "instrumentId",
+        "symbol",
+        "asOf",
+        "horizonDays",
+        "modelFingerprint",
+        "policyState",
+        "policyFingerprint",
+        "portfolioPolicyStateFingerprint",
+        "action",
+    )
+    forged_uncertainty = dict(uncertainty_bound)
+    forged_uncertainty["candidateFingerprint"] = other_candidate
+    forged_uncertainty["validatedActionCandidateFingerprint"] = forged_action[
+        "validatedActionCandidateFingerprint"
+    ]
+    forged_uncertainty["uncertaintyBoundActionCandidateFingerprint"] = _artifact_fp(
+        {key: forged_uncertainty.get(key) for key in uncertainty_core_keys}
+    )
+
+    with pytest.raises(ValueError, match="candidatos live distintos"):
+        _authorize(service, calibrated, forged_action, forged_uncertainty)
+
+
+def test_authorization_rejects_resealed_uncertainty_from_another_portfolio_state() -> None:
+    _, calibrated, _, action, uncertainty_bound = _chain()
+    service, _ = _service()
+    forged = dict(uncertainty_bound)
+    forged["portfolioPolicyStateFingerprint"] = _fp("other-portfolio-state")
+    core_keys = (
+        "artifactVersion",
+        "validatedActionCandidateFingerprint",
+        "actionUncertaintyEvidenceFingerprint",
+        "actionPromotionDecisionId",
+        "actionPromotionDecisionFingerprint",
+        "economicContractFingerprint",
+        "candidateFingerprint",
+        "instrumentId",
+        "symbol",
+        "asOf",
+        "horizonDays",
+        "modelFingerprint",
+        "policyState",
+        "policyFingerprint",
+        "portfolioPolicyStateFingerprint",
+        "action",
+    )
+    forged["uncertaintyBoundActionCandidateFingerprint"] = _artifact_fp(
+        {key: forged.get(key) for key in core_keys}
+    )
+
+    with pytest.raises(ValueError, match="estado sellado de cartera"):
+        _authorize(service, calibrated, action, forged)
 
 
 def test_authorization_repository_is_append_only_and_detects_tampering(tmp_path) -> None:
@@ -273,6 +372,8 @@ def test_authorization_repository_is_append_only_and_detects_tampering(tmp_path)
         "actionPromotionDecisionId": "action-1",
         "actionPromotionDecisionFingerprint": _fp("action-decision"),
         "candidateFingerprint": _fp("candidate"),
+        "portfolioPolicyStateFingerprint": _fp("portfolio-state"),
+        "economicContractFingerprint": _fp("economic-contract"),
         "instrumentId": "ins-aapl-xnas-usd",
         "symbol": "AAPL",
         "asOf": "2026-09-06T16:00:00+00:00",
@@ -298,6 +399,12 @@ def test_authorization_repository_is_append_only_and_detects_tampering(tmp_path)
     assert loaded is not None
     assert loaded["authorization"] == record["authorization"]
     assert loaded["authorization"]["automaticTrading"] is False
+    assert loaded["authorization"]["portfolioPolicyStateFingerprint"] == _fp(
+        "portfolio-state"
+    )
+    assert loaded["authorization"]["economicContractFingerprint"] == _fp(
+        "economic-contract"
+    )
 
     with repository._database.connect() as connection:
         connection.execute(
