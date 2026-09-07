@@ -197,6 +197,10 @@ class RecommendationProductionPromotionProtocolRepository:
             item = criteria_payload.get(key)
             if not isinstance(item, dict):
                 raise ValueError(f"Faltan criterios precomprometidos para {horizon} días.")
+            minimum_row_count = self._positive_int(
+                item.get("minimumConfirmationRowCount"),
+                "minimumConfirmationRowCount",
+            )
             sign_accuracy = self._bounded_float(
                 item.get("minimumSignAccuracy"),
                 "minimumSignAccuracy",
@@ -211,6 +215,7 @@ class RecommendationProductionPromotionProtocolRepository:
             if not isinstance(beat_baseline, bool):
                 raise ValueError("requireBeatZeroExcessMseBaseline debe ser booleano.")
             criteria[key] = {
+                "minimumConfirmationRowCount": minimum_row_count,
                 "minimumSignAccuracy": sign_accuracy,
                 "minimumRelativeMseImprovement": mse_improvement,
                 "requireBeatZeroExcessMseBaseline": beat_baseline,
@@ -268,6 +273,11 @@ class RecommendationProductionPromotionProtocolRepository:
         if not parsed:
             raise ValueError(f"{field} es obligatorio.")
         return parsed
+
+    def _positive_int(self, value: object, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{field} debe ser un entero positivo.")
+        return value
 
     def _finite_float(self, value: object, field: str) -> float:
         try:
