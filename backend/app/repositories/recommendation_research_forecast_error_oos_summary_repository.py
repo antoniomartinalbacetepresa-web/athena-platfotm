@@ -6,8 +6,8 @@ import re
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
-from app.services.recommendation_research_forecast_error_oos_summary_service import (
-    RecommendationResearchForecastErrorOosSummaryService,
+from app.services.recommendation_research_forecast_error_oos_summary_integrity_service import (
+    RecommendationResearchForecastErrorOosSummaryIntegrityService,
 )
 
 
@@ -20,10 +20,10 @@ class RecommendationResearchForecastErrorOosSummaryRepository:
     def __init__(
         self,
         database: AthenaDatabase | None = None,
-        service: RecommendationResearchForecastErrorOosSummaryService | None = None,
+        service: RecommendationResearchForecastErrorOosSummaryIntegrityService | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
-        self._service = service or RecommendationResearchForecastErrorOosSummaryService()
+        self._service = service or RecommendationResearchForecastErrorOosSummaryIntegrityService()
 
     def initialize(self) -> None:
         self._database.initialize()
