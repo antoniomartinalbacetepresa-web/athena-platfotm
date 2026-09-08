@@ -46,17 +46,67 @@ class _ValidReconciliationRepository:
         }
 
 
+class _ValidValuationRepository:
+    def get(self, **kwargs: object) -> dict[str, object]:
+        return {"artifact": {"portfolioValuationEvidenceFingerprint": "c" * 64}}
+
+    def validate_record(self, record: dict[str, object]) -> dict[str, object]:
+        return record
+
+
+class _ValidWeightService:
+    def build(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "portfolioId": "portfolio-1",
+            "reportingCurrency": "USD",
+            "asOf": AS_OF.isoformat(),
+            "reconciliationKey": "e" * 64,
+            "portfolioStateKey": "d" * 64,
+            "portfolioValuationEvidenceFingerprint": "c" * 64,
+            "weightEvidenceKey": "f" * 64,
+            "cashWeight": 0.5,
+            "positions": [
+                {
+                    "instrumentId": 1,
+                    "symbol": "AAA",
+                    "weight": 0.5,
+                }
+            ],
+        }
+
+    def validate_artifact(self, artifact: dict[str, object]) -> dict[str, object]:
+        return artifact
+
+
+def _install_api_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        factor_risk_api,
+        "_reconciliation_repository",
+        _ValidReconciliationRepository(),
+    )
+    monkeypatch.setattr(
+        factor_risk_api,
+        "_valuation_repository",
+        _ValidValuationRepository(),
+    )
+    monkeypatch.setattr(
+        factor_risk_api,
+        "_weight_service",
+        _ValidWeightService(),
+    )
+
+
 def _api_request(*, exposure_available_at: str) -> dict[str, object]:
     return {
         "portfolioId": "portfolio-1",
         "reportingCurrency": "USD",
         "reconciliationKey": "e" * 64,
+        "portfolioValuationEvidenceFingerprint": "c" * 64,
         "asOf": AS_OF.isoformat(),
         "positions": [
             {
                 "instrumentId": 1,
                 "symbol": "AAA",
-                "weight": 0.5,
                 "exposureAvailableAt": exposure_available_at,
                 "source": "athena_factor_model_v1",
                 "sourceRef": "factor-snapshot:AAA:2025-12-31",
@@ -168,11 +218,7 @@ def test_factor_risk_rejects_invalid_weight_sum_and_naive_timestamps() -> None:
 
 
 def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
-    monkeypatch.setattr(
-        factor_risk_api,
-        "_reconciliation_repository",
-        _ValidReconciliationRepository(),
-    )
+    _install_api_evidence(monkeypatch)
     client = TestClient(app)
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk",
@@ -186,19 +232,22 @@ def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
     assert data["isWeightingReady"] is False
     assert data["weightedExposures"]["market"] == pytest.approx(0.5)
     assert data["weightedExposures"]["usd_fx"] == pytest.approx(0.15)
+    assert data["cashWeight"] == pytest.approx(0.5)
     assert data["policy"]["fx"] == "usd_fx_is_explicit_factor_not_silently_netting_currency_risk"
     assert data["policy"]["automaticTrading"] is False
     assert data["stateIntegrity"]["reconciled"] is True
     assert data["stateIntegrity"]["gate"] == "required_before_factor_risk"
-    assert data["stateIntegrity"]["weightDerivation"] == "not_yet_derived_from_reconciled_state"
+    assert (
+        data["stateIntegrity"]["weightDerivation"]
+        == "derived_from_reconciled_state_and_sealed_pit_valuation"
+    )
+    assert data["stateIntegrity"]["callerSuppliedWeightAccepted"] is False
+    assert data["stateIntegrity"]["weightEvidenceKey"] == "f" * 64
+    assert data["stateIntegrity"]["portfolioValuationEvidenceFingerprint"] == "c" * 64
 
 
 def test_factor_risk_api_rejects_naive_temporal_evidence_before_service_use(monkeypatch) -> None:
-    monkeypatch.setattr(
-        factor_risk_api,
-        "_reconciliation_repository",
-        _ValidReconciliationRepository(),
-    )
+    _install_api_evidence(monkeypatch)
     client = TestClient(app)
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk",
