@@ -10,6 +10,9 @@ from app.repositories.recommendation_professional_research_cycle_repository impo
 from app.repositories.recommendation_research_evaluation_specification_repository import (
     RecommendationResearchEvaluationSpecificationRepository,
 )
+from app.repositories.recommendation_research_forecast_error_oos_summary_repository import (
+    RecommendationResearchForecastErrorOosSummaryRepository,
+)
 from app.repositories.recommendation_research_forecast_error_repository import (
     RecommendationResearchForecastErrorRepository,
 )
@@ -18,6 +21,9 @@ from app.repositories.recommendation_research_outcome_attribution_repository imp
 )
 from app.services.recommendation_research_evaluation_specification_service import (
     RecommendationResearchEvaluationSpecificationService,
+)
+from app.services.recommendation_research_forecast_error_oos_summary_service import (
+    RecommendationResearchForecastErrorOosSummaryService,
 )
 from app.services.recommendation_research_forecast_error_service import (
     RecommendationResearchForecastErrorService,
@@ -33,8 +39,10 @@ cycle_repository = RecommendationProfessionalResearchCycleRepository()
 specification_repository = RecommendationResearchEvaluationSpecificationRepository()
 outcome_repository = RecommendationResearchOutcomeAttributionRepository()
 error_repository = RecommendationResearchForecastErrorRepository()
+oos_summary_repository = RecommendationResearchForecastErrorOosSummaryRepository()
 specification_service = RecommendationResearchEvaluationSpecificationService()
 error_service = RecommendationResearchForecastErrorService()
+oos_summary_service = RecommendationResearchForecastErrorOosSummaryService()
 
 
 class EvaluationSpecificationRequest(BaseModel):
@@ -50,6 +58,12 @@ class EvaluationSpecificationRequest(BaseModel):
 class ForecastErrorRequest(BaseModel):
     specificationHash: str = Field(min_length=64, max_length=64)
     outcomeHash: str = Field(min_length=64, max_length=64)
+
+
+class ForecastErrorOosSummaryRequest(BaseModel):
+    summaryId: str = Field(min_length=1, max_length=200)
+    asOf: datetime
+    errorHashes: list[str] = Field(min_length=1, max_length=5000)
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -148,4 +162,74 @@ def get_forecast_error(error_hash: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo verificar forecast error persistido.") from exc
+    return {"data": record["artifact"]}
+
+
+@router.post("/forecast-error-oos-summary")
+def post_forecast_error_oos_summary(
+    request: ForecastErrorOosSummaryRequest,
+) -> dict[str, object]:
+    """Aggregate only persisted forecast errors into a descriptive PIT OOS summary."""
+
+    as_of = _aware_utc(request.asOf, "asOf")
+    try:
+        if len(set(request.errorHashes)) != len(request.errorHashes):
+            raise ValueError("errorHashes contiene duplicados.")
+        error_records = [
+            error_repository.get_by_hash(error_hash=error_hash)
+            for error_hash in request.errorHashes
+        ]
+        specification_records = []
+        for record in error_records:
+            artifact = record.get("artifact")
+            if not isinstance(artifact, dict):
+                raise ValueError("Forecast error persistido carece de artifact válido.")
+            specification_hash = artifact.get("specificationHash")
+            if not isinstance(specification_hash, str):
+                raise ValueError("Forecast error persistido perdió specificationHash.")
+            specification_records.append(
+                specification_repository.get_by_hash(specification_hash=specification_hash)
+            )
+        artifact = oos_summary_service.build(
+            summary_id=request.summaryId,
+            as_of=as_of,
+            error_records=error_records,
+            specification_records=specification_records,
+        )
+        persisted = oos_summary_repository.append(artifact=artifact)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo construir OOS forecast error summary verificable.",
+        ) from exc
+
+    return {
+        "data": {
+            **artifact,
+            "persistence": {
+                "appendOnly": True,
+                "tamperEvident": True,
+                "semanticIntegrityVerified": True,
+                "summaryHash": persisted["summary_hash"],
+                "storageClaim": "tamper_evident_append_only_repository_not_worm_storage",
+            },
+        }
+    }
+
+
+@router.get("/forecast-error-oos-summary/{summary_hash}")
+def get_forecast_error_oos_summary(summary_hash: str) -> dict[str, object]:
+    try:
+        record = oos_summary_repository.get_by_hash(summary_hash=summary_hash)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar OOS forecast error summary persistido.",
+        ) from exc
     return {"data": record["artifact"]}
