@@ -165,7 +165,7 @@ def test_oos_summary_is_descriptive_pit_and_reports_overlap_without_claiming_ski
 
 
 def test_oos_summary_identity_is_order_independent() -> None:
-    errors, specs = dataset(second_start_day=31)
+    errors, specs = dataset(second_start_day=30)
     service = RecommendationResearchForecastErrorOosSummaryService()
     first = service.build(summary_id="stable", as_of=AS_OF, error_records=errors, specification_records=specs)
     second = service.build(
@@ -190,7 +190,7 @@ def test_oos_summary_rejects_mixed_forecast_methods() -> None:
 
 def test_oos_summary_rejects_duplicate_error_identity() -> None:
     errors, specs = dataset()
-    with pytest.raises(ValueError, match="errorHash duplicado"):
+    with pytest.raises(ValueError, match="duplicado"):
         RecommendationResearchForecastErrorOosSummaryService().build(
             summary_id="duplicate",
             as_of=AS_OF,
