@@ -30,6 +30,9 @@ from app.api.recommendation_portfolio_event_ledger import (
 from app.api.recommendation_portfolio_performance_attribution import (
     router as recommendation_portfolio_performance_attribution_router,
 )
+from app.api.recommendation_portfolio_state_reconstruction import (
+    router as recommendation_portfolio_state_reconstruction_router,
+)
 from app.api.recommendation_portfolio_time_weighted_return import (
     router as recommendation_portfolio_time_weighted_return_router,
 )
@@ -98,6 +101,7 @@ app.include_router(recommendation_performance_attribution_router)
 app.include_router(recommendation_portfolio_performance_attribution_router)
 app.include_router(recommendation_portfolio_time_weighted_return_router)
 app.include_router(recommendation_portfolio_event_ledger_router)
+app.include_router(recommendation_portfolio_state_reconstruction_router)
 app.include_router(recommendation_investment_journal_router)
 app.include_router(recommendation_devils_advocate_router)
 app.include_router(recommendation_athena_radar_router)
