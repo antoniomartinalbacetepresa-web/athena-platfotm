@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
+    RecommendationPortfolioStateReconciliationRepository,
+)
 from app.services.recommendation_factor_risk_service import (
     FactorRiskPositionInput,
     RecommendationFactorRiskService,
@@ -18,6 +22,8 @@ router = APIRouter(
 )
 
 factor_risk_service = RecommendationFactorRiskService()
+_reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class FactorRiskPositionRequest(BaseModel):
@@ -31,6 +37,9 @@ class FactorRiskPositionRequest(BaseModel):
 
 
 class FactorRiskResearchRequest(BaseModel):
+    portfolioId: str = Field(min_length=1)
+    reportingCurrency: str = Field(min_length=3, max_length=3)
+    reconciliationKey: str = Field(min_length=64, max_length=64)
     asOf: datetime
     positions: list[FactorRiskPositionRequest] = Field(min_length=1, max_length=500)
 
@@ -56,6 +65,23 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Factor Risk intentó habilitar producción.")
     if payload.get("isWeightingReady") is not False:
         raise HTTPException(status_code=500, detail="Factor Risk intentó habilitar ponderación.")
+    if not isinstance(payload.get("portfolioId"), str) or not str(payload.get("portfolioId")).strip():
+        raise HTTPException(status_code=500, detail="Factor Risk perdió identidad de cartera.")
+    reporting_currency = payload.get("reportingCurrency")
+    if not isinstance(reporting_currency, str) or len(reporting_currency) != 3 or not reporting_currency.isalpha():
+        raise HTTPException(status_code=500, detail="Factor Risk perdió moneda de reporting.")
+    state_integrity = payload.get("stateIntegrity")
+    if not isinstance(state_integrity, dict):
+        raise HTTPException(status_code=500, detail="Factor Risk perdió gating de reconciliación.")
+    reconciliation_key = state_integrity.get("reconciliationKey")
+    if not isinstance(reconciliation_key, str) or _SHA256_RE.fullmatch(reconciliation_key) is None:
+        raise HTTPException(status_code=500, detail="Factor Risk perdió reconciliationKey válido.")
+    if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
+        raise HTTPException(status_code=500, detail="Factor Risk aceptó estado no reconciliado/verificado.")
+    if state_integrity.get("gate") != "required_before_factor_risk":
+        raise HTTPException(status_code=500, detail="Factor Risk perdió la puerta obligatoria de integridad.")
+    if state_integrity.get("weightDerivation") != "not_yet_derived_from_reconciled_state":
+        raise HTTPException(status_code=500, detail="Factor Risk sobreafirmó derivación de pesos desde el estado.")
 
     policy = payload.get("policy")
     if not isinstance(policy, dict):
@@ -166,9 +192,24 @@ def _assert_contract(payload: dict[str, object]) -> None:
 
 @router.post("/factor-risk")
 def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
-    """Measure explicit PIT portfolio factor exposure without sizing or trade advice."""
+    """Measure PIT factor exposure only after persisted independent state reconciliation."""
 
     as_of = _aware_utc(request.asOf, "asOf")
+    try:
+        reconciliation_record = _reconciliation_repository.require_reconciled(
+            reconciliation_key=request.reconciliationKey,
+            portfolio_id=request.portfolioId,
+            reporting_currency=request.reportingCurrency,
+            as_of=as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar reconciliationKey para Factor Risk.",
+        ) from exc
+
     positions: list[FactorRiskPositionInput] = []
     for item in request.positions:
         positions.append(
@@ -202,5 +243,15 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     payload = result.to_api_dict()
     if not isinstance(payload, dict):
         raise HTTPException(status_code=500, detail="Factor Risk devolvió un contrato inválido.")
+    payload["portfolioId"] = request.portfolioId.strip()
+    payload["reportingCurrency"] = request.reportingCurrency.strip().upper()
+    payload["stateIntegrity"] = {
+        "reconciliationKey": request.reconciliationKey.lower(),
+        "portfolioStateKey": reconciliation_record["portfolio_state_key"],
+        "reconciled": True,
+        "tamperVerified": True,
+        "gate": "required_before_factor_risk",
+        "weightDerivation": "not_yet_derived_from_reconciled_state",
+    }
     _assert_contract(payload)
     return {"data": payload}
