@@ -31,6 +31,48 @@ class _Service:
         return _Result(self.payload)
 
 
+class _ReconciliationRepository:
+    def require_reconciled(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "portfolio_state_key": "a" * 64,
+            "artifact": {"reconciled": True},
+        }
+
+
+class _ValuationRepository:
+    def get(self, **kwargs: object) -> dict[str, object]:
+        return {"artifact": {"portfolioValuationEvidenceFingerprint": "b" * 64}}
+
+    def validate_record(self, record: dict[str, object]) -> dict[str, object]:
+        return record
+
+
+class _WeightService:
+    def build(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "portfolioId": "portfolio-1",
+            "reportingCurrency": "USD",
+            "asOf": AS_OF,
+            "reconciliationKey": "c" * 64,
+            "portfolioStateKey": "a" * 64,
+            "portfolioValuationEvidenceFingerprint": "b" * 64,
+            "weightEvidenceKey": "d" * 64,
+            "cashWeight": 0.4,
+            "positions": [
+                {"instrumentId": 1, "symbol": "AAA", "weight": 0.6},
+            ],
+        }
+
+    def validate_artifact(self, artifact: dict[str, object]) -> dict[str, object]:
+        return artifact
+
+
+def _install_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(candidate_api, "_reconciliation_repository", _ReconciliationRepository())
+    monkeypatch.setattr(candidate_api, "_valuation_repository", _ValuationRepository())
+    monkeypatch.setattr(candidate_api, "_weight_service", _WeightService())
+
+
 def _candidate() -> dict[str, object]:
     return {
         "instrumentId": 2,
@@ -90,12 +132,15 @@ def _payload(**overrides: object) -> dict[str, object]:
 
 def _request() -> dict[str, object]:
     return {
+        "portfolioId": "portfolio-1",
+        "reportingCurrency": "USD",
+        "reconciliationKey": "c" * 64,
+        "portfolioValuationEvidenceFingerprint": "b" * 64,
         "asOf": AS_OF,
         "positions": [
             {
                 "instrumentId": 1,
                 "symbol": "AAA",
-                "weight": 0.6,
                 "exposureAvailableAt": AVAILABLE_AT,
                 "source": "pit_factor_store",
                 "sourceRef": "factor:1:2025-12-31",
@@ -109,6 +154,7 @@ def _request() -> dict[str, object]:
 def test_candidate_impact_endpoint_preserves_research_only_contract(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    _install_evidence(monkeypatch)
 
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
@@ -123,10 +169,28 @@ def test_candidate_impact_endpoint_preserves_research_only_contract(monkeypatch)
     assert data["policy"]["automaticTrading"] is False
     assert data["policy"]["covariance"] == "not_estimated_no_marginal_variance_or_risk_contribution_claim"
     assert data["candidate"]["sourceRef"] == "factor:2:2025-12-31"
+    assert data["stateIntegrity"]["baselineWeightDerivation"] == "derived_from_reconciled_state_and_sealed_pit_valuation"
+    assert data["stateIntegrity"]["baselineCallerSuppliedWeightAccepted"] is False
+    assert data["stateIntegrity"]["candidateWeightMeaning"] == "explicit_hypothetical_cash_funded_scenario_not_sizing_advice"
+    assert data["stateIntegrity"]["baselineCashWeight"] == 0.4
     assert len(service.calls) == 1
+    baseline = service.calls[0]["positions"]
+    assert baseline[0].weight == 0.6
+
+
+def test_candidate_impact_api_rejects_baseline_caller_weight(monkeypatch) -> None:
+    _install_evidence(monkeypatch)
+    body = _request()
+    body["positions"][0]["weight"] = 0.6  # type: ignore[index]
+    response = client.post(
+        "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
+        json=body,
+    )
+    assert response.status_code == 422
 
 
 def test_candidate_impact_api_fails_closed_on_unsafe_contract(monkeypatch) -> None:
+    _install_evidence(monkeypatch)
     unsafe_payloads = (
         _payload(advisoryStatus="buy"),
         _payload(productionEligible=True),
@@ -156,6 +220,7 @@ def test_candidate_impact_api_fails_closed_on_unsafe_contract(monkeypatch) -> No
 def test_candidate_impact_api_rejects_naive_as_of_before_service(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    _install_evidence(monkeypatch)
     body = _request()
     body["asOf"] = "2026-01-01T00:00:00"
 
@@ -171,6 +236,7 @@ def test_candidate_impact_api_rejects_naive_as_of_before_service(monkeypatch) ->
 def test_candidate_impact_api_rejects_naive_candidate_evidence_before_service(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    _install_evidence(monkeypatch)
     body = _request()
     body["candidate"]["exposureAvailableAt"] = "2025-12-31T23:00:00"  # type: ignore[index]
 
@@ -180,4 +246,20 @@ def test_candidate_impact_api_rejects_naive_candidate_evidence_before_service(mo
     )
 
     assert response.status_code == 400
+    assert service.calls == []
+
+
+def test_candidate_impact_api_rejects_candidate_already_in_baseline(monkeypatch) -> None:
+    service = _Service(_payload())
+    monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    _install_evidence(monkeypatch)
+    body = _request()
+    body["candidate"]["instrumentId"] = 1  # type: ignore[index]
+
+    response = client.post(
+        "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
+        json=body,
+    )
+    assert response.status_code == 400
+    assert "ya pertenece" in response.json()["detail"]
     assert service.calls == []
