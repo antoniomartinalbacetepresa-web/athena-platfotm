@@ -10,6 +10,7 @@ from app.database.athena_database import AthenaDatabase
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
 class RecommendationResearchOutcomeAttributionRepository:
@@ -133,8 +134,25 @@ class RecommendationResearchOutcomeAttributionRepository:
             raise ValueError("Outcome attribution intentó aprendizaje automático no validado.")
         if policy.get("causalClaim") != "forbidden_arithmetic_attribution_only":
             raise ValueError("Outcome attribution intentó inferencia causal.")
-        if policy.get("fx") != "explicit_not_silently_neutralized":
+        if policy.get("fx") != "explicit_currency_pair_bound_fail_closed":
             raise ValueError("Outcome attribution perdió seguridad FX.")
+        if policy.get("identity") != "outcome_hash_binds_cycle_hash_and_exact_attribution_payload":
+            raise ValueError("Outcome attribution perdió identidad canónica.")
+
+        attribution = payload.get("attribution")
+        if not isinstance(attribution, dict):
+            raise ValueError("Outcome attribution perdió Performance Attribution anidado.")
+        attribution_key = self._sha256(payload.get("attributionKey"), "attributionKey")
+        if self._sha256(attribution.get("attributionKey"), "attribution.attributionKey") != attribution_key:
+            raise ValueError("attributionKey no coincide con Performance Attribution anidado.")
+        benchmark_id = self._text(payload.get("benchmarkId"), "benchmarkId")
+        if self._text(attribution.get("benchmarkId"), "attribution.benchmarkId") != benchmark_id:
+            raise ValueError("benchmarkId no coincide con Performance Attribution anidado.")
+
+        currency = self._currency_contract(payload.get("currency"), "currency")
+        attribution_currency = self._currency_contract(attribution.get("currency"), "attribution.currency")
+        if currency != attribution_currency:
+            raise ValueError("El contrato de moneda no coincide con Performance Attribution anidado.")
 
         cycle_hash = self._sha256(payload.get("cycleHash"), "cycleHash")
         outcome_hash = self._sha256(payload.get("outcomeHash"), "outcomeHash")
@@ -144,7 +162,7 @@ class RecommendationResearchOutcomeAttributionRepository:
             "instrumentId": self._text(payload.get("instrumentId"), "instrumentId"),
             "symbol": self._text(payload.get("symbol"), "symbol").upper(),
             "cycleAsOf": self._text(payload.get("cycleAsOf"), "cycleAsOf"),
-            "attribution": payload.get("attribution"),
+            "attribution": attribution,
         }
         expected = self._canonical_hash(canonical)
         if outcome_hash != expected:
@@ -194,6 +212,24 @@ class RecommendationResearchOutcomeAttributionRepository:
             "created_at": str(row["created_at"]),
         }
 
+    def _currency_contract(self, value: object, field: str) -> dict[str, object]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} debe ser un objeto de moneda válido.")
+        instrument = self._currency(value.get("instrumentCurrency"), f"{field}.instrumentCurrency")
+        reporting = self._currency(value.get("reportingCurrency"), f"{field}.reportingCurrency")
+        fx_pair = self._text(value.get("fxPair"), f"{field}.fxPair").upper()
+        if fx_pair != f"{instrument}/{reporting}":
+            raise ValueError(f"{field}.fxPair es inconsistente.")
+        conversion_required = instrument != reporting
+        if value.get("conversionRequired") is not conversion_required:
+            raise ValueError(f"{field}.conversionRequired es inconsistente.")
+        return {
+            "instrumentCurrency": instrument,
+            "reportingCurrency": reporting,
+            "fxPair": fx_pair,
+            "conversionRequired": conversion_required,
+        }
+
     def _canonical_hash(self, payload: object) -> str:
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -202,6 +238,12 @@ class RecommendationResearchOutcomeAttributionRepository:
         text = str(value or "").strip().lower()
         if not _SHA256_RE.fullmatch(text):
             raise ValueError(f"{field} debe ser SHA-256 hexadecimal válido.")
+        return text
+
+    def _currency(self, value: object, field: str) -> str:
+        text = self._text(value, field).upper()
+        if _CURRENCY_RE.fullmatch(text) is None:
+            raise ValueError(f"{field} debe ser código de moneda de tres letras.")
         return text
 
     def _text(self, value: object, field: str) -> str:
