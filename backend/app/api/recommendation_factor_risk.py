@@ -16,6 +16,9 @@ from app.repositories.recommendation_portfolio_state_reconciliation_repository i
 from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
     RecommendationPortfolioValuationEvidenceRepository,
 )
+from app.repositories.recommendation_price_factor_exposure_repository import (
+    RecommendationPriceFactorExposureRepository,
+)
 from app.services.recommendation_factor_risk_service import (
     FactorRiskPositionInput,
     RecommendationFactorRiskService,
@@ -35,7 +38,9 @@ _reconciliation_repository = RecommendationPortfolioStateReconciliationRepositor
 _valuation_repository = RecommendationPortfolioValuationEvidenceRepository()
 _weight_service = RecommendationReconciledPortfolioWeightService()
 _factor_exposure_repository = RecommendationFactorExposureRepository()
+_price_factor_repository = RecommendationPriceFactorExposureRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SEALED_CALLER_FORBIDDEN = {"market", "momentum", "low_volatility"}
 
 
 class FactorRiskPositionRequest(BaseModel):
@@ -44,6 +49,7 @@ class FactorRiskPositionRequest(BaseModel):
     instrumentId: int = Field(gt=0)
     symbol: str = Field(min_length=1)
     marketExposureKey: str = Field(min_length=64, max_length=64)
+    priceExposureKey: str | None = Field(default=None, min_length=64, max_length=64)
     exposureAvailableAt: datetime
     source: str = Field(min_length=1)
     sourceRef: str = Field(min_length=1)
@@ -75,6 +81,17 @@ def _finite_number(value: object) -> bool:
     )
 
 
+def _require_hash_map(value: object, field: str, *, allow_empty: bool) -> dict[str, str]:
+    if not isinstance(value, dict) or (not value and not allow_empty):
+        raise HTTPException(status_code=500, detail=f"Factor Risk perdió {field} válido.")
+    result: dict[str, str] = {}
+    for instrument_id, key in value.items():
+        if not str(instrument_id).isdigit() or not isinstance(key, str) or _SHA256_RE.fullmatch(key) is None:
+            raise HTTPException(status_code=500, detail=f"Factor Risk devolvió {field} inválido.")
+        result[str(instrument_id)] = key
+    return result
+
+
 def _assert_contract(payload: dict[str, object]) -> None:
     if payload.get("advisoryStatus") != "no_advice":
         raise HTTPException(status_code=500, detail="Factor Risk violó el contrato no-advice.")
@@ -87,19 +104,21 @@ def _assert_contract(payload: dict[str, object]) -> None:
     reporting_currency = payload.get("reportingCurrency")
     if not isinstance(reporting_currency, str) or len(reporting_currency) != 3 or not reporting_currency.isalpha():
         raise HTTPException(status_code=500, detail="Factor Risk perdió moneda de reporting.")
+
     state_integrity = payload.get("stateIntegrity")
     if not isinstance(state_integrity, dict):
         raise HTTPException(status_code=500, detail="Factor Risk perdió gating de reconciliación.")
-    for field in ("reconciliationKey", "portfolioStateKey", "weightEvidenceKey", "portfolioValuationEvidenceFingerprint"):
+    for field in (
+        "reconciliationKey",
+        "portfolioStateKey",
+        "weightEvidenceKey",
+        "portfolioValuationEvidenceFingerprint",
+    ):
         value = state_integrity.get(field)
         if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
             raise HTTPException(status_code=500, detail=f"Factor Risk perdió {field} válido.")
-    market_keys = state_integrity.get("marketExposureKeys")
-    if not isinstance(market_keys, dict) or not market_keys:
-        raise HTTPException(status_code=500, detail="Factor Risk perdió evidencia beta sellada.")
-    for instrument_id, key in market_keys.items():
-        if not str(instrument_id).isdigit() or not isinstance(key, str) or _SHA256_RE.fullmatch(key) is None:
-            raise HTTPException(status_code=500, detail="Factor Risk devolvió marketExposureKeys inválido.")
+    _require_hash_map(state_integrity.get("marketExposureKeys"), "marketExposureKeys", allow_empty=False)
+    _require_hash_map(state_integrity.get("priceExposureKeys"), "priceExposureKeys", allow_empty=True)
     if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
         raise HTTPException(status_code=500, detail="Factor Risk aceptó estado no reconciliado/verificado.")
     if state_integrity.get("gate") != "required_before_factor_risk":
@@ -108,8 +127,12 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Factor Risk no derivó pesos desde evidencia reconciliada/PIT.")
     if state_integrity.get("marketFactorDerivation") != "sealed_pit_market_observations_only":
         raise HTTPException(status_code=500, detail="Factor Risk no derivó market desde evidencia PIT sellada.")
+    if state_integrity.get("priceFactorDerivation") != "sealed_pit_market_observations_or_explicitly_missing":
+        raise HTTPException(status_code=500, detail="Factor Risk perdió derivación sellada de momentum/low-volatility.")
     if state_integrity.get("callerSuppliedMarketAccepted") is not False:
         raise HTTPException(status_code=500, detail="Factor Risk aceptó market arbitrario del caller.")
+    if state_integrity.get("callerSuppliedPriceFactorsAccepted") is not False:
+        raise HTTPException(status_code=500, detail="Factor Risk aceptó momentum/low-volatility arbitrarios del caller.")
     if state_integrity.get("callerSuppliedWeightAccepted") is not False:
         raise HTTPException(status_code=500, detail="Factor Risk aceptó pesos arbitrarios del caller.")
     if not _finite_number(state_integrity.get("cashWeight")):
@@ -157,7 +180,8 @@ def _assert_contract(payload: dict[str, object]) -> None:
     if not isinstance(fully_covered, list):
         raise HTTPException(status_code=500, detail="Factor Risk devolvió fullyCoveredFactors inválido.")
     expected_fully_covered = {
-        name for name, value in coverage.items()
+        name
+        for name, value in coverage.items()
         if float(invested) > 0.0 and abs(float(value) - float(invested)) <= 1e-9
     }
     if set(fully_covered) != expected_fully_covered:
@@ -175,12 +199,20 @@ def _assert_contract(payload: dict[str, object]) -> None:
         symbol = position.get("symbol")
         factors = position.get("factors")
         if (
-            isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0
-            or not isinstance(symbol, str) or not symbol.strip()
-            or not isinstance(position.get("source"), str) or not str(position.get("source")).strip()
-            or not isinstance(position.get("sourceRef"), str) or not str(position.get("sourceRef")).strip()
-            or not isinstance(position.get("exposureAvailableAt"), str) or not str(position.get("exposureAvailableAt")).strip()
-            or not isinstance(factors, dict) or "market" not in factors or not _finite_number(position.get("weight"))
+            isinstance(instrument_id, bool)
+            or not isinstance(instrument_id, int)
+            or instrument_id <= 0
+            or not isinstance(symbol, str)
+            or not symbol.strip()
+            or not isinstance(position.get("source"), str)
+            or not str(position.get("source")).strip()
+            or not isinstance(position.get("sourceRef"), str)
+            or not str(position.get("sourceRef")).strip()
+            or not isinstance(position.get("exposureAvailableAt"), str)
+            or not str(position.get("exposureAvailableAt")).strip()
+            or not isinstance(factors, dict)
+            or "market" not in factors
+            or not _finite_number(position.get("weight"))
         ):
             raise HTTPException(status_code=500, detail="Factor Risk devolvió provenance PIT incompleta.")
         normalized_symbol = symbol.strip().upper()
@@ -197,9 +229,16 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Factor Risk devolvió dominantFactor sin cobertura completa.")
 
 
+def _artifact_datetime(artifact: dict[str, object], field: str) -> datetime:
+    try:
+        return datetime.fromisoformat(str(artifact.get(field)).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Factor exposure perdió {field} válido.") from exc
+
+
 @router.post("/factor-risk")
 def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
-    """Measure PIT factor exposure with reconciled weights and sealed market beta."""
+    """Measure PIT factor exposure with reconciled weights and sealed factor evidence."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     try:
@@ -223,7 +262,10 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="No se pudo verificar/derivar la evidencia de pesos para Factor Risk.") from exc
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar/derivar la evidencia de pesos para Factor Risk.",
+        ) from exc
 
     if weight_evidence["portfolioId"] != request.portfolioId.strip():
         raise HTTPException(status_code=400, detail="Weight evidence pertenece a otra cartera.")
@@ -252,52 +294,110 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     if set(request_ids) != set(weights_by_id):
         missing = sorted(set(weights_by_id) - set(request_ids))
         extra = sorted(set(request_ids) - set(weights_by_id))
-        raise HTTPException(status_code=400, detail=f"Factor exposure identity mismatch; missing={missing}, extra={extra}.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Factor exposure identity mismatch; missing={missing}, extra={extra}.",
+        )
 
     positions: list[FactorRiskPositionInput] = []
     market_keys: dict[str, str] = {}
+    price_keys: dict[str, str] = {}
     for item in request.positions:
         derived = weights_by_id[item.instrumentId]
         derived_symbol = str(derived.get("symbol") or "").strip().upper()
         if item.symbol.strip().upper() != derived_symbol:
-            raise HTTPException(status_code=400, detail=f"Símbolo de instrumentId={item.instrumentId} no coincide con la valoración canónica.")
-        if "market" in {str(name).strip().lower() for name in item.factors}:
-            raise HTTPException(status_code=400, detail="El caller no puede suministrar factor market; use marketExposureKey sellado.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Símbolo de instrumentId={item.instrumentId} no coincide con la valoración canónica.",
+            )
+        normalized_caller_factors = {str(name).strip().lower() for name in item.factors}
+        forbidden = sorted(normalized_caller_factors & _SEALED_CALLER_FORBIDDEN)
+        if forbidden:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El caller no puede suministrar factores sellados {forbidden}; use factorExposureKey PIT.",
+            )
         weight = derived.get("weight")
         if not _finite_number(weight):
             raise HTTPException(status_code=500, detail="Weight evidence devolvió weight no finito.")
+
         try:
-            factor_record = _factor_exposure_repository.get(factor_exposure_key=item.marketExposureKey)
+            factor_record = _factor_exposure_repository.get(
+                factor_exposure_key=item.marketExposureKey,
+            )
             if factor_record is None:
                 raise ValueError("No existe market factor exposure persistido con esa identidad.")
-            artifact = factor_record.get("artifact")
-            if not isinstance(artifact, dict):
+            market_artifact = factor_record.get("artifact")
+            if not isinstance(market_artifact, dict):
                 raise ValueError("Market factor exposure persistido perdió artifact.")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if artifact.get("instrumentId") != item.instrumentId:
+        if market_artifact.get("instrumentId") != item.instrumentId:
             raise HTTPException(status_code=400, detail="marketExposureKey pertenece a otro instrumento.")
-        if datetime.fromisoformat(str(artifact.get("asOf")).replace("Z", "+00:00")) != as_of:
+        if _artifact_datetime(market_artifact, "asOf") != as_of:
             raise HTTPException(status_code=400, detail="marketExposureKey pertenece a otro asOf.")
-        sealed_factors = artifact.get("factors")
-        if not isinstance(sealed_factors, dict) or set(sealed_factors) != {"market"} or not _finite_number(sealed_factors.get("market")):
+        market_factors = market_artifact.get("factors")
+        if (
+            not isinstance(market_factors, dict)
+            or set(market_factors) != {"market"}
+            or not _finite_number(market_factors.get("market"))
+        ):
             raise HTTPException(status_code=500, detail="Market factor exposure persistido es inválido.")
-        sealed_available = datetime.fromisoformat(str(artifact.get("availableAt")).replace("Z", "+00:00")).astimezone(timezone.utc)
-        caller_available = _aware_utc(item.exposureAvailableAt, "positions.exposureAvailableAt")
-        combined_factors = dict(item.factors)
-        combined_factors["market"] = float(sealed_factors["market"])
-        key = str(artifact.get("factorExposureKey") or "")
-        if _SHA256_RE.fullmatch(key) is None:
+        market_key = str(market_artifact.get("factorExposureKey") or "")
+        if _SHA256_RE.fullmatch(market_key) is None:
             raise HTTPException(status_code=500, detail="Market factor exposure perdió identidad SHA-256.")
-        market_keys[str(item.instrumentId)] = key
+        market_keys[str(item.instrumentId)] = market_key
+        evidence_times = [_artifact_datetime(market_artifact, "availableAt")]
+        combined_factors = dict(item.factors)
+        combined_factors["market"] = float(market_factors["market"])
+        refs = [f"market:{market_key}"]
+        sources = ["sealed_market_beta"]
+
+        if item.priceExposureKey is not None:
+            try:
+                price_record = _price_factor_repository.get(
+                    factor_exposure_key=item.priceExposureKey,
+                )
+                if price_record is None:
+                    raise ValueError("No existe price factor exposure persistido con esa identidad.")
+                price_artifact = price_record.get("artifact")
+                if not isinstance(price_artifact, dict):
+                    raise ValueError("Price factor exposure persistido perdió artifact.")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if price_artifact.get("instrumentId") != item.instrumentId:
+                raise HTTPException(status_code=400, detail="priceExposureKey pertenece a otro instrumento.")
+            if _artifact_datetime(price_artifact, "asOf") != as_of:
+                raise HTTPException(status_code=400, detail="priceExposureKey pertenece a otro asOf.")
+            price_factors = price_artifact.get("factors")
+            if (
+                not isinstance(price_factors, dict)
+                or set(price_factors) != {"momentum", "low_volatility"}
+                or any(not _finite_number(value) for value in price_factors.values())
+            ):
+                raise HTTPException(status_code=500, detail="Price factor exposure persistido es inválido.")
+            price_key = str(price_artifact.get("factorExposureKey") or "")
+            if _SHA256_RE.fullmatch(price_key) is None:
+                raise HTTPException(status_code=500, detail="Price factor exposure perdió identidad SHA-256.")
+            price_keys[str(item.instrumentId)] = price_key
+            evidence_times.append(_artifact_datetime(price_artifact, "availableAt"))
+            combined_factors["momentum"] = float(price_factors["momentum"])
+            combined_factors["low_volatility"] = float(price_factors["low_volatility"])
+            refs.append(f"price:{price_key}")
+            sources.append("sealed_price_factors")
+
+        caller_available = _aware_utc(item.exposureAvailableAt, "positions.exposureAvailableAt")
+        evidence_times.append(caller_available)
+        refs.append(f"caller:{item.sourceRef.strip()}")
+        sources.append(item.source.strip())
         positions.append(
             FactorRiskPositionInput(
                 instrument_id=item.instrumentId,
                 symbol=derived_symbol,
                 weight=float(weight),
-                exposure_available_at=max(sealed_available, caller_available),
-                source=f"sealed_market_beta+{item.source.strip()}",
-                source_ref=f"market:{key};caller:{item.sourceRef.strip()}",
+                exposure_available_at=max(evidence_times),
+                source="+".join(sources),
+                source_ref=";".join(refs),
                 factors=combined_factors,
             )
         )
@@ -317,15 +417,20 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     payload["stateIntegrity"] = {
         "reconciliationKey": str(weight_evidence["reconciliationKey"]),
         "portfolioStateKey": str(weight_evidence["portfolioStateKey"]),
-        "portfolioValuationEvidenceFingerprint": str(weight_evidence["portfolioValuationEvidenceFingerprint"]),
+        "portfolioValuationEvidenceFingerprint": str(
+            weight_evidence["portfolioValuationEvidenceFingerprint"]
+        ),
         "weightEvidenceKey": str(weight_evidence["weightEvidenceKey"]),
         "marketExposureKeys": market_keys,
+        "priceExposureKeys": price_keys,
         "reconciled": True,
         "tamperVerified": True,
         "gate": "required_before_factor_risk",
         "weightDerivation": "derived_from_reconciled_state_and_sealed_pit_valuation",
         "marketFactorDerivation": "sealed_pit_market_observations_only",
+        "priceFactorDerivation": "sealed_pit_market_observations_or_explicitly_missing",
         "callerSuppliedMarketAccepted": False,
+        "callerSuppliedPriceFactorsAccepted": False,
         "callerSuppliedWeightAccepted": False,
         "cashWeight": weight_evidence["cashWeight"],
     }
