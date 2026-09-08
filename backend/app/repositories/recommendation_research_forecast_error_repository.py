@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any
@@ -46,6 +46,9 @@ class RecommendationResearchForecastErrorRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_research_forecast_error_cycle
                 ON athena_research_forecast_errors(cycle_hash, horizon_seconds, id);
+
+                CREATE INDEX IF NOT EXISTS idx_research_forecast_error_outcome_time
+                ON athena_research_forecast_errors(outcome_hash, created_at, id);
                 """
             )
 
@@ -121,6 +124,35 @@ class RecommendationResearchForecastErrorRepository:
         if row is None:
             raise ValueError("No existe un research forecast error con ese hash.")
         return self.validate_record(self._row(row))
+
+    def get_for_outcomes_at_or_before(
+        self,
+        *,
+        outcome_hashes: list[str] | tuple[str, ...],
+        as_of: datetime,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("as_of debe incluir zona horaria.")
+        normalized_hashes = [self._sha256(value, "outcome_hash") for value in outcome_hashes]
+        if not normalized_hashes:
+            return []
+        if len(normalized_hashes) > 5000:
+            raise ValueError("outcome_hashes supera el límite de 5000.")
+        if len(set(normalized_hashes)) != len(normalized_hashes):
+            raise ValueError("outcome_hashes contiene duplicados.")
+        cutoff = as_of.astimezone(timezone.utc).isoformat()
+        placeholders = ",".join("?" for _ in normalized_hashes)
+        query = f"""
+            SELECT *
+            FROM athena_research_forecast_errors
+            WHERE outcome_hash IN ({placeholders})
+              AND created_at <= ?
+            ORDER BY horizon_seconds ASC, outcome_hash ASC, id ASC
+        """
+        with self._database.connect() as connection:
+            rows = connection.execute(query, (*normalized_hashes, cutoff)).fetchall()
+        return [self.validate_record(self._row(row)) for row in rows]
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         artifact = record.get("artifact")
