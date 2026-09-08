@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 import os
 from pathlib import Path
 import re
@@ -132,6 +133,27 @@ def _assert_reconciliation_contract(payload: dict[str, object]) -> None:
             status_code=500,
             detail="Portfolio state reconciliation intentó promoción automática.",
         )
+    witness = payload.get("snapshotState")
+    if witness is not None:
+        if not isinstance(witness, dict):
+            raise HTTPException(status_code=500, detail="Snapshot reconciliado inválido.")
+        cash = witness.get("cashBalance")
+        if isinstance(cash, bool) or not isinstance(cash, (int, float)) or not math.isfinite(float(cash)):
+            raise HTTPException(status_code=500, detail="Snapshot reconciliado devolvió cash no finito.")
+        positions = witness.get("positions")
+        if not isinstance(positions, list):
+            raise HTTPException(status_code=500, detail="Snapshot reconciliado perdió posiciones.")
+        seen: set[str] = set()
+        for position in positions:
+            if not isinstance(position, dict):
+                raise HTTPException(status_code=500, detail="Snapshot reconciliado contiene posición inválida.")
+            instrument_id = str(position.get("instrumentId") or "").strip()
+            quantity = position.get("quantity")
+            if not instrument_id or instrument_id in seen:
+                raise HTTPException(status_code=500, detail="Snapshot reconciliado perdió identidad única.")
+            if isinstance(quantity, bool) or not isinstance(quantity, (int, float)) or not math.isfinite(float(quantity)):
+                raise HTTPException(status_code=500, detail="Snapshot reconciliado devolvió cantidad no finita.")
+            seen.add(instrument_id)
 
 
 @router.post("/portfolio-state-reconstruction")
@@ -225,6 +247,8 @@ def reconcile_portfolio_state(
     """Reconcile state and persist the exact PIT evidence append-only."""
 
     try:
+        snapshot_observed_at = _aware_utc(request.snapshot.observedAt, "snapshot.observedAt")
+        snapshot_available_at = _aware_utc(request.snapshot.availableAt, "snapshot.availableAt")
         result = RecommendationPortfolioStateReconciliationService().evaluate(
             as_of=_aware_utc(request.asOf, "asOf"),
             item=PortfolioStateReconciliationInput(
@@ -240,20 +264,31 @@ def reconcile_portfolio_state(
                         )
                         for item in request.snapshot.positions
                     ),
-                    observed_at=_aware_utc(
-                        request.snapshot.observedAt,
-                        "snapshot.observedAt",
-                    ),
-                    available_at=_aware_utc(
-                        request.snapshot.availableAt,
-                        "snapshot.availableAt",
-                    ),
+                    observed_at=snapshot_observed_at,
+                    available_at=snapshot_available_at,
                     source=request.snapshot.source,
                     source_ref=request.snapshot.sourceRef,
                 ),
             ),
         )
         payload = result.to_api_dict()
+        payload["snapshotState"] = {
+            "cashBalance": request.snapshot.cashBalance,
+            "positions": [
+                {
+                    "instrumentId": item.instrumentId.strip(),
+                    "quantity": item.quantity,
+                }
+                for item in sorted(
+                    request.snapshot.positions,
+                    key=lambda position: position.instrumentId.strip(),
+                )
+            ],
+            "observedAt": snapshot_observed_at.isoformat(),
+            "availableAt": snapshot_available_at.isoformat(),
+            "source": request.snapshot.source.strip(),
+            "sourceRef": request.snapshot.sourceRef.strip(),
+        }
         _assert_reconciliation_contract(payload)
         record = _reconciliation_repository.append(artifact=payload)
     except HTTPException:
