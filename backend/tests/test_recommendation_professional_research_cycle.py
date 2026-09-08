@@ -173,10 +173,39 @@ def test_cycle_binds_exact_identity_snapshot_and_pit_cutoff() -> None:
     assert result["isWeightingReady"] is False
     assert result["policy"]["automaticTrading"] is False
     assert result["policy"]["automaticProductionPromotion"] is False
+    assert result["integrity"]["algorithm"] == "sha256"
+    assert result["integrity"]["journalSnapshotHash"] == journal.snapshot_hash
+    assert len(result["integrity"]["radarHash"]) == 64
+    assert len(result["integrity"]["devilsAdvocateHash"]) == 64
+    assert len(result["integrity"]["cycleHash"]) == 64
+    assert result["policy"]["tamperEvidence"] == "cycle_hash_binds_canonical_radar_journal_and_devils_advocate_artifacts"
     assert "score" not in result
     assert "expectedReturn" not in result
     assert "probability" not in result
     assert "targetWeight" not in result
+
+
+def test_cycle_integrity_hash_is_deterministic_and_binds_provenance() -> None:
+    radar, journal, devil = _artifacts()
+    service = RecommendationProfessionalResearchCycleService()
+    first = service.bind(
+        instrument_id="instrument-aapl", radar=radar, journal=journal, devils_advocate=devil
+    ).to_api_dict()
+    second = service.bind(
+        instrument_id="instrument-aapl", radar=radar, journal=journal, devils_advocate=devil
+    ).to_api_dict()
+    changed_radar, changed_journal, changed_devil = _artifacts(radar_source="athena-test-mutated")
+    changed = service.bind(
+        instrument_id="instrument-aapl",
+        radar=changed_radar,
+        journal=changed_journal,
+        devils_advocate=changed_devil,
+    ).to_api_dict()
+
+    assert first["integrity"] == second["integrity"]
+    assert first["integrity"]["radarHash"] != changed["integrity"]["radarHash"]
+    assert first["integrity"]["cycleHash"] != changed["integrity"]["cycleHash"]
+    assert first["integrity"]["journalSnapshotHash"] == changed["integrity"]["journalSnapshotHash"]
 
 
 def test_cycle_marks_fx_only_when_explicit_evidence_exists() -> None:
@@ -241,6 +270,8 @@ def test_cycle_api_persists_lineage_and_remains_research_only(
     assert data["advisoryStatus"] == "no_advice"
     assert data["productionEligible"] is False
     assert data["isWeightingReady"] is False
+    assert data["integrity"]["journalSnapshotHash"] == data["journal"]["snapshotHash"]
+    assert len(data["integrity"]["cycleHash"]) == 64
     assert repository.verify_lineage(journal_id="journal-aapl")["revisionCount"] == 1
 
 
