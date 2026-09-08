@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Callable
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any
@@ -15,15 +16,17 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class RecommendationResearchEvaluationSpecificationRepository:
-    """Append-only, tamper-evident storage for ex-ante evaluation specifications."""
+    """Append-only, tamper-evident storage for truly ex-ante evaluation specifications."""
 
     def __init__(
         self,
         database: AthenaDatabase | None = None,
         service: RecommendationResearchEvaluationSpecificationService | None = None,
+        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._service = service or RecommendationResearchEvaluationSpecificationService()
+        self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -56,6 +59,12 @@ class RecommendationResearchEvaluationSpecificationRepository:
         specification_hash = self._sha256(validated["specificationHash"], "specificationHash")
         cycle_hash = self._sha256(validated["cycleHash"], "cycleHash")
         horizon_seconds = int(validated["horizonSeconds"])
+        sealed_at = self._aware_utc(self._now_provider(), "now_provider")
+        period_end = self._aware_iso(validated.get("periodEnd"), "periodEnd")
+        if sealed_at >= period_end:
+            raise ValueError(
+                "El horizonte ya terminó: esta previsión no puede sellarse retrospectivamente como ex-ante."
+            )
         serialized = json.dumps(
             validated,
             sort_keys=True,
@@ -63,7 +72,7 @@ class RecommendationResearchEvaluationSpecificationRepository:
             ensure_ascii=False,
             allow_nan=False,
         )
-        created_at = datetime.now().astimezone().isoformat()
+        created_at = sealed_at.isoformat()
 
         with self._database.connect() as connection:
             existing_id = connection.execute(
@@ -138,6 +147,10 @@ class RecommendationResearchEvaluationSpecificationRepository:
         if not isinstance(artifact, dict):
             raise ValueError("Registro de evaluation specification carece de artifact válido.")
         validated = self._service.validate_artifact(artifact)
+        created_at = self._aware_iso(record.get("created_at"), "created_at")
+        period_end = self._aware_iso(validated.get("periodEnd"), "periodEnd")
+        if created_at >= period_end:
+            raise ValueError("La specification persistida no fue sellada antes de terminar su horizonte.")
         expected = {
             "specification_id": validated["specificationId"],
             "specification_hash": validated["specificationHash"],
@@ -177,3 +190,15 @@ class RecommendationResearchEvaluationSpecificationRepository:
         if not _SHA256_RE.fullmatch(text):
             raise ValueError(f"{field} debe ser SHA-256 hexadecimal válido.")
         return text
+
+    def _aware_iso(self, value: object, field: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} debe ser ISO-8601 válido.") from exc
+        return self._aware_utc(parsed, field)
+
+    def _aware_utc(self, value: datetime, field: str) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return value.astimezone(timezone.utc)
