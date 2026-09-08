@@ -9,6 +9,7 @@ from typing import Any
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _FORBIDDEN_SOURCE_MARKERS = ("financialmodelingprep", "financial modeling prep")
 
 
@@ -53,8 +54,34 @@ class RecommendationResearchOutcomeAttributionService:
             raise ValueError("El outcome no admite atribución causal no validada.")
         if policy.get("residualInterpretation") != "unexplained_not_automatic_stock_selection_alpha":
             raise ValueError("El residual no puede interpretarse automáticamente como alpha.")
-        if policy.get("fx") != "explicit_not_silently_neutralized":
+        if policy.get("fx") != "explicit_currency_pair_bound_fail_closed":
             raise ValueError("El outcome perdió seguridad FX explícita.")
+        if policy.get("identity") != "deterministic_sha256_attribution_key":
+            raise ValueError("El outcome perdió identidad determinista de atribución.")
+        if policy.get("benchmark") != "explicit_market_contribution_identity":
+            raise ValueError("El outcome perdió identidad explícita de benchmark.")
+
+        attribution_key = self._sha256(
+            attribution_payload.get("attributionKey"), "attribution.attributionKey"
+        )
+        benchmark_id = self._text(
+            attribution_payload.get("benchmarkId"), "attribution.benchmarkId"
+        )
+        currency = attribution_payload.get("currency")
+        if not isinstance(currency, dict):
+            raise ValueError("Performance Attribution perdió contrato de moneda.")
+        instrument_currency = self._currency(
+            currency.get("instrumentCurrency"), "attribution.currency.instrumentCurrency"
+        )
+        reporting_currency = self._currency(
+            currency.get("reportingCurrency"), "attribution.currency.reportingCurrency"
+        )
+        fx_pair = self._text(currency.get("fxPair"), "attribution.currency.fxPair").upper()
+        if fx_pair != f"{instrument_currency}/{reporting_currency}":
+            raise ValueError("Performance Attribution devolvió par FX inconsistente.")
+        expected_conversion = instrument_currency != reporting_currency
+        if currency.get("conversionRequired") is not expected_conversion:
+            raise ValueError("Performance Attribution devolvió estado de conversión FX inconsistente.")
 
         instrument_id = self._text(cycle.get("instrumentId"), "cycle.instrumentId")
         symbol = self._text(cycle.get("symbol"), "cycle.symbol").upper()
@@ -115,6 +142,11 @@ class RecommendationResearchOutcomeAttributionService:
             "residualReturn",
         ):
             self._finite(attribution_payload.get(field), field)
+        fx_value = self._finite(attribution_payload.get("fxContribution"), "fxContribution")
+        if not expected_conversion and not math.isclose(
+            fx_value, 0.0, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise ValueError("El outcome contiene FX no nulo sin conversión de moneda.")
         factor_values = attribution_payload.get("factorContributions")
         if not isinstance(factor_values, dict):
             raise ValueError("factorContributions debe ser un objeto.")
@@ -138,8 +170,16 @@ class RecommendationResearchOutcomeAttributionService:
             "outcomeId": outcome_id_normalized,
             "outcomeHash": outcome_hash,
             "cycleHash": cycle_hash,
+            "attributionKey": attribution_key,
             "instrumentId": instrument_id,
             "symbol": symbol,
+            "benchmarkId": benchmark_id,
+            "currency": {
+                "instrumentCurrency": instrument_currency,
+                "reportingCurrency": reporting_currency,
+                "fxPair": fx_pair,
+                "conversionRequired": expected_conversion,
+            },
             "cycleAsOf": cycle_as_of.isoformat(),
             "asOf": outcome_as_of.isoformat(),
             "periodStart": period_start.isoformat(),
@@ -152,7 +192,8 @@ class RecommendationResearchOutcomeAttributionService:
                 "causalClaim": "forbidden_arithmetic_attribution_only",
                 "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
                 "learning": "research_only_not_automatic_model_update",
-                "fx": "explicit_not_silently_neutralized",
+                "fx": "explicit_currency_pair_bound_fail_closed",
+                "identity": "outcome_hash_binds_cycle_hash_and_exact_attribution_payload",
                 "integrity": "outcome_hash_binds_cycle_hash_and_exact_attribution_payload",
             },
         }
@@ -203,6 +244,12 @@ class RecommendationResearchOutcomeAttributionService:
         text = str(value or "").strip().lower()
         if not _SHA256_RE.fullmatch(text):
             raise ValueError(f"{field} debe ser SHA-256 hexadecimal válido.")
+        return text
+
+    def _currency(self, value: object, field: str) -> str:
+        text = self._text(value, field).upper()
+        if _CURRENCY_RE.fullmatch(text) is None:
+            raise ValueError(f"{field} debe ser código de moneda de tres letras.")
         return text
 
     def _text(self, value: object, field: str) -> str:

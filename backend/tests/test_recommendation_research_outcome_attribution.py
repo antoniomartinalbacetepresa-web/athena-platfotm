@@ -129,6 +129,10 @@ def _attribution(*, available_at: datetime = PERIOD_END + timedelta(minutes=1), 
         item=RecommendationPerformanceAttributionInput(
             instrument_id="instrument-aapl",
             symbol="AAPL",
+            instrument_currency="USD",
+            reporting_currency="EUR",
+            fx_pair="USD/EUR",
+            benchmark_id="benchmark:MSCI_WORLD",
             period_start=PERIOD_START,
             period_end=PERIOD_END,
             total_return=ev(0.12, "urn:outcome:total"),
@@ -153,6 +157,10 @@ def _request(cycle_hash: str) -> tuple[str, dict[str, object]]:
         "outcomeId": "30d-v1",
         "instrumentId": "instrument-aapl",
         "symbol": "AAPL",
+        "instrumentCurrency": "USD",
+        "reportingCurrency": "EUR",
+        "fxPair": "USD/EUR",
+        "benchmarkId": "benchmark:MSCI_WORLD",
         "asOf": OUTCOME_AS_OF.isoformat(),
         "periodStart": PERIOD_START.isoformat(),
         "periodEnd": PERIOD_END.isoformat(),
@@ -178,6 +186,10 @@ def test_outcome_binds_posterior_attribution_to_exact_cycle(tmp_path: Path) -> N
     assert result["isWeightingReady"] is False
     assert result["policy"]["automaticTrading"] is False
     assert result["policy"]["learning"] == "research_only_not_automatic_model_update"
+    assert result["policy"]["fx"] == "explicit_currency_pair_bound_fail_closed"
+    assert result["benchmarkId"] == "benchmark:MSCI_WORLD"
+    assert result["currency"]["fxPair"] == "USD/EUR"
+    assert len(result["attributionKey"]) == 64
     assert result["attribution"]["residualReturn"] == pytest.approx(0.04)
 
 
@@ -213,6 +225,16 @@ def test_outcome_rejects_identity_mismatch_and_fmp(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="FMP/Financial Modeling Prep"):
         RecommendationResearchOutcomeAttributionService().bind(
             outcome_id="fmp", cycle_record=cycle, attribution_payload=_attribution(source="Financial Modeling Prep")
+        )
+
+
+def test_outcome_rejects_tampered_fx_contract() -> None:
+    payload = _attribution()
+    payload["currency"]["fxPair"] = "EUR/USD"
+    cycle = {"cycle_hash": "0" * 64, "package": {"cycle": {}}}
+    with pytest.raises(ValueError):
+        RecommendationResearchOutcomeAttributionService().bind(
+            outcome_id="tampered-fx", cycle_record=cycle, attribution_payload=payload
         )
 
 
@@ -264,6 +286,8 @@ def test_outcome_api_persists_and_retrieves_verified_payload(tmp_path: Path, mon
     assert data["persistence"]["appendOnly"] is True
     assert data["persistence"]["tamperEvident"] is True
     assert data["policy"]["automaticTrading"] is False
+    assert data["policy"]["fx"] == "explicit_currency_pair_bound_fail_closed"
+    assert data["currency"]["fxPair"] == "USD/EUR"
 
     fetched = client.get(
         f"/api/v1/recommendations/professional-research/research-cycle/outcome-attribution/{data['outcomeHash']}"

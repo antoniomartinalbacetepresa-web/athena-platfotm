@@ -51,6 +51,10 @@ class ResearchOutcomeAttributionRequest(BaseModel):
     outcomeId: str = Field(min_length=1)
     instrumentId: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
+    instrumentCurrency: str = Field(min_length=3, max_length=3)
+    reportingCurrency: str = Field(min_length=3, max_length=3)
+    fxPair: str = Field(min_length=7, max_length=7)
+    benchmarkId: str = Field(min_length=1)
     asOf: datetime
     periodStart: datetime
     periodEnd: datetime
@@ -102,6 +106,10 @@ def post_research_outcome_attribution(
             item=RecommendationPerformanceAttributionInput(
                 instrument_id=request.instrumentId,
                 symbol=request.symbol,
+                instrument_currency=request.instrumentCurrency,
+                reporting_currency=request.reportingCurrency,
+                fx_pair=request.fxPair,
+                benchmark_id=request.benchmarkId,
                 period_start=period_start,
                 period_end=period_end,
                 total_return=evidence(request.totalReturn, "totalReturn"),
