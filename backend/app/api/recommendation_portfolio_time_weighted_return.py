@@ -7,6 +7,9 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
+    RecommendationPortfolioStateReconciliationRepository,
+)
 from app.services.recommendation_portfolio_time_weighted_return_service import (
     PortfolioCashFlowEvidence,
     PortfolioTwrSegment,
@@ -21,6 +24,7 @@ router = APIRouter(
     tags=["recommendations-professional-research"],
 )
 service = RecommendationPortfolioTimeWeightedReturnService()
+_reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
@@ -52,6 +56,7 @@ class TwrSegmentRequest(BaseModel):
 class PortfolioTimeWeightedReturnRequest(BaseModel):
     portfolioId: str = Field(min_length=1)
     reportingCurrency: str = Field(min_length=3, max_length=3)
+    reconciliationKey: str = Field(min_length=64, max_length=64)
     asOf: datetime
     periodStart: datetime
     periodEnd: datetime
@@ -106,6 +111,17 @@ def _assert_contract(payload: dict[str, object]) -> None:
     currency = payload.get("reportingCurrency")
     if not isinstance(currency, str) or _CURRENCY_RE.fullmatch(currency) is None:
         raise HTTPException(status_code=500, detail="Portfolio TWR devolvió moneda inválida.")
+    state_integrity = payload.get("stateIntegrity")
+    if not isinstance(state_integrity, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió gating de reconciliación.")
+    reconciliation_key = state_integrity.get("reconciliationKey")
+    if not isinstance(reconciliation_key, str) or _SHA256_RE.fullmatch(reconciliation_key) is None:
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió reconciliationKey válido.")
+    if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
+        raise HTTPException(status_code=500, detail="Portfolio TWR aceptó estado no reconciliado/verificado.")
+    if state_integrity.get("gate") != "required_before_measurement":
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió la puerta obligatoria de integridad.")
+
     twr = _finite(payload.get("timeWeightedReturn"), "timeWeightedReturn")
     _finite(payload.get("netExternalFlow"), "netExternalFlow")
     segments = payload.get("segments")
@@ -147,11 +163,23 @@ def _assert_contract(payload: dict[str, object]) -> None:
 def post_portfolio_time_weighted_return(
     request: PortfolioTimeWeightedReturnRequest,
 ) -> dict[str, object]:
-    """Measure historical cash-flow-aware TWR; never advice, sizing or trading."""
+    """Measure historical TWR only after persisted independent state reconciliation."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
     period_end = _aware_utc(request.periodEnd, "periodEnd")
+    try:
+        reconciliation_record = _reconciliation_repository.require_reconciled(
+            reconciliation_key=request.reconciliationKey,
+            portfolio_id=request.portfolioId,
+            reporting_currency=request.reportingCurrency,
+            as_of=as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo verificar reconciliationKey para Portfolio TWR.") from exc
+
     segments: list[PortfolioTwrSegment] = []
     for index, item in enumerate(request.segments):
         start_at = _aware_utc(item.startAt, f"segments[{index}].startAt")
@@ -188,5 +216,12 @@ def post_portfolio_time_weighted_return(
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo calcular Portfolio TWR PIT.") from exc
     payload = result.to_api_dict()
+    payload["stateIntegrity"] = {
+        "reconciliationKey": request.reconciliationKey.lower(),
+        "portfolioStateKey": reconciliation_record["portfolio_state_key"],
+        "reconciled": True,
+        "tamperVerified": True,
+        "gate": "required_before_measurement",
+    }
     _assert_contract(payload)
     return {"data": payload}
