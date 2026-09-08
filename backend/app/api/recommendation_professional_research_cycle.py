@@ -147,7 +147,7 @@ def _assert_lineage(lineage: dict[str, object], *, snapshot_hash: str, journal_i
 
 @router.post("/research-cycle")
 def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) -> dict[str, object]:
-    """Persist and bind one PIT Radar -> Journal -> Devil's Advocate research cycle."""
+    """Validate, then persist, one PIT Radar -> Journal -> Devil's Advocate research cycle."""
 
     try:
         as_of = _aware_utc(request.asOf, "asOf")
@@ -192,14 +192,6 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
             ),
             prior_snapshot_hash=request.priorSnapshotHash,
         )
-        journal_repository.append(snapshot=journal)
-        lineage = journal_repository.verify_lineage(journal_id=journal.journal_id)
-        _assert_lineage(
-            lineage,
-            snapshot_hash=journal.snapshot_hash,
-            journal_id=journal.journal_id,
-            symbol=journal.symbol,
-        )
         devils_advocate = devils_advocate_service.review(
             journal_id=journal.journal_id,
             revision_id=journal.revision_id,
@@ -225,6 +217,20 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
             journal=journal,
             devils_advocate=devils_advocate,
         )
+        payload = result.to_api_dict()
+        _assert_cycle_contract(payload)
+
+        # Persistence is intentionally the final side effect. Invalid PIT,
+        # identity, provenance, FMP, FX-policy, advice, weighting or trading
+        # contracts fail before an append-only journal row can be written.
+        journal_repository.append(snapshot=journal)
+        lineage = journal_repository.verify_lineage(journal_id=journal.journal_id)
+        _assert_lineage(
+            lineage,
+            snapshot_hash=journal.snapshot_hash,
+            journal_id=journal.journal_id,
+            symbol=journal.symbol,
+        )
     except HTTPException:
         raise
     except ValueError as exc:
@@ -232,8 +238,6 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo construir el ciclo profesional PIT.") from exc
 
-    payload = result.to_api_dict()
-    _assert_cycle_contract(payload)
     payload["journalPersistence"] = {
         "appendOnly": True,
         "lineageVerified": True,
