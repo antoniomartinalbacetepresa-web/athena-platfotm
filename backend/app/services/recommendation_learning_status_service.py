@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_research_outcome_oos_cohort_repository import (
+    RecommendationResearchOutcomeOosCohortRepository,
+)
 from app.repositories.recommendation_shadow_live_candidate_repository import (
     RecommendationShadowLiveCandidateRepository,
 )
@@ -37,6 +40,8 @@ class RecommendationLearningStatusService:
         database: AthenaDatabase | None = None,
         shadow_longitudinal_service: RecommendationShadowLiveLongitudinalService
         | None = None,
+        research_outcome_oos_cohort_repository: RecommendationResearchOutcomeOosCohortRepository
+        | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
         if shadow_longitudinal_service is not None:
@@ -56,6 +61,10 @@ class RecommendationLearningStatusService:
                     evaluation_service=evaluation_service,
                 )
             )
+        self._research_outcome_oos_cohort_repository = (
+            research_outcome_oos_cohort_repository
+            or RecommendationResearchOutcomeOosCohortRepository(self._database)
+        )
 
     def get_status(
         self,
@@ -96,6 +105,9 @@ class RecommendationLearningStatusService:
         )
         self._assert_shadow_longitudinal_safe(shadow_live_longitudinal)
 
+        research_outcome_oos = self._research_outcome_oos_status(as_of=as_of)
+        self._assert_research_outcome_oos_safe(research_outcome_oos)
+
         return {
             "status": "learning_diagnostics_only",
             "asOf": schedule.as_of,
@@ -108,12 +120,130 @@ class RecommendationLearningStatusService:
             "evaluationSchedule": schedule.to_api_dict(),
             "drift": drift,
             "shadowLiveLongitudinal": shadow_live_longitudinal,
+            "researchOutcomeOos": research_outcome_oos,
             "advisoryStatus": "no_advice",
             "productionEligible": False,
+            "isWeightingReady": False,
             "automaticModelMutation": False,
             "automaticProductionPromotion": False,
             "automaticTrading": False,
         }
+
+    def _research_outcome_oos_status(self, *, as_of: datetime) -> dict[str, Any]:
+        record = self._research_outcome_oos_cohort_repository.get_latest_at_or_before(
+            as_of=as_of
+        )
+        if record is None:
+            return {
+                "status": "research_outcome_oos_evidence_pending",
+                "cohortId": None,
+                "cohortHash": None,
+                "cohortAsOf": None,
+                "observationCount": 0,
+                "distinctResolvedIssuerCount": 0,
+                "unresolvedIssuerObservationCount": 0,
+                "horizonCount": 0,
+                "horizons": {},
+                "advisoryStatus": "no_advice",
+                "productionEligible": False,
+                "isWeightingReady": False,
+                "recommendationCandidateReady": False,
+                "productionLearningEligible": False,
+                "policy": {
+                    "source": "latest_tamper_verified_persisted_professional_research_outcome_cohort_at_or_before_as_of",
+                    "availability": "no_eligible_persisted_cohort_at_cutoff",
+                    "learningUse": "diagnostic_only_not_automatic_model_update",
+                    "automaticModelMutation": False,
+                    "automaticProductionPromotion": False,
+                    "automaticTrading": False,
+                },
+            }
+
+        artifact = record.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValueError("La OOS cohort persistida carece de artifact válido.")
+        horizons = artifact.get("horizons")
+        if not isinstance(horizons, dict):
+            raise ValueError("La OOS cohort persistida carece de horizontes válidos.")
+        horizon_summary: dict[str, dict[str, Any]] = {}
+        for key, value in sorted(horizons.items()):
+            if not isinstance(value, dict):
+                raise ValueError("La OOS cohort contiene un horizonte inválido.")
+            horizon_summary[str(key)] = {
+                "horizonSeconds": value.get("horizonSeconds"),
+                "horizonDays": value.get("horizonDays"),
+                "observationCount": value.get("observationCount"),
+                "resolvedIssuerObservationCount": value.get(
+                    "resolvedIssuerObservationCount"
+                ),
+                "unresolvedIssuerObservationCount": value.get(
+                    "unresolvedIssuerObservationCount"
+                ),
+                "distinctResolvedIssuerCount": value.get(
+                    "distinctResolvedIssuerCount"
+                ),
+                "maximumObservationsPerResolvedIssuer": value.get(
+                    "maximumObservationsPerResolvedIssuer"
+                ),
+                "metrics": value.get("metrics"),
+            }
+
+        return {
+            "status": "research_outcome_oos_evidence_available",
+            "cohortId": artifact.get("cohortId"),
+            "cohortHash": artifact.get("cohortHash"),
+            "cohortAsOf": artifact.get("asOf"),
+            "observationCount": artifact.get("observationCount"),
+            "distinctResolvedIssuerCount": artifact.get(
+                "distinctResolvedIssuerCount"
+            ),
+            "unresolvedIssuerObservationCount": artifact.get(
+                "unresolvedIssuerObservationCount"
+            ),
+            "horizonCount": artifact.get("horizonCount"),
+            "horizons": horizon_summary,
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "recommendationCandidateReady": False,
+            "productionLearningEligible": False,
+            "policy": {
+                "source": "latest_tamper_verified_persisted_professional_research_outcome_cohort_at_or_before_as_of",
+                "availability": "cohort_hash_reverified_before_diagnostic_read",
+                "learningUse": "diagnostic_only_not_automatic_model_update",
+                "issuerDiversity": "reported_not_treated_as_statistical_independence",
+                "horizonPooling": "forbidden",
+                "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
+                "automaticModelMutation": False,
+                "automaticProductionPromotion": False,
+                "automaticTrading": False,
+            },
+        }
+
+    def _assert_research_outcome_oos_safe(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            raise ValueError("El diagnóstico OOS profesional debe ser un objeto.")
+        if payload.get("advisoryStatus") != "no_advice":
+            raise ValueError("El diagnóstico OOS profesional debe mantener no_advice.")
+        for key in (
+            "productionEligible",
+            "isWeightingReady",
+            "recommendationCandidateReady",
+            "productionLearningEligible",
+        ):
+            if payload.get(key) is not False:
+                raise ValueError(f"El diagnóstico OOS profesional intentó activar {key}.")
+        policy = payload.get("policy")
+        if not isinstance(policy, dict):
+            raise ValueError("El diagnóstico OOS profesional carece de policy.")
+        if policy.get("learningUse") != "diagnostic_only_not_automatic_model_update":
+            raise ValueError("El diagnóstico OOS intentó habilitar aprendizaje automático.")
+        if policy.get("automaticModelMutation") is not False:
+            raise ValueError("El diagnóstico OOS no puede mutar modelos automáticamente.")
+        if policy.get("automaticProductionPromotion") is not False:
+            raise ValueError("El diagnóstico OOS no puede promover producción.")
+        if policy.get("automaticTrading") is not False:
+            raise ValueError("El diagnóstico OOS no puede ejecutar operaciones.")
 
     def _assert_shadow_longitudinal_safe(self, payload: object) -> None:
         if not isinstance(payload, dict):
