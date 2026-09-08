@@ -62,7 +62,7 @@ def request_body() -> dict[str, object]:
             },
             {
                 "weight": evidence(0.4, "weight:b", day=1),
-                "attribution": child("inst-b", "BBB", -0.02, -0.01),
+                "attribution": child("inst-b", "BBB", -0.04, -0.01),
             },
         ],
     }
