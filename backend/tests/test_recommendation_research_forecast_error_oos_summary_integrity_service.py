@@ -5,6 +5,10 @@ import json
 
 import pytest
 
+from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_research_forecast_error_oos_summary_repository import (
+    RecommendationResearchForecastErrorOosSummaryRepository,
+)
 from app.services.recommendation_research_forecast_error_oos_summary_integrity_service import (
     RecommendationResearchForecastErrorOosSummaryIntegrityService,
 )
@@ -167,3 +171,48 @@ def test_integrity_validator_rejects_rehashed_error_arithmetic_tampering() -> No
 
     with pytest.raises(ValueError, match="signedError no reconcilia"):
         RecommendationResearchForecastErrorOosSummaryIntegrityService().validate_artifact(artifact)
+
+
+def test_repository_round_trip_revalidates_semantic_integrity(tmp_path) -> None:
+    repository = RecommendationResearchForecastErrorOosSummaryRepository(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+    artifact = _artifact()
+
+    persisted = repository.append(artifact=artifact)
+    loaded = repository.get_by_hash(summary_hash=str(artifact["summaryHash"]))
+
+    assert persisted["summary_hash"] == artifact["summaryHash"]
+    assert loaded["artifact"] == artifact
+
+
+def test_repository_rejects_rehashed_semantic_tampering_in_sqlite(tmp_path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    repository = RecommendationResearchForecastErrorOosSummaryRepository(database=database)
+    artifact = _artifact()
+    repository.append(artifact=artifact)
+
+    tampered = json.loads(json.dumps(artifact))
+    tampered["metrics"]["meanAbsoluteError"] = 0.0
+    _recompute_hash(tampered)
+    tampered_hash = str(tampered["summaryHash"])
+    serialized = json.dumps(
+        tampered,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE athena_research_forecast_error_oos_summaries
+            SET summary_hash = ?, artifact_json = ?
+            WHERE summary_hash = ?
+            """,
+            (tampered_hash, serialized, str(artifact["summaryHash"])),
+        )
+
+    with pytest.raises(ValueError, match="meanAbsoluteError no reconcilia"):
+        repository.get_by_hash(summary_hash=tampered_hash)
