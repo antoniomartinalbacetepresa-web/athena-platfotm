@@ -24,6 +24,9 @@ from app.api.recommendation_investment_journal import (
 from app.api.recommendation_performance_attribution import (
     router as recommendation_performance_attribution_router,
 )
+from app.api.recommendation_portfolio_performance_attribution import (
+    router as recommendation_portfolio_performance_attribution_router,
+)
 from app.api.recommendation_production import router as recommendation_production_router
 from app.api.recommendation_professional_research import (
     router as recommendation_professional_research_router,
@@ -86,6 +89,7 @@ app.include_router(recommendation_catalysts_router)
 app.include_router(recommendation_factor_risk_router)
 app.include_router(recommendation_factor_risk_candidate_impact_router)
 app.include_router(recommendation_performance_attribution_router)
+app.include_router(recommendation_portfolio_performance_attribution_router)
 app.include_router(recommendation_investment_journal_router)
 app.include_router(recommendation_devils_advocate_router)
 app.include_router(recommendation_athena_radar_router)
