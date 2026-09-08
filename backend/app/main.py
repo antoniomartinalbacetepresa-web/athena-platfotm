@@ -21,6 +21,9 @@ from app.api.recommendation_factor_risk_candidate_impact import (
 from app.api.recommendation_investment_journal import (
     router as recommendation_investment_journal_router,
 )
+from app.api.recommendation_market_factor_exposure import (
+    router as recommendation_market_factor_exposure_router,
+)
 from app.api.recommendation_performance_attribution import (
     router as recommendation_performance_attribution_router,
 )
@@ -100,6 +103,7 @@ app.include_router(recommendation_thesis_invalidation_router)
 app.include_router(recommendation_catalysts_router)
 app.include_router(recommendation_factor_risk_router)
 app.include_router(recommendation_factor_risk_candidate_impact_router)
+app.include_router(recommendation_market_factor_exposure_router)
 app.include_router(recommendation_performance_attribution_router)
 app.include_router(recommendation_portfolio_performance_attribution_router)
 app.include_router(recommendation_portfolio_time_weighted_return_router)
