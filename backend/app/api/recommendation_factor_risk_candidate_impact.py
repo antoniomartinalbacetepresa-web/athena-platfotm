@@ -4,12 +4,21 @@ import math
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
+    RecommendationPortfolioStateReconciliationRepository,
+)
+from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
+    RecommendationPortfolioValuationEvidenceRepository,
+)
 from app.services.recommendation_factor_risk_candidate_impact_service import (
     RecommendationFactorRiskCandidateImpactService,
 )
 from app.services.recommendation_factor_risk_service import FactorRiskPositionInput
+from app.services.recommendation_reconciled_portfolio_weight_service import (
+    RecommendationReconciledPortfolioWeightService,
+)
 
 
 router = APIRouter(
@@ -18,12 +27,28 @@ router = APIRouter(
 )
 
 candidate_impact_service = RecommendationFactorRiskCandidateImpactService()
+_reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
+_valuation_repository = RecommendationPortfolioValuationEvidenceRepository()
+_weight_service = RecommendationReconciledPortfolioWeightService()
 
 
-class FactorRiskPositionRequest(BaseModel):
+class BaselineFactorExposureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     instrumentId: int = Field(gt=0)
     symbol: str = Field(min_length=1)
-    weight: float = Field(ge=0.0, le=1.0)
+    exposureAvailableAt: datetime
+    source: str = Field(min_length=1)
+    sourceRef: str = Field(min_length=1)
+    factors: dict[str, float] = Field(min_length=1)
+
+
+class CandidateFactorExposureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrumentId: int = Field(gt=0)
+    symbol: str = Field(min_length=1)
+    weight: float = Field(gt=0.0, le=1.0)
     exposureAvailableAt: datetime
     source: str = Field(min_length=1)
     sourceRef: str = Field(min_length=1)
@@ -31,9 +56,15 @@ class FactorRiskPositionRequest(BaseModel):
 
 
 class FactorRiskCandidateImpactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    portfolioId: str = Field(min_length=1)
+    reportingCurrency: str = Field(min_length=3, max_length=3)
+    reconciliationKey: str = Field(min_length=64, max_length=64)
+    portfolioValuationEvidenceFingerprint: str = Field(min_length=64, max_length=64)
     asOf: datetime
-    positions: list[FactorRiskPositionRequest] = Field(min_length=1, max_length=499)
-    candidate: FactorRiskPositionRequest
+    positions: list[BaselineFactorExposureRequest] = Field(min_length=1, max_length=499)
+    candidate: CandidateFactorExposureRequest
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -50,18 +81,6 @@ def _finite_number(value: object) -> bool:
     )
 
 
-def _to_input(item: FactorRiskPositionRequest, prefix: str) -> FactorRiskPositionInput:
-    return FactorRiskPositionInput(
-        instrument_id=item.instrumentId,
-        symbol=item.symbol,
-        weight=item.weight,
-        exposure_available_at=_aware_utc(item.exposureAvailableAt, f"{prefix}.exposureAvailableAt"),
-        source=item.source,
-        source_ref=item.sourceRef,
-        factors=dict(item.factors),
-    )
-
-
 def _assert_contract(payload: dict[str, object]) -> None:
     if payload.get("advisoryStatus") != "no_advice":
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact violó no-advice.")
@@ -69,6 +88,27 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact intentó habilitar producción.")
     if payload.get("isWeightingReady") is not False:
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact intentó habilitar ponderación.")
+
+    state_integrity = payload.get("stateIntegrity")
+    if not isinstance(state_integrity, dict):
+        raise HTTPException(status_code=500, detail="Candidate Impact perdió stateIntegrity.")
+    if state_integrity.get("baselineWeightDerivation") != "derived_from_reconciled_state_and_sealed_pit_valuation":
+        raise HTTPException(status_code=500, detail="Candidate Impact no derivó baseline desde evidencia reconciliada.")
+    if state_integrity.get("baselineCallerSuppliedWeightAccepted") is not False:
+        raise HTTPException(status_code=500, detail="Candidate Impact aceptó pesos baseline arbitrarios.")
+    if state_integrity.get("candidateWeightMeaning") != "explicit_hypothetical_cash_funded_scenario_not_sizing_advice":
+        raise HTTPException(status_code=500, detail="Candidate Impact perdió semántica hipotética del candidato.")
+    if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
+        raise HTTPException(status_code=500, detail="Candidate Impact aceptó estado no reconciliado/verificado.")
+    for field in (
+        "reconciliationKey",
+        "portfolioStateKey",
+        "portfolioValuationEvidenceFingerprint",
+        "weightEvidenceKey",
+    ):
+        value = state_integrity.get(field)
+        if not isinstance(value, str) or len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+            raise HTTPException(status_code=500, detail=f"Candidate Impact perdió {field} válido.")
 
     policy = payload.get("policy")
     if not isinstance(policy, dict):
@@ -110,6 +150,13 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact perdió el incremento explícito de inversión.")
     if float(payload["postCashWeight"]) >= float(payload["baselineCashWeight"]):
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact no refleja financiación desde efectivo.")
+    if not math.isclose(
+        float(payload["baselineCashWeight"]),
+        float(state_integrity.get("baselineCashWeight")),
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise HTTPException(status_code=500, detail="Candidate Impact no reconcilió cash baseline derivado.")
 
     comparable = payload.get("comparableFactors")
     coverage_lost = payload.get("coverageLostFactors")
@@ -163,16 +210,113 @@ def _assert_contract(payload: dict[str, object]) -> None:
 def post_factor_risk_candidate_impact(
     request: FactorRiskCandidateImpactRequest,
 ) -> dict[str, object]:
-    """Measure explicit cash-funded candidate factor impact without sizing advice."""
+    """Measure a hypothetical cash-funded candidate against a reconciled PIT baseline."""
 
     as_of = _aware_utc(request.asOf, "asOf")
-    positions = tuple(_to_input(item, "positions") for item in request.positions)
-    candidate = _to_input(request.candidate, "candidate")
+    try:
+        reconciliation_record = _reconciliation_repository.require_reconciled(
+            reconciliation_key=request.reconciliationKey,
+            portfolio_id=request.portfolioId,
+            reporting_currency=request.reportingCurrency,
+            as_of=as_of,
+        )
+        valuation_record = _valuation_repository.get(
+            valuation_fingerprint=request.portfolioValuationEvidenceFingerprint,
+        )
+        if valuation_record is None:
+            raise ValueError("No existe valoración PIT sellada con ese fingerprint.")
+        _valuation_repository.validate_record(valuation_record)
+        weight_evidence = _weight_service.build(
+            reconciliation_record=reconciliation_record,
+            valuation_record=valuation_record,
+        )
+        _weight_service.validate_artifact(weight_evidence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo derivar baseline reconciliado para Candidate Impact.",
+        ) from exc
+
+    if weight_evidence["portfolioId"] != request.portfolioId.strip():
+        raise HTTPException(status_code=400, detail="Weight evidence pertenece a otra cartera.")
+    if weight_evidence["reportingCurrency"] != request.reportingCurrency.strip().upper():
+        raise HTTPException(status_code=400, detail="Weight evidence usa otra moneda.")
+    if datetime.fromisoformat(str(weight_evidence["asOf"]).replace("Z", "+00:00")) != as_of:
+        raise HTTPException(status_code=400, detail="Weight evidence pertenece a otro asOf.")
+
+    derived_positions = weight_evidence.get("positions")
+    if not isinstance(derived_positions, list):
+        raise HTTPException(status_code=500, detail="Weight evidence perdió positions.")
+    by_id: dict[int, dict[str, object]] = {}
+    for position in derived_positions:
+        if not isinstance(position, dict):
+            raise HTTPException(status_code=500, detail="Weight evidence contiene posición inválida.")
+        instrument_id = position.get("instrumentId")
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise HTTPException(status_code=500, detail="Weight evidence perdió instrumentId.")
+        if instrument_id in by_id:
+            raise HTTPException(status_code=500, detail="Weight evidence duplicó instrumentId.")
+        by_id[instrument_id] = position
+
+    request_ids = [item.instrumentId for item in request.positions]
+    if len(request_ids) != len(set(request_ids)):
+        raise HTTPException(status_code=400, detail="Baseline factor exposures contiene instrumentId duplicado.")
+    if set(request_ids) != set(by_id):
+        missing = sorted(set(by_id) - set(request_ids))
+        extra = sorted(set(request_ids) - set(by_id))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Baseline factor identity mismatch; missing={missing}, extra={extra}.",
+        )
+    if request.candidate.instrumentId in by_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Candidate instrumentId ya pertenece a la cartera baseline; este endpoint no modela aumentos de posición existentes.",
+        )
+
+    positions: list[FactorRiskPositionInput] = []
+    for item in request.positions:
+        derived = by_id[item.instrumentId]
+        symbol = str(derived.get("symbol") or "").strip().upper()
+        if item.symbol.strip().upper() != symbol:
+            raise HTTPException(status_code=400, detail="Símbolo baseline no coincide con valoración canónica.")
+        weight = derived.get("weight")
+        if not _finite_number(weight):
+            raise HTTPException(status_code=500, detail="Weight evidence devolvió peso baseline no finito.")
+        positions.append(
+            FactorRiskPositionInput(
+                instrument_id=item.instrumentId,
+                symbol=symbol,
+                weight=float(weight),
+                exposure_available_at=_aware_utc(
+                    item.exposureAvailableAt,
+                    "positions.exposureAvailableAt",
+                ),
+                source=item.source,
+                source_ref=item.sourceRef,
+                factors=dict(item.factors),
+            )
+        )
+
+    candidate = FactorRiskPositionInput(
+        instrument_id=request.candidate.instrumentId,
+        symbol=request.candidate.symbol,
+        weight=request.candidate.weight,
+        exposure_available_at=_aware_utc(
+            request.candidate.exposureAvailableAt,
+            "candidate.exposureAvailableAt",
+        ),
+        source=request.candidate.source,
+        source_ref=request.candidate.sourceRef,
+        factors=dict(request.candidate.factors),
+    )
 
     try:
         result = candidate_impact_service.evaluate(
             as_of=as_of,
-            positions=positions,
+            positions=tuple(positions),
             candidate=candidate,
         )
     except ValueError as exc:
@@ -186,5 +330,19 @@ def post_factor_risk_candidate_impact(
     payload = result.to_api_dict()
     if not isinstance(payload, dict):
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact devolvió contrato inválido.")
+    payload["stateIntegrity"] = {
+        "reconciliationKey": str(weight_evidence["reconciliationKey"]),
+        "portfolioStateKey": str(weight_evidence["portfolioStateKey"]),
+        "portfolioValuationEvidenceFingerprint": str(
+            weight_evidence["portfolioValuationEvidenceFingerprint"]
+        ),
+        "weightEvidenceKey": str(weight_evidence["weightEvidenceKey"]),
+        "reconciled": True,
+        "tamperVerified": True,
+        "baselineCashWeight": weight_evidence["cashWeight"],
+        "baselineWeightDerivation": "derived_from_reconciled_state_and_sealed_pit_valuation",
+        "baselineCallerSuppliedWeightAccepted": False,
+        "candidateWeightMeaning": "explicit_hypothetical_cash_funded_scenario_not_sizing_advice",
+    }
     _assert_contract(payload)
     return {"data": payload}
