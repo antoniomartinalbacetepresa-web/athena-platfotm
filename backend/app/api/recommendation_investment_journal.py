@@ -105,7 +105,10 @@ def _assert_contract(payload: dict[str, object]) -> None:
     if policy.get("automaticProductionPromotion") is not False:
         raise HTTPException(status_code=500, detail="Investment Journal intentó promover producción automáticamente.")
     if policy.get("persistentAppendOnlyStorage") is not False:
-        raise HTTPException(status_code=500, detail="El snapshot aislado afirmó persistencia que no le corresponde.")
+        raise HTTPException(
+            status_code=500,
+            detail="El snapshot aislado afirmó persistencia append-only que no le corresponde.",
+        )
     if policy.get("immutability") != "snapshot_hash_is_sha256_of_canonical_snapshot_payload":
         raise HTTPException(status_code=500, detail="Investment Journal perdió la garantía de fingerprint canónico.")
 
