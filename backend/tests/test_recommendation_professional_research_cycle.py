@@ -278,5 +278,5 @@ def test_cycle_api_contract_fails_closed_on_production_or_weighting() -> None:
 
 
 def test_cycle_route_is_registered() -> None:
-    paths = {route.path for route in app.routes}
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
     assert "/api/v1/recommendations/professional-research/research-cycle" in paths
