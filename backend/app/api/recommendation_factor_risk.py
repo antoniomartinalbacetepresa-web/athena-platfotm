@@ -5,14 +5,20 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
     RecommendationPortfolioStateReconciliationRepository,
 )
+from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
+    RecommendationPortfolioValuationEvidenceRepository,
+)
 from app.services.recommendation_factor_risk_service import (
     FactorRiskPositionInput,
     RecommendationFactorRiskService,
+)
+from app.services.recommendation_reconciled_portfolio_weight_service import (
+    RecommendationReconciledPortfolioWeightService,
 )
 
 
@@ -23,13 +29,16 @@ router = APIRouter(
 
 factor_risk_service = RecommendationFactorRiskService()
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
+_valuation_repository = RecommendationPortfolioValuationEvidenceRepository()
+_weight_service = RecommendationReconciledPortfolioWeightService()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class FactorRiskPositionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     instrumentId: int = Field(gt=0)
     symbol: str = Field(min_length=1)
-    weight: float = Field(ge=0.0, le=1.0)
     exposureAvailableAt: datetime
     source: str = Field(min_length=1)
     sourceRef: str = Field(min_length=1)
@@ -37,9 +46,12 @@ class FactorRiskPositionRequest(BaseModel):
 
 
 class FactorRiskResearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     portfolioId: str = Field(min_length=1)
     reportingCurrency: str = Field(min_length=3, max_length=3)
     reconciliationKey: str = Field(min_length=64, max_length=64)
+    portfolioValuationEvidenceFingerprint: str = Field(min_length=64, max_length=64)
     asOf: datetime
     positions: list[FactorRiskPositionRequest] = Field(min_length=1, max_length=500)
 
@@ -73,15 +85,20 @@ def _assert_contract(payload: dict[str, object]) -> None:
     state_integrity = payload.get("stateIntegrity")
     if not isinstance(state_integrity, dict):
         raise HTTPException(status_code=500, detail="Factor Risk perdió gating de reconciliación.")
-    reconciliation_key = state_integrity.get("reconciliationKey")
-    if not isinstance(reconciliation_key, str) or _SHA256_RE.fullmatch(reconciliation_key) is None:
-        raise HTTPException(status_code=500, detail="Factor Risk perdió reconciliationKey válido.")
+    for field in ("reconciliationKey", "portfolioStateKey", "weightEvidenceKey", "portfolioValuationEvidenceFingerprint"):
+        value = state_integrity.get(field)
+        if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
+            raise HTTPException(status_code=500, detail=f"Factor Risk perdió {field} válido.")
     if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
         raise HTTPException(status_code=500, detail="Factor Risk aceptó estado no reconciliado/verificado.")
     if state_integrity.get("gate") != "required_before_factor_risk":
         raise HTTPException(status_code=500, detail="Factor Risk perdió la puerta obligatoria de integridad.")
-    if state_integrity.get("weightDerivation") != "not_yet_derived_from_reconciled_state":
-        raise HTTPException(status_code=500, detail="Factor Risk sobreafirmó derivación de pesos desde el estado.")
+    if state_integrity.get("weightDerivation") != "derived_from_reconciled_state_and_sealed_pit_valuation":
+        raise HTTPException(status_code=500, detail="Factor Risk no derivó pesos desde evidencia reconciliada/PIT.")
+    if state_integrity.get("callerSuppliedWeightAccepted") is not False:
+        raise HTTPException(status_code=500, detail="Factor Risk aceptó pesos arbitrarios del caller.")
+    if not _finite_number(state_integrity.get("cashWeight")):
+        raise HTTPException(status_code=500, detail="Factor Risk perdió cashWeight derivado.")
 
     policy = payload.get("policy")
     if not isinstance(policy, dict):
@@ -114,6 +131,8 @@ def _assert_contract(payload: dict[str, object]) -> None:
             raise HTTPException(status_code=500, detail="Factor Risk devolvió métricas no finitas.")
     if abs(float(invested) + float(cash) - 1.0) > 1e-9:
         raise HTTPException(status_code=500, detail="Factor Risk devolvió pesos de cartera incoherentes.")
+    if not math.isclose(float(cash), float(state_integrity["cashWeight"]), rel_tol=0.0, abs_tol=1e-9):
+        raise HTTPException(status_code=500, detail="Factor Risk no reconcilió cashWeight con la evidencia derivada.")
 
     exposures = payload.get("weightedExposures")
     coverage = payload.get("factorCoverageWeights")
@@ -192,7 +211,7 @@ def _assert_contract(payload: dict[str, object]) -> None:
 
 @router.post("/factor-risk")
 def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
-    """Measure PIT factor exposure only after persisted independent state reconciliation."""
+    """Measure PIT factor exposure using only weights derived from reconciled portfolio evidence."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     try:
@@ -202,21 +221,74 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
             reporting_currency=request.reportingCurrency,
             as_of=as_of,
         )
+        valuation_record = _valuation_repository.get(
+            valuation_fingerprint=request.portfolioValuationEvidenceFingerprint,
+        )
+        if valuation_record is None:
+            raise ValueError("No existe valoración PIT sellada con ese fingerprint.")
+        _valuation_repository.validate_record(valuation_record)
+        weight_evidence = _weight_service.build(
+            reconciliation_record=reconciliation_record,
+            valuation_record=valuation_record,
+        )
+        _weight_service.validate_artifact(weight_evidence)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail="No se pudo verificar reconciliationKey para Factor Risk.",
+            detail="No se pudo verificar/derivar la evidencia de pesos para Factor Risk.",
         ) from exc
+
+    if weight_evidence["portfolioId"] != request.portfolioId.strip():
+        raise HTTPException(status_code=400, detail="Weight evidence pertenece a otra cartera.")
+    if weight_evidence["reportingCurrency"] != request.reportingCurrency.strip().upper():
+        raise HTTPException(status_code=400, detail="Weight evidence usa otra moneda de reporting.")
+    if datetime.fromisoformat(str(weight_evidence["asOf"]).replace("Z", "+00:00")) != as_of:
+        raise HTTPException(status_code=400, detail="Weight evidence pertenece a otro asOf.")
+
+    derived_positions = weight_evidence.get("positions")
+    if not isinstance(derived_positions, list):
+        raise HTTPException(status_code=500, detail="Weight evidence perdió positions.")
+    weights_by_id: dict[int, dict[str, object]] = {}
+    for item in derived_positions:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=500, detail="Weight evidence contiene posición inválida.")
+        instrument_id = item.get("instrumentId")
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise HTTPException(status_code=500, detail="Weight evidence perdió instrumentId canónico.")
+        if instrument_id in weights_by_id:
+            raise HTTPException(status_code=500, detail="Weight evidence duplicó instrumentId.")
+        weights_by_id[instrument_id] = item
+
+    request_ids = [item.instrumentId for item in request.positions]
+    if len(request_ids) != len(set(request_ids)):
+        raise HTTPException(status_code=400, detail="Factor Risk request contiene instrumentId duplicado.")
+    if set(request_ids) != set(weights_by_id):
+        missing = sorted(set(weights_by_id) - set(request_ids))
+        extra = sorted(set(request_ids) - set(weights_by_id))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Factor exposure identity mismatch; missing={missing}, extra={extra}.",
+        )
 
     positions: list[FactorRiskPositionInput] = []
     for item in request.positions:
+        derived = weights_by_id[item.instrumentId]
+        derived_symbol = str(derived.get("symbol") or "").strip().upper()
+        if item.symbol.strip().upper() != derived_symbol:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Símbolo de instrumentId={item.instrumentId} no coincide con la valoración canónica.",
+            )
+        weight = derived.get("weight")
+        if not _finite_number(weight):
+            raise HTTPException(status_code=500, detail="Weight evidence devolvió weight no finito.")
         positions.append(
             FactorRiskPositionInput(
                 instrument_id=item.instrumentId,
-                symbol=item.symbol,
-                weight=item.weight,
+                symbol=derived_symbol,
+                weight=float(weight),
                 exposure_available_at=_aware_utc(
                     item.exposureAvailableAt,
                     "positions.exposureAvailableAt",
@@ -246,12 +318,18 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     payload["portfolioId"] = request.portfolioId.strip()
     payload["reportingCurrency"] = request.reportingCurrency.strip().upper()
     payload["stateIntegrity"] = {
-        "reconciliationKey": request.reconciliationKey.lower(),
-        "portfolioStateKey": reconciliation_record["portfolio_state_key"],
+        "reconciliationKey": str(weight_evidence["reconciliationKey"]),
+        "portfolioStateKey": str(weight_evidence["portfolioStateKey"]),
+        "portfolioValuationEvidenceFingerprint": str(
+            weight_evidence["portfolioValuationEvidenceFingerprint"]
+        ),
+        "weightEvidenceKey": str(weight_evidence["weightEvidenceKey"]),
         "reconciled": True,
         "tamperVerified": True,
         "gate": "required_before_factor_risk",
-        "weightDerivation": "not_yet_derived_from_reconciled_state",
+        "weightDerivation": "derived_from_reconciled_state_and_sealed_pit_valuation",
+        "callerSuppliedWeightAccepted": False,
+        "cashWeight": weight_evidence["cashWeight"],
     }
     _assert_contract(payload)
     return {"data": payload}
