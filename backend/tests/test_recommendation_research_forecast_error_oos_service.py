@@ -89,7 +89,7 @@ def _error(
     artifact = {
         "module": "research_forecast_error",
         "errorHash": (error_seed * 64)[:64],
-        "specificationHash": ((error_seed + "s") * 64)[:64],
+        "specificationHash": ((error_seed + "a") * 64)[:64],
         "outcomeHash": row["outcomeHash"],
         "cycleHash": row["cycleHash"],
         "instrumentId": row["instrumentId"],
