@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.repositories.recommendation_investment_journal_repository import (
+    RecommendationInvestmentJournalRepository,
+)
 from app.services.recommendation_investment_journal_service import (
     InvestmentJournalReferenceInput,
     RecommendationInvestmentJournalService,
@@ -18,6 +21,7 @@ router = APIRouter(
 )
 
 investment_journal_service = RecommendationInvestmentJournalService()
+investment_journal_repository = RecommendationInvestmentJournalRepository()
 
 
 class InvestmentJournalReferenceRequest(BaseModel):
@@ -43,6 +47,29 @@ def _aware_utc(value: datetime, field: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise HTTPException(status_code=400, detail=f"{field} debe incluir zona horaria.")
     return value.astimezone(timezone.utc)
+
+
+def _freeze_request(request: InvestmentJournalSnapshotRequest):
+    references = tuple(
+        InvestmentJournalReferenceInput(
+            reference_id=item.referenceId,
+            kind=item.kind,
+            available_at=_aware_utc(item.availableAt, "references.availableAt"),
+            source=item.source,
+            source_ref=item.sourceRef,
+        )
+        for item in request.references
+    )
+    return investment_journal_service.freeze_snapshot(
+        journal_id=request.journalId,
+        revision_id=request.revisionId,
+        symbol=request.symbol,
+        recorded_at=_aware_utc(request.recordedAt, "recordedAt"),
+        as_of=_aware_utc(request.asOf, "asOf"),
+        thesis=request.thesis,
+        references=references,
+        prior_snapshot_hash=request.priorSnapshotHash,
+    )
 
 
 def _assert_contract(payload: dict[str, object]) -> None:
@@ -78,36 +105,39 @@ def _assert_contract(payload: dict[str, object]) -> None:
     if policy.get("automaticProductionPromotion") is not False:
         raise HTTPException(status_code=500, detail="Investment Journal intentó promover producción automáticamente.")
     if policy.get("persistentAppendOnlyStorage") is not False:
-        raise HTTPException(status_code=500, detail="Investment Journal afirmó persistencia append-only no implementada.")
+        raise HTTPException(status_code=500, detail="El snapshot aislado afirmó persistencia que no le corresponde.")
     if policy.get("immutability") != "snapshot_hash_is_sha256_of_canonical_snapshot_payload":
         raise HTTPException(status_code=500, detail="Investment Journal perdió la garantía de fingerprint canónico.")
+
+
+def _assert_lineage_contract(payload: dict[str, object]) -> None:
+    if payload.get("status") != "lineage_verified":
+        raise HTTPException(status_code=500, detail="Investment Journal no verificó el lineage persistido.")
+    if payload.get("advisoryStatus") != "no_advice":
+        raise HTTPException(status_code=500, detail="El lineage violó el contrato no-advice.")
+    if payload.get("productionEligible") is not False or payload.get("isWeightingReady") is not False:
+        raise HTTPException(status_code=500, detail="El lineage intentó habilitar producción o ponderación.")
+    count = payload.get("revisionCount")
+    if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+        raise HTTPException(status_code=500, detail="El lineage devolvió un número de revisiones inválido.")
+    head = payload.get("headSnapshotHash")
+    if not isinstance(head, str) or len(head) != 64:
+        raise HTTPException(status_code=500, detail="El lineage devolvió un head hash inválido.")
+    policy = payload.get("policy")
+    if not isinstance(policy, dict) or policy.get("appendOnly") is not True:
+        raise HTTPException(status_code=500, detail="El lineage perdió la garantía append-only.")
+    if policy.get("automaticTrading") is not False or policy.get("automaticProductionPromotion") is not False:
+        raise HTTPException(status_code=500, detail="El lineage intentó habilitar automatismos prohibidos.")
+    if policy.get("lineage") != "every_revision_links_to_exact_previous_persisted_snapshot_hash":
+        raise HTTPException(status_code=500, detail="El lineage perdió su regla de encadenamiento exacto.")
 
 
 @router.post("/investment-journal/snapshot")
 def post_investment_journal_snapshot(request: InvestmentJournalSnapshotRequest) -> dict[str, object]:
     """Freeze a PIT research snapshot without claiming durable persistence or advice."""
 
-    references = tuple(
-        InvestmentJournalReferenceInput(
-            reference_id=item.referenceId,
-            kind=item.kind,
-            available_at=_aware_utc(item.availableAt, "references.availableAt"),
-            source=item.source,
-            source_ref=item.sourceRef,
-        )
-        for item in request.references
-    )
     try:
-        result = investment_journal_service.freeze_snapshot(
-            journal_id=request.journalId,
-            revision_id=request.revisionId,
-            symbol=request.symbol,
-            recorded_at=_aware_utc(request.recordedAt, "recordedAt"),
-            as_of=_aware_utc(request.asOf, "asOf"),
-            thesis=request.thesis,
-            references=references,
-            prior_snapshot_hash=request.priorSnapshotHash,
-        )
+        result = _freeze_request(request)
     except HTTPException:
         raise
     except ValueError as exc:
@@ -120,3 +150,47 @@ def post_investment_journal_snapshot(request: InvestmentJournalSnapshotRequest) 
         raise HTTPException(status_code=500, detail="Investment Journal devolvió un contrato inválido.")
     _assert_contract(payload)
     return {"data": payload}
+
+
+@router.post("/investment-journal/persisted-snapshot")
+def post_persisted_investment_journal_snapshot(
+    request: InvestmentJournalSnapshotRequest,
+) -> dict[str, object]:
+    """Freeze and append one immutable PIT revision to the durable journal lineage."""
+
+    try:
+        snapshot = _freeze_request(request)
+        snapshot_payload = snapshot.to_api_dict()
+        _assert_contract(snapshot_payload)
+        record = investment_journal_repository.append(snapshot=snapshot)
+        lineage = investment_journal_repository.verify_lineage(journal_id=snapshot.journal_id)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo persistir el Investment Journal append-only de ATHENA.") from exc
+
+    _assert_lineage_contract(lineage)
+    if record.get("snapshot_hash") != snapshot.snapshot_hash:
+        raise HTTPException(status_code=500, detail="La persistencia devolvió un snapshot_hash incoherente.")
+    return {
+        "data": {
+            "snapshot": snapshot_payload,
+            "persistence": lineage,
+        }
+    }
+
+
+@router.get("/investment-journal/{journal_id}/lineage")
+def get_investment_journal_lineage(journal_id: str) -> dict[str, object]:
+    """Verify the complete persisted hash chain for one research journal."""
+
+    try:
+        lineage = investment_journal_repository.verify_lineage(journal_id=journal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "No existe" in str(exc) else 400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo verificar el lineage del Investment Journal.") from exc
+    _assert_lineage_contract(lineage)
+    return {"data": lineage}
