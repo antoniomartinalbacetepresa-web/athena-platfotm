@@ -209,13 +209,20 @@ def test_cycle_repository_detects_direct_package_tampering(tmp_path: Path) -> No
         repository.get_by_hash(cycle_hash=record["cycle_hash"])
 
 
-def test_cycle_repository_rejects_fmp_even_if_package_is_otherwise_hash_consistent(tmp_path: Path) -> None:
+def test_cycle_repository_rejects_fmp_even_when_upstream_artifacts_were_valid(tmp_path: Path) -> None:
     repository = RecommendationProfessionalResearchCycleRepository(AthenaDatabase(tmp_path / "cycle-fmp.db"))
-    radar, journal, devil, cycle = _artifacts(radar_source="Financial Modeling Prep")
+    radar, journal, devil, cycle = _artifacts()
+    radar_payload = radar.to_api_dict()
+    radar_payload["candidates"][0]["evidence"][0]["source"] = "Financial Modeling Prep"
+
+    # The repository is a defense-in-depth boundary. Build valid upstream
+    # artifacts first, then inject a forbidden source directly into the
+    # persistence payload so this test exercises the repository itself rather
+    # than being intercepted earlier by ATHENA Radar's own FMP guard.
     with pytest.raises(ValueError, match="FMP/Financial Modeling Prep"):
         repository.validate_package(
             cycle_payload=cycle.to_api_dict(),
-            radar_payload=radar.to_api_dict(),
+            radar_payload=radar_payload,
             journal_payload=journal.to_api_dict(),
             devils_advocate_payload=devil.to_api_dict(),
         )
