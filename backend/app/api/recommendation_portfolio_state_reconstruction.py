@@ -8,6 +8,9 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
+    RecommendationPortfolioStateReconciliationRepository,
+)
 from app.services.recommendation_portfolio_event_ledger_service import (
     RecommendationPortfolioEventLedgerService,
 )
@@ -31,6 +34,7 @@ router = APIRouter(
 )
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 
 
 class OpeningCashRequest(BaseModel):
@@ -100,6 +104,34 @@ def _service() -> RecommendationPortfolioStateReconstructionService:
         )
     ledger = RecommendationPortfolioEventLedgerService(Path(configured))
     return RecommendationPortfolioStateReconstructionService(ledger)
+
+
+def _assert_reconciliation_contract(payload: dict[str, object]) -> None:
+    if _SHA256_RE.fullmatch(str(payload.get("reconciliationKey", ""))) is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation devolvió identidad inválida.",
+        )
+    if (
+        payload.get("advisoryStatus") != "no_advice"
+        or payload.get("productionEligible") is not False
+        or payload.get("isWeightingReady") is not False
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation violó los límites de seguridad.",
+        )
+    policy = payload.get("policy")
+    if not isinstance(policy, dict) or policy.get("automaticTrading") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation intentó habilitar trading.",
+        )
+    if policy.get("automaticProductionPromotion") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation intentó promoción automática.",
+        )
 
 
 @router.post("/portfolio-state-reconstruction")
@@ -190,7 +222,7 @@ def reconstruct_portfolio_state(
 def reconcile_portfolio_state(
     request: PortfolioStateReconciliationRequest,
 ) -> dict[str, object]:
-    """Reconcile reconstructed state against independent point-in-time evidence."""
+    """Reconcile state and persist the exact PIT evidence append-only."""
 
     try:
         result = RecommendationPortfolioStateReconciliationService().evaluate(
@@ -221,6 +253,9 @@ def reconcile_portfolio_state(
                 ),
             ),
         )
+        payload = result.to_api_dict()
+        _assert_reconciliation_contract(payload)
+        record = _reconciliation_repository.append(artifact=payload)
     except HTTPException:
         raise
     except ValueError as exc:
@@ -228,28 +263,45 @@ def reconcile_portfolio_state(
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail="No se pudo reconciliar el estado histórico de cartera.",
+            detail="No se pudo reconciliar/persistir el estado histórico de cartera.",
         ) from exc
 
-    payload = result.to_api_dict()
-    if _SHA256_RE.fullmatch(str(payload.get("reconciliationKey", ""))) is None:
+    return {
+        "data": payload,
+        "persistence": {
+            "appendOnly": True,
+            "tamperEvidence": "canonical_artifact_sha256",
+            "artifactHash": record["artifact_hash"],
+            "createdAt": record["created_at"],
+        },
+    }
+
+
+@router.get("/portfolio-state-reconciliation/{reconciliation_key}")
+def get_portfolio_state_reconciliation(reconciliation_key: str) -> dict[str, object]:
+    """Read a persisted reconciliation only after tamper verification."""
+
+    try:
+        record = _reconciliation_repository.get_by_key(
+            reconciliation_key=reconciliation_key,
+        )
+        payload = record["artifact"]
+        _assert_reconciliation_contract(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail="Portfolio state reconciliation devolvió identidad inválida.",
-        )
-    if (
-        payload.get("advisoryStatus") != "no_advice"
-        or payload.get("productionEligible") is not False
-        or payload.get("isWeightingReady") is not False
-    ):
-        raise HTTPException(
-            status_code=500,
-            detail="Portfolio state reconciliation violó los límites de seguridad.",
-        )
-    policy = payload.get("policy")
-    if not isinstance(policy, dict) or policy.get("automaticTrading") is not False:
-        raise HTTPException(
-            status_code=500,
-            detail="Portfolio state reconciliation intentó habilitar trading.",
-        )
-    return {"data": payload}
+            detail="No se pudo verificar la reconciliación persistida.",
+        ) from exc
+    return {
+        "data": payload,
+        "persistence": {
+            "appendOnly": True,
+            "tamperVerified": True,
+            "artifactHash": record["artifact_hash"],
+            "createdAt": record["created_at"],
+        },
+    }
