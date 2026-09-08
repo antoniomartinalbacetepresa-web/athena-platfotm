@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any
@@ -114,6 +114,26 @@ class RecommendationResearchOutcomeOosCohortRepository:
             ).fetchone()
         if row is None:
             raise ValueError("No existe una OOS cohort con ese cohortHash.")
+        return self.validate_record(self._row(row))
+
+    def get_latest_at_or_before(self, *, as_of: datetime) -> dict[str, Any] | None:
+        self.initialize()
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("as_of debe incluir zona horaria.")
+        cutoff = as_of.astimezone(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM athena_research_outcome_oos_cohorts
+                WHERE as_of <= ?
+                ORDER BY as_of DESC, id DESC
+                LIMIT 1
+                """,
+                (cutoff,),
+            ).fetchone()
+        if row is None:
+            return None
         return self.validate_record(self._row(row))
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
