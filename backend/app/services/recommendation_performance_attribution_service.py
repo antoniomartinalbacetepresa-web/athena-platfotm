@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import math
 
 
@@ -26,6 +27,10 @@ class FactorContributionEvidence:
 class RecommendationPerformanceAttributionInput:
     instrument_id: str
     symbol: str
+    instrument_currency: str
+    reporting_currency: str
+    fx_pair: str
+    benchmark_id: str
     period_start: datetime
     period_end: datetime
     total_return: AttributionEvidence
@@ -36,8 +41,13 @@ class RecommendationPerformanceAttributionInput:
 
 @dataclass(frozen=True)
 class RecommendationPerformanceAttributionResult:
+    attribution_key: str
     instrument_id: str
     symbol: str
+    instrument_currency: str
+    reporting_currency: str
+    fx_pair: str
+    benchmark_id: str
     as_of: datetime
     period_start: datetime
     period_end: datetime
@@ -55,8 +65,16 @@ class RecommendationPerformanceAttributionResult:
             "advisoryStatus": "no_advice",
             "productionEligible": False,
             "isWeightingReady": False,
+            "attributionKey": self.attribution_key,
             "instrumentId": self.instrument_id,
             "symbol": self.symbol,
+            "benchmarkId": self.benchmark_id,
+            "currency": {
+                "instrumentCurrency": self.instrument_currency,
+                "reportingCurrency": self.reporting_currency,
+                "fxPair": self.fx_pair,
+                "conversionRequired": self.instrument_currency != self.reporting_currency,
+            },
             "asOf": self.as_of.isoformat(),
             "periodStart": self.period_start.isoformat(),
             "periodEnd": self.period_end.isoformat(),
@@ -72,7 +90,9 @@ class RecommendationPerformanceAttributionResult:
                 "automaticProductionPromotion": False,
                 "causalClaim": "forbidden_arithmetic_attribution_only",
                 "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
-                "fx": "explicit_not_silently_neutralized",
+                "fx": "explicit_currency_pair_bound_fail_closed",
+                "identity": "deterministic_sha256_attribution_key",
+                "benchmark": "explicit_market_contribution_identity",
                 "temporal": "all_evidence_available_at_must_be_lte_as_of",
                 "calibration": "not_productive_until_out_of_sample_validated",
             },
@@ -110,6 +130,13 @@ class RecommendationPerformanceAttributionService:
             raise ValueError(f"{field} is required")
         return cleaned
 
+    @classmethod
+    def _currency(cls, value: str, field: str) -> str:
+        cleaned = cls._text(value, field).upper()
+        if len(cleaned) != 3 or not cleaned.isascii() or not cleaned.isalpha():
+            raise ValueError(f"{field} must be a three-letter currency code")
+        return cleaned
+
     def _normalize_evidence(
         self,
         evidence: AttributionEvidence,
@@ -129,6 +156,51 @@ class RecommendationPerformanceAttributionService:
             "sourceRef": source_ref,
         }
 
+    @staticmethod
+    def _attribution_key(
+        *,
+        instrument_id: str,
+        symbol: str,
+        benchmark_id: str,
+        instrument_currency: str,
+        reporting_currency: str,
+        fx_pair: str,
+        as_of: datetime,
+        period_start: datetime,
+        period_end: datetime,
+        evidence: dict[str, object],
+    ) -> str:
+        factor_meta = evidence["factorContributions"]
+        assert isinstance(factor_meta, dict)
+        factor_tokens = []
+        for name in sorted(factor_meta):
+            meta = factor_meta[name]
+            assert isinstance(meta, dict)
+            factor_tokens.append(
+                f"{name}:{meta['availableAt']}:{meta['source']}:{meta['sourceRef']}"
+            )
+
+        tokens = [
+            "performance_attribution_v2",
+            instrument_id,
+            symbol,
+            benchmark_id,
+            instrument_currency,
+            reporting_currency,
+            fx_pair,
+            as_of.isoformat(),
+            period_start.isoformat(),
+            period_end.isoformat(),
+        ]
+        for key in ("totalReturn", "marketContribution", "fxContribution"):
+            meta = evidence[key]
+            assert isinstance(meta, dict)
+            tokens.append(
+                f"{key}:{meta['availableAt']}:{meta['source']}:{meta['sourceRef']}"
+            )
+        tokens.extend(factor_tokens)
+        return hashlib.sha256("|".join(tokens).encode("utf-8")).hexdigest()
+
     def evaluate(
         self,
         *,
@@ -145,6 +217,13 @@ class RecommendationPerformanceAttributionService:
 
         instrument_id = self._text(item.instrument_id, "instrument_id")
         symbol = self._text(item.symbol, "symbol").upper()
+        benchmark_id = self._text(item.benchmark_id, "benchmark_id")
+        instrument_currency = self._currency(item.instrument_currency, "instrument_currency")
+        reporting_currency = self._currency(item.reporting_currency, "reporting_currency")
+        fx_pair = self._text(item.fx_pair, "fx_pair").upper()
+        expected_fx_pair = f"{instrument_currency}/{reporting_currency}"
+        if fx_pair != expected_fx_pair:
+            raise ValueError(f"fx_pair must be {expected_fx_pair}")
 
         total_return, total_meta = self._normalize_evidence(
             item.total_return, field="total_return", as_of=as_of_utc
@@ -155,6 +234,10 @@ class RecommendationPerformanceAttributionService:
         fx, fx_meta = self._normalize_evidence(
             item.fx_contribution, field="fx_contribution", as_of=as_of_utc
         )
+        if instrument_currency == reporting_currency and not math.isclose(
+            fx, 0.0, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise ValueError("fx_contribution must be zero when no currency conversion is required")
 
         factor_values: dict[str, float] = {}
         factor_meta: dict[str, object] = {}
@@ -186,9 +269,33 @@ class RecommendationPerformanceAttributionService:
         if not math.isfinite(explained) or not math.isfinite(residual):
             raise ValueError("attribution result must be finite")
 
-        return RecommendationPerformanceAttributionResult(
+        evidence = {
+            "totalReturn": total_meta,
+            "marketContribution": market_meta,
+            "fxContribution": fx_meta,
+            "factorContributions": factor_meta,
+        }
+        attribution_key = self._attribution_key(
             instrument_id=instrument_id,
             symbol=symbol,
+            benchmark_id=benchmark_id,
+            instrument_currency=instrument_currency,
+            reporting_currency=reporting_currency,
+            fx_pair=fx_pair,
+            as_of=as_of_utc,
+            period_start=period_start,
+            period_end=period_end,
+            evidence=evidence,
+        )
+
+        return RecommendationPerformanceAttributionResult(
+            attribution_key=attribution_key,
+            instrument_id=instrument_id,
+            symbol=symbol,
+            instrument_currency=instrument_currency,
+            reporting_currency=reporting_currency,
+            fx_pair=fx_pair,
+            benchmark_id=benchmark_id,
             as_of=as_of_utc,
             period_start=period_start,
             period_end=period_end,
@@ -198,10 +305,5 @@ class RecommendationPerformanceAttributionService:
             factor_contributions=factor_values,
             explained_return=explained,
             residual_return=residual,
-            evidence={
-                "totalReturn": total_meta,
-                "marketContribution": market_meta,
-                "fxContribution": fx_meta,
-                "factorContributions": factor_meta,
-            },
+            evidence=evidence,
         )
