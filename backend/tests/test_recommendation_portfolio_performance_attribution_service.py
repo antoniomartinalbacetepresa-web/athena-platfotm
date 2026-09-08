@@ -63,7 +63,7 @@ def attribution(
 
 
 def item(*, second_benchmark: str | None = None) -> RecommendationPortfolioPerformanceAttributionInput:
-    second = attribution("inst-b", "BBB", total=-0.02, market=-0.01, fx=0.0)
+    second = attribution("inst-b", "BBB", total=-0.04, market=-0.01, fx=0.0)
     if second_benchmark is not None:
         second = RecommendationPerformanceAttributionInput(
             **{**second.__dict__, "benchmark_id": second_benchmark}
