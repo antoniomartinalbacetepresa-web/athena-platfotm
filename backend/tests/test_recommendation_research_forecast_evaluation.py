@@ -138,9 +138,16 @@ def _outcome_record(*, total_return: float = 0.08, horizon_seconds: int = 30 * 8
     }
 
 
+def _precommit_repository(database: AthenaDatabase):
+    return RecommendationResearchEvaluationSpecificationRepository(
+        database,
+        RecommendationResearchEvaluationSpecificationService(),
+        now_provider=lambda: CYCLE_AS_OF + timedelta(minutes=1),
+    )
+
+
 def test_specification_is_frozen_before_outcome_and_research_only() -> None:
     artifact = _specification()
-
     assert artifact["metric"] == "total_return"
     assert artifact["periodStart"] == CYCLE_AS_OF.isoformat()
     assert artifact["periodEnd"] == (CYCLE_AS_OF + timedelta(days=30)).isoformat()
@@ -153,7 +160,7 @@ def test_specification_is_frozen_before_outcome_and_research_only() -> None:
     assert artifact["policy"]["thresholds"] == "none_selected_here"
 
 
-def test_specification_rejects_hindsight_and_fmp() -> None:
+def test_specification_rejects_declared_hindsight_and_fmp() -> None:
     service = RecommendationResearchEvaluationSpecificationService()
     with pytest.raises(ValueError, match="a más tardar"):
         service.build(
@@ -166,7 +173,6 @@ def test_specification_rejects_hindsight_and_fmp() -> None:
             source_ref="urn:forecast:future",
             method="test",
         )
-
     with pytest.raises(ValueError, match="FMP/Financial Modeling Prep"):
         service.build(
             specification_id="spec-fmp",
@@ -180,13 +186,24 @@ def test_specification_rejects_hindsight_and_fmp() -> None:
         )
 
 
+def test_repository_rejects_physical_retroactive_sealing(tmp_path: Path) -> None:
+    repository = RecommendationResearchEvaluationSpecificationRepository(
+        AthenaDatabase(tmp_path / "retroactive.db"),
+        RecommendationResearchEvaluationSpecificationService(),
+        now_provider=lambda: CYCLE_AS_OF + timedelta(days=30),
+    )
+    with pytest.raises(ValueError, match="no puede sellarse retrospectivamente"):
+        repository.append(artifact=_specification())
+
+
 def test_specification_repository_prevents_moving_goalposts(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "spec.db")
     service = RecommendationResearchEvaluationSpecificationService()
-    repository = RecommendationResearchEvaluationSpecificationRepository(database, service)
+    repository = _precommit_repository(database)
     first = _specification(expected=0.12)
     same = repository.append(artifact=first)
     assert repository.append(artifact=first)["specification_hash"] == same["specification_hash"]
+    assert datetime.fromisoformat(same["created_at"]) < datetime.fromisoformat(first["periodEnd"])
 
     changed = service.build(
         specification_id="spec-aapl-30d-changed",
@@ -213,7 +230,6 @@ def test_forecast_error_uses_exact_precommitted_period_and_reconciles() -> None:
         },
         outcome_record=outcome,
     )
-
     assert result["expectedValue"] == 0.12
     assert result["realizedValue"] == 0.08
     assert result["signedError"] == pytest.approx(-0.04)
@@ -266,7 +282,6 @@ def test_forecast_error_repository_is_idempotent_and_detects_tampering(tmp_path:
                 first["error_hash"],
             ),
         )
-
     with pytest.raises(ValueError):
         repository.get_by_hash(error_hash=first["error_hash"])
 
