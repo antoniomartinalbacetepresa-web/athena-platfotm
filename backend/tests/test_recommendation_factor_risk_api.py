@@ -214,8 +214,11 @@ def test_factor_risk_endpoint_uses_sealed_market_and_reconciled_weights(monkeypa
     assert data["isWeightingReady"] is False
     assert data["stateIntegrity"]["reconciled"] is True
     assert data["stateIntegrity"]["marketFactorDerivation"] == "sealed_pit_market_observations_only"
+    assert data["stateIntegrity"]["priceFactorDerivation"] == "sealed_pit_market_observations_or_explicitly_missing"
     assert data["stateIntegrity"]["callerSuppliedMarketAccepted"] is False
+    assert data["stateIntegrity"]["callerSuppliedPriceFactorsAccepted"] is False
     assert data["stateIntegrity"]["marketExposureKeys"]["1"] == MARKET_KEY
+    assert data["stateIntegrity"]["priceExposureKeys"] == {}
     evaluated = service.calls[0]["positions"][0]  # type: ignore[index]
     assert evaluated.weight == 1.0
     assert evaluated.factors["market"] == 1.0
@@ -239,7 +242,20 @@ def test_factor_risk_api_rejects_caller_supplied_market(monkeypatch) -> None:
     body["positions"][0]["factors"]["market"] = 9.0  # type: ignore[index]
     response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=body)
     assert response.status_code == 400
-    assert "no puede suministrar factor market" in response.json()["detail"]
+    assert "no puede suministrar factores sellados" in response.json()["detail"]
+    assert service.calls == []
+
+
+def test_factor_risk_api_rejects_caller_supplied_price_factors(monkeypatch) -> None:
+    service = _Service(_payload())
+    monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
+    _install_evidence(monkeypatch)
+    for factor in ("momentum", "low_volatility"):
+        body = _request()
+        body["positions"][0]["factors"][factor] = 9.0  # type: ignore[index]
+        response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=body)
+        assert response.status_code == 400
+        assert "factores sellados" in response.json()["detail"]
     assert service.calls == []
 
 
