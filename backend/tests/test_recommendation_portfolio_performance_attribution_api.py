@@ -23,6 +23,36 @@ def evidence(value: float, ref: str, *, day: int) -> dict[str, object]:
     }
 
 
+def _reconciliation_key(*, portfolio_id: str = "portfolio-1", reconciled: bool = True) -> str:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-state-reconciliation",
+        json={
+            "reconstructedState": {
+                "portfolioStateKey": "d" * 64,
+                "portfolioId": portfolio_id,
+                "reportingCurrency": "USD",
+                "asOf": "2026-09-01T12:00:00Z",
+                "cashBalance": 100.0,
+                "positions": [],
+            },
+            "snapshot": {
+                "portfolioId": portfolio_id,
+                "reportingCurrency": "USD",
+                "cashBalance": 100.0 if reconciled else 101.0,
+                "positions": [],
+                "observedAt": "2026-09-01T12:00:00Z",
+                "availableAt": "2026-09-01T12:00:00Z",
+                "source": "independent_broker_snapshot",
+                "sourceRef": f"urn:broker:attribution:{portfolio_id}:{reconciled}",
+            },
+            "asOf": "2026-09-01T12:00:00Z",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["reconciled"] is reconciled
+    return response.json()["data"]["reconciliationKey"]
+
+
 def child(instrument_id: str, symbol: str, total: float, market: float) -> dict[str, object]:
     return {
         "instrumentId": instrument_id,
@@ -46,11 +76,12 @@ def child(instrument_id: str, symbol: str, total: float, market: float) -> dict[
     }
 
 
-def request_body() -> dict[str, object]:
+def request_body(*, reconciliation_key: str | None = None) -> dict[str, object]:
     return {
         "portfolioId": "portfolio-1",
         "benchmarkId": "SP500_TR",
         "reportingCurrency": "USD",
+        "reconciliationKey": reconciliation_key or _reconciliation_key(),
         "asOf": datetime(2026, 9, 1, 12, tzinfo=UTC).isoformat(),
         "periodStart": iso(1),
         "periodEnd": iso(31),
@@ -83,6 +114,9 @@ def test_endpoint_reconciles_portfolio_without_enabling_advice_or_weighting() ->
     assert payload["policy"]["weighting"] == "historical_beginning_weights_diagnostic_only"
     assert payload["policy"]["cashFlows"] == "unsupported_fail_closed"
     assert payload["policy"]["residualInterpretation"] == "unexplained_not_automatic_stock_selection_alpha"
+    assert payload["stateIntegrity"]["reconciled"] is True
+    assert payload["stateIntegrity"]["tamperVerified"] is True
+    assert payload["stateIntegrity"]["gate"] == "required_before_attribution"
     assert abs(payload["reconstructedPortfolioReturn"] - 0.032) < 1e-12
     assert len(payload["portfolioAttributionKey"]) == 64
 
@@ -107,6 +141,24 @@ def test_endpoint_rejects_non_reconciling_return() -> None:
     )
     assert response.status_code == 400
     assert "does not reconcile" in response.json()["detail"]
+
+
+def test_endpoint_rejects_unreconciled_persisted_state() -> None:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
+        json=request_body(reconciliation_key=_reconciliation_key(reconciled=False)),
+    )
+    assert response.status_code == 400
+    assert "reconciled=true" in response.json()["detail"]
+
+
+def test_endpoint_rejects_reconciliation_from_another_portfolio() -> None:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
+        json=request_body(reconciliation_key=_reconciliation_key(portfolio_id="portfolio-other")),
+    )
+    assert response.status_code == 400
+    assert "otra cartera" in response.json()["detail"]
 
 
 def test_api_contract_fails_closed_if_weighting_becomes_ready(monkeypatch) -> None:
