@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from app.repositories.recommendation_investment_journal_repository import (
     RecommendationInvestmentJournalRepository,
 )
+from app.repositories.recommendation_professional_research_cycle_repository import (
+    RecommendationProfessionalResearchCycleRepository,
+)
 from app.services.recommendation_athena_radar_service import (
     AthenaRadarCandidateInput,
     AthenaRadarEvidenceInput,
@@ -36,6 +39,7 @@ journal_service = RecommendationInvestmentJournalService()
 journal_repository = RecommendationInvestmentJournalRepository()
 devils_advocate_service = RecommendationDevilsAdvocateService()
 cycle_service = RecommendationProfessionalResearchCycleService()
+cycle_repository = RecommendationProfessionalResearchCycleRepository()
 
 
 class CycleRadarEvidenceRequest(BaseModel):
@@ -145,6 +149,16 @@ def _assert_lineage(lineage: dict[str, object], *, snapshot_hash: str, journal_i
         raise HTTPException(status_code=500, detail="El lineage persistido intentó habilitar automatización productiva.")
 
 
+def _persistence_summary(record: dict[str, object]) -> dict[str, object]:
+    return {
+        "appendOnly": True,
+        "packageIntegrityVerified": True,
+        "cycleHash": record["cycle_hash"],
+        "createdAt": record["created_at"],
+        "storageClaim": "tamper_evident_append_only_repository_not_worm_storage",
+    }
+
+
 @router.post("/research-cycle")
 def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) -> dict[str, object]:
     """Validate, then persist, one PIT Radar -> Journal -> Devil's Advocate research cycle."""
@@ -220,9 +234,20 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
         payload = result.to_api_dict()
         _assert_cycle_contract(payload)
 
-        # Persistence is intentionally the final side effect. Invalid PIT,
-        # identity, provenance, FMP, FX-policy, advice, weighting or trading
-        # contracts fail before an append-only journal row can be written.
+        radar_payload = radar.to_api_dict()
+        journal_payload = journal.to_api_dict()
+        devils_payload = devils_advocate.to_api_dict()
+
+        # Validate the entire durable package before the first persistent side
+        # effect. Invalid PIT, identity, provenance, FMP, advice, weighting,
+        # hashes or trading contracts cannot leave a partial cycle record.
+        cycle_repository.validate_package(
+            cycle_payload=payload,
+            radar_payload=radar_payload,
+            journal_payload=journal_payload,
+            devils_advocate_payload=devils_payload,
+        )
+
         journal_repository.append(snapshot=journal)
         lineage = journal_repository.verify_lineage(journal_id=journal.journal_id)
         _assert_lineage(
@@ -230,6 +255,12 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
             snapshot_hash=journal.snapshot_hash,
             journal_id=journal.journal_id,
             symbol=journal.symbol,
+        )
+        cycle_record = cycle_repository.append(
+            cycle_payload=payload,
+            radar_payload=radar_payload,
+            journal_payload=journal_payload,
+            devils_advocate_payload=devils_payload,
         )
     except HTTPException:
         raise
@@ -243,4 +274,28 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
         "lineageVerified": True,
         "headSnapshotHash": journal.snapshot_hash,
     }
+    payload["cyclePersistence"] = _persistence_summary(cycle_record)
     return {"data": payload}
+
+
+@router.get("/research-cycle/{cycle_hash}")
+def get_professional_research_cycle(cycle_hash: str) -> dict[str, object]:
+    """Return one persisted cycle only after full package-integrity verification."""
+
+    try:
+        record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo verificar el ciclo profesional persistido.") from exc
+
+    return {
+        "data": {
+            "package": record["package"],
+            "persistence": _persistence_summary(record),
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "automaticTrading": False,
+        }
+    }
