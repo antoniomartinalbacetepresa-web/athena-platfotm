@@ -7,6 +7,9 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
+    RecommendationPortfolioStateReconciliationRepository,
+)
 from app.services.recommendation_performance_attribution_service import (
     AttributionEvidence,
     FactorContributionEvidence,
@@ -24,6 +27,7 @@ router = APIRouter(
     tags=["recommendations-professional-research"],
 )
 service = RecommendationPortfolioPerformanceAttributionService()
+_reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
@@ -65,6 +69,7 @@ class PortfolioPerformanceAttributionRequest(BaseModel):
     portfolioId: str = Field(min_length=1)
     benchmarkId: str = Field(min_length=1)
     reportingCurrency: str = Field(min_length=3, max_length=3)
+    reconciliationKey: str = Field(min_length=64, max_length=64)
     asOf: datetime
     periodStart: datetime
     periodEnd: datetime
@@ -112,6 +117,16 @@ def _assert_contract(payload: dict[str, object]) -> None:
     currency = payload.get("reportingCurrency")
     if not isinstance(currency, str) or _CURRENCY_RE.fullmatch(currency) is None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió moneda inválida.")
+    state_integrity = payload.get("stateIntegrity")
+    if not isinstance(state_integrity, dict):
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió gating de reconciliación.")
+    reconciliation_key = state_integrity.get("reconciliationKey")
+    if not isinstance(reconciliation_key, str) or _SHA256_RE.fullmatch(reconciliation_key) is None:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió reconciliationKey válido.")
+    if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution aceptó estado no reconciliado/verificado.")
+    if state_integrity.get("gate") != "required_before_attribution":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió la puerta obligatoria de integridad.")
 
     observed = _assert_finite(payload.get("observedPortfolioReturn"), "observedPortfolioReturn")
     reconstructed = _assert_finite(payload.get("reconstructedPortfolioReturn"), "reconstructedPortfolioReturn")
@@ -177,11 +192,26 @@ def _assert_contract(payload: dict[str, object]) -> None:
 def post_portfolio_performance_attribution(
     request: PortfolioPerformanceAttributionRequest,
 ) -> dict[str, object]:
-    """Reconcile historical portfolio attribution without advice, sizing or trading."""
+    """Reconcile historical attribution only after persisted independent state reconciliation."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
     period_end = _aware_utc(request.periodEnd, "periodEnd")
+    try:
+        reconciliation_record = _reconciliation_repository.require_reconciled(
+            reconciliation_key=request.reconciliationKey,
+            portfolio_id=request.portfolioId,
+            reporting_currency=request.reportingCurrency,
+            as_of=as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar reconciliationKey para Portfolio Attribution.",
+        ) from exc
+
     constituents: list[PortfolioAttributionConstituent] = []
     for index, item in enumerate(request.constituents):
         child = item.attribution
@@ -237,5 +267,12 @@ def post_portfolio_performance_attribution(
         raise HTTPException(status_code=500, detail="No se pudo calcular Portfolio Performance Attribution PIT.") from exc
 
     payload = result.to_api_dict()
+    payload["stateIntegrity"] = {
+        "reconciliationKey": request.reconciliationKey.lower(),
+        "portfolioStateKey": reconciliation_record["portfolio_state_key"],
+        "reconciled": True,
+        "tamperVerified": True,
+        "gate": "required_before_attribution",
+    }
     _assert_contract(payload)
     return {"data": payload}
