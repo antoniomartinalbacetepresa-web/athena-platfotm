@@ -11,6 +11,12 @@ from pydantic import BaseModel, Field
 from app.services.recommendation_portfolio_event_ledger_service import (
     RecommendationPortfolioEventLedgerService,
 )
+from app.services.recommendation_portfolio_state_reconciliation_service import (
+    PortfolioSnapshotEvidence,
+    PortfolioSnapshotPositionEvidence,
+    PortfolioStateReconciliationInput,
+    RecommendationPortfolioStateReconciliationService,
+)
 from app.services.recommendation_portfolio_state_reconstruction_service import (
     OpeningCashEvidence,
     OpeningPositionEvidence,
@@ -51,6 +57,28 @@ class PortfolioStateReconstructionRequest(BaseModel):
     reconstructionStart: datetime
     openingCash: OpeningCashRequest
     openingPositions: list[OpeningPositionRequest] = Field(default_factory=list)
+    asOf: datetime
+
+
+class PortfolioStateSnapshotPositionRequest(BaseModel):
+    instrumentId: str = Field(min_length=1)
+    quantity: float
+
+
+class PortfolioStateSnapshotRequest(BaseModel):
+    portfolioId: str = Field(min_length=1)
+    reportingCurrency: str = Field(min_length=3, max_length=3)
+    cashBalance: float
+    positions: list[PortfolioStateSnapshotPositionRequest] = Field(default_factory=list)
+    observedAt: datetime
+    availableAt: datetime
+    source: str = Field(min_length=1)
+    sourceRef: str = Field(min_length=1)
+
+
+class PortfolioStateReconciliationRequest(BaseModel):
+    reconstructedState: dict[str, object]
+    snapshot: PortfolioStateSnapshotRequest
     asOf: datetime
 
 
@@ -154,5 +182,74 @@ def reconstruct_portfolio_state(
         raise HTTPException(
             status_code=500,
             detail="Portfolio state reconstruction intentó habilitar trading.",
+        )
+    return {"data": payload}
+
+
+@router.post("/portfolio-state-reconciliation")
+def reconcile_portfolio_state(
+    request: PortfolioStateReconciliationRequest,
+) -> dict[str, object]:
+    """Reconcile reconstructed state against independent point-in-time evidence."""
+
+    try:
+        result = RecommendationPortfolioStateReconciliationService().evaluate(
+            as_of=_aware_utc(request.asOf, "asOf"),
+            item=PortfolioStateReconciliationInput(
+                reconstructed_state=request.reconstructedState,
+                snapshot=PortfolioSnapshotEvidence(
+                    portfolio_id=request.snapshot.portfolioId,
+                    reporting_currency=request.snapshot.reportingCurrency,
+                    cash_balance=request.snapshot.cashBalance,
+                    positions=tuple(
+                        PortfolioSnapshotPositionEvidence(
+                            instrument_id=item.instrumentId,
+                            quantity=item.quantity,
+                        )
+                        for item in request.snapshot.positions
+                    ),
+                    observed_at=_aware_utc(
+                        request.snapshot.observedAt,
+                        "snapshot.observedAt",
+                    ),
+                    available_at=_aware_utc(
+                        request.snapshot.availableAt,
+                        "snapshot.availableAt",
+                    ),
+                    source=request.snapshot.source,
+                    source_ref=request.snapshot.sourceRef,
+                ),
+            ),
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo reconciliar el estado histórico de cartera.",
+        ) from exc
+
+    payload = result.to_api_dict()
+    if _SHA256_RE.fullmatch(str(payload.get("reconciliationKey", ""))) is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation devolvió identidad inválida.",
+        )
+    if (
+        payload.get("advisoryStatus") != "no_advice"
+        or payload.get("productionEligible") is not False
+        or payload.get("isWeightingReady") is not False
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation violó los límites de seguridad.",
+        )
+    policy = payload.get("policy")
+    if not isinstance(policy, dict) or policy.get("automaticTrading") is not False:
+        raise HTTPException(
+            status_code=500,
+            detail="Portfolio state reconciliation intentó habilitar trading.",
         )
     return {"data": payload}
