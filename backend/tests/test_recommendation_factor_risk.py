@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+import app.api.recommendation_factor_risk as factor_risk_api
 from app.main import app
 from app.services.recommendation_factor_risk_service import (
     FactorRiskPositionInput,
@@ -35,6 +36,34 @@ def _position(
         source_ref=source_ref,
         factors=factors or {"market": 1.0, "quality": 0.5, "usd_fx": 0.2},
     )
+
+
+class _ValidReconciliationRepository:
+    def require_reconciled(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "portfolio_state_key": "d" * 64,
+            "artifact": {"reconciled": True},
+        }
+
+
+def _api_request(*, exposure_available_at: str) -> dict[str, object]:
+    return {
+        "portfolioId": "portfolio-1",
+        "reportingCurrency": "USD",
+        "reconciliationKey": "e" * 64,
+        "asOf": AS_OF.isoformat(),
+        "positions": [
+            {
+                "instrumentId": 1,
+                "symbol": "AAA",
+                "weight": 0.5,
+                "exposureAvailableAt": exposure_available_at,
+                "source": "athena_factor_model_v1",
+                "sourceRef": "factor-snapshot:AAA:2025-12-31",
+                "factors": {"market": 1.0, "usd_fx": 0.3},
+            }
+        ],
+    }
 
 
 def test_factor_risk_aggregates_explicit_pit_portfolio_exposures() -> None:
@@ -138,24 +167,16 @@ def test_factor_risk_rejects_invalid_weight_sum_and_naive_timestamps() -> None:
         )
 
 
-def test_factor_risk_api_exposes_research_only_contract() -> None:
+def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
+    monkeypatch.setattr(
+        factor_risk_api,
+        "_reconciliation_repository",
+        _ValidReconciliationRepository(),
+    )
     client = TestClient(app)
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk",
-        json={
-            "asOf": AS_OF.isoformat(),
-            "positions": [
-                {
-                    "instrumentId": 1,
-                    "symbol": "AAA",
-                    "weight": 0.5,
-                    "exposureAvailableAt": AVAILABLE_AT.isoformat(),
-                    "source": "athena_factor_model_v1",
-                    "sourceRef": "factor-snapshot:AAA:2025-12-31",
-                    "factors": {"market": 1.0, "usd_fx": 0.3},
-                }
-            ],
-        },
+        json=_api_request(exposure_available_at=AVAILABLE_AT.isoformat()),
     )
 
     assert response.status_code == 200
@@ -167,26 +188,21 @@ def test_factor_risk_api_exposes_research_only_contract() -> None:
     assert data["weightedExposures"]["usd_fx"] == pytest.approx(0.15)
     assert data["policy"]["fx"] == "usd_fx_is_explicit_factor_not_silently_netting_currency_risk"
     assert data["policy"]["automaticTrading"] is False
+    assert data["stateIntegrity"]["reconciled"] is True
+    assert data["stateIntegrity"]["gate"] == "required_before_factor_risk"
+    assert data["stateIntegrity"]["weightDerivation"] == "not_yet_derived_from_reconciled_state"
 
 
-def test_factor_risk_api_rejects_naive_temporal_evidence_before_service_use() -> None:
+def test_factor_risk_api_rejects_naive_temporal_evidence_before_service_use(monkeypatch) -> None:
+    monkeypatch.setattr(
+        factor_risk_api,
+        "_reconciliation_repository",
+        _ValidReconciliationRepository(),
+    )
     client = TestClient(app)
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk",
-        json={
-            "asOf": "2026-01-01T00:00:00+00:00",
-            "positions": [
-                {
-                    "instrumentId": 1,
-                    "symbol": "AAA",
-                    "weight": 0.5,
-                    "exposureAvailableAt": "2025-12-31T23:00:00",
-                    "source": "athena_factor_model_v1",
-                    "sourceRef": "factor-snapshot:AAA:2025-12-31",
-                    "factors": {"market": 1.0},
-                }
-            ],
-        },
+        json=_api_request(exposure_available_at="2025-12-31T23:00:00"),
     )
 
     assert response.status_code == 400
