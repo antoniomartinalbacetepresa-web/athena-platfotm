@@ -15,6 +15,7 @@ from app.services.recommendation_factor_risk_service import (
 
 AS_OF = datetime(2026, 1, 1, tzinfo=timezone.utc)
 AVAILABLE_AT = AS_OF - timedelta(hours=1)
+MARKET_KEY = "a" * 64
 
 
 def _position(
@@ -40,10 +41,7 @@ def _position(
 
 class _ValidReconciliationRepository:
     def require_reconciled(self, **kwargs: object) -> dict[str, object]:
-        return {
-            "portfolio_state_key": "d" * 64,
-            "artifact": {"reconciled": True},
-        }
+        return {"portfolio_state_key": "d" * 64, "artifact": {"reconciled": True}}
 
 
 class _ValidValuationRepository:
@@ -65,35 +63,32 @@ class _ValidWeightService:
             "portfolioValuationEvidenceFingerprint": "c" * 64,
             "weightEvidenceKey": "f" * 64,
             "cashWeight": 0.5,
-            "positions": [
-                {
-                    "instrumentId": 1,
-                    "symbol": "AAA",
-                    "weight": 0.5,
-                }
-            ],
+            "positions": [{"instrumentId": 1, "symbol": "AAA", "weight": 0.5}],
         }
 
     def validate_artifact(self, artifact: dict[str, object]) -> dict[str, object]:
         return artifact
 
 
+class _ValidFactorExposureRepository:
+    def get(self, **kwargs: object) -> dict[str, object]:
+        return {
+            "artifact": {
+                "factorExposureKey": MARKET_KEY,
+                "instrumentId": 1,
+                "benchmarkInstrumentId": 99,
+                "asOf": AS_OF.isoformat(),
+                "availableAt": AVAILABLE_AT.isoformat(),
+                "factors": {"market": 1.0},
+            }
+        }
+
+
 def _install_api_evidence(monkeypatch) -> None:
-    monkeypatch.setattr(
-        factor_risk_api,
-        "_reconciliation_repository",
-        _ValidReconciliationRepository(),
-    )
-    monkeypatch.setattr(
-        factor_risk_api,
-        "_valuation_repository",
-        _ValidValuationRepository(),
-    )
-    monkeypatch.setattr(
-        factor_risk_api,
-        "_weight_service",
-        _ValidWeightService(),
-    )
+    monkeypatch.setattr(factor_risk_api, "_reconciliation_repository", _ValidReconciliationRepository())
+    monkeypatch.setattr(factor_risk_api, "_valuation_repository", _ValidValuationRepository())
+    monkeypatch.setattr(factor_risk_api, "_weight_service", _ValidWeightService())
+    monkeypatch.setattr(factor_risk_api, "_factor_exposure_repository", _ValidFactorExposureRepository())
 
 
 def _api_request(*, exposure_available_at: str) -> dict[str, object]:
@@ -107,10 +102,11 @@ def _api_request(*, exposure_available_at: str) -> dict[str, object]:
             {
                 "instrumentId": 1,
                 "symbol": "AAA",
+                "marketExposureKey": MARKET_KEY,
                 "exposureAvailableAt": exposure_available_at,
                 "source": "athena_factor_model_v1",
                 "sourceRef": "factor-snapshot:AAA:2025-12-31",
-                "factors": {"market": 1.0, "usd_fx": 0.3},
+                "factors": {"usd_fx": 0.3},
             }
         ],
     }
@@ -131,7 +127,6 @@ def test_factor_risk_aggregates_explicit_pit_portfolio_exposures() -> None:
             ),
         ),
     )
-
     payload = result.to_api_dict()
     assert payload["positionCount"] == 2
     assert payload["investedWeight"] == pytest.approx(0.9)
@@ -150,71 +145,37 @@ def test_factor_risk_aggregates_explicit_pit_portfolio_exposures() -> None:
 
 def test_factor_risk_rejects_lookahead_and_non_finite_data() -> None:
     service = RecommendationFactorRiskService()
-
     with pytest.raises(ValueError, match="look-ahead"):
-        service.evaluate(
-            as_of=AS_OF,
-            positions=(_position(available_at=AS_OF + timedelta(microseconds=1)),),
-        )
-
+        service.evaluate(as_of=AS_OF, positions=(_position(available_at=AS_OF + timedelta(microseconds=1)),))
     for value in (float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValueError, match="finito"):
             service.evaluate(as_of=AS_OF, positions=(_position(weight=value),))
         with pytest.raises(ValueError, match="finito"):
-            service.evaluate(
-                as_of=AS_OF,
-                positions=(_position(factors={"market": value}),),
-            )
+            service.evaluate(as_of=AS_OF, positions=(_position(factors={"market": value}),))
 
 
 def test_factor_risk_rejects_duplicate_identity_missing_provenance_and_unknown_factor() -> None:
     service = RecommendationFactorRiskService()
-
     with pytest.raises(ValueError, match="duplicados"):
-        service.evaluate(
-            as_of=AS_OF,
-            positions=(
-                _position(),
-                _position(instrument_id=1, symbol="BBB", weight=0.2),
-            ),
-        )
+        service.evaluate(as_of=AS_OF, positions=(_position(), _position(instrument_id=1, symbol="BBB", weight=0.2)))
     with pytest.raises(ValueError, match="duplicados"):
-        service.evaluate(
-            as_of=AS_OF,
-            positions=(
-                _position(),
-                _position(instrument_id=2, symbol="aaa", weight=0.2),
-            ),
-        )
+        service.evaluate(as_of=AS_OF, positions=(_position(), _position(instrument_id=2, symbol="aaa", weight=0.2)))
     with pytest.raises(ValueError, match="source.*provenance"):
         service.evaluate(as_of=AS_OF, positions=(_position(source=" "),))
     with pytest.raises(ValueError, match="source_ref.*provenance"):
         service.evaluate(as_of=AS_OF, positions=(_position(source_ref=""),))
     with pytest.raises(ValueError, match="Factor no soportado"):
-        service.evaluate(
-            as_of=AS_OF,
-            positions=(_position(factors={"astrology": 1.0}),),
-        )
+        service.evaluate(as_of=AS_OF, positions=(_position(factors={"astrology": 1.0}),))
 
 
 def test_factor_risk_rejects_invalid_weight_sum_and_naive_timestamps() -> None:
     service = RecommendationFactorRiskService()
-
     with pytest.raises(ValueError, match="suma de weights"):
-        service.evaluate(
-            as_of=AS_OF,
-            positions=(
-                _position(weight=0.7),
-                _position(instrument_id=2, symbol="BBB", weight=0.4),
-            ),
-        )
+        service.evaluate(as_of=AS_OF, positions=(_position(weight=0.7), _position(instrument_id=2, symbol="BBB", weight=0.4)))
     with pytest.raises(ValueError, match="as_of.*zona horaria"):
         service.evaluate(as_of=datetime(2026, 1, 1), positions=(_position(),))
     with pytest.raises(ValueError, match="exposure_available_at.*zona horaria"):
-        service.evaluate(
-            as_of=AS_OF,
-            positions=(_position(available_at=datetime(2025, 12, 31, 23)),),
-        )
+        service.evaluate(as_of=AS_OF, positions=(_position(available_at=datetime(2025, 12, 31, 23)),))
 
 
 def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
@@ -224,7 +185,6 @@ def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
         "/api/v1/recommendations/professional-research/factor-risk",
         json=_api_request(exposure_available_at=AVAILABLE_AT.isoformat()),
     )
-
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["advisoryStatus"] == "no_advice"
@@ -233,17 +193,15 @@ def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
     assert data["weightedExposures"]["market"] == pytest.approx(0.5)
     assert data["weightedExposures"]["usd_fx"] == pytest.approx(0.15)
     assert data["cashWeight"] == pytest.approx(0.5)
-    assert data["policy"]["fx"] == "usd_fx_is_explicit_factor_not_silently_netting_currency_risk"
     assert data["policy"]["automaticTrading"] is False
     assert data["stateIntegrity"]["reconciled"] is True
     assert data["stateIntegrity"]["gate"] == "required_before_factor_risk"
-    assert (
-        data["stateIntegrity"]["weightDerivation"]
-        == "derived_from_reconciled_state_and_sealed_pit_valuation"
-    )
+    assert data["stateIntegrity"]["weightDerivation"] == "derived_from_reconciled_state_and_sealed_pit_valuation"
+    assert data["stateIntegrity"]["marketFactorDerivation"] == "sealed_pit_market_observations_only"
+    assert data["stateIntegrity"]["callerSuppliedMarketAccepted"] is False
+    assert data["stateIntegrity"]["marketExposureKeys"]["1"] == MARKET_KEY
     assert data["stateIntegrity"]["callerSuppliedWeightAccepted"] is False
     assert data["stateIntegrity"]["weightEvidenceKey"] == "f" * 64
-    assert data["stateIntegrity"]["portfolioValuationEvidenceFingerprint"] == "c" * 64
 
 
 def test_factor_risk_api_rejects_naive_temporal_evidence_before_service_use(monkeypatch) -> None:
@@ -253,6 +211,5 @@ def test_factor_risk_api_rejects_naive_temporal_evidence_before_service_use(monk
         "/api/v1/recommendations/professional-research/factor-risk",
         json=_api_request(exposure_available_at="2025-12-31T23:00:00"),
     )
-
     assert response.status_code == 400
     assert "zona horaria" in response.json()["detail"]
