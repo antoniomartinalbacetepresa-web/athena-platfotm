@@ -32,6 +32,9 @@ from app.api.recommendation_professional_research_cycle import (
     router as recommendation_professional_research_cycle_router,
 )
 from app.api.recommendation_research import router as recommendation_research_router
+from app.api.recommendation_research_outcome_attribution import (
+    router as recommendation_research_outcome_attribution_router,
+)
 from app.api.recommendation_shadow_operations import (
     router as recommendation_shadow_operations_router,
 )
@@ -81,6 +84,7 @@ app.include_router(recommendation_investment_journal_router)
 app.include_router(recommendation_devils_advocate_router)
 app.include_router(recommendation_athena_radar_router)
 app.include_router(recommendation_professional_research_cycle_router)
+app.include_router(recommendation_research_outcome_attribution_router)
 app.include_router(recommendation_shadow_operations_router)
 
 
