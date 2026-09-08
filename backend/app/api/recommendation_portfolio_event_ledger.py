@@ -81,6 +81,8 @@ def append_portfolio_event(request: PortfolioLedgerEventRequest) -> dict[str, ob
                 source_ref=request.sourceRef,
             ),
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -115,6 +117,8 @@ def get_external_cash_flows(
             period_end=_aware_utc(periodEnd, "periodEnd"),
             as_of=_aware_utc(asOf, "asOf"),
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
