@@ -202,12 +202,10 @@ def test_factor_risk_gate_fails_closed_if_legacy_changes_or_invents_value(monkey
     assert "inventó value" in response.json()["detail"]
 
 
-def test_factor_risk_public_route_is_single_registered_boundary() -> None:
-    assert "/api/v1/recommendations/professional-research/factor-risk" in app.openapi()["paths"]
-    paths = [
-        route.path
-        for route in app.routes
-        if hasattr(route, "path")
-        and route.path == "/api/v1/recommendations/professional-research/factor-risk"
+def test_factor_risk_public_route_is_registered_in_openapi_contract() -> None:
+    path = app.openapi()["paths"][
+        "/api/v1/recommendations/professional-research/factor-risk"
     ]
-    assert len(paths) == 1
+    assert set(path) == {"post"}
+    operation = path["post"]
+    assert operation["operationId"].startswith("post_factor_risk_with_sealed_value_")
