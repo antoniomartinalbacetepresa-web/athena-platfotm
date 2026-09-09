@@ -98,6 +98,7 @@ def test_normalize_uses_acceptance_time_and_excludes_future_revision() -> None:
     assert payload["isWeightingReady"] is False
     assert payload["policy"]["automaticTrading"] is False
     assert payload["policy"]["lookahead"] == "forbidden"
+    assert payload["policy"]["availabilityEvidence"] == "explicit_sec_acceptance_datetime_required"
     assert len(assets.fact_key) == 64
 
 
@@ -112,6 +113,16 @@ def test_normalize_preserves_revision_as_new_vintage_after_it_is_known() -> None
     assert len(assets) == 2
     assert {item.accession_number for item in assets} == {ACC_OLD, ACC_NEW}
     assert len({item.fact_key for item in assets}) == 2
+
+
+def test_normalize_skips_fact_without_explicit_acceptance_timestamp() -> None:
+    facts = SecFundamentalPitService().normalize(
+        cik=CIK,
+        company_facts=company_facts(),
+        submissions={"filings": {"recent": {"accessionNumber": [], "acceptanceDateTime": []}}},
+        as_of=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+    assert facts == ()
 
 
 def test_normalize_rejects_nonfinite_and_temporally_impossible_facts() -> None:
