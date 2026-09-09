@@ -23,6 +23,9 @@ from app.repositories.recommendation_rate_factor_exposure_repository import (
 from app.repositories.recommendation_size_factor_exposure_repository import (
     RecommendationSizeFactorExposureRepository,
 )
+from app.services.recommendation_factor_risk_output_binding_service import (
+    RecommendationFactorRiskOutputBindingService,
+)
 from app.services.recommendation_factor_risk_service import (
     FactorRiskPositionInput,
     RecommendationFactorRiskService,
@@ -38,6 +41,7 @@ router = APIRouter(
 )
 
 factor_risk_service = RecommendationFactorRiskService()
+_output_binding_service = RecommendationFactorRiskOutputBindingService()
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _valuation_repository = RecommendationPortfolioValuationEvidenceRepository()
 _weight_service = RecommendationReconciledPortfolioWeightService()
@@ -498,6 +502,16 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     payload = result.to_api_dict()
     if not isinstance(payload, dict):
         raise HTTPException(status_code=500, detail="Factor Risk devolvió un contrato inválido.")
+    try:
+        _output_binding_service.validate(
+            payload=payload,
+            expected_positions=tuple(positions),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Factor Risk violó binding salida-evidencia: {exc}",
+        ) from exc
     payload["portfolioId"] = request.portfolioId.strip()
     payload["reportingCurrency"] = request.reportingCurrency.strip().upper()
     payload["stateIntegrity"] = {
