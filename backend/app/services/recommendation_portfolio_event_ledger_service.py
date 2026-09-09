@@ -8,11 +8,21 @@ import math
 from pathlib import Path
 import re
 from threading import Lock
-from typing import Iterable
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_ALLOWED_EVENT_TYPES = frozenset({"external_cash_flow", "trade_execution", "corporate_action"})
+_ALLOWED_EVENT_TYPES = frozenset(
+    {
+        "external_cash_flow",
+        "trade_execution",
+        "cash_dividend",
+        "fee",
+        "tax",
+        "split_adjustment",
+        "corporate_action",
+    }
+)
+_INTERNAL_CASH_EVENT_TYPES = frozenset({"cash_dividend", "fee", "tax"})
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,32 @@ class ExternalCashFlowProjection:
             "eventKey": self.event_key,
             "amount": self.amount,
             "currency": self.currency,
+            "occurredAt": self.occurred_at.isoformat(),
+            "availableAt": self.available_at.isoformat(),
+            "source": self.source,
+            "sourceRef": self.source_ref,
+        }
+
+
+@dataclass(frozen=True)
+class InternalCashEventProjection:
+    event_key: str
+    event_type: str
+    amount: float
+    currency: str
+    instrument_id: str | None
+    occurred_at: datetime
+    available_at: datetime
+    source: str
+    source_ref: str
+
+    def to_api_dict(self) -> dict[str, object]:
+        return {
+            "eventKey": self.event_key,
+            "eventType": self.event_type,
+            "amount": self.amount,
+            "currency": self.currency,
+            "instrumentId": self.instrument_id,
             "occurredAt": self.occurred_at.isoformat(),
             "availableAt": self.available_at.isoformat(),
             "source": self.source,
@@ -189,6 +225,21 @@ class RecommendationPortfolioEventLedgerService:
         elif event_type == "trade_execution":
             if instrument_id is None or quantity is None or quantity == 0.0 or amount is None:
                 raise ValueError("trade_execution requires instrument_id, non-zero quantity and explicit amount")
+        elif event_type == "cash_dividend":
+            if instrument_id is None or amount is None or amount == 0.0:
+                raise ValueError("cash_dividend requires instrument_id and non-zero explicit amount")
+            if quantity is not None:
+                raise ValueError("cash_dividend cannot carry quantity effect")
+        elif event_type in {"fee", "tax"}:
+            if amount is None or amount >= 0.0:
+                raise ValueError(f"{event_type} requires an explicit negative amount")
+            if quantity is not None:
+                raise ValueError(f"{event_type} cannot carry quantity effect")
+        elif event_type == "split_adjustment":
+            if instrument_id is None or quantity is None or quantity == 0.0:
+                raise ValueError("split_adjustment requires instrument_id and non-zero quantity effect")
+            if amount is not None:
+                raise ValueError("split_adjustment cannot carry cash amount")
         elif event_type == "corporate_action":
             if instrument_id is None:
                 raise ValueError("corporate_action requires instrument_id")
@@ -346,6 +397,49 @@ class RecommendationPortfolioEventLedgerService:
         projected.sort(key=lambda item: (item.occurred_at, item.event_key))
         return tuple(projected)
 
+    def internal_cash_events(
+        self,
+        *,
+        portfolio_id: str,
+        reporting_currency: str,
+        period_start: datetime,
+        period_end: datetime,
+        as_of: datetime,
+    ) -> tuple[InternalCashEventProjection, ...]:
+        """Project typed internal cash events without treating them as TWR external flows."""
+        portfolio = self._text(portfolio_id, "portfolio_id")
+        currency = self._currency(reporting_currency)
+        start = self._aware_utc(period_start, "period_start")
+        end = self._aware_utc(period_end, "period_end")
+        cutoff = self._aware_utc(as_of, "as_of")
+        if end <= start or end > cutoff:
+            raise ValueError("invalid ledger projection period")
+        projected: list[InternalCashEventProjection] = []
+        for record in self.load():
+            event = record.event
+            if event.portfolio_id != portfolio or event.event_type not in _INTERNAL_CASH_EVENT_TYPES:
+                continue
+            if event.available_at > cutoff or not (start < event.occurred_at < end):
+                continue
+            if event.currency != currency:
+                raise ValueError("internal cash event currency requires explicit FX conversion evidence")
+            assert event.amount is not None
+            projected.append(
+                InternalCashEventProjection(
+                    event_key=event.event_key,
+                    event_type=event.event_type,
+                    amount=event.amount,
+                    currency=event.currency,
+                    instrument_id=event.instrument_id,
+                    occurred_at=event.occurred_at,
+                    available_at=event.available_at,
+                    source=event.source,
+                    source_ref=event.source_ref,
+                )
+            )
+        projected.sort(key=lambda item: (item.occurred_at, item.event_type, item.event_key))
+        return tuple(projected)
+
     @staticmethod
     def policy() -> dict[str, object]:
         return {
@@ -360,5 +454,14 @@ class RecommendationPortfolioEventLedgerService:
             "persistence": "append_only_hash_chained_jsonl",
             "temporal": "occurred_at_lte_available_at_lte_as_of",
             "identity": "deterministic_sha256_event_key_and_record_hash_chain",
+            "typedEvents": {
+                "externalCashFlow": "only_external_contribution_or_withdrawal_for_twr_boundaries",
+                "tradeExecution": "observed_execution_with_explicit_cash_and_quantity_effects",
+                "cashDividend": "internal_cash_return_bound_to_instrument_not_external_flow",
+                "fee": "explicit_negative_internal_cash_friction",
+                "tax": "explicit_negative_internal_cash_friction",
+                "splitAdjustment": "explicit_quantity_only_corporate_action",
+                "corporateAction": "generic_form_persistable_but_state_semantics_fail_closed",
+            },
             "purpose": "historical_observation_and_return_measurement_only",
         }
