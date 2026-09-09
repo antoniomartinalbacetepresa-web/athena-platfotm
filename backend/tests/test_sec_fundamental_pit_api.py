@@ -8,6 +8,13 @@ client = TestClient(app)
 
 
 class FakeEdgar:
+    @staticmethod
+    def normalize_cik(cik: str | int) -> str:
+        digits = "".join(character for character in str(cik) if character.isdigit())
+        if not digits or len(digits) > 10:
+            raise ValueError("CIK inválido.")
+        return digits.zfill(10)
+
     def get_company_facts(self, cik: str) -> dict[str, object]:
         return {
             "cik": 320193,
