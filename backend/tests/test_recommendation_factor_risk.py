@@ -46,7 +46,23 @@ class _ValidReconciliationRepository:
 
 class _ValidValuationRepository:
     def get(self, **kwargs: object) -> dict[str, object]:
-        return {"artifact": {"portfolioValuationEvidenceFingerprint": "c" * 64}}
+        return {
+            "artifact": {
+                "portfolioValuationEvidenceFingerprint": "c" * 64,
+                "positions": [
+                    {
+                        "instrumentId": 1,
+                        "instrumentCurrency": "USD",
+                        "fx": {
+                            "rate": 1.0,
+                            "observedAt": AVAILABLE_AT.isoformat(),
+                            "retrievedAt": AVAILABLE_AT.isoformat(),
+                            "historicalPointInTimeEligible": True,
+                        },
+                    }
+                ],
+            }
+        }
 
     def validate_record(self, record: dict[str, object]) -> dict[str, object]:
         return record
@@ -106,7 +122,7 @@ def _api_request(*, exposure_available_at: str) -> dict[str, object]:
                 "exposureAvailableAt": exposure_available_at,
                 "source": "athena_factor_model_v1",
                 "sourceRef": "factor-snapshot:AAA:2025-12-31",
-                "factors": {"usd_fx": 0.3},
+                "factors": {},
             }
         ],
     }
@@ -191,14 +207,16 @@ def test_factor_risk_api_exposes_research_only_contract(monkeypatch) -> None:
     assert data["productionEligible"] is False
     assert data["isWeightingReady"] is False
     assert data["weightedExposures"]["market"] == pytest.approx(0.5)
-    assert data["weightedExposures"]["usd_fx"] == pytest.approx(0.15)
+    assert data["weightedExposures"]["usd_fx"] == pytest.approx(0.0)
     assert data["cashWeight"] == pytest.approx(0.5)
     assert data["policy"]["automaticTrading"] is False
     assert data["stateIntegrity"]["reconciled"] is True
     assert data["stateIntegrity"]["gate"] == "required_before_factor_risk"
     assert data["stateIntegrity"]["weightDerivation"] == "derived_from_reconciled_state_and_sealed_pit_valuation"
     assert data["stateIntegrity"]["marketFactorDerivation"] == "sealed_pit_market_observations_only"
+    assert data["stateIntegrity"]["usdFxFactorDerivation"] == "sealed_portfolio_valuation_translation_exposure_or_explicitly_missing"
     assert data["stateIntegrity"]["callerSuppliedMarketAccepted"] is False
+    assert data["stateIntegrity"]["callerSuppliedUsdFxAccepted"] is False
     assert data["stateIntegrity"]["marketExposureKeys"]["1"] == MARKET_KEY
     assert data["stateIntegrity"]["callerSuppliedWeightAccepted"] is False
     assert data["stateIntegrity"]["weightEvidenceKey"] == "f" * 64
