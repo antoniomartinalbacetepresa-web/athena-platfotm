@@ -251,9 +251,23 @@ class RecommendationFactorRiskService:
         quality_value: float,
         quality_exposure_key: str | None,
     ) -> None:
-        key = str(quality_exposure_key or "").strip().lower()
-        if not self._sha256(key):
-            raise ValueError("quality requiere quality_exposure_key SHA-256 sellada.")
+        explicit_key = str(quality_exposure_key or "").strip().lower()
+        referenced_keys = [
+            part.strip().split(":", 1)[1].strip().lower()
+            for part in source_ref.split(";")
+            if part.strip().lower().startswith("quality:") and ":" in part.strip()
+        ]
+        if explicit_key:
+            if not self._sha256(explicit_key):
+                raise ValueError("quality requiere quality_exposure_key SHA-256 sellada.")
+            if referenced_keys != [explicit_key]:
+                raise ValueError("Factor quality perdió sourceRef único de quality_exposure_key.")
+            key = explicit_key
+        else:
+            if len(referenced_keys) != 1 or not self._sha256(referenced_keys[0]):
+                raise ValueError("quality requiere quality_exposure_key SHA-256 sellada en sourceRef.")
+            key = referenced_keys[0]
+
         try:
             record = self._quality_repository.get(factor_exposure_key=key)
         except ValueError as exc:
