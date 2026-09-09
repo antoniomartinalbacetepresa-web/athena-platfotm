@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
 from typing import Any
@@ -45,14 +46,20 @@ class SecFundamentalPitRepository:
         key = str(artifact["factKey"])
         if _SHA256_RE.fullmatch(key) is None:
             raise ValueError("factKey inválido.")
-        serialized = json.dumps(artifact, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        serialized = json.dumps(
+            artifact,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
         created_at = datetime.now(timezone.utc).isoformat()
         with self._database.connect() as connection:
             existing = connection.execute(
                 "SELECT * FROM sec_fundamental_pit_facts WHERE fact_key = ?", (key,)
             ).fetchone()
             if existing is not None:
-                record = self._row(existing)
+                record = self._validate_record(self._row(existing))
                 if record["artifact"] != artifact:
                     raise ValueError("factKey ya existe con otro contenido.")
                 return record
@@ -77,9 +84,15 @@ class SecFundamentalPitRepository:
             row = connection.execute(
                 "SELECT * FROM sec_fundamental_pit_facts WHERE fact_key = ?", (key,)
             ).fetchone()
-        return self._row(row)
+        return self._validate_record(self._row(row))
 
-    def get_known_at_or_before(self, *, cik: str, as_of: datetime, concept: str | None = None) -> list[dict[str, Any]]:
+    def get_known_at_or_before(
+        self,
+        *,
+        cik: str,
+        as_of: datetime,
+        concept: str | None = None,
+    ) -> list[dict[str, Any]]:
         self.initialize()
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise ValueError("as_of debe incluir zona horaria.")
@@ -104,12 +117,56 @@ class SecFundamentalPitRepository:
             raise ValueError("Registro fundamental manipulado: factKey no coincide.")
         if artifact.get("cik") != record["cik"]:
             raise ValueError("Registro fundamental manipulado: CIK no coincide.")
+        if artifact.get("taxonomy") != record["taxonomy"]:
+            raise ValueError("Registro fundamental manipulado: taxonomy no coincide.")
+        if artifact.get("concept") != record["concept"]:
+            raise ValueError("Registro fundamental manipulado: concept no coincide.")
+        if artifact.get("unit") != record["unit"]:
+            raise ValueError("Registro fundamental manipulado: unit no coincide.")
+        if artifact.get("accessionNumber") != record["accession_number"]:
+            raise ValueError("Registro fundamental manipulado: accession no coincide.")
+        if artifact.get("availableAt") != record["available_at"]:
+            raise ValueError("Registro fundamental manipulado: availableAt no coincide.")
         provenance = artifact.get("provenance")
         if not isinstance(provenance, dict) or provenance.get("source") != "sec_edgar":
             raise ValueError("Registro fundamental carece de provenance SEC válida.")
         if artifact.get("productionEligible") is not False or artifact.get("isWeightingReady") is not False:
             raise ValueError("Registro fundamental violó límites de producción/weighting.")
+        expected_key = self._artifact_key(artifact)
+        if expected_key != record["fact_key"]:
+            raise ValueError("Registro fundamental manipulado: hash canónico no coincide.")
         return record
+
+    @staticmethod
+    def _artifact_key(artifact: dict[str, Any]) -> str:
+        provenance = artifact.get("provenance")
+        if not isinstance(provenance, dict):
+            raise ValueError("Registro fundamental carece de provenance válida.")
+        identity = {
+            "cik": artifact.get("cik"),
+            "taxonomy": artifact.get("taxonomy"),
+            "concept": artifact.get("concept"),
+            "unit": artifact.get("unit"),
+            "value": format(float(artifact.get("value")), ".17g"),
+            "periodStart": artifact.get("periodStart"),
+            "periodEnd": artifact.get("periodEnd"),
+            "fiscalYear": artifact.get("fiscalYear"),
+            "fiscalPeriod": artifact.get("fiscalPeriod"),
+            "form": artifact.get("form"),
+            "accessionNumber": artifact.get("accessionNumber"),
+            "filedAt": artifact.get("filedAt"),
+            "availableAt": artifact.get("availableAt"),
+            "source": provenance.get("source"),
+            "sourceRef": provenance.get("sourceRef"),
+        }
+        return hashlib.sha256(
+            json.dumps(
+                identity,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
 
     @staticmethod
     def _row(row: Any) -> dict[str, Any]:
