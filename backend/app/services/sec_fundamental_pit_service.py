@@ -52,6 +52,7 @@ class FundamentalPitFact:
                 "automaticProductionPromotion": False,
                 "temporal": "period_end_lte_filed_at_lte_available_at",
                 "lookahead": "forbidden",
+                "availabilityEvidence": "explicit_sec_acceptance_datetime_required",
                 "revisionHandling": "accession_bound_vintages_preserved",
                 "identity": "deterministic_sha256_fact_key",
                 "source": "sec_edgar_companyfacts_plus_submissions",
@@ -62,7 +63,16 @@ class FundamentalPitFact:
 class SecFundamentalPitService:
     """Normalize SEC CompanyFacts into accession-bound point-in-time evidence."""
 
-    _ALLOWED_FORMS = {"10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A"}
+    _ALLOWED_FORMS = {
+        "10-K",
+        "10-K/A",
+        "10-Q",
+        "10-Q/A",
+        "20-F",
+        "20-F/A",
+        "40-F",
+        "40-F/A",
+    }
 
     def normalize(
         self,
@@ -114,9 +124,22 @@ class SecFundamentalPitService:
                             continue
                         existing = output.get(fact.fact_key)
                         if existing is not None and existing != fact:
-                            raise ValueError("SEC produjo dos facts distintos con la misma identidad canónica.")
+                            raise ValueError(
+                                "SEC produjo dos facts distintos con la misma identidad canónica."
+                            )
                         output[fact.fact_key] = fact
-        return tuple(sorted(output.values(), key=lambda item: (item.available_at, item.taxonomy, item.concept, item.unit, item.fact_key)))
+        return tuple(
+            sorted(
+                output.values(),
+                key=lambda item: (
+                    item.available_at,
+                    item.taxonomy,
+                    item.concept,
+                    item.unit,
+                    item.fact_key,
+                ),
+            )
+        )
 
     def _normalize_observation(
         self,
@@ -133,13 +156,15 @@ class SecFundamentalPitService:
         if form not in self._ALLOWED_FORMS:
             return None
         accession = self._text(raw.get("accn"), "accn")
+        available_at = acceptance_by_accession.get(accession)
+        if available_at is None:
+            return None
         filed_date = self._date(raw.get("filed"), "filed")
         period_end = self._date(raw.get("end"), "end")
         period_start = self._optional_date(raw.get("start"), "start")
         if period_start is not None and period_start > period_end:
             raise ValueError("Un fact SEC tiene start posterior a end.")
         filed_at = datetime.combine(filed_date, time.min, tzinfo=timezone.utc)
-        available_at = acceptance_by_accession.get(accession, filed_at)
         if period_end > filed_date:
             raise ValueError("Un fact SEC termina después de su filing date.")
         if filed_at > available_at:
@@ -156,7 +181,10 @@ class SecFundamentalPitService:
             except (TypeError, ValueError) as exc:
                 raise ValueError("fy inválido.") from exc
         fiscal_period = str(raw.get("fp") or "").strip().upper() or None
-        source_ref = f"sec:{cik}:{accession}:{taxonomy}:{concept}:{unit}:{period_start}:{period_end}"
+        source_ref = (
+            f"sec:{cik}:{accession}:{taxonomy}:{concept}:{unit}:"
+            f"{period_start}:{period_end}"
+        )
         identity = {
             "cik": cik,
             "taxonomy": taxonomy,
@@ -174,7 +202,14 @@ class SecFundamentalPitService:
             "source": "sec_edgar",
             "sourceRef": source_ref,
         }
-        key = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        key = hashlib.sha256(
+            json.dumps(
+                identity,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
         return FundamentalPitFact(
             fact_key=key,
             cik=cik,
@@ -195,10 +230,10 @@ class SecFundamentalPitService:
         )
 
     def _acceptance_index(self, submissions: Mapping[str, Any]) -> dict[str, datetime]:
-        recent = submissions.get("filings")
-        if not isinstance(recent, Mapping):
+        filings = submissions.get("filings")
+        if not isinstance(filings, Mapping):
             return {}
-        recent = recent.get("recent")
+        recent = filings.get("recent")
         if not isinstance(recent, Mapping):
             return {}
         accessions = recent.get("accessionNumber")
@@ -213,7 +248,10 @@ class SecFundamentalPitService:
             acceptance_raw = acceptances[index]
             if not accession or not acceptance_raw:
                 continue
-            result[accession] = self._parse_datetime(acceptance_raw, "acceptanceDateTime")
+            result[accession] = self._parse_datetime(
+                acceptance_raw,
+                "acceptanceDateTime",
+            )
         return result
 
     @staticmethod
