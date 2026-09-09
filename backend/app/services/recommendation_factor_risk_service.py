@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from app.repositories.recommendation_quality_factor_exposure_repository import (
+    RecommendationQualityFactorExposureRepository,
+)
+
 
 _ALLOWED_FACTORS = frozenset(
     {
@@ -29,6 +33,7 @@ class FactorRiskPositionInput:
     source: str
     source_ref: str
     factors: Mapping[str, float]
+    quality_exposure_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,7 @@ class RecommendationFactorRisk:
                 "provenance": "every_position_requires_source_and_source_ref_and_is_returned_for_audit",
                 "missingFactorCoverage": "reported_explicitly_never_imputed_as_zero",
                 "fx": "usd_fx_is_explicit_factor_not_silently_netting_currency_risk",
+                "quality": "quality_requires_persisted_tamper_verified_pit_factor_exposure_key",
                 "dominantFactor": "only_selected_from_factors_covering_all_invested_weight",
                 "thresholds": "not_calibrated",
                 "interpretation": "portfolio_factor_diagnostic_not_position_sizing_or_trade_advice",
@@ -82,11 +88,19 @@ class RecommendationFactorRisk:
 class RecommendationFactorRiskService:
     """Build a provenance-bound PIT portfolio factor diagnostic.
 
-    Factor exposures are explicit caller-supplied research evidence. This service
-    does not infer missing exposures, fill unavailable factors, estimate covariance,
-    size positions or issue buy/sell/hold decisions. Missing factor coverage is
-    reported explicitly instead of being silently treated as a zero exposure.
+    Caller-supplied research evidence is allowed only for factors that have not
+    yet been sealed upstream. Quality is a sealed factor: whenever present it
+    must reconcile exactly to a persisted, tamper-verified PIT quality artifact.
+    The service never infers missing exposures, estimates covariance, sizes
+    positions or issues buy/sell/hold decisions.
     """
+
+    def __init__(
+        self,
+        *,
+        quality_repository: RecommendationQualityFactorExposureRepository | None = None,
+    ) -> None:
+        self._quality_repository = quality_repository or RecommendationQualityFactorExposureRepository()
 
     def evaluate(
         self,
@@ -146,6 +160,20 @@ class RecommendationFactorRiskService:
                 if exposure < -10.0 or exposure > 10.0:
                     raise ValueError("Las exposiciones factoriales deben estar en [-10, 10].")
                 normalized_factors[name] = exposure
+
+            quality_key = position.quality_exposure_key
+            if "quality" in normalized_factors:
+                self._validate_sealed_quality(
+                    instrument_id=instrument_id,
+                    cutoff=cutoff,
+                    exposure_available_at=available_at,
+                    source=source,
+                    source_ref=source_ref,
+                    quality_value=normalized_factors["quality"],
+                    quality_exposure_key=quality_key,
+                )
+            elif quality_key is not None:
+                raise ValueError("quality_exposure_key no puede existir sin factor quality.")
 
             for factor, exposure in normalized_factors.items():
                 weighted[factor] = self._finite(
@@ -212,6 +240,57 @@ class RecommendationFactorRiskService:
             production_eligible=False,
         )
 
+    def _validate_sealed_quality(
+        self,
+        *,
+        instrument_id: int,
+        cutoff: datetime,
+        exposure_available_at: datetime,
+        source: str,
+        source_ref: str,
+        quality_value: float,
+        quality_exposure_key: str | None,
+    ) -> None:
+        key = str(quality_exposure_key or "").strip().lower()
+        if not self._sha256(key):
+            raise ValueError("quality requiere quality_exposure_key SHA-256 sellada.")
+        try:
+            record = self._quality_repository.get(factor_exposure_key=key)
+        except ValueError as exc:
+            raise ValueError(f"quality_exposure_key inválida: {exc}") from exc
+        if record is None:
+            raise ValueError("No existe quality factor exposure persistido con esa identidad.")
+        artifact = record.get("artifact")
+        if not isinstance(artifact, Mapping):
+            raise ValueError("Quality factor exposure persistido perdió artifact.")
+        artifact_key = str(artifact.get("factorExposureKey") or "").strip().lower()
+        if artifact_key != key or not self._sha256(artifact_key):
+            raise ValueError("Quality factor exposure perdió identidad sellada.")
+        if artifact.get("instrumentId") != instrument_id:
+            raise ValueError("quality_exposure_key pertenece a otro instrumento.")
+        artifact_as_of = self._parse_datetime(artifact.get("asOf"), "quality.asOf")
+        artifact_available = self._parse_datetime(artifact.get("availableAt"), "quality.availableAt")
+        if artifact_as_of != cutoff:
+            raise ValueError("quality_exposure_key pertenece a otro as_of.")
+        if artifact_available > cutoff or artifact_available > exposure_available_at:
+            raise ValueError("Quality factor exposure viola PIT/exposure_available_at.")
+        factors = artifact.get("factors")
+        if not isinstance(factors, Mapping) or set(factors) != {"quality"}:
+            raise ValueError("Quality factor exposure persistido contiene factores inesperados.")
+        sealed_value = self._finite(factors.get("quality"), "sealed_quality")
+        if sealed_value < -1.0 - 1e-12 or sealed_value > 1.0 + 1e-12:
+            raise ValueError("Quality factor exposure sellado salió de [-1,1].")
+        if not math.isclose(quality_value, sealed_value, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError("Factor quality no reconcilia con quality_exposure_key sellada.")
+        if "sealed_quality_factor" not in {part.strip() for part in source.split("+")}:
+            raise ValueError("Factor quality perdió provenance sealed_quality_factor.")
+        if f"quality:{key}" not in {part.strip() for part in source_ref.split(";")}:
+            raise ValueError("Factor quality perdió sourceRef de quality_exposure_key.")
+        if artifact.get("advisoryStatus") != "no_advice":
+            raise ValueError("Quality factor exposure violó no_advice.")
+        if artifact.get("productionEligible") is not False or artifact.get("isWeightingReady") is not False:
+            raise ValueError("Quality factor exposure intentó habilitar producción/weighting.")
+
     def _required_text(self, value: object, field: str) -> str:
         text = str(value or "").strip()
         if not text:
@@ -240,7 +319,21 @@ class RecommendationFactorRiskService:
             raise ValueError(f"{field} debe ser numérico finito.")
         return result
 
+    @staticmethod
+    def _sha256(value: str) -> bool:
+        return len(value) == 64 and all(ch in "0123456789abcdef" for ch in value)
+
     def _aware_utc(self, value: datetime, field: str) -> datetime:
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{field} debe incluir zona horaria.")
         return value.astimezone(timezone.utc)
+
+    def _parse_datetime(self, raw: object, field: str) -> datetime:
+        if isinstance(raw, datetime):
+            return self._aware_utc(raw, field)
+        text = str(raw or "").strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(f"{field} debe ser timestamp ISO válido.") from exc
+        return self._aware_utc(parsed, field)
