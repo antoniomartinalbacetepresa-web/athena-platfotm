@@ -10,9 +10,15 @@ from app.repositories.recommendation_factor_exposure_repository import Recommend
 from app.repositories.recommendation_price_factor_exposure_repository import (
     RecommendationPriceFactorExposureRepository,
 )
+from app.repositories.recommendation_size_factor_exposure_repository import (
+    RecommendationSizeFactorExposureRepository,
+)
 from app.services.recommendation_market_beta_exposure_service import RecommendationMarketBetaExposureService
 from app.services.recommendation_price_factor_exposure_service import (
     RecommendationPriceFactorExposureService,
+)
+from app.services.recommendation_size_factor_exposure_service import (
+    RecommendationSizeFactorExposureService,
 )
 
 
@@ -24,6 +30,8 @@ _service = RecommendationMarketBetaExposureService()
 _repository = RecommendationFactorExposureRepository(service=_service)
 _price_service = RecommendationPriceFactorExposureService()
 _price_repository = RecommendationPriceFactorExposureRepository(service=_price_service)
+_size_service = RecommendationSizeFactorExposureService()
+_size_repository = RecommendationSizeFactorExposureRepository(service=_size_service)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -45,6 +53,14 @@ class PriceFactorExposureRequest(BaseModel):
     sourceProvider: str = Field(min_length=1)
     periodStart: datetime
     periodEnd: datetime
+    asOf: datetime
+
+
+class SizeFactorExposureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrumentId: int = Field(gt=0)
+    sourceProvider: str = Field(min_length=1)
     asOf: datetime
 
 
@@ -128,4 +144,32 @@ def post_price_factor_exposure(request: PriceFactorExposureRequest) -> dict[str,
     if set(persisted.get("factors", {})) != {"momentum", "low_volatility"}:
         raise HTTPException(status_code=500, detail="Price factors devolvió factores inesperados.")
     _assert_safety(persisted, "Price factors")
+    return {"data": persisted}
+
+
+@router.post("/factor-exposure/size")
+def post_size_factor_exposure(request: SizeFactorExposureRequest) -> dict[str, object]:
+    """Derive and seal bounded cross-sectional PIT size evidence; never advice or sizing."""
+
+    try:
+        artifact = _size_service.evaluate(
+            instrument_id=request.instrumentId,
+            source_provider=request.sourceProvider,
+            as_of=_aware(request.asOf, "asOf"),
+        )
+        record = _size_repository.append(artifact=artifact)
+        persisted = record["artifact"]
+        if not isinstance(persisted, dict):
+            raise RuntimeError("Size factor exposure persistido perdió artifact.")
+        _size_service.validate_artifact(persisted)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo derivar/persistir size PIT.") from exc
+
+    if set(persisted.get("factors", {})) != {"size"}:
+        raise HTTPException(status_code=500, detail="Size factor devolvió factores inesperados.")
+    _assert_safety(persisted, "Size factor")
     return {"data": persisted}
