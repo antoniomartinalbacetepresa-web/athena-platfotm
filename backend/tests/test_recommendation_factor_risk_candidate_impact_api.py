@@ -81,7 +81,7 @@ def _candidate() -> dict[str, object]:
         "exposureAvailableAt": AVAILABLE_AT,
         "source": "pit_factor_store",
         "sourceRef": "factor:2:2025-12-31",
-        "factors": {"value": -1.0, "quality": 0.2},
+        "factors": {"quality": 0.2},
     }
 
 
@@ -110,17 +110,17 @@ def _payload(**overrides: object) -> dict[str, object]:
         "baselineCashWeight": 0.4,
         "postInvestedWeight": 0.8,
         "postCashWeight": 0.2,
-        "comparableFactors": ["value", "quality"],
+        "comparableFactors": ["quality"],
         "coverageLostFactors": [],
-        "baselineWeightedExposures": {"value": 0.6, "quality": 0.12},
-        "postWeightedExposures": {"value": 0.4, "quality": 0.16},
-        "factorExposureDeltas": {"value": -0.2, "quality": 0.04},
-        "baselineComparableGrossExposure": 0.72,
-        "postComparableGrossExposure": 0.56,
-        "comparableGrossExposureDelta": -0.16,
-        "baselineComparableMaxAbsExposure": 0.6,
-        "postComparableMaxAbsExposure": 0.4,
-        "comparableMaxAbsExposureDelta": -0.2,
+        "baselineWeightedExposures": {"quality": 0.12},
+        "postWeightedExposures": {"quality": 0.16},
+        "factorExposureDeltas": {"quality": 0.04},
+        "baselineComparableGrossExposure": 0.12,
+        "postComparableGrossExposure": 0.16,
+        "comparableGrossExposureDelta": 0.04,
+        "baselineComparableMaxAbsExposure": 0.12,
+        "postComparableMaxAbsExposure": 0.16,
+        "comparableMaxAbsExposureDelta": 0.04,
         "advisoryStatus": "no_advice",
         "productionEligible": False,
         "isWeightingReady": False,
@@ -144,7 +144,7 @@ def _request() -> dict[str, object]:
                 "exposureAvailableAt": AVAILABLE_AT,
                 "source": "pit_factor_store",
                 "sourceRef": "factor:1:2025-12-31",
-                "factors": {"value": 1.0, "quality": 0.2},
+                "factors": {"quality": 0.2},
             }
         ],
         "candidate": _candidate(),
@@ -174,6 +174,8 @@ def test_candidate_impact_endpoint_preserves_research_only_contract(monkeypatch)
     assert data["stateIntegrity"]["callerSuppliedSealedFactorsAccepted"] is False
     assert data["stateIntegrity"]["sealedFactorComparison"] == "blocked_until_candidate_has_matching_sealed_pit_evidence"
     assert data["stateIntegrity"]["candidateWeightMeaning"] == "explicit_hypothetical_cash_funded_scenario_not_sizing_advice"
+    assert data["stateIntegrity"]["callerSuppliedValueAccepted"] is False
+    assert data["stateIntegrity"]["valueComparison"] == "blocked_until_candidate_has_matching_sealed_pit_value_evidence"
     assert data["stateIntegrity"]["baselineCashWeight"] == 0.4
     assert len(service.calls) == 1
     baseline = service.calls[0]["positions"]
@@ -191,11 +193,25 @@ def test_candidate_impact_api_rejects_baseline_caller_weight(monkeypatch) -> Non
     assert response.status_code == 422
 
 
+def test_candidate_impact_rejects_value_in_baseline_before_service(monkeypatch) -> None:
+    service = _Service(_payload())
+    monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    body = _request()
+    body["positions"][0]["factors"] = {"quality": 0.2, "value": 1.0}  # type: ignore[index]
+    response = client.post(
+        "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
+        json=body,
+    )
+    assert response.status_code == 400
+    assert "value" in response.json()["detail"]
+    assert service.calls == []
+
+
 def test_candidate_impact_rejects_sealed_factor_in_baseline_before_service(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
     body = _request()
-    body["positions"][0]["factors"] = {"value": 1.0, "market": 1.2}  # type: ignore[index]
+    body["positions"][0]["factors"] = {"quality": 0.2, "market": 1.2}  # type: ignore[index]
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
         json=body,
@@ -209,13 +225,27 @@ def test_candidate_impact_rejects_rates_in_baseline_before_service(monkeypatch) 
     service = _Service(_payload())
     monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
     body = _request()
-    body["positions"][0]["factors"] = {"value": 1.0, "rates": 0.5}  # type: ignore[index]
+    body["positions"][0]["factors"] = {"quality": 0.2, "rates": 0.5}  # type: ignore[index]
     response = client.post(
         "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
         json=body,
     )
     assert response.status_code == 400
     assert "factores sellados" in response.json()["detail"]
+    assert service.calls == []
+
+
+def test_candidate_impact_rejects_value_in_candidate_before_service(monkeypatch) -> None:
+    service = _Service(_payload())
+    monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    body = _request()
+    body["candidate"]["factors"] = {"quality": 0.2, "value": -0.4}  # type: ignore[index]
+    response = client.post(
+        "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
+        json=body,
+    )
+    assert response.status_code == 400
+    assert "value" in response.json()["detail"]
     assert service.calls == []
 
 
@@ -260,10 +290,10 @@ def test_candidate_impact_api_fails_closed_on_unsafe_contract(monkeypatch) -> No
         _payload(baselineCashWeight=float("nan")),
         _payload(postCashWeight=0.5),
         _payload(comparableFactors=[]),
-        _payload(coverageLostFactors=["value"], comparableFactors=["value", "quality"]),
-        _payload(factorExposureDeltas={"value": 999.0, "quality": 0.04}),
+        _payload(coverageLostFactors=["quality"], comparableFactors=["quality"]),
+        _payload(factorExposureDeltas={"quality": 999.0}),
         _payload(candidate={**_candidate(), "sourceRef": ""}),
-        _payload(candidate={**_candidate(), "factors": {"value": float("inf")}}),
+        _payload(candidate={**_candidate(), "factors": {"quality": float("inf")}}),
         _payload(
             comparableFactors=["rates"],
             baselineWeightedExposures={"rates": 0.6},
