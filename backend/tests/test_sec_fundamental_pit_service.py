@@ -136,7 +136,7 @@ def test_normalize_rejects_nonfinite_and_temporally_impossible_facts() -> None:
         )
 
 
-def test_repository_is_idempotent_filters_by_asof_and_detects_tampering(tmp_path) -> None:
+def test_repository_is_idempotent_filters_by_asof_and_detects_hash_tampering(tmp_path) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     repository = SecFundamentalPitRepository(database)
     fact = SecFundamentalPitService().normalize(
@@ -158,10 +158,10 @@ def test_repository_is_idempotent_filters_by_asof_and_detects_tampering(tmp_path
 
     with database.connect() as connection:
         artifact = dict(known[0]["artifact"])
-        artifact["cik"] = "0000000001"
+        artifact["value"] = float(artifact["value"]) + 1.0
         connection.execute(
             "UPDATE sec_fundamental_pit_facts SET artifact_json = ? WHERE fact_key = ?",
             (json.dumps(artifact), fact.fact_key),
         )
-    with pytest.raises(ValueError, match="manipulado"):
+    with pytest.raises(ValueError, match="hash canónico"):
         repository.get_known_at_or_before(cik=CIK, as_of=AS_OF)
