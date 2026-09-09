@@ -10,12 +10,18 @@ from app.repositories.recommendation_factor_exposure_repository import Recommend
 from app.repositories.recommendation_price_factor_exposure_repository import (
     RecommendationPriceFactorExposureRepository,
 )
+from app.repositories.recommendation_rate_factor_exposure_repository import (
+    RecommendationRateFactorExposureRepository,
+)
 from app.repositories.recommendation_size_factor_exposure_repository import (
     RecommendationSizeFactorExposureRepository,
 )
 from app.services.recommendation_market_beta_exposure_service import RecommendationMarketBetaExposureService
 from app.services.recommendation_price_factor_exposure_service import (
     RecommendationPriceFactorExposureService,
+)
+from app.services.recommendation_rate_factor_exposure_service import (
+    RecommendationRateFactorExposureService,
 )
 from app.services.recommendation_size_factor_exposure_service import (
     RecommendationSizeFactorExposureService,
@@ -32,6 +38,8 @@ _price_service = RecommendationPriceFactorExposureService()
 _price_repository = RecommendationPriceFactorExposureRepository(service=_price_service)
 _size_service = RecommendationSizeFactorExposureService()
 _size_repository = RecommendationSizeFactorExposureRepository(service=_size_service)
+_rate_service = RecommendationRateFactorExposureService()
+_rate_repository = RecommendationRateFactorExposureRepository(service=_rate_service)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -61,6 +69,17 @@ class SizeFactorExposureRequest(BaseModel):
 
     instrumentId: int = Field(gt=0)
     sourceProvider: str = Field(min_length=1)
+    asOf: datetime
+
+
+class RateFactorExposureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrumentId: int = Field(gt=0)
+    marketSourceProvider: str = Field(min_length=1)
+    rateSeriesId: str = Field(min_length=1)
+    periodStart: datetime
+    periodEnd: datetime
     asOf: datetime
 
 
@@ -172,4 +191,35 @@ def post_size_factor_exposure(request: SizeFactorExposureRequest) -> dict[str, o
     if set(persisted.get("factors", {})) != {"size"}:
         raise HTTPException(status_code=500, detail="Size factor devolvió factores inesperados.")
     _assert_safety(persisted, "Size factor")
+    return {"data": persisted}
+
+
+@router.post("/factor-exposure/rates")
+def post_rate_factor_exposure(request: RateFactorExposureRequest) -> dict[str, object]:
+    """Derive and seal bounded PIT rate sensitivity; never advice or sizing."""
+
+    try:
+        artifact = _rate_service.evaluate(
+            instrument_id=request.instrumentId,
+            market_source_provider=request.marketSourceProvider,
+            rate_series_id=request.rateSeriesId,
+            period_start=_aware(request.periodStart, "periodStart"),
+            period_end=_aware(request.periodEnd, "periodEnd"),
+            as_of=_aware(request.asOf, "asOf"),
+        )
+        record = _rate_repository.append(artifact=artifact)
+        persisted = record["artifact"]
+        if not isinstance(persisted, dict):
+            raise RuntimeError("Rates factor exposure persistido perdió artifact.")
+        _rate_service.validate_artifact(persisted)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo derivar/persistir rates PIT.") from exc
+
+    if set(persisted.get("factors", {})) != {"rates"}:
+        raise HTTPException(status_code=500, detail="Rates factor devolvió factores inesperados.")
+    _assert_safety(persisted, "Rates factor")
     return {"data": persisted}
