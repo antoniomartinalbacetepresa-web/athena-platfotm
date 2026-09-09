@@ -17,6 +17,9 @@ from app.repositories.recommendation_portfolio_valuation_evidence_repository imp
 from app.repositories.recommendation_price_factor_exposure_repository import (
     RecommendationPriceFactorExposureRepository,
 )
+from app.repositories.recommendation_rate_factor_exposure_repository import (
+    RecommendationRateFactorExposureRepository,
+)
 from app.repositories.recommendation_size_factor_exposure_repository import (
     RecommendationSizeFactorExposureRepository,
 )
@@ -41,8 +44,9 @@ _weight_service = RecommendationReconciledPortfolioWeightService()
 _factor_exposure_repository = RecommendationFactorExposureRepository()
 _price_factor_repository = RecommendationPriceFactorExposureRepository()
 _size_factor_repository = RecommendationSizeFactorExposureRepository()
+_rate_factor_repository = RecommendationRateFactorExposureRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_SEALED_CALLER_FORBIDDEN = {"market", "momentum", "low_volatility", "size", "usd_fx"}
+_SEALED_CALLER_FORBIDDEN = {"market", "momentum", "low_volatility", "size", "usd_fx", "rates"}
 
 
 class FactorRiskPositionRequest(BaseModel):
@@ -53,6 +57,7 @@ class FactorRiskPositionRequest(BaseModel):
     marketExposureKey: str = Field(min_length=64, max_length=64)
     priceExposureKey: str | None = Field(default=None, min_length=64, max_length=64)
     sizeExposureKey: str | None = Field(default=None, min_length=64, max_length=64)
+    rateExposureKey: str | None = Field(default=None, min_length=64, max_length=64)
     exposureAvailableAt: datetime
     source: str = Field(min_length=1)
     sourceRef: str = Field(min_length=1)
@@ -177,6 +182,7 @@ def _assert_contract(payload: dict[str, object]) -> None:
     _require_hash_map(state_integrity.get("marketExposureKeys"), "marketExposureKeys", allow_empty=False)
     _require_hash_map(state_integrity.get("priceExposureKeys"), "priceExposureKeys", allow_empty=True)
     _require_hash_map(state_integrity.get("sizeExposureKeys"), "sizeExposureKeys", allow_empty=True)
+    _require_hash_map(state_integrity.get("rateExposureKeys"), "rateExposureKeys", allow_empty=True)
     if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
         raise HTTPException(status_code=500, detail="Factor Risk aceptó estado no reconciliado/verificado.")
     if state_integrity.get("gate") != "required_before_factor_risk":
@@ -186,10 +192,12 @@ def _assert_contract(payload: dict[str, object]) -> None:
         "marketFactorDerivation": "sealed_pit_market_observations_only",
         "priceFactorDerivation": "sealed_pit_market_observations_or_explicitly_missing",
         "sizeFactorDerivation": "sealed_cross_sectional_pit_market_cap_or_explicitly_missing",
+        "rateFactorDerivation": "sealed_pit_macro_and_market_observations_or_explicitly_missing",
         "usdFxFactorDerivation": "sealed_portfolio_valuation_translation_exposure_or_explicitly_missing",
         "callerSuppliedMarketAccepted": False,
         "callerSuppliedPriceFactorsAccepted": False,
         "callerSuppliedSizeAccepted": False,
+        "callerSuppliedRatesAccepted": False,
         "callerSuppliedUsdFxAccepted": False,
         "callerSuppliedWeightAccepted": False,
     }
@@ -337,6 +345,7 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
     market_keys: dict[str, str] = {}
     price_keys: dict[str, str] = {}
     size_keys: dict[str, str] = {}
+    rate_keys: dict[str, str] = {}
     for item in request.positions:
         derived = weights_by_id[item.instrumentId]
         valued = valuation_by_id[item.instrumentId]
@@ -427,6 +436,33 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
             refs.append(f"size:{size_key}")
             sources.append("sealed_size_factor")
 
+        if item.rateExposureKey is not None:
+            try:
+                rate_record = _rate_factor_repository.get_by_key(
+                    factor_exposure_key=item.rateExposureKey,
+                )
+                rate_artifact = rate_record.get("artifact")
+                if not isinstance(rate_artifact, dict):
+                    raise ValueError("Rates factor exposure persistido perdió artifact.")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if rate_artifact.get("instrumentId") != item.instrumentId or _artifact_datetime(rate_artifact, "asOf") != as_of:
+                raise HTTPException(status_code=400, detail="rateExposureKey pertenece a otro instrumento/asOf.")
+            rate_factors = rate_artifact.get("factors")
+            if not isinstance(rate_factors, dict) or set(rate_factors) != {"rates"} or not _finite_number(rate_factors.get("rates")):
+                raise HTTPException(status_code=500, detail="Rates factor exposure persistido es inválido.")
+            rate_value = float(rate_factors["rates"])
+            if rate_value < -1.0 - 1e-12 or rate_value > 1.0 + 1e-12:
+                raise HTTPException(status_code=500, detail="Rates factor exposure salió de [-1,1].")
+            rate_key = str(rate_artifact.get("factorExposureKey") or "")
+            if _SHA256_RE.fullmatch(rate_key) is None:
+                raise HTTPException(status_code=500, detail="Rates factor exposure perdió identidad SHA-256.")
+            rate_keys[str(item.instrumentId)] = rate_key
+            evidence_times.append(_artifact_datetime(rate_artifact, "availableAt"))
+            combined_factors["rates"] = rate_value
+            refs.append(f"rates:{rate_key}")
+            sources.append("sealed_rates_factor")
+
         usd_fx = _usd_fx_translation_exposure(valued, request.reportingCurrency)
         if usd_fx is not None:
             combined_factors["usd_fx"] = usd_fx
@@ -472,6 +508,7 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
         "marketExposureKeys": market_keys,
         "priceExposureKeys": price_keys,
         "sizeExposureKeys": size_keys,
+        "rateExposureKeys": rate_keys,
         "reconciled": True,
         "tamperVerified": True,
         "gate": "required_before_factor_risk",
@@ -479,10 +516,12 @@ def post_factor_risk(request: FactorRiskResearchRequest) -> dict[str, object]:
         "marketFactorDerivation": "sealed_pit_market_observations_only",
         "priceFactorDerivation": "sealed_pit_market_observations_or_explicitly_missing",
         "sizeFactorDerivation": "sealed_cross_sectional_pit_market_cap_or_explicitly_missing",
+        "rateFactorDerivation": "sealed_pit_macro_and_market_observations_or_explicitly_missing",
         "usdFxFactorDerivation": "sealed_portfolio_valuation_translation_exposure_or_explicitly_missing",
         "callerSuppliedMarketAccepted": False,
         "callerSuppliedPriceFactorsAccepted": False,
         "callerSuppliedSizeAccepted": False,
+        "callerSuppliedRatesAccepted": False,
         "callerSuppliedUsdFxAccepted": False,
         "callerSuppliedWeightAccepted": False,
         "cashWeight": weight_evidence["cashWeight"],
