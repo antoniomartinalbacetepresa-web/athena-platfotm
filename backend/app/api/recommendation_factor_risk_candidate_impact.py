@@ -30,7 +30,7 @@ candidate_impact_service = RecommendationFactorRiskCandidateImpactService()
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _valuation_repository = RecommendationPortfolioValuationEvidenceRepository()
 _weight_service = RecommendationReconciledPortfolioWeightService()
-_SEALED_CALLER_FORBIDDEN = {"market", "momentum", "low_volatility", "size", "usd_fx"}
+_SEALED_CALLER_FORBIDDEN = {"market", "momentum", "low_volatility", "size", "usd_fx", "rates"}
 
 
 class BaselineFactorExposureRequest(BaseModel):
