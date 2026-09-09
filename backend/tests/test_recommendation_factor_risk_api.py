@@ -12,6 +12,7 @@ client = TestClient(app)
 AS_OF = "2026-01-01T00:00:00+00:00"
 AVAILABLE_AT = "2025-12-31T23:00:00+00:00"
 MARKET_KEY = "a" * 64
+SIZE_KEY = "b" * 64
 
 
 @dataclass(frozen=True)
@@ -45,12 +46,29 @@ class _ReconciliationRepository:
 
 
 class _ValuationRepository:
-    def __init__(self) -> None:
+    def __init__(self, *, instrument_currency: str = "USD") -> None:
         self.calls: list[dict[str, object]] = []
+        self.instrument_currency = instrument_currency
 
     def get(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(kwargs)
-        return {"artifact": {"portfolioValuationEvidenceFingerprint": "c" * 64}}
+        return {
+            "artifact": {
+                "portfolioValuationEvidenceFingerprint": "c" * 64,
+                "positions": [
+                    {
+                        "instrumentId": 1,
+                        "instrumentCurrency": self.instrument_currency,
+                        "fx": {
+                            "rate": 1.0,
+                            "observedAt": AVAILABLE_AT,
+                            "retrievedAt": AVAILABLE_AT,
+                            "historicalPointInTimeEligible": True,
+                        },
+                    }
+                ],
+            }
+        }
 
     def validate_record(self, record: dict[str, object]) -> dict[str, object]:
         return record
@@ -96,15 +114,32 @@ class _FactorExposureRepository:
         }
 
 
+class _SizeExposureRepository:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def get(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(kwargs)
+        return {
+            "artifact": {
+                "factorExposureKey": SIZE_KEY,
+                "instrumentId": 1,
+                "asOf": AS_OF,
+                "availableAt": AVAILABLE_AT,
+                "factors": {"size": 0.25},
+            }
+        }
+
+
 def _position_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "instrumentId": 1,
         "symbol": "AAA",
         "weight": 1.0,
         "exposureAvailableAt": AVAILABLE_AT,
-        "source": "sealed_market_beta+pit_factor_store",
-        "sourceRef": f"market:{MARKET_KEY};caller:factor:1:2025-12-31",
-        "factors": {"market": 1.0, "usd_fx": 0.2},
+        "source": "sealed_market_beta+sealed_portfolio_valuation_fx+pit_factor_store",
+        "sourceRef": f"market:{MARKET_KEY};usd_fx:valuation:{'c' * 64};caller:factor:1:2025-12-31",
+        "factors": {"market": 1.0, "usd_fx": 0.0},
     }
     payload.update(overrides)
     return payload
@@ -143,7 +178,7 @@ def _payload(**overrides: object) -> dict[str, object]:
             "quality": 0.0,
             "rates": 0.0,
             "size": 0.0,
-            "usd_fx": 0.2,
+            "usd_fx": 0.0,
             "value": 0.0,
         },
         "factorCoverageWeights": {
@@ -157,7 +192,7 @@ def _payload(**overrides: object) -> dict[str, object]:
             "value": 0.0,
         },
         "fullyCoveredFactors": ["market", "usd_fx"],
-        "grossFactorExposure": 1.2,
+        "grossFactorExposure": 1.0,
         "maxAbsoluteFactorExposure": 1.0,
         "dominantFactor": "market",
         "advisoryStatus": "no_advice",
@@ -169,43 +204,46 @@ def _payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def _request() -> dict[str, object]:
+def _request(*, include_size: bool = False) -> dict[str, object]:
+    position: dict[str, object] = {
+        "instrumentId": 1,
+        "symbol": "AAA",
+        "marketExposureKey": MARKET_KEY,
+        "exposureAvailableAt": AVAILABLE_AT,
+        "source": "pit_factor_store",
+        "sourceRef": "factor:1:2025-12-31",
+        "factors": {},
+    }
+    if include_size:
+        position["sizeExposureKey"] = SIZE_KEY
     return {
         "portfolioId": "portfolio-1",
         "reportingCurrency": "USD",
         "reconciliationKey": "f" * 64,
         "portfolioValuationEvidenceFingerprint": "c" * 64,
         "asOf": AS_OF,
-        "positions": [
-            {
-                "instrumentId": 1,
-                "symbol": "AAA",
-                "marketExposureKey": MARKET_KEY,
-                "exposureAvailableAt": AVAILABLE_AT,
-                "source": "pit_factor_store",
-                "sourceRef": "factor:1:2025-12-31",
-                "factors": {"usd_fx": 0.2},
-            }
-        ],
+        "positions": [position],
     }
 
 
-def _install_evidence(monkeypatch, *, reconciliation_error: ValueError | None = None):
+def _install_evidence(monkeypatch, *, reconciliation_error: ValueError | None = None, instrument_currency: str = "USD"):
     reconciliation = _ReconciliationRepository(reconciliation_error)
-    valuation = _ValuationRepository()
+    valuation = _ValuationRepository(instrument_currency=instrument_currency)
     weights = _WeightService()
     factors = _FactorExposureRepository()
+    sizes = _SizeExposureRepository()
     monkeypatch.setattr(factor_risk_api, "_reconciliation_repository", reconciliation)
     monkeypatch.setattr(factor_risk_api, "_valuation_repository", valuation)
     monkeypatch.setattr(factor_risk_api, "_weight_service", weights)
     monkeypatch.setattr(factor_risk_api, "_factor_exposure_repository", factors)
-    return reconciliation, valuation, weights, factors
+    monkeypatch.setattr(factor_risk_api, "_size_factor_repository", sizes)
+    return reconciliation, valuation, weights, factors, sizes
 
 
-def test_factor_risk_endpoint_uses_sealed_market_and_reconciled_weights(monkeypatch) -> None:
+def test_factor_risk_endpoint_derives_usd_fx_and_reconciled_weights(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
-    reconciliation, valuation, weights, factors = _install_evidence(monkeypatch)
+    evidence = _install_evidence(monkeypatch)
     response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=_request())
     assert response.status_code == 200
     data = response.json()["data"]
@@ -213,17 +251,36 @@ def test_factor_risk_endpoint_uses_sealed_market_and_reconciled_weights(monkeypa
     assert data["productionEligible"] is False
     assert data["isWeightingReady"] is False
     assert data["stateIntegrity"]["reconciled"] is True
-    assert data["stateIntegrity"]["marketFactorDerivation"] == "sealed_pit_market_observations_only"
-    assert data["stateIntegrity"]["priceFactorDerivation"] == "sealed_pit_market_observations_or_explicitly_missing"
-    assert data["stateIntegrity"]["callerSuppliedMarketAccepted"] is False
-    assert data["stateIntegrity"]["callerSuppliedPriceFactorsAccepted"] is False
-    assert data["stateIntegrity"]["marketExposureKeys"]["1"] == MARKET_KEY
-    assert data["stateIntegrity"]["priceExposureKeys"] == {}
+    assert data["stateIntegrity"]["usdFxFactorDerivation"] == "sealed_portfolio_valuation_translation_exposure_or_explicitly_missing"
+    assert data["stateIntegrity"]["callerSuppliedUsdFxAccepted"] is False
+    assert data["stateIntegrity"]["callerSuppliedSizeAccepted"] is False
+    assert data["stateIntegrity"]["sizeExposureKeys"] == {}
     evaluated = service.calls[0]["positions"][0]  # type: ignore[index]
     assert evaluated.weight == 1.0
     assert evaluated.factors["market"] == 1.0
-    assert evaluated.factors["usd_fx"] == 0.2
-    assert len(reconciliation.calls) == len(valuation.calls) == len(weights.calls) == len(factors.calls) == 1
+    assert evaluated.factors["usd_fx"] == 0.0
+    assert all(len(item.calls) == 1 for item in evidence[:4])
+    assert evidence[4].calls == []
+
+
+def test_factor_risk_endpoint_consumes_sealed_size(monkeypatch) -> None:
+    payload = _payload(
+        positions=[_position_payload(factors={"market": 1.0, "usd_fx": 0.0, "size": 0.25})],
+        weightedExposures={"market": 1.0, "usd_fx": 0.0, "size": 0.25},
+        factorCoverageWeights={"market": 1.0, "usd_fx": 1.0, "size": 1.0},
+        fullyCoveredFactors=["market", "size", "usd_fx"],
+        grossFactorExposure=1.25,
+    )
+    service = _Service(payload)
+    monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
+    evidence = _install_evidence(monkeypatch)
+    response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=_request(include_size=True))
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["stateIntegrity"]["sizeExposureKeys"]["1"] == SIZE_KEY
+    evaluated = service.calls[0]["positions"][0]  # type: ignore[index]
+    assert evaluated.factors["size"] == 0.25
+    assert len(evidence[4].calls) == 1
 
 
 def test_factor_risk_api_rejects_caller_supplied_weight(monkeypatch) -> None:
@@ -234,29 +291,34 @@ def test_factor_risk_api_rejects_caller_supplied_weight(monkeypatch) -> None:
     assert response.status_code == 422
 
 
-def test_factor_risk_api_rejects_caller_supplied_market(monkeypatch) -> None:
+def test_factor_risk_api_rejects_all_sealed_factors_from_caller(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
     _install_evidence(monkeypatch)
-    body = _request()
-    body["positions"][0]["factors"]["market"] = 9.0  # type: ignore[index]
-    response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=body)
-    assert response.status_code == 400
-    assert "no puede suministrar factores sellados" in response.json()["detail"]
-    assert service.calls == []
-
-
-def test_factor_risk_api_rejects_caller_supplied_price_factors(monkeypatch) -> None:
-    service = _Service(_payload())
-    monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
-    _install_evidence(monkeypatch)
-    for factor in ("momentum", "low_volatility"):
+    for factor in ("market", "momentum", "low_volatility", "size", "usd_fx"):
         body = _request()
         body["positions"][0]["factors"][factor] = 9.0  # type: ignore[index]
         response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=body)
         assert response.status_code == 400
         assert "factores sellados" in response.json()["detail"]
     assert service.calls == []
+
+
+def test_factor_risk_usd_fx_translation_sign_is_derived(monkeypatch) -> None:
+    payload = _payload(
+        positions=[_position_payload(factors={"market": 1.0, "usd_fx": -1.0})],
+        weightedExposures={"market": 1.0, "usd_fx": -1.0},
+        factorCoverageWeights={"market": 1.0, "usd_fx": 1.0},
+        fullyCoveredFactors=["market", "usd_fx"],
+        grossFactorExposure=2.0,
+    )
+    service = _Service(payload)
+    monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
+    _install_evidence(monkeypatch, instrument_currency="EUR")
+    response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=_request())
+    assert response.status_code == 200
+    evaluated = service.calls[0]["positions"][0]  # type: ignore[index]
+    assert evaluated.factors["usd_fx"] == -1.0
 
 
 def test_factor_risk_api_fails_closed_on_unsafe_contract(monkeypatch) -> None:
@@ -286,19 +348,19 @@ def test_factor_risk_api_fails_closed_on_unsafe_contract(monkeypatch) -> None:
 def test_factor_risk_api_rejects_naive_as_of_before_service(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
-    reconciliation, valuation, weights, factors = _install_evidence(monkeypatch)
+    evidence = _install_evidence(monkeypatch)
     body = _request()
     body["asOf"] = "2026-01-01T00:00:00"
     response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=body)
     assert response.status_code == 400
     assert service.calls == []
-    assert reconciliation.calls == valuation.calls == weights.calls == factors.calls == []
+    assert all(item.calls == [] for item in evidence)
 
 
 def test_factor_risk_api_blocks_before_service_when_reconciliation_fails(monkeypatch) -> None:
     service = _Service(_payload())
     monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
-    reconciliation, valuation, weights, factors = _install_evidence(
+    evidence = _install_evidence(
         monkeypatch,
         reconciliation_error=ValueError("La reconciliación persistida no está reconciled=true; downstream bloqueado."),
     )
@@ -306,8 +368,8 @@ def test_factor_risk_api_blocks_before_service_when_reconciliation_fails(monkeyp
     assert response.status_code == 400
     assert "reconciled=true" in response.json()["detail"]
     assert service.calls == []
-    assert len(reconciliation.calls) == 1
-    assert valuation.calls == weights.calls == factors.calls == []
+    assert len(evidence[0].calls) == 1
+    assert all(item.calls == [] for item in evidence[1:])
 
 
 def test_factor_risk_api_rejects_factor_identity_not_in_weight_evidence(monkeypatch) -> None:
