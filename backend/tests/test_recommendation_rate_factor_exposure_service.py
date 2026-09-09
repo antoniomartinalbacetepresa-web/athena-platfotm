@@ -28,6 +28,18 @@ AS_OF = END + timedelta(days=2)
 
 def build_service(tmp_path, *, days: int = 21):
     db = AthenaDatabase(tmp_path / "athena.db")
+    db.initialize()
+    with db.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO instruments (
+                id, symbol, company_name, instrument_id, instrument_type,
+                is_primary_listing, currency, source_provider
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "RATE1", "Rates Test Instrument", "test:rate1", "equity", 1, "USD", "test_fixture"),
+        )
+
     market = MarketObservationRepository(db)
     macro = RecommendationMacroPitObservationRepository(database=db)
     macro_artifacts = RecommendationMacroPitObservationService()
