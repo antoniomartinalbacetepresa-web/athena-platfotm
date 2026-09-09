@@ -75,7 +75,16 @@ class RecommendationPortfolioStateReconstructionResult:
                 "fxInference": "forbidden",
                 "shorting": "unsupported_fail_closed",
                 "margin": "unsupported_fail_closed",
-                "corporateActions": "typed_semantics_required_fail_closed",
+                "corporateActions": "typed_cash_dividend_fee_tax_and_split_supported_generic_action_fail_closed",
+                "typedEventSemantics": {
+                    "externalCashFlow": "cash_only_external_capital",
+                    "tradeExecution": "explicit_cash_and_quantity_effect",
+                    "cashDividend": "internal_cash_only",
+                    "fee": "internal_negative_cash_only",
+                    "tax": "internal_negative_cash_only",
+                    "splitAdjustment": "quantity_only_no_cash",
+                    "corporateAction": "generic_form_rejected",
+                },
                 "temporal": "opening_available_at_lte_start_and_event_available_at_lte_as_of",
                 "identity": "deterministic_sha256_portfolio_state_key",
                 "purpose": "historical_position_and_cash_reconstruction_only",
@@ -85,6 +94,9 @@ class RecommendationPortfolioStateReconstructionResult:
 
 class RecommendationPortfolioStateReconstructionService:
     _ABS_TOLERANCE = 1e-10
+    _CASH_EVENT_TYPES = frozenset(
+        {"external_cash_flow", "trade_execution", "cash_dividend", "fee", "tax"}
+    )
 
     def __init__(self, ledger: RecommendationPortfolioEventLedgerService):
         self._ledger = ledger
@@ -243,16 +255,25 @@ class RecommendationPortfolioStateReconstructionService:
             position_deltas: dict[str, float] = {}
             while index < len(events) and events[index].occurred_at == occurred_at:
                 event = events[index]
-                if event.currency != reporting_currency:
-                    raise ValueError("portfolio event currency requires explicit FX conversion evidence")
                 if event.event_type == "corporate_action":
                     raise ValueError("corporate_action requires typed semantics before state reconstruction")
+                if event.event_type in self._CASH_EVENT_TYPES and event.currency != reporting_currency:
+                    raise ValueError("portfolio cash event currency requires explicit FX conversion evidence")
+
                 if event.event_type == "external_cash_flow":
                     assert event.amount is not None
                     cash_delta += event.amount
                 elif event.event_type == "trade_execution":
                     assert event.amount is not None and event.quantity is not None and event.instrument_id is not None
                     cash_delta += event.amount
+                    position_deltas[event.instrument_id] = (
+                        position_deltas.get(event.instrument_id, 0.0) + event.quantity
+                    )
+                elif event.event_type in {"cash_dividend", "fee", "tax"}:
+                    assert event.amount is not None
+                    cash_delta += event.amount
+                elif event.event_type == "split_adjustment":
+                    assert event.quantity is not None and event.instrument_id is not None
                     position_deltas[event.instrument_id] = (
                         position_deltas.get(event.instrument_id, 0.0) + event.quantity
                     )
