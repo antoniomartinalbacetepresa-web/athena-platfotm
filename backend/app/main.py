@@ -67,6 +67,7 @@ from app.api.recommendation_thesis_invalidation import (
 )
 from app.api.recommendations import router as recommendations_router
 from app.api.sec import router as sec_router
+from app.api.sec_fundamental_pit import router as sec_fundamental_pit_router
 from app.api.sources import router as sources_router
 
 
@@ -89,6 +90,7 @@ app.add_middleware(
 
 app.include_router(market_router)
 app.include_router(sec_router)
+app.include_router(sec_fundamental_pit_router)
 app.include_router(macro_router)
 app.include_router(news_router)
 app.include_router(sources_router)
