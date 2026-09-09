@@ -30,6 +30,7 @@ candidate_impact_service = RecommendationFactorRiskCandidateImpactService()
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _valuation_repository = RecommendationPortfolioValuationEvidenceRepository()
 _weight_service = RecommendationReconciledPortfolioWeightService()
+_SEALED_CALLER_FORBIDDEN = {"market", "momentum", "low_volatility", "size", "usd_fx"}
 
 
 class BaselineFactorExposureRequest(BaseModel):
@@ -81,6 +82,19 @@ def _finite_number(value: object) -> bool:
     )
 
 
+def _reject_sealed_caller_factors(factors: dict[str, float], field: str) -> None:
+    normalized = {str(name).strip().lower() for name in factors}
+    forbidden = sorted(normalized & _SEALED_CALLER_FORBIDDEN)
+    if forbidden:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field} no puede suministrar factores sellados {forbidden}; "
+                "Candidate Impact no los comparará hasta disponer de evidencia PIT sellada del candidato."
+            ),
+        )
+
+
 def _assert_contract(payload: dict[str, object]) -> None:
     if payload.get("advisoryStatus") != "no_advice":
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact violó no-advice.")
@@ -96,6 +110,10 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Candidate Impact no derivó baseline desde evidencia reconciliada.")
     if state_integrity.get("baselineCallerSuppliedWeightAccepted") is not False:
         raise HTTPException(status_code=500, detail="Candidate Impact aceptó pesos baseline arbitrarios.")
+    if state_integrity.get("callerSuppliedSealedFactorsAccepted") is not False:
+        raise HTTPException(status_code=500, detail="Candidate Impact aceptó factores sellados arbitrarios.")
+    if state_integrity.get("sealedFactorComparison") != "blocked_until_candidate_has_matching_sealed_pit_evidence":
+        raise HTTPException(status_code=500, detail="Candidate Impact perdió la frontera de factores sellados.")
     if state_integrity.get("candidateWeightMeaning") != "explicit_hypothetical_cash_funded_scenario_not_sizing_advice":
         raise HTTPException(status_code=500, detail="Candidate Impact perdió semántica hipotética del candidato.")
     if state_integrity.get("reconciled") is not True or state_integrity.get("tamperVerified") is not True:
@@ -179,6 +197,8 @@ def _assert_contract(payload: dict[str, object]) -> None:
     if set(before) != set(comparable) or set(after) != set(comparable) or set(deltas) != set(comparable):
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact devolvió mapas factoriales incompletos.")
     for factor in comparable:
+        if factor in _SEALED_CALLER_FORBIDDEN:
+            raise HTTPException(status_code=500, detail="Candidate Impact devolvió comparación de factor sellado sin evidencia sellada.")
         values = (before.get(factor), after.get(factor), deltas.get(factor))
         if any(not _finite_number(value) for value in values):
             raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact devolvió exposición no finita.")
@@ -204,6 +224,8 @@ def _assert_contract(payload: dict[str, object]) -> None:
     factors = candidate.get("factors")
     if not isinstance(factors, dict) or not factors or any(not _finite_number(value) for value in factors.values()):
         raise HTTPException(status_code=500, detail="Factor Risk Candidate Impact devolvió factores de candidato inválidos.")
+    if {str(name).strip().lower() for name in factors} & _SEALED_CALLER_FORBIDDEN:
+        raise HTTPException(status_code=500, detail="Candidate Impact devolvió factor sellado no autorizado en candidato.")
 
 
 @router.post("/factor-risk/candidate-impact")
@@ -213,6 +235,10 @@ def post_factor_risk_candidate_impact(
     """Measure a hypothetical cash-funded candidate against a reconciled PIT baseline."""
 
     as_of = _aware_utc(request.asOf, "asOf")
+    for index, item in enumerate(request.positions):
+        _reject_sealed_caller_factors(item.factors, f"positions[{index}].factors")
+    _reject_sealed_caller_factors(request.candidate.factors, "candidate.factors")
+
     try:
         reconciliation_record = _reconciliation_repository.require_reconciled(
             reconciliation_key=request.reconciliationKey,
@@ -342,6 +368,8 @@ def post_factor_risk_candidate_impact(
         "baselineCashWeight": weight_evidence["cashWeight"],
         "baselineWeightDerivation": "derived_from_reconciled_state_and_sealed_pit_valuation",
         "baselineCallerSuppliedWeightAccepted": False,
+        "callerSuppliedSealedFactorsAccepted": False,
+        "sealedFactorComparison": "blocked_until_candidate_has_matching_sealed_pit_evidence",
         "candidateWeightMeaning": "explicit_hypothetical_cash_funded_scenario_not_sizing_advice",
     }
     _assert_contract(payload)
