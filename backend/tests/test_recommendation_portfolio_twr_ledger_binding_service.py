@@ -139,6 +139,7 @@ def test_ledger_binding_rejects_duplicate_timestamp_provenance_fx_and_lookahead(
     with pytest.raises(ValueError, match="one instant"):
         _evaluate(flows=(_flow(key="a" * 64), _flow(key="c" * 64, source_ref="deposit-2")))
 
+    duplicate_provenance_time = datetime(2026, 1, 11, tzinfo=UTC)
     with pytest.raises(ValueError, match="duplicate provenance"):
         _evaluate(
             flows=(
@@ -146,7 +147,8 @@ def test_ledger_binding_rejects_duplicate_timestamp_provenance_fx_and_lookahead(
                 _flow(
                     key="c" * 64,
                     source_ref="same",
-                    occurred_at=datetime(2026, 1, 11, tzinfo=UTC),
+                    occurred_at=duplicate_provenance_time,
+                    available_at=duplicate_provenance_time,
                 ),
             )
         )
