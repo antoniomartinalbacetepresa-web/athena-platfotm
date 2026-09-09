@@ -265,7 +265,13 @@ def test_factor_risk_endpoint_derives_usd_fx_and_reconciled_weights(monkeypatch)
 
 def test_factor_risk_endpoint_consumes_sealed_size(monkeypatch) -> None:
     payload = _payload(
-        positions=[_position_payload(factors={"market": 1.0, "usd_fx": 0.0, "size": 0.25})],
+        positions=[
+            _position_payload(
+                source="sealed_market_beta+sealed_size_factor+sealed_portfolio_valuation_fx+pit_factor_store",
+                sourceRef=f"market:{MARKET_KEY};size:{SIZE_KEY};usd_fx:valuation:{'c' * 64};caller:factor:1:2025-12-31",
+                factors={"market": 1.0, "usd_fx": 0.0, "size": 0.25},
+            )
+        ],
         weightedExposures={"market": 1.0, "usd_fx": 0.0, "size": 0.25},
         factorCoverageWeights={"market": 1.0, "usd_fx": 1.0, "size": 1.0},
         fullyCoveredFactors=["market", "size", "usd_fx"],
@@ -295,7 +301,7 @@ def test_factor_risk_api_rejects_all_sealed_factors_from_caller(monkeypatch) -> 
     service = _Service(_payload())
     monkeypatch.setattr(factor_risk_api, "factor_risk_service", service)
     _install_evidence(monkeypatch)
-    for factor in ("market", "momentum", "low_volatility", "size", "usd_fx"):
+    for factor in ("market", "momentum", "low_volatility", "size", "usd_fx", "rates"):
         body = _request()
         body["positions"][0]["factors"][factor] = 9.0  # type: ignore[index]
         response = client.post("/api/v1/recommendations/professional-research/factor-risk", json=body)
