@@ -35,7 +35,7 @@ def _position(
         exposure_available_at=available_at,
         source=source,
         source_ref=source_ref,
-        factors=factors or {"market": 1.0, "quality": 0.5, "usd_fx": 0.2},
+        factors=factors or {"market": 1.0, "usd_fx": 0.2},
     )
 
 
@@ -138,7 +138,7 @@ def test_factor_risk_aggregates_explicit_pit_portfolio_exposures() -> None:
                 instrument_id=2,
                 symbol="BBB",
                 weight=0.3,
-                factors={"market": 0.5, "quality": -0.2, "momentum": 0.4},
+                factors={"market": 0.5, "momentum": 0.4},
                 source_ref="factor-snapshot:BBB:2025-12-31",
             ),
         ),
@@ -148,7 +148,7 @@ def test_factor_risk_aggregates_explicit_pit_portfolio_exposures() -> None:
     assert payload["investedWeight"] == pytest.approx(0.9)
     assert payload["cashWeight"] == pytest.approx(0.1)
     assert payload["weightedExposures"]["market"] == pytest.approx(0.75)
-    assert payload["weightedExposures"]["quality"] == pytest.approx(0.24)
+    assert payload["weightedExposures"]["quality"] == pytest.approx(0.0)
     assert payload["weightedExposures"]["momentum"] == pytest.approx(0.12)
     assert payload["weightedExposures"]["usd_fx"] == pytest.approx(0.12)
     assert payload["dominantFactor"] == "market"
