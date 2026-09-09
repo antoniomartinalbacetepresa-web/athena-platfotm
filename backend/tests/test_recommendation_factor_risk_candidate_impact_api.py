@@ -81,7 +81,7 @@ def _candidate() -> dict[str, object]:
         "exposureAvailableAt": AVAILABLE_AT,
         "source": "pit_factor_store",
         "sourceRef": "factor:2:2025-12-31",
-        "factors": {"market": -1.0, "usd_fx": 0.2},
+        "factors": {"rates": -1.0, "quality": 0.2},
     }
 
 
@@ -110,11 +110,11 @@ def _payload(**overrides: object) -> dict[str, object]:
         "baselineCashWeight": 0.4,
         "postInvestedWeight": 0.8,
         "postCashWeight": 0.2,
-        "comparableFactors": ["market", "usd_fx"],
+        "comparableFactors": ["rates", "quality"],
         "coverageLostFactors": [],
-        "baselineWeightedExposures": {"market": 0.6, "usd_fx": 0.12},
-        "postWeightedExposures": {"market": 0.4, "usd_fx": 0.16},
-        "factorExposureDeltas": {"market": -0.2, "usd_fx": 0.04},
+        "baselineWeightedExposures": {"rates": 0.6, "quality": 0.12},
+        "postWeightedExposures": {"rates": 0.4, "quality": 0.16},
+        "factorExposureDeltas": {"rates": -0.2, "quality": 0.04},
         "baselineComparableGrossExposure": 0.72,
         "postComparableGrossExposure": 0.56,
         "comparableGrossExposureDelta": -0.16,
@@ -144,7 +144,7 @@ def _request() -> dict[str, object]:
                 "exposureAvailableAt": AVAILABLE_AT,
                 "source": "pit_factor_store",
                 "sourceRef": "factor:1:2025-12-31",
-                "factors": {"market": 1.0, "usd_fx": 0.2},
+                "factors": {"rates": 1.0, "quality": 0.2},
             }
         ],
         "candidate": _candidate(),
@@ -171,6 +171,8 @@ def test_candidate_impact_endpoint_preserves_research_only_contract(monkeypatch)
     assert data["candidate"]["sourceRef"] == "factor:2:2025-12-31"
     assert data["stateIntegrity"]["baselineWeightDerivation"] == "derived_from_reconciled_state_and_sealed_pit_valuation"
     assert data["stateIntegrity"]["baselineCallerSuppliedWeightAccepted"] is False
+    assert data["stateIntegrity"]["callerSuppliedSealedFactorsAccepted"] is False
+    assert data["stateIntegrity"]["sealedFactorComparison"] == "blocked_until_candidate_has_matching_sealed_pit_evidence"
     assert data["stateIntegrity"]["candidateWeightMeaning"] == "explicit_hypothetical_cash_funded_scenario_not_sizing_advice"
     assert data["stateIntegrity"]["baselineCashWeight"] == 0.4
     assert len(service.calls) == 1
@@ -189,6 +191,34 @@ def test_candidate_impact_api_rejects_baseline_caller_weight(monkeypatch) -> Non
     assert response.status_code == 422
 
 
+def test_candidate_impact_rejects_sealed_factor_in_baseline_before_service(monkeypatch) -> None:
+    service = _Service(_payload())
+    monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    body = _request()
+    body["positions"][0]["factors"] = {"rates": 1.0, "market": 1.2}  # type: ignore[index]
+    response = client.post(
+        "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
+        json=body,
+    )
+    assert response.status_code == 400
+    assert "factores sellados" in response.json()["detail"]
+    assert service.calls == []
+
+
+def test_candidate_impact_rejects_sealed_factor_in_candidate_before_service(monkeypatch) -> None:
+    service = _Service(_payload())
+    monkeypatch.setattr(candidate_api, "candidate_impact_service", service)
+    body = _request()
+    body["candidate"]["factors"] = {"quality": 0.2, "usd_fx": -1.0}  # type: ignore[index]
+    response = client.post(
+        "/api/v1/recommendations/professional-research/factor-risk/candidate-impact",
+        json=body,
+    )
+    assert response.status_code == 400
+    assert "factores sellados" in response.json()["detail"]
+    assert service.calls == []
+
+
 def test_candidate_impact_api_fails_closed_on_unsafe_contract(monkeypatch) -> None:
     _install_evidence(monkeypatch)
     unsafe_payloads = (
@@ -202,10 +232,11 @@ def test_candidate_impact_api_fails_closed_on_unsafe_contract(monkeypatch) -> No
         _payload(baselineCashWeight=float("nan")),
         _payload(postCashWeight=0.5),
         _payload(comparableFactors=[]),
-        _payload(coverageLostFactors=["market"], comparableFactors=["market", "usd_fx"]),
-        _payload(factorExposureDeltas={"market": 999.0, "usd_fx": 0.04}),
+        _payload(coverageLostFactors=["rates"], comparableFactors=["rates", "quality"]),
+        _payload(factorExposureDeltas={"rates": 999.0, "quality": 0.04}),
         _payload(candidate={**_candidate(), "sourceRef": ""}),
-        _payload(candidate={**_candidate(), "factors": {"market": float("inf")}}),
+        _payload(candidate={**_candidate(), "factors": {"rates": float("inf")}}),
+        _payload(comparableFactors=["market"], baselineWeightedExposures={"market": 0.6}, postWeightedExposures={"market": 0.4}, factorExposureDeltas={"market": -0.2}),
     )
 
     for payload in unsafe_payloads:
