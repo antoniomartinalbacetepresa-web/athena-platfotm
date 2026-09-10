@@ -86,6 +86,22 @@ class UserAccountRepository:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def update_password_hash(self, *, user_id: int, password_hash: str) -> bool:
+        if int(user_id) <= 0:
+            return False
+        normalized_hash = self._required(password_hash, "password_hash")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE {self._TABLE}
+                SET password_hash = ?, updated_at = ?
+                WHERE id = ? AND is_active = 1
+                """,
+                (normalized_hash, now, int(user_id)),
+            )
+        return int(cursor.rowcount or 0) == 1
+
     def _ensure_table(self) -> None:
         with self._database.connect() as connection:
             connection.executescript(
