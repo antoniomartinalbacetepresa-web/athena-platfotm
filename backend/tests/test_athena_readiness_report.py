@@ -4,10 +4,8 @@ from pathlib import Path
 import pytest
 
 from app.database.athena_database import AthenaDatabase
-from scripts.athena_readiness_report import (
-    _build_operational_readiness,
-    build_report,
-)
+from app.services.athena_readiness_service import build_operational_readiness
+from scripts.athena_readiness_report import build_report
 
 
 def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -> None:
@@ -52,7 +50,7 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
 
 
 def test_operational_readiness_reaches_100_only_when_all_gates_pass() -> None:
-    report = _build_operational_readiness(
+    report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history={"observationCount": 5000},
@@ -80,7 +78,7 @@ def test_operational_readiness_reaches_100_only_when_all_gates_pass() -> None:
 
 
 def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
-    report = _build_operational_readiness(
+    report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history={"observationCount": 1},
