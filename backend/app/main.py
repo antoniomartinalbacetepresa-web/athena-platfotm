@@ -77,6 +77,7 @@ from app.api.sec import router as sec_router
 from app.api.sec_fundamental_pit import router as sec_fundamental_pit_router
 from app.api.sources import router as sources_router
 from app.api.user_portfolio import router as user_portfolio_router
+from app.api.user_profile import router as user_profile_router
 
 
 app = FastAPI(
@@ -98,6 +99,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(user_portfolio_router)
+app.include_router(user_profile_router)
 app.include_router(market_router)
 app.include_router(sec_router)
 app.include_router(sec_fundamental_pit_router)
