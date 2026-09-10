@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
 from app.api.macro import router as macro_router
 from app.api.market import router as market_router
 from app.api.news import router as news_router
@@ -94,6 +95,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(market_router)
 app.include_router(sec_router)
 app.include_router(sec_fundamental_pit_router)
