@@ -50,16 +50,16 @@ This number measures the analytical and investment-research core only. It must n
 | Dashboard | 85% | Responsive dashboard, live panels and operational readiness surface exist. Remaining: end-to-end states and final UX acceptance. |
 | Market | 80% | Real persisted universe, regional ingestion, market-cap/canonical identity logic and standalone UI exist. Remaining: canonical weighting evidence, production coverage and deeper historical acceptance. |
 | News | 65% | Verified backend feed and standalone reusable UI exist. Remaining: importance ranking, estimated impact and AI summary provenance. |
-| Portfolio | 80% | Portfolio UI plus valuation, concentration, correlations, attribution/reconciliation and accounting infrastructure exist. Remaining: secure per-user ownership and complete E2E UX. |
-| Profile & authentication | 70% | Argon2 password hashing, JWT, register/token/me APIs, Flutter registration/login, in-memory session, guest mode and protected Profile exist. Remaining: recovery, secure durable session, account lifecycle and encrypted personalization storage. |
+| Portfolio | 84% | Portfolio UI plus valuation, concentration, correlations, attribution/reconciliation and accounting infrastructure exist. Authenticated personal positions are now isolated server-side by JWT-derived ownership and covered by cross-user access tests. Remaining: integrate authenticated storage into the complete Portfolio UX without leaking sensitive cost-basis data, encrypted sensitive fields and final E2E acceptance. |
+| Profile & authentication | 74% | Argon2 hashing, signed expiring JWT with unique jti, register/token/me/logout APIs, persistent token revocation, persistent login throttling, Flutter registration/login/logout client support, guest mode and protected Profile exist. Remaining: recovery, durable secure client session, broader account lifecycle and encrypted personalization storage. |
 | ATHENA AI & recommendations | 78% | Research, catalysts, invalidation, factor risk, attribution, journal, devil's advocate, radar, shadow/OOS and diagnostics exist. Remaining: validated user-facing synthesis and longitudinal evidence thresholds. |
 | Market history | 65% | Backfill, PIT preservation and depth-aware readiness gate exist. Remaining: real >=365-day eligible-universe coverage, source continuity and corporate-action acceptance. |
 | Continuous learning | 70% | Calibration/drift/evaluation/shadow/OOS infrastructure exists. Remaining: sufficient real longitudinal OOS evidence and controlled promotion policy. |
 | Personalization | 30% | Authenticated identity now exists. Remaining: encrypted per-user capital, objectives, risk profile, preferences and history. |
-| Security & production hardening | 68% | Fail-closed auth secret, Argon2 hashes, signed expiring JWT, tamper checks and conservative execution policies exist. Remaining: authorization by resource, rate limiting, recovery/revocation, encrypted sensitive storage, backups, deployment secret management, threat-model acceptance and required branch checks. |
-| Testing & CI | 92% | Backend pytest plus Flutter analyze/test validate each pushed change. Remaining: mandatory protected-branch checks, broader E2E/security/recovery and release gates. |
+| Security & production hardening | 74% | Fail-closed auth secret, Argon2 hashes, signed expiring JWT, tamper checks, JWT revocation, resource-level portfolio authorization and persistent login rate limiting are validated. Remaining: recovery/revocation across all sessions, encrypted sensitive storage, backups, deployment secret management, threat-model acceptance and required branch checks. |
+| Testing & CI | 93% | Backend pytest plus Flutter analyze/test validate each pushed change; auth revocation, throttling, cross-user portfolio isolation and Flutter auth contracts have dedicated coverage. Remaining: mandatory protected-branch checks, broader E2E/security/recovery and release gates. |
 
-**Overall whole-product engineering completion: approximately 74%.**
+**Overall whole-product engineering completion: approximately 75%.**
 
 ## Definition of 100%
 
@@ -67,12 +67,12 @@ ATHENA reaches 100% engineering completion only when every whole-product area ab
 
 ## Highest-priority path to 100%
 
-1. Complete authentication lifecycle, authorization and encrypted personalization storage.
-2. Protect user-owned Portfolio/Profile resources server-side.
-3. Close canonical market-weighting structural blockers without lowering thresholds; external approval remains human-controlled.
-4. Reach real historical depth/coverage and corporate-action-safe acceptance.
-5. Close longitudinal OOS and forecast-error evidence gates without fabricated/synthetic production evidence.
-6. Finish verified News impact/importance/AI-summary provenance and final ATHENA user-facing synthesis.
-7. Add rate limiting, recovery/revocation, backup/recovery, threat-model and deployment hardening.
+1. Finish the authentication lifecycle: account recovery, all-session revocation, secure durable client session and account lifecycle controls.
+2. Integrate authenticated Portfolio/Profile resources end-to-end and add encrypted personalization storage before persisting sensitive capital, objectives or risk preferences.
+3. Add backup/recovery, threat-model and deployment-secret hardening.
+4. Close canonical market-weighting structural blockers without lowering thresholds; external approval remains human-controlled.
+5. Reach real historical depth/coverage and corporate-action-safe acceptance.
+6. Close longitudinal OOS and forecast-error evidence gates without fabricated/synthetic production evidence.
+7. Finish verified News impact/importance/AI-summary provenance and final ATHENA user-facing synthesis.
 8. Make CI checks mandatory on protected branches and add E2E/security/release gates.
 9. Re-audit every area against `MASTER_PROJECT.md`; only then mark 100%.
