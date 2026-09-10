@@ -5,8 +5,11 @@ import math
 import re
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.repositories.recommendation_performance_attribution_repository import (
+    RecommendationPerformanceAttributionRepository,
+)
 from app.services.recommendation_performance_attribution_service import (
     AttributionEvidence,
     FactorContributionEvidence,
@@ -21,11 +24,14 @@ router = APIRouter(
 )
 
 service = RecommendationPerformanceAttributionService()
+_repository = RecommendationPerformanceAttributionRepository(service=service)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
 class EvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     value: float
     availableAt: datetime
     source: str = Field(min_length=1)
@@ -33,6 +39,8 @@ class EvidenceRequest(BaseModel):
 
 
 class FactorContributionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     factor: str = Field(min_length=1)
     contribution: float
     availableAt: datetime
@@ -41,6 +49,8 @@ class FactorContributionRequest(BaseModel):
 
 
 class PerformanceAttributionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     instrumentId: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     instrumentCurrency: str = Field(min_length=3, max_length=3)
@@ -96,6 +106,8 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Performance Attribution perdió seguridad FX.")
     if policy.get("identity") != "deterministic_sha256_attribution_key":
         raise HTTPException(status_code=500, detail="Performance Attribution perdió identidad determinista.")
+    if policy.get("identityBinding") != "numeric_values_plus_pit_provenance_plus_period_and_instrument":
+        raise HTTPException(status_code=500, detail="Performance Attribution perdió identidad content-bound.")
     if policy.get("benchmark") != "explicit_market_contribution_identity":
         raise HTTPException(status_code=500, detail="Performance Attribution perdió identidad de benchmark.")
 
@@ -154,7 +166,7 @@ def _assert_contract(payload: dict[str, object]) -> None:
 
 @router.post("/performance-attribution")
 def post_performance_attribution(request: PerformanceAttributionRequest) -> dict[str, object]:
-    """Perform arithmetic, PIT, provenance-bound return attribution without advice."""
+    """Perform and persist arithmetic, PIT, provenance-bound attribution without advice."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
@@ -197,11 +209,43 @@ def post_performance_attribution(request: PerformanceAttributionRequest) -> dict
                 factor_contributions=factors,
             ),
         )
+        payload = result.to_api_dict()
+        _assert_contract(payload)
+        record = _repository.append(artifact=payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="No se pudo calcular Performance Attribution PIT.") from exc
+        raise HTTPException(status_code=500, detail="No se pudo calcular/persistir Performance Attribution PIT.") from exc
 
-    payload = result.to_api_dict()
-    _assert_contract(payload)
-    return {"data": payload}
+    return {
+        "data": payload,
+        "persistence": {
+            "appendOnly": True,
+            "tamperVerified": True,
+            "artifactHash": record["artifact_hash"],
+        },
+    }
+
+
+@router.get("/performance-attribution/{attribution_key}")
+def get_performance_attribution(attribution_key: str) -> dict[str, object]:
+    """Read a persisted attribution only after full canonical reconstruction and tamper verification."""
+
+    try:
+        record = _repository.get_by_key(attribution_key=attribution_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    artifact = record.get("artifact")
+    if not isinstance(artifact, dict):
+        raise HTTPException(status_code=500, detail="Performance Attribution persistida carece de artifact válido.")
+    _assert_contract(artifact)
+    return {
+        "data": artifact,
+        "persistence": {
+            "appendOnly": True,
+            "tamperVerified": True,
+            "artifactHash": record["artifact_hash"],
+        },
+    }
