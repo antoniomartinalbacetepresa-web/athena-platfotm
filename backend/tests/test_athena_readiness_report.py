@@ -25,6 +25,7 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     assert report["instrumentTypes"]["listingCount"] == 0
     assert report["marketHistory"]["observationCount"] == 0
     assert report["marketHistory"]["instrumentCoverage"] == 0.0
+    assert report["marketHistory"]["historyDepthReady"] is False
     assert (
         report["recommendationLearning"]["automaticModelMutation"]
         is False
@@ -40,7 +41,7 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     assert readiness["ready"] is False
     assert "global_market_universe_not_ready" in readiness["blockers"]
     assert "canonical_market_weighting_not_ready" in readiness["blockers"]
-    assert "market_history_missing" in readiness["blockers"]
+    assert "market_history_depth_insufficient" in readiness["blockers"]
     assert "research_outcome_oos_evidence_pending" in readiness["blockers"]
     assert "forecast_error_oos_measurement_incomplete" in readiness["blockers"]
     assert "external_market_cap_validation_required" in readiness["blockers"]
@@ -53,7 +54,7 @@ def test_operational_readiness_reaches_100_only_when_all_gates_pass() -> None:
     report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
-        market_history={"observationCount": 5000},
+        market_history={"historyDepthReady": True},
         learning={
             "researchOutcomeOos": {
                 "status": "research_outcome_oos_evidence_available",
@@ -81,7 +82,7 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
     report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
-        market_history={"observationCount": 1},
+        market_history={"historyDepthReady": True},
         learning={
             "researchOutcomeOos": {
                 "status": "research_outcome_oos_evidence_available",
@@ -98,6 +99,27 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
     assert report["blockers"] == [
         "forecast_error_oos_measurement_incomplete",
     ]
+
+
+def test_operational_readiness_rejects_shallow_history() -> None:
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history={"historyDepthReady": False, "observationCount": 100000},
+        learning={
+            "researchOutcomeOos": {
+                "status": "research_outcome_oos_evidence_available",
+            },
+            "researchForecastErrorOos": {
+                "status": "forecast_error_oos_evidence_available",
+                "measurementCoverage": 1.0,
+            },
+        },
+    )
+
+    assert report["completionPercent"] == 80.0
+    assert report["ready"] is False
+    assert report["blockers"] == ["market_history_depth_insufficient"]
 
 
 def test_athena_readiness_report_requires_timezone_aware_as_of(tmp_path: Path) -> None:
