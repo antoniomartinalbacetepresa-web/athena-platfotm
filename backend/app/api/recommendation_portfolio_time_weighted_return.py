@@ -11,11 +11,17 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.repositories.recommendation_portfolio_nlv_snapshot_repository import (
+    RecommendationPortfolioNlvSnapshotRepository,
+)
 from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
     RecommendationPortfolioStateReconciliationRepository,
 )
 from app.repositories.recommendation_portfolio_twr_measurement_repository import (
     RecommendationPortfolioTwrMeasurementRepository,
+)
+from app.services.recommendation_portfolio_event_ledger_service import (
+    RecommendationPortfolioEventLedgerService,
 )
 from app.services.recommendation_portfolio_server_side_twr_service import (
     RecommendationPortfolioServerSideTwrService,
@@ -29,26 +35,22 @@ router = APIRouter(
 )
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _measurement_repository = RecommendationPortfolioTwrMeasurementRepository()
+_nlv_repository = RecommendationPortfolioNlvSnapshotRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
 _TOTAL_VALUE_SCOPE = "total_net_liquidation_value_in_reporting_currency"
 _FINAL_SCHEMA = "athena_portfolio_twr_final_measurement_v1"
+_NLV_PAIR_SCHEMA = "athena_portfolio_twr_nlv_pair_v1"
 
 
 class TwrBoundaryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     observedAt: datetime
-    availableAt: datetime
-    preFlowValue: float
-    postFlowValue: float
-    externalFlowAmount: float = 0.0
-    currency: str = Field(min_length=3, max_length=3)
-    valuationScope: str = Field(min_length=1)
-    valuationFingerprint: str = Field(min_length=64, max_length=64)
-    source: str = Field(min_length=1)
-    sourceRef: str = Field(min_length=1)
+    regularSnapshotKey: str | None = Field(default=None, min_length=64, max_length=64)
+    preFlowSnapshotKey: str | None = Field(default=None, min_length=64, max_length=64)
+    postFlowSnapshotKey: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 class PortfolioTimeWeightedReturnRequest(BaseModel):
@@ -109,6 +111,26 @@ def _seal_final_measurement(payload: dict[str, object]) -> None:
     payload["measurementKey"] = hashlib.sha256(_final_identity(payload).encode("utf-8")).hexdigest()
 
 
+def _nlv_pair_fingerprint(pre_key: str, post_key: str) -> str:
+    body = {
+        "schema": _NLV_PAIR_SCHEMA,
+        "preFlowSnapshotKey": pre_key.lower(),
+        "postFlowSnapshotKey": post_key.lower(),
+    }
+    serialized = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _iso_datetime(value: object, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"NLV persistido devolvió {field} inválido.") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise HTTPException(status_code=500, detail=f"NLV persistido devolvió {field} sin zona horaria.")
+    return parsed.astimezone(timezone.utc)
+
+
 def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> None:
     if payload.get("module") != "portfolio_twr_measurement":
         raise HTTPException(status_code=500, detail="Portfolio TWR devolvió módulo inválido.")
@@ -151,6 +173,17 @@ def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> Non
     if not isinstance(ledger_head, str) or _SHA256_RE.fullmatch(ledger_head) is None:
         raise HTTPException(status_code=500, detail="Portfolio TWR devolvió ledgerHeadHash inválido.")
 
+    nlv = payload.get("nlvEvidence")
+    if not isinstance(nlv, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió evidencia NLV sellada.")
+    if nlv.get("callerSuppliedValuesAccepted") is not False or nlv.get("tamperVerified") is not True:
+        raise HTTPException(status_code=500, detail="Portfolio TWR aceptó valores NLV libres o no verificados.")
+    snapshot_keys = nlv.get("snapshotKeys")
+    if not isinstance(snapshot_keys, list) or len(snapshot_keys) < 2:
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió snapshotKeys NLV.")
+    if any(not isinstance(key, str) or _SHA256_RE.fullmatch(key) is None for key in snapshot_keys):
+        raise HTTPException(status_code=500, detail="Portfolio TWR devolvió snapshotKey NLV inválida.")
+
     policy = payload.get("policy")
     if not isinstance(policy, dict):
         raise HTTPException(status_code=500, detail="Portfolio TWR devolvió política inválida.")
@@ -158,6 +191,8 @@ def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> Non
         raise HTTPException(status_code=500, detail="Portfolio TWR permitió cash-flow ledger del caller.")
     if policy.get("callerSuppliedInternalCashEvents") is not False:
         raise HTTPException(status_code=500, detail="Portfolio TWR permitió eventos internos del caller.")
+    if policy.get("callerSuppliedValuationValues") is not False:
+        raise HTTPException(status_code=500, detail="Portfolio TWR permitió valores de valoración del caller.")
     if policy.get("automaticTrading") is not False or policy.get("automaticProductionPromotion") is not False:
         raise HTTPException(status_code=500, detail="Portfolio TWR intentó habilitar automatización.")
     if policy.get("valuationScope") != _TOTAL_VALUE_SCOPE:
@@ -174,11 +209,123 @@ def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> Non
         raise HTTPException(status_code=500, detail="Portfolio TWR perdió la puerta obligatoria de integridad.")
 
 
+def _build_boundaries(
+    *,
+    request: PortfolioTimeWeightedReturnRequest,
+    as_of: datetime,
+    period_start: datetime,
+    period_end: datetime,
+    reporting_currency: str,
+    ledger_path: Path,
+) -> tuple[tuple[PortfolioTwrBoundaryInput, ...], list[str]]:
+    ledger = RecommendationPortfolioEventLedgerService(ledger_path)
+    external = ledger.external_cash_flows(
+        portfolio_id=request.portfolioId,
+        reporting_currency=reporting_currency,
+        period_start=period_start,
+        period_end=period_end,
+        as_of=as_of,
+    )
+    flow_by_time: dict[datetime, float] = {}
+    for event in external:
+        occurred = event.occurred_at.astimezone(timezone.utc)
+        if occurred in flow_by_time:
+            raise ValueError("multiple external cash flows at one instant require upstream deterministic aggregation")
+        flow_by_time[occurred] = float(event.amount)
+
+    boundaries: list[PortfolioTwrBoundaryInput] = []
+    snapshot_keys: list[str] = []
+    for index, item in enumerate(request.boundaries):
+        observed = _aware_utc(item.observedAt, f"boundaries[{index}].observedAt")
+        flow = flow_by_time.get(observed, 0.0)
+        regular_key = item.regularSnapshotKey
+        pre_key = item.preFlowSnapshotKey
+        post_key = item.postFlowSnapshotKey
+
+        if observed in flow_by_time:
+            if regular_key is not None or pre_key is None or post_key is None:
+                raise ValueError(
+                    "external-flow TWR boundary requires preFlowSnapshotKey and postFlowSnapshotKey only"
+                )
+            pre_record = _nlv_repository.require_snapshot(
+                snapshot_key=pre_key,
+                portfolio_id=request.portfolioId,
+                reporting_currency=reporting_currency,
+                observed_at=observed,
+                phase="pre_external_flow",
+                as_of=as_of,
+            )
+            post_record = _nlv_repository.require_snapshot(
+                snapshot_key=post_key,
+                portfolio_id=request.portfolioId,
+                reporting_currency=reporting_currency,
+                observed_at=observed,
+                phase="post_external_flow",
+                as_of=as_of,
+            )
+            pre_artifact = pre_record["artifact"]
+            post_artifact = post_record["artifact"]
+            pre_value = float(pre_artifact["value"])
+            post_value = float(post_artifact["value"])
+            available = max(
+                _iso_datetime(pre_artifact["availableAt"], "pre.availableAt"),
+                _iso_datetime(post_artifact["availableAt"], "post.availableAt"),
+            )
+            normalized_pre = str(pre_artifact["snapshotKey"]).lower()
+            normalized_post = str(post_artifact["snapshotKey"]).lower()
+            snapshot_keys.extend((normalized_pre, normalized_post))
+            boundaries.append(
+                PortfolioTwrBoundaryInput(
+                    observed_at=observed,
+                    available_at=available,
+                    pre_flow_value=pre_value,
+                    post_flow_value=post_value,
+                    external_flow_amount=flow,
+                    currency=reporting_currency,
+                    valuation_scope=_TOTAL_VALUE_SCOPE,
+                    valuation_fingerprint=_nlv_pair_fingerprint(normalized_pre, normalized_post),
+                    source="persisted_portfolio_nlv_snapshot_pair",
+                    source_ref=f"{normalized_pre}:{normalized_post}",
+                )
+            )
+            continue
+
+        if regular_key is None or pre_key is not None or post_key is not None:
+            raise ValueError("non-flow TWR boundary requires regularSnapshotKey only")
+        regular_record = _nlv_repository.require_snapshot(
+            snapshot_key=regular_key,
+            portfolio_id=request.portfolioId,
+            reporting_currency=reporting_currency,
+            observed_at=observed,
+            phase="regular",
+            as_of=as_of,
+        )
+        artifact = regular_record["artifact"]
+        value = float(artifact["value"])
+        normalized_key = str(artifact["snapshotKey"]).lower()
+        snapshot_keys.append(normalized_key)
+        boundaries.append(
+            PortfolioTwrBoundaryInput(
+                observed_at=observed,
+                available_at=_iso_datetime(artifact["availableAt"], "regular.availableAt"),
+                pre_flow_value=value,
+                post_flow_value=value,
+                external_flow_amount=0.0,
+                currency=reporting_currency,
+                valuation_scope=_TOTAL_VALUE_SCOPE,
+                valuation_fingerprint=normalized_key,
+                source=str(artifact["source"]),
+                source_ref=str(artifact["sourceRef"]),
+            )
+        )
+    return tuple(boundaries), snapshot_keys
+
+
 @router.post("/portfolio-time-weighted-return")
 def post_portfolio_time_weighted_return(
     request: PortfolioTimeWeightedReturnRequest,
 ) -> dict[str, object]:
-    """Measure and persist TWR from total-NLV PIT boundaries plus canonical server ledger."""
+    """Measure and persist TWR from sealed NLV snapshots plus canonical server ledger."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
@@ -199,24 +346,17 @@ def post_portfolio_time_weighted_return(
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo verificar reconciliationKey para Portfolio TWR.") from exc
 
-    boundaries = tuple(
-        PortfolioTwrBoundaryInput(
-            observed_at=_aware_utc(item.observedAt, f"boundaries[{index}].observedAt"),
-            available_at=_aware_utc(item.availableAt, f"boundaries[{index}].availableAt"),
-            pre_flow_value=item.preFlowValue,
-            post_flow_value=item.postFlowValue,
-            external_flow_amount=item.externalFlowAmount,
-            currency=item.currency,
-            valuation_scope=item.valuationScope,
-            valuation_fingerprint=item.valuationFingerprint,
-            source=item.source,
-            source_ref=item.sourceRef,
-        )
-        for index, item in enumerate(request.boundaries)
-    )
-
+    ledger_path = _ledger_path()
     try:
-        result = RecommendationPortfolioServerSideTwrService(ledger_path=_ledger_path()).evaluate(
+        boundaries, snapshot_keys = _build_boundaries(
+            request=request,
+            as_of=as_of,
+            period_start=period_start,
+            period_end=period_end,
+            reporting_currency=reporting_currency,
+            ledger_path=ledger_path,
+        )
+        result = RecommendationPortfolioServerSideTwrService(ledger_path=ledger_path).evaluate(
             portfolio_id=request.portfolioId,
             reporting_currency=reporting_currency,
             period_start=period_start,
@@ -226,10 +366,23 @@ def post_portfolio_time_weighted_return(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="No se pudo calcular Portfolio TWR PIT desde el ledger canónico.") from exc
+        raise HTTPException(status_code=500, detail="No se pudo calcular Portfolio TWR PIT desde NLV/ledger canónicos.") from exc
 
     payload = result.to_api_dict()
+    payload["nlvEvidence"] = {
+        "callerSuppliedValuesAccepted": False,
+        "tamperVerified": True,
+        "snapshotKeys": snapshot_keys,
+        "binding": "regular_or_exact_pre_post_external_flow_snapshots",
+    }
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió policy antes del sellado final.")
+    policy["callerSuppliedValuationValues"] = False
+    policy["valuationEvidence"] = "persisted_tamper_verified_portfolio_nlv_snapshots"
     payload["stateIntegrity"] = {
         "reconciliationKey": request.reconciliationKey.lower(),
         "portfolioStateKey": reconciliation_record["portfolio_state_key"],
