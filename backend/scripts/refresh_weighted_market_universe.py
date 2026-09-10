@@ -7,6 +7,7 @@ from typing import Callable
 
 from app.database.athena_database import AthenaDatabase
 from app.services.market_cap_coverage_service import MarketCapCoverageService
+from app.services.market_weighting_readiness_service import MarketWeightingReadinessService
 from app.services.yahoo_regional_universe_source import (
     ProgressCallback,
     YahooRegionalUniverseSource,
@@ -23,8 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Refresca el universo ponderable de ATHENA TYCHE con equities "
-            "regionales de Yahoo y devuelve informes de cobertura y "
-            "concentración de capitalización."
+            "regionales de Yahoo y devuelve informes de cobertura, "
+            "concentración y readiness canónico de capitalización."
         )
     )
     parser.add_argument("--database", type=Path, default=None)
@@ -79,6 +80,15 @@ def _build_capitalization_profile(database_path: Path | None) -> dict[str, objec
     )
 
 
+def _build_weighting_readiness(database_path: Path | None) -> dict[str, object]:
+    database = AthenaDatabase(database_path)
+    return (
+        MarketWeightingReadinessService(database=database)
+        .get_report()
+        .to_api_dict()
+    )
+
+
 def run_refresh(
     *,
     database_path: Path | None = None,
@@ -88,6 +98,9 @@ def run_refresh(
     importer: Callable[..., dict[str, object]] = run_import,
     profile_builder: Callable[[Path | None], dict[str, object]] = (
         _build_capitalization_profile
+    ),
+    readiness_builder: Callable[[Path | None], dict[str, object]] = (
+        _build_weighting_readiness
     ),
     progress_callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
@@ -111,6 +124,12 @@ def run_refresh(
         )
 
     capitalization_profile = profile_builder(database_path)
+    weighting_readiness = readiness_builder(database_path)
+    blockers = weighting_readiness.get("blockers")
+    if not isinstance(blockers, list):
+        raise RuntimeError(
+            "El readiness de ponderación no devolvió una lista de bloqueos válida."
+        )
 
     return {
         "status": "ready" if quality.get("isGlobalReady") else "fallback",
@@ -128,6 +147,8 @@ def run_refresh(
         "activeSourceMemberships": result.get("activeSourceMemberships"),
         "catalogQuality": quality,
         "capitalizationProfile": capitalization_profile,
+        "weightingReadiness": weighting_readiness,
+        "nextWeightingBlockers": list(blockers),
     }
 
 
