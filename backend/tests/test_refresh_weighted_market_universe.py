@@ -33,6 +33,16 @@ def _fake_profile(_database_path: Path | None) -> dict[str, object]:
     }
 
 
+def _fake_readiness(_database_path: Path | None) -> dict[str, object]:
+    return {
+        "ready": False,
+        "identityMarketCapCoverage": 0.98,
+        "domicileMarketCapCoverage": 0.94,
+        "canonicalIssuerCount": 1200,
+        "blockers": ["external_market_cap_validation_required"],
+    }
+
+
 def test_run_refresh_returns_ready_status_and_forwards_limits(
     tmp_path: Path,
 ) -> None:
@@ -63,6 +73,7 @@ def test_run_refresh_returns_ready_status_and_forwards_limits(
         max_pages=2,
         importer=fake_importer,
         profile_builder=_fake_profile,
+        readiness_builder=_fake_readiness,
     )
 
     assert result["status"] == "ready"
@@ -70,6 +81,10 @@ def test_run_refresh_returns_ready_status_and_forwards_limits(
     assert result["regions"] == ["us", "de", "jp"]
     assert result["catalogQuality"]["globallyUsableCount"] == 280
     assert result["capitalizationProfile"]["usableCount"] == 280
+    assert result["weightingReadiness"]["ready"] is False
+    assert result["nextWeightingBlockers"] == [
+        "external_market_cap_validation_required",
+    ]
     assert result["exhaustive"] is False
     assert calls == [
         {
@@ -107,6 +122,7 @@ def test_run_refresh_reports_exhaustive_mode_when_max_pages_is_none() -> None:
         max_pages=None,
         importer=fake_importer,
         profile_builder=_fake_profile,
+        readiness_builder=_fake_readiness,
     )
 
     assert result["exhaustive"] is True
@@ -136,6 +152,7 @@ def test_run_refresh_reports_fallback_when_quality_is_not_ready() -> None:
         regions=("us", "de", "jp"),
         importer=fake_importer,
         profile_builder=_fake_profile,
+        readiness_builder=_fake_readiness,
     )
 
     assert result["status"] == "fallback"
@@ -167,4 +184,21 @@ def test_run_refresh_requires_quality_report() -> None:
             regions=("us",),
             importer=fake_importer,
             profile_builder=_fake_profile,
+            readiness_builder=_fake_readiness,
+        )
+
+
+def test_run_refresh_requires_weighting_blocker_list() -> None:
+    def fake_importer(**kwargs):
+        return {
+            "source": "yahoo_regional_screener",
+            "catalogQuality": {"isGlobalReady": True},
+        }
+
+    with pytest.raises(RuntimeError, match="lista de bloqueos"):
+        run_refresh(
+            regions=("us",),
+            importer=fake_importer,
+            profile_builder=_fake_profile,
+            readiness_builder=lambda _path: {"ready": False},
         )
