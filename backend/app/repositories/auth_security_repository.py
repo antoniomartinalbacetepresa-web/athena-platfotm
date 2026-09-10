@@ -9,12 +9,14 @@ from app.database.athena_database import AthenaDatabase
 class AuthSecurityRepository:
     """Persistent auth-security state shared by all backend processes.
 
-    Stores revoked JWT identifiers and fixed-window login counters. No plaintext
-    password, bearer token, or secret key is ever persisted here.
+    Stores revoked JWT identifiers, per-user session versions and fixed-window
+    login counters. No plaintext password, bearer token, or secret key is ever
+    persisted here.
     """
 
     _REVOKED_TABLE = "athena_revoked_auth_tokens"
     _RATE_TABLE = "athena_auth_rate_limits"
+    _SESSION_TABLE = "athena_auth_user_sessions"
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -55,6 +57,67 @@ class AuthSecurityRepository:
                 (normalized_jti, now),
             ).fetchone()
         return row is not None
+
+    def current_session_version(self, *, user_id: int) -> int:
+        if user_id <= 0:
+            raise ValueError("user_id debe ser positivo.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            connection.execute(
+                f"""
+                INSERT OR IGNORE INTO {self._SESSION_TABLE} (
+                    user_id, session_version, updated_at
+                ) VALUES (?, 1, ?)
+                """,
+                (int(user_id), now),
+            )
+            row = connection.execute(
+                f"""
+                SELECT session_version
+                FROM {self._SESSION_TABLE}
+                WHERE user_id = ?
+                LIMIT 1
+                """,
+                (int(user_id),),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("No se pudo resolver la versión de sesión.")
+        return int(row["session_version"])
+
+    def revoke_all_sessions(self, *, user_id: int) -> int:
+        if user_id <= 0:
+            raise ValueError("user_id debe ser positivo.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            connection.execute(
+                f"""
+                INSERT OR IGNORE INTO {self._SESSION_TABLE} (
+                    user_id, session_version, updated_at
+                ) VALUES (?, 1, ?)
+                """,
+                (int(user_id), now),
+            )
+            connection.execute(
+                f"""
+                UPDATE {self._SESSION_TABLE}
+                SET session_version = session_version + 1,
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (now, int(user_id)),
+            )
+            row = connection.execute(
+                f"""
+                SELECT session_version
+                FROM {self._SESSION_TABLE}
+                WHERE user_id = ?
+                LIMIT 1
+                """,
+                (int(user_id),),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("No se pudo revocar las sesiones del usuario.")
+        return int(row["session_version"])
 
     def consume_login_attempt(
         self,
@@ -137,6 +200,15 @@ class AuthSecurityRepository:
                     window_started_at TEXT NOT NULL,
                     attempts INTEGER NOT NULL CHECK (attempts >= 0),
                     updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS {self._SESSION_TABLE} (
+                    user_id INTEGER PRIMARY KEY,
+                    session_version INTEGER NOT NULL DEFAULT 1
+                        CHECK (session_version > 0),
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES athena_user_accounts(id)
+                        ON DELETE CASCADE
                 );
                 """
             )
