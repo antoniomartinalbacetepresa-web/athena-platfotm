@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -8,6 +10,7 @@ import jwt
 from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 
+from app.repositories.auth_security_repository import AuthSecurityRepository
 from app.repositories.user_account_repository import UserAccountRepository
 
 
@@ -16,16 +19,20 @@ class AuthService:
     ACCESS_TOKEN_EXPIRE_MINUTES = 30
     MINIMUM_SECRET_BYTES = 32
     MINIMUM_PASSWORD_LENGTH = 12
+    LOGIN_ATTEMPT_LIMIT = 8
+    LOGIN_WINDOW_SECONDS = 300
 
     def __init__(
         self,
         *,
         repository: UserAccountRepository | None = None,
+        security_repository: AuthSecurityRepository | None = None,
         secret_key: str | None = None,
     ) -> None:
         # Validate signing configuration before touching persistent auth state.
         self._secret_key = self._load_secret(secret_key)
         self._repository = repository or UserAccountRepository()
+        self._security_repository = security_repository or AuthSecurityRepository()
         self._password_hash = PasswordHash.recommended()
         self._dummy_hash = self._password_hash.hash("athena-dummy-password-not-a-user")
 
@@ -60,11 +67,34 @@ class AuthService:
             return None
         return self._public_account(account)
 
+    def login_rate_key(self, *, email: str, client_id: str) -> str:
+        normalized_email = str(email or "").strip().lower()
+        normalized_client = str(client_id or "unknown").strip().lower() or "unknown"
+        digest = hashlib.sha256(
+            f"{normalized_client}|{normalized_email}".encode("utf-8")
+        ).hexdigest()
+        return f"auth-login:{digest}"
+
+    def consume_login_attempt(self, *, rate_key: str) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        window_epoch = epoch - (epoch % self.LOGIN_WINDOW_SECONDS)
+        window_start = datetime.fromtimestamp(window_epoch, tz=timezone.utc)
+        return self._security_repository.consume_login_attempt(
+            key=rate_key,
+            window_started_at=window_start,
+            limit=self.LOGIN_ATTEMPT_LIMIT,
+        )
+
+    def clear_login_attempts(self, *, rate_key: str) -> None:
+        self._security_repository.clear_login_attempts(key=rate_key)
+
     def create_access_token(self, *, user_id: int, email: str) -> str:
         now = datetime.now(timezone.utc)
         payload = {
             "sub": str(int(user_id)),
             "email": str(email).strip().lower(),
+            "jti": uuid.uuid4().hex,
             "iat": now,
             "exp": now + timedelta(minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES),
             "iss": "athena-tyche",
@@ -73,6 +103,41 @@ class AuthService:
         return jwt.encode(payload, self._secret_key, algorithm=self.ALGORITHM)
 
     def account_from_token(self, token: str) -> dict[str, Any] | None:
+        payload = self._decode_token(token)
+        if payload is None:
+            return None
+        subject = str(payload.get("sub") or "")
+        jti = str(payload.get("jti") or "")
+        if not subject.isdigit() or int(subject) <= 0 or not jti:
+            return None
+        if self._security_repository.is_token_revoked(jti=jti):
+            return None
+        account = self._repository.get_by_id(int(subject))
+        if account is None or int(account.get("is_active") or 0) != 1:
+            return None
+        return self._public_account(account)
+
+    def revoke_access_token(self, token: str) -> bool:
+        payload = self._decode_token(token)
+        if payload is None:
+            return False
+        subject = str(payload.get("sub") or "")
+        jti = str(payload.get("jti") or "")
+        exp = payload.get("exp")
+        if not subject.isdigit() or int(subject) <= 0 or not jti:
+            return False
+        try:
+            expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
+        except (TypeError, ValueError, OSError):
+            return False
+        self._security_repository.revoke_token(
+            jti=jti,
+            user_id=int(subject),
+            expires_at=expires_at,
+        )
+        return True
+
+    def _decode_token(self, token: str) -> dict[str, Any] | None:
         try:
             payload = jwt.decode(
                 token,
@@ -80,15 +145,9 @@ class AuthService:
                 algorithms=[self.ALGORITHM],
                 issuer="athena-tyche",
                 audience="athena-tyche-app",
-                options={"require": ["sub", "iat", "exp", "iss", "aud"]},
+                options={"require": ["sub", "jti", "iat", "exp", "iss", "aud"]},
             )
-            subject = str(payload.get("sub") or "")
-            if not subject.isdigit() or int(subject) <= 0:
-                return None
-            account = self._repository.get_by_id(int(subject))
-            if account is None or int(account.get("is_active") or 0) != 1:
-                return None
-            return self._public_account(account)
+            return payload if isinstance(payload, dict) else None
         except (InvalidTokenError, ValueError, TypeError):
             return None
 
