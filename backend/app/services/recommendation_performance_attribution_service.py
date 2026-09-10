@@ -92,6 +92,7 @@ class RecommendationPerformanceAttributionResult:
                 "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
                 "fx": "explicit_currency_pair_bound_fail_closed",
                 "identity": "deterministic_sha256_attribution_key",
+                "identityBinding": "numeric_values_plus_pit_provenance_plus_period_and_instrument",
                 "benchmark": "explicit_market_contribution_identity",
                 "temporal": "all_evidence_available_at_must_be_lte_as_of",
                 "calibration": "not_productive_until_out_of_sample_validated",
@@ -157,7 +158,15 @@ class RecommendationPerformanceAttributionService:
         }
 
     @staticmethod
+    def _number_token(value: float) -> str:
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            raise ValueError("attribution identity value must be finite")
+        return format(numeric, ".17g")
+
+    @classmethod
     def _attribution_key(
+        cls,
         *,
         instrument_id: str,
         symbol: str,
@@ -168,6 +177,10 @@ class RecommendationPerformanceAttributionService:
         as_of: datetime,
         period_start: datetime,
         period_end: datetime,
+        total_return: float,
+        market_contribution: float,
+        fx_contribution: float,
+        factor_values: dict[str, float],
         evidence: dict[str, object],
     ) -> str:
         factor_meta = evidence["factorContributions"]
@@ -177,11 +190,11 @@ class RecommendationPerformanceAttributionService:
             meta = factor_meta[name]
             assert isinstance(meta, dict)
             factor_tokens.append(
-                f"{name}:{meta['availableAt']}:{meta['source']}:{meta['sourceRef']}"
+                f"{name}:{cls._number_token(factor_values[name])}:{meta['availableAt']}:{meta['source']}:{meta['sourceRef']}"
             )
 
         tokens = [
-            "performance_attribution_v2",
+            "performance_attribution_v3",
             instrument_id,
             symbol,
             benchmark_id,
@@ -192,11 +205,16 @@ class RecommendationPerformanceAttributionService:
             period_start.isoformat(),
             period_end.isoformat(),
         ]
+        numeric_values = {
+            "totalReturn": total_return,
+            "marketContribution": market_contribution,
+            "fxContribution": fx_contribution,
+        }
         for key in ("totalReturn", "marketContribution", "fxContribution"):
             meta = evidence[key]
             assert isinstance(meta, dict)
             tokens.append(
-                f"{key}:{meta['availableAt']}:{meta['source']}:{meta['sourceRef']}"
+                f"{key}:{cls._number_token(numeric_values[key])}:{meta['availableAt']}:{meta['source']}:{meta['sourceRef']}"
             )
         tokens.extend(factor_tokens)
         return hashlib.sha256("|".join(tokens).encode("utf-8")).hexdigest()
@@ -285,6 +303,10 @@ class RecommendationPerformanceAttributionService:
             as_of=as_of_utc,
             period_start=period_start,
             period_end=period_end,
+            total_return=total_return,
+            market_contribution=market,
+            fx_contribution=fx,
+            factor_values=factor_values,
             evidence=evidence,
         )
 
