@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../features/auth/presentation/pages/login_page.dart';
+import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/market/presentation/pages/market_page.dart';
 import '../../features/news/presentation/pages/news_page.dart';
@@ -15,6 +16,11 @@ class AppRouter {
       case AppRoutes.login:
         return MaterialPageRoute(
           builder: (_) => const LoginPage(),
+        );
+
+      case AppRoutes.register:
+        return MaterialPageRoute(
+          builder: (_) => const RegisterPage(),
         );
 
       case AppRoutes.dashboard:
