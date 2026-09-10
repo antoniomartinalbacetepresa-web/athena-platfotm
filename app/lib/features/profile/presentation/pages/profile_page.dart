@@ -5,6 +5,8 @@ import '../../../../core/theme/athena_colors.dart';
 import '../../../auth/models/auth_account.dart';
 import '../../../auth/services/athena_auth_service.dart';
 import '../../../auth/services/auth_session.dart';
+import '../../models/user_preferences.dart';
+import '../../services/user_preferences_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -14,9 +16,14 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final AthenaAuthService _service = AthenaAuthService();
+  final AthenaAuthService _authService = AthenaAuthService();
+  final UserPreferencesService _preferencesService = UserPreferencesService();
+
   bool _checking = false;
+  bool _preferencesBusy = false;
   String? _error;
+  String? _preferencesError;
+  UserPreferences? _preferences;
 
   @override
   void initState() {
@@ -26,7 +33,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   void dispose() {
-    _service.dispose();
+    _authService.dispose();
+    _preferencesService.dispose();
     super.dispose();
   }
 
@@ -38,18 +46,97 @@ class _ProfilePageState extends State<ProfilePage> {
       _error = null;
     });
     try {
-      final account = await _service.getMe(token);
+      final account = await _authService.getMe(token);
       AuthSession.instance.establish(accessToken: token, account: account);
+      await _loadPreferences();
     } catch (_) {
       AuthSession.instance.clear();
+      _preferences = null;
+      _preferencesError = null;
       _error = 'La sesión ha caducado o ya no es válida.';
     } finally {
       if (mounted) setState(() => _checking = false);
     }
   }
 
-  void _logout() {
+  Future<void> _loadPreferences() async {
+    if (!AuthSession.instance.isAuthenticated) return;
+    setState(() {
+      _preferencesBusy = true;
+      _preferencesError = null;
+    });
+    try {
+      final preferences = await _preferencesService.load();
+      if (!mounted) return;
+      setState(() => _preferences = preferences);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _preferencesError =
+            'No se pudieron cargar las preferencias protegidas. No se han sustituido por datos locales.';
+      });
+    } finally {
+      if (mounted) setState(() => _preferencesBusy = false);
+    }
+  }
+
+  Future<void> _savePreferences(UserPreferences preferences) async {
+    setState(() {
+      _preferencesBusy = true;
+      _preferencesError = null;
+    });
+    try {
+      final stored = await _preferencesService.save(preferences);
+      if (!mounted) return;
+      setState(() => _preferences = stored);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preferencias protegidas guardadas.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _preferencesError =
+            'No se pudieron guardar las preferencias. No se conservará una copia local insegura.';
+      });
+    } finally {
+      if (mounted) setState(() => _preferencesBusy = false);
+    }
+  }
+
+  Future<void> _deletePreferences() async {
+    setState(() {
+      _preferencesBusy = true;
+      _preferencesError = null;
+    });
+    try {
+      await _preferencesService.delete();
+      if (!mounted) return;
+      setState(() => _preferences = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preferencias protegidas eliminadas.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _preferencesError = 'No se pudieron eliminar las preferencias protegidas.';
+      });
+    } finally {
+      if (mounted) setState(() => _preferencesBusy = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    final token = AuthSession.instance.accessToken;
+    if (token != null) {
+      try {
+        await _authService.logout(token);
+      } catch (_) {
+        // Local session is still cleared. A failed remote revocation must not
+        // trap the user inside an invalid client session.
+      }
+    }
     AuthSession.instance.clear();
+    if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(
       context,
       AppRoutes.welcome,
@@ -75,7 +162,13 @@ class _ProfilePageState extends State<ProfilePage> {
                 ? _GuestProfileState(error: _error)
                 : _AuthenticatedProfile(
                     account: account,
+                    preferences: _preferences,
+                    preferencesBusy: _preferencesBusy,
+                    preferencesError: _preferencesError,
                     onRefresh: _refreshAuthenticatedAccount,
+                    onReloadPreferences: _loadPreferences,
+                    onSavePreferences: _savePreferences,
+                    onDeletePreferences: _deletePreferences,
                     onLogout: _logout,
                   ),
       ),
@@ -121,7 +214,7 @@ class _GuestProfileState extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   error ??
-                      'Estás usando ATHENA como invitado. Inicia sesión para acceder a datos personales y futuras preferencias protegidas.',
+                      'Estás usando ATHENA como invitado. Inicia sesión para acceder a tus preferencias protegidas.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: AthenaColors.textSecondary,
@@ -145,13 +238,25 @@ class _GuestProfileState extends StatelessWidget {
 class _AuthenticatedProfile extends StatelessWidget {
   const _AuthenticatedProfile({
     required this.account,
+    required this.preferences,
+    required this.preferencesBusy,
+    required this.preferencesError,
     required this.onRefresh,
+    required this.onReloadPreferences,
+    required this.onSavePreferences,
+    required this.onDeletePreferences,
     required this.onLogout,
   });
 
   final AuthAccount account;
+  final UserPreferences? preferences;
+  final bool preferencesBusy;
+  final String? preferencesError;
   final Future<void> Function() onRefresh;
-  final VoidCallback onLogout;
+  final Future<void> Function() onReloadPreferences;
+  final Future<void> Function(UserPreferences) onSavePreferences;
+  final Future<void> Function() onDeletePreferences;
+  final Future<void> Function() onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -160,18 +265,13 @@ class _AuthenticatedProfile extends StatelessWidget {
       children: [
         _IdentityCard(account: account),
         const SizedBox(height: 16),
-        const _ProfileSection(
-          icon: Icons.tune_rounded,
-          title: 'Preferencias',
-          description: 'Objetivos, horizonte y preferencias de inversión.',
-          status: 'Bloqueado hasta persistencia cifrada',
-        ),
-        const SizedBox(height: 12),
-        const _ProfileSection(
-          icon: Icons.shield_outlined,
-          title: 'Perfil de riesgo',
-          description: 'Configuración de tolerancia al riesgo y límites.',
-          status: 'Pendiente de cuestionario validado y almacenamiento cifrado',
+        ProfilePreferencesForm(
+          preferences: preferences,
+          busy: preferencesBusy,
+          error: preferencesError,
+          onReload: onReloadPreferences,
+          onSave: onSavePreferences,
+          onDelete: preferences == null ? null : onDeletePreferences,
         ),
         const SizedBox(height: 12),
         const _ProfileSection(
@@ -182,17 +282,245 @@ class _AuthenticatedProfile extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         OutlinedButton.icon(
-          onPressed: onRefresh,
+          onPressed: preferencesBusy ? null : onRefresh,
           icon: const Icon(Icons.refresh_rounded),
           label: const Text('VALIDAR SESIÓN'),
         ),
         const SizedBox(height: 10),
         TextButton.icon(
-          onPressed: onLogout,
+          onPressed: preferencesBusy ? null : onLogout,
           icon: const Icon(Icons.logout_rounded),
           label: const Text('CERRAR SESIÓN'),
         ),
       ],
+    );
+  }
+}
+
+class ProfilePreferencesForm extends StatefulWidget {
+  const ProfilePreferencesForm({
+    super.key,
+    required this.preferences,
+    required this.busy,
+    required this.onReload,
+    required this.onSave,
+    this.onDelete,
+    this.error,
+  });
+
+  final UserPreferences? preferences;
+  final bool busy;
+  final String? error;
+  final Future<void> Function() onReload;
+  final Future<void> Function(UserPreferences) onSave;
+  final Future<void> Function()? onDelete;
+
+  @override
+  State<ProfilePreferencesForm> createState() => _ProfilePreferencesFormState();
+}
+
+class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _horizonController;
+  late final TextEditingController _currencyController;
+  late String _riskTolerance;
+  late String _objective;
+
+  @override
+  void initState() {
+    super.initState();
+    _horizonController = TextEditingController();
+    _currencyController = TextEditingController();
+    _apply(widget.preferences);
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfilePreferencesForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.preferences != widget.preferences) {
+      _apply(widget.preferences);
+    }
+  }
+
+  void _apply(UserPreferences? value) {
+    _riskTolerance = value?.riskTolerance ?? 'balanced';
+    _objective = value?.objective ?? 'balanced_growth';
+    _horizonController.text = (value?.investmentHorizonYears ?? 10).toString();
+    _currencyController.text = value?.baseCurrency ?? 'EUR';
+  }
+
+  @override
+  void dispose() {
+    _horizonController.dispose();
+    _currencyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final preferences = UserPreferences(
+      riskTolerance: _riskTolerance,
+      investmentHorizonYears: int.parse(_horizonController.text.trim()),
+      baseCurrency: _currencyController.text.trim().toUpperCase(),
+      objective: _objective,
+    );
+    await widget.onSave(preferences);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AthenaColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AthenaColors.border),
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.tune_rounded, color: AthenaColors.primary),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Preferencias protegidas',
+                    style: TextStyle(
+                      color: AthenaColors.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Se guardan cifradas en el backend asociado a tu cuenta. ATHENA no mantiene una copia local de estos campos.',
+              style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
+            ),
+            if (widget.error != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                widget.error!,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              value: _riskTolerance,
+              decoration: const InputDecoration(labelText: 'Tolerancia al riesgo'),
+              items: const [
+                DropdownMenuItem(value: 'conservative', child: Text('Conservadora')),
+                DropdownMenuItem(value: 'balanced', child: Text('Equilibrada')),
+                DropdownMenuItem(value: 'growth', child: Text('Crecimiento')),
+                DropdownMenuItem(value: 'aggressive', child: Text('Agresiva')),
+              ],
+              onChanged: widget.busy
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _riskTolerance = value);
+                    },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _objective,
+              decoration: const InputDecoration(labelText: 'Objetivo'),
+              items: const [
+                DropdownMenuItem(
+                  value: 'capital_preservation',
+                  child: Text('Preservación de capital'),
+                ),
+                DropdownMenuItem(value: 'income', child: Text('Ingresos')),
+                DropdownMenuItem(
+                  value: 'balanced_growth',
+                  child: Text('Crecimiento equilibrado'),
+                ),
+                DropdownMenuItem(
+                  value: 'long_term_growth',
+                  child: Text('Crecimiento a largo plazo'),
+                ),
+              ],
+              onChanged: widget.busy
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _objective = value);
+                    },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _horizonController,
+              enabled: !widget.busy,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Horizonte (años)'),
+              validator: (value) {
+                final years = int.tryParse(value?.trim() ?? '');
+                if (years == null || years < 1 || years > 60) {
+                  return 'Introduce un horizonte entre 1 y 60 años.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _currencyController,
+              enabled: !widget.busy,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(labelText: 'Moneda base (ISO 4217)'),
+              validator: (value) {
+                final currency = value?.trim().toUpperCase() ?? '';
+                if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
+                  return 'Introduce un código de moneda de tres letras.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: widget.busy ? null : _submit,
+                  icon: widget.busy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('GUARDAR'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: widget.busy ? null : widget.onReload,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('RECARGAR'),
+                ),
+                if (widget.onDelete != null)
+                  TextButton.icon(
+                    onPressed: widget.busy ? null : widget.onDelete,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('ELIMINAR'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.preferences == null
+                  ? 'Aún no hay preferencias guardadas.'
+                  : 'Preferencias cargadas desde almacenamiento cifrado.',
+              style: const TextStyle(
+                color: AthenaColors.primary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -241,7 +569,7 @@ class _IdentityCard extends StatelessWidget {
           ],
           const SizedBox(height: 12),
           const Text(
-            'La identidad se vuelve a validar contra /api/v1/auth/me. El token no se persiste en almacenamiento local en esta fase.',
+            'La identidad se revalida contra el backend. Las preferencias sensibles solo se leen y escriben mediante la sesión autenticada.',
             style: TextStyle(
               color: AthenaColors.textSecondary,
               fontSize: 11,
