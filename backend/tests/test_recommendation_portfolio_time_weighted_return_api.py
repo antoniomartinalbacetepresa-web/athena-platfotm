@@ -145,7 +145,8 @@ def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monk
         json=payload(),
     )
     assert response.status_code == 200
-    data = response.json()["data"]
+    body = response.json()
+    data = body["data"]
     assert data["module"] == "portfolio_twr_measurement"
     assert data["status"] == "measured_from_canonical_server_side_portfolio_ledger"
     assert data["advisoryStatus"] == "no_advice"
@@ -159,6 +160,7 @@ def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monk
         "fee": -0.5,
         "tax": -0.25,
     }
+    assert data["serverSideLedger"]["serverSide"] is True
     assert data["serverSideLedger"]["callerSuppliedEventsAccepted"] is False
     assert data["serverSideLedger"]["appendOnly"] is True
     assert data["serverSideLedger"]["tamperEvidentHashChain"] is True
@@ -170,7 +172,19 @@ def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monk
     assert data["stateIntegrity"]["tamperVerified"] is True
     assert data["stateIntegrity"]["gate"] == "required_before_measurement"
     assert len(data["measurementKey"]) == 64
+    assert len(data["ledgerMeasurementKey"]) == 64
     assert len(data["coreMeasurementKey"]) == 64
+    assert data["measurementKey"] != data["ledgerMeasurementKey"]
+    assert body["persistence"]["appendOnly"] is True
+    assert body["persistence"]["tamperVerified"] is True
+    assert len(body["persistence"]["artifactHash"]) == 64
+
+    read = client.get(
+        f"/api/v1/recommendations/professional-research/portfolio-time-weighted-return/{data['measurementKey']}"
+    )
+    assert read.status_code == 200
+    assert read.json()["data"] == data
+    assert read.json()["persistence"]["tamperVerified"] is True
 
 
 def test_portfolio_twr_endpoint_rejects_caller_supplied_cash_events(monkeypatch, tmp_path) -> None:
