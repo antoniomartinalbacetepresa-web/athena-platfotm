@@ -22,34 +22,17 @@ class AuthService:
     LOGIN_ATTEMPT_LIMIT = 8
     LOGIN_WINDOW_SECONDS = 300
 
-    def __init__(
-        self,
-        *,
-        repository: UserAccountRepository | None = None,
-        security_repository: AuthSecurityRepository | None = None,
-        secret_key: str | None = None,
-    ) -> None:
-        # Validate signing configuration before touching persistent auth state.
+    def __init__(self, *, repository: UserAccountRepository | None = None, security_repository: AuthSecurityRepository | None = None, secret_key: str | None = None) -> None:
         self._secret_key = self._load_secret(secret_key)
         self._repository = repository or UserAccountRepository()
         self._security_repository = security_repository or AuthSecurityRepository()
         self._password_hash = PasswordHash.recommended()
         self._dummy_hash = self._password_hash.hash("athena-dummy-password-not-a-user")
 
-    def register(
-        self,
-        *,
-        email: str,
-        password: str,
-        display_name: str | None = None,
-    ) -> dict[str, Any]:
+    def register(self, *, email: str, password: str, display_name: str | None = None) -> dict[str, Any]:
         normalized_password = self._validate_password(password)
         password_hash = self._password_hash.hash(normalized_password)
-        account = self._repository.create(
-            email=email,
-            password_hash=password_hash,
-            display_name=display_name,
-        )
+        account = self._repository.create(email=email, password_hash=password_hash, display_name=display_name)
         return self._public_account(account)
 
     def authenticate(self, *, email: str, password: str) -> dict[str, Any] | None:
@@ -70,9 +53,7 @@ class AuthService:
     def login_rate_key(self, *, email: str, client_id: str) -> str:
         normalized_email = str(email or "").strip().lower()
         normalized_client = str(client_id or "unknown").strip().lower() or "unknown"
-        digest = hashlib.sha256(
-            f"{normalized_client}|{normalized_email}".encode("utf-8")
-        ).hexdigest()
+        digest = hashlib.sha256(f"{normalized_client}|{normalized_email}".encode("utf-8")).hexdigest()
         return f"auth-login:{digest}"
 
     def consume_login_attempt(self, *, rate_key: str) -> dict[str, Any]:
@@ -80,21 +61,19 @@ class AuthService:
         epoch = int(now.timestamp())
         window_epoch = epoch - (epoch % self.LOGIN_WINDOW_SECONDS)
         window_start = datetime.fromtimestamp(window_epoch, tz=timezone.utc)
-        return self._security_repository.consume_login_attempt(
-            key=rate_key,
-            window_started_at=window_start,
-            limit=self.LOGIN_ATTEMPT_LIMIT,
-        )
+        return self._security_repository.consume_login_attempt(key=rate_key, window_started_at=window_start, limit=self.LOGIN_ATTEMPT_LIMIT)
 
     def clear_login_attempts(self, *, rate_key: str) -> None:
         self._security_repository.clear_login_attempts(key=rate_key)
 
     def create_access_token(self, *, user_id: int, email: str) -> str:
         now = datetime.now(timezone.utc)
+        session_version = self._security_repository.current_session_version(user_id=int(user_id))
         payload = {
             "sub": str(int(user_id)),
             "email": str(email).strip().lower(),
             "jti": uuid.uuid4().hex,
+            "sv": session_version,
             "iat": now,
             "exp": now + timedelta(minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES),
             "iss": "athena-tyche",
@@ -108,11 +87,15 @@ class AuthService:
             return None
         subject = str(payload.get("sub") or "")
         jti = str(payload.get("jti") or "")
-        if not subject.isdigit() or int(subject) <= 0 or not jti:
+        session_version = payload.get("sv")
+        if not subject.isdigit() or int(subject) <= 0 or not jti or not isinstance(session_version, int) or session_version <= 0:
             return None
+        user_id = int(subject)
         if self._security_repository.is_token_revoked(jti=jti):
             return None
-        account = self._repository.get_by_id(int(subject))
+        if self._security_repository.current_session_version(user_id=user_id) != session_version:
+            return None
+        account = self._repository.get_by_id(user_id)
         if account is None or int(account.get("is_active") or 0) != 1:
             return None
         return self._public_account(account)
@@ -130,12 +113,11 @@ class AuthService:
             expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
         except (TypeError, ValueError, OSError):
             return False
-        self._security_repository.revoke_token(
-            jti=jti,
-            user_id=int(subject),
-            expires_at=expires_at,
-        )
+        self._security_repository.revoke_token(jti=jti, user_id=int(subject), expires_at=expires_at)
         return True
+
+    def revoke_all_sessions(self, *, user_id: int) -> int:
+        return self._security_repository.revoke_all_sessions(user_id=int(user_id))
 
     def _decode_token(self, token: str) -> dict[str, Any] | None:
         try:
@@ -145,28 +127,19 @@ class AuthService:
                 algorithms=[self.ALGORITHM],
                 issuer="athena-tyche",
                 audience="athena-tyche-app",
-                options={"require": ["sub", "jti", "iat", "exp", "iss", "aud"]},
+                options={"require": ["sub", "jti", "sv", "iat", "exp", "iss", "aud"]},
             )
             return payload if isinstance(payload, dict) else None
         except (InvalidTokenError, ValueError, TypeError):
             return None
 
     def _public_account(self, account: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": int(account["id"]),
-            "email": str(account["email"]),
-            "displayName": account.get("display_name"),
-            "isActive": int(account.get("is_active") or 0) == 1,
-            "createdAt": str(account["created_at"]),
-            "updatedAt": str(account["updated_at"]),
-        }
+        return {"id": int(account["id"]), "email": str(account["email"]), "displayName": account.get("display_name"), "isActive": int(account.get("is_active") or 0) == 1, "createdAt": str(account["created_at"]), "updatedAt": str(account["updated_at"])}
 
     def _validate_password(self, password: str) -> str:
         value = str(password or "")
         if len(value) < self.MINIMUM_PASSWORD_LENGTH:
-            raise ValueError(
-                f"La contraseña debe tener al menos {self.MINIMUM_PASSWORD_LENGTH} caracteres."
-            )
+            raise ValueError(f"La contraseña debe tener al menos {self.MINIMUM_PASSWORD_LENGTH} caracteres.")
         if len(value) > 256:
             raise ValueError("La contraseña supera el máximo permitido.")
         if value.strip() != value:
@@ -177,7 +150,5 @@ class AuthService:
         value = override if override is not None else os.getenv("ATHENA_AUTH_SECRET")
         normalized = str(value or "").strip()
         if len(normalized.encode("utf-8")) < self.MINIMUM_SECRET_BYTES:
-            raise RuntimeError(
-                "ATHENA_AUTH_SECRET debe contener al menos 32 bytes y no puede usar un valor por defecto."
-            )
+            raise RuntimeError("ATHENA_AUTH_SECRET debe contener al menos 32 bytes y no puede usar un valor por defecto.")
         return normalized
