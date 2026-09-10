@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
+import '../../features/market/presentation/pages/market_page.dart';
 import '../../features/news/presentation/pages/news_page.dart';
 import '../../features/portfolio/presentation/pages/portfolio_page.dart';
 import '../../features/profile/presentation/pages/profile_page.dart';
@@ -13,6 +14,11 @@ class AppRouter {
       case AppRoutes.dashboard:
         return MaterialPageRoute(
           builder: (_) => const DashboardPage(),
+        );
+
+      case AppRoutes.market:
+        return MaterialPageRoute(
+          builder: (_) => const MarketPage(),
         );
 
       case AppRoutes.news:
