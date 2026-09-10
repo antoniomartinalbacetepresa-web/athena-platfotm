@@ -50,6 +50,22 @@ class AuthService:
             return None
         return self._public_account(account)
 
+    def change_password(self, *, user_id: int, current_password: str, new_password: str) -> bool:
+        account = self._repository.get_by_id(int(user_id))
+        if account is None or int(account.get("is_active") or 0) != 1:
+            return False
+        stored_hash = str(account.get("password_hash") or "")
+        if not stored_hash or not self._password_hash.verify(str(current_password or ""), stored_hash):
+            return False
+        normalized_password = self._validate_password(new_password)
+        if self._password_hash.verify(normalized_password, stored_hash):
+            raise ValueError("La nueva contraseña debe ser diferente de la actual.")
+        password_hash = self._password_hash.hash(normalized_password)
+        if not self._repository.update_password_hash(user_id=int(user_id), password_hash=password_hash):
+            return False
+        self._security_repository.revoke_all_sessions(user_id=int(user_id))
+        return True
+
     def login_rate_key(self, *, email: str, client_id: str) -> str:
         normalized_email = str(email or "").strip().lower()
         normalized_client = str(client_id or "unknown").strip().lower() or "unknown"
