@@ -130,7 +130,17 @@ class _LoginPageState extends State<LoginPage> {
                             : const Text('ENTRAR CON CUENTA'),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+                    TextButton(
+                      onPressed: _loading
+                          ? null
+                          : () => Navigator.pushNamed(
+                                context,
+                                AppRoutes.register,
+                              ),
+                      child: const Text('Crear una cuenta'),
+                    ),
+                    const SizedBox(height: 4),
                     TextButton(
                       onPressed: _loading
                           ? null
