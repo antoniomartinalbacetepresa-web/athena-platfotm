@@ -102,6 +102,37 @@ class AthenaAuthService {
     return AuthAccount.fromMap(Map<String, dynamic>.from(account));
   }
 
+  Future<void> changePassword({
+    required String token,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final normalizedToken = token.trim();
+    if (normalizedToken.isEmpty) {
+      throw ArgumentError('Token obligatorio.');
+    }
+    if (currentPassword.isEmpty) {
+      throw ArgumentError('La contraseña actual es obligatoria.');
+    }
+    if (newPassword.length < 12) {
+      throw ArgumentError('La nueva contraseña debe tener al menos 12 caracteres.');
+    }
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/v1/auth/change-password'),
+      headers: {
+        'Authorization': 'Bearer $normalizedToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      }),
+    );
+    if (response.statusCode != 204) {
+      throw Exception('No se pudo cambiar la contraseña (${response.statusCode}).');
+    }
+  }
+
   Future<void> logout(String token) async {
     await _revoke(token, path: '/api/v1/auth/logout');
   }
