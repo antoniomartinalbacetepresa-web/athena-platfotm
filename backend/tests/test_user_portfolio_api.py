@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -10,9 +8,12 @@ from app.main import app
 TEST_SECRET = "athena-test-secret-that-is-at-least-32-bytes-long"
 
 
-def _configure(tmp_path) -> None:
-    os.environ["ATHENA_DATABASE_PATH"] = str(tmp_path / "athena_user_portfolio.db")
-    os.environ["ATHENA_AUTH_SECRET"] = TEST_SECRET
+def _configure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv(
+        "ATHENA_DATABASE_PATH",
+        str(tmp_path / "athena_user_portfolio.db"),
+    )
+    monkeypatch.setenv("ATHENA_AUTH_SECRET", TEST_SECRET)
 
 
 def _register_and_token(client: TestClient, *, email: str) -> str:
@@ -41,15 +42,15 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_personal_portfolio_requires_authentication(tmp_path) -> None:
-    _configure(tmp_path)
+def test_personal_portfolio_requires_authentication(monkeypatch, tmp_path) -> None:
+    _configure(monkeypatch, tmp_path)
     with TestClient(app) as client:
         response = client.get("/api/v1/user/portfolio")
     assert response.status_code == 401
 
 
-def test_users_can_only_see_and_delete_their_own_positions(tmp_path) -> None:
-    _configure(tmp_path)
+def test_users_can_only_see_and_delete_their_own_positions(monkeypatch, tmp_path) -> None:
+    _configure(monkeypatch, tmp_path)
     with TestClient(app) as client:
         token_a = _register_and_token(client, email="owner-a@example.com")
         token_b = _register_and_token(client, email="owner-b@example.com")
@@ -98,8 +99,8 @@ def test_users_can_only_see_and_delete_their_own_positions(tmp_path) -> None:
         assert empty.json()["data"]["positions"] == []
 
 
-def test_client_cannot_supply_portfolio_owner(tmp_path) -> None:
-    _configure(tmp_path)
+def test_client_cannot_supply_portfolio_owner(monkeypatch, tmp_path) -> None:
+    _configure(monkeypatch, tmp_path)
     with TestClient(app) as client:
         token = _register_and_token(client, email="owner@example.com")
         response = client.put(
@@ -115,8 +116,11 @@ def test_client_cannot_supply_portfolio_owner(tmp_path) -> None:
     assert response.status_code == 422
 
 
-def test_upsert_updates_only_the_authenticated_owners_matching_position(tmp_path) -> None:
-    _configure(tmp_path)
+def test_upsert_updates_only_the_authenticated_owners_matching_position(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
     with TestClient(app) as client:
         token_a = _register_and_token(client, email="upsert-a@example.com")
         token_b = _register_and_token(client, email="upsert-b@example.com")
