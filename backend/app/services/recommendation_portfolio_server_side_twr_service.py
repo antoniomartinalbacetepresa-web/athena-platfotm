@@ -30,6 +30,7 @@ class ServerSidePortfolioTwrResult:
         payload = self.core.to_api_dict()
         payload["status"] = "measured_from_canonical_server_side_portfolio_ledger"
         payload["serverSideLedger"] = {
+            "serverSide": True,
             "callerSuppliedEventsAccepted": False,
             "appendOnly": True,
             "tamperEvidentHashChain": True,
