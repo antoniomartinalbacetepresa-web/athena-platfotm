@@ -9,12 +9,12 @@ import 'package:http/testing.dart';
 void main() {
   tearDown(() => AuthSession.instance.clear());
 
-  test('register sends normalized JSON and parses account', () async {
+  test('register sends normalized JSON and parses backend account contract', () async {
     late http.Request captured;
     final client = MockClient((request) async {
       captured = request;
       return http.Response(
-        '{"status":"registered","account":{"id":5,"email":"user@example.com","displayName":"Athena User","isActive":true,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        '{"status":"account_created","account":{"id":5,"email":"user@example.com","displayName":"Athena User","isActive":true,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
         201,
         headers: {'content-type': 'application/json'},
       );
@@ -103,6 +103,28 @@ void main() {
     expect(account.email, 'user@example.com');
     expect(account.displayName, 'Athena User');
     expect(account.isActive, isTrue);
+  });
+
+  test('logout calls backend revocation endpoint with bearer token', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.logout(' signed.jwt.token ');
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/logout');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+  });
+
+  test('logout does not silently accept backend revocation failure', () async {
+    final client = MockClient((request) async => http.Response('{}', 401));
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    expect(service.logout('signed.jwt.token'), throwsException);
   });
 
   test('login rejects invalid token contract', () async {
