@@ -9,6 +9,7 @@ import '../widgets/my_space_panel.dart';
 import '../widgets/news_panel.dart';
 import '../widgets/recommendations_panel.dart';
 import '../widgets/relevant_investors_panel.dart';
+import '../widgets/system_readiness_panel.dart';
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
@@ -33,13 +34,22 @@ class DashboardPage extends StatelessWidget {
                   AthenaSpacing.md,
                   AthenaSpacing.lg,
                 ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    if (constraints.maxWidth < _desktopBreakpoint) {
-                      return const _CompactDashboard();
-                    }
-                    return const _DesktopDashboard();
-                  },
+                child: Column(
+                  children: [
+                    const SizedBox(
+                      height: 112,
+                      child: SystemReadinessPanel(),
+                    ),
+                    const SizedBox(height: AthenaSpacing.md),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (constraints.maxWidth < _desktopBreakpoint) {
+                          return const _CompactDashboard();
+                        }
+                        return const _DesktopDashboard();
+                      },
+                    ),
+                  ],
                 ),
               ),
             ),
