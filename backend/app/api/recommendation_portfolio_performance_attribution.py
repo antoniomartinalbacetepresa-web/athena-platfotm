@@ -5,10 +5,13 @@ import math
 import re
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
     RecommendationPortfolioStateReconciliationRepository,
+)
+from app.repositories.recommendation_portfolio_twr_measurement_repository import (
+    RecommendationPortfolioTwrMeasurementRepository,
 )
 from app.services.recommendation_performance_attribution_service import (
     AttributionEvidence,
@@ -28,6 +31,7 @@ router = APIRouter(
 )
 service = RecommendationPortfolioPerformanceAttributionService()
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
+_twr_repository = RecommendationPortfolioTwrMeasurementRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
@@ -66,14 +70,15 @@ class PortfolioConstituentRequest(BaseModel):
 
 
 class PortfolioPerformanceAttributionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     portfolioId: str = Field(min_length=1)
     benchmarkId: str = Field(min_length=1)
     reportingCurrency: str = Field(min_length=3, max_length=3)
-    reconciliationKey: str = Field(min_length=64, max_length=64)
+    measurementKey: str = Field(min_length=64, max_length=64)
     asOf: datetime
     periodStart: datetime
     periodEnd: datetime
-    observedPortfolioReturn: EvidenceRequest
     constituents: list[PortfolioConstituentRequest] = Field(min_length=1, max_length=200)
 
 
@@ -101,7 +106,7 @@ def _assert_finite(value: object, field: str) -> float:
     return numeric
 
 
-def _assert_contract(payload: dict[str, object]) -> None:
+def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
     if payload.get("module") != "portfolio_performance_attribution":
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió módulo inválido.")
     if payload.get("advisoryStatus") != "no_advice":
@@ -117,6 +122,21 @@ def _assert_contract(payload: dict[str, object]) -> None:
     currency = payload.get("reportingCurrency")
     if not isinstance(currency, str) or _CURRENCY_RE.fullmatch(currency) is None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió moneda inválida.")
+
+    measurement = payload.get("performanceMeasurement")
+    if not isinstance(measurement, dict):
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió binding de TWR.")
+    if measurement.get("measurementKey") != measurement_key.lower():
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió measurementKey sellada.")
+    if measurement.get("tamperVerified") is not True or measurement.get("gate") != "required_before_attribution":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution aceptó medición TWR no verificada.")
+    ledger_key = measurement.get("ledgerMeasurementKey")
+    ledger_head = measurement.get("ledgerHeadHash")
+    if not isinstance(ledger_key, str) or _SHA256_RE.fullmatch(ledger_key) is None:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió ledgerMeasurementKey.")
+    if not isinstance(ledger_head, str) or _SHA256_RE.fullmatch(ledger_head) is None:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió ledgerHeadHash.")
+
     state_integrity = payload.get("stateIntegrity")
     if not isinstance(state_integrity, dict):
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió gating de reconciliación.")
@@ -127,6 +147,8 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution aceptó estado no reconciliado/verificado.")
     if state_integrity.get("gate") != "required_before_attribution":
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió la puerta obligatoria de integridad.")
+    if measurement.get("reconciliationKey") != reconciliation_key:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution mezcló medición y reconciliación distintas.")
 
     observed = _assert_finite(payload.get("observedPortfolioReturn"), "observedPortfolioReturn")
     reconstructed = _assert_finite(payload.get("reconstructedPortfolioReturn"), "reconstructedPortfolioReturn")
@@ -175,6 +197,10 @@ def _assert_contract(payload: dict[str, object]) -> None:
     evidence = payload.get("evidence")
     if not isinstance(evidence, dict) or "observedPortfolioReturn" not in evidence:
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió provenance.")
+    observed_evidence = evidence["observedPortfolioReturn"]
+    if not isinstance(observed_evidence, dict) or observed_evidence.get("sourceRef") != f"twr:{measurement_key.lower()}":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution no trazó el retorno a la medición TWR.")
+
     policy = payload.get("policy")
     if not isinstance(policy, dict):
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió política inválida.")
@@ -184,24 +210,51 @@ def _assert_contract(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution interpretó residual como alpha.")
     if policy.get("weighting") != "historical_beginning_weights_diagnostic_only":
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió límite de weighting.")
-    if policy.get("cashFlows") != "unsupported_fail_closed":
-        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió límite de cash flows.")
+    if policy.get("cashFlows") != "portfolio_return_uses_sealed_twr_constituent_cash_flow_attribution_not_estimated":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió tratamiento seguro de cash flows.")
+    if policy.get("observedReturn") != "sealed_portfolio_twr_measurement_required":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution volvió a aceptar retorno observado libre.")
 
 
 @router.post("/portfolio-performance-attribution")
 def post_portfolio_performance_attribution(
     request: PortfolioPerformanceAttributionRequest,
 ) -> dict[str, object]:
-    """Reconcile historical attribution only after persisted independent state reconciliation."""
+    """Reconcile attribution against a persisted, tamper-verified portfolio TWR measurement."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
     period_end = _aware_utc(request.periodEnd, "periodEnd")
+    reporting_currency = request.reportingCurrency.upper()
+
+    try:
+        twr_record = _twr_repository.require_measurement(
+            measurement_key=request.measurementKey,
+            portfolio_id=request.portfolioId,
+            reporting_currency=reporting_currency,
+            period_start=period_start,
+            period_end=period_end,
+            as_of=as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo verificar measurementKey para Portfolio Attribution.") from exc
+
+    twr_artifact = twr_record["artifact"]
+    if not isinstance(twr_artifact, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR persistido carece de artifact válido.")
+    state = twr_artifact.get("stateIntegrity")
+    ledger = twr_artifact.get("serverSideLedger")
+    if not isinstance(state, dict) or not isinstance(ledger, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR persistido perdió integridad de estado/ledger.")
+    reconciliation_key = str(state.get("reconciliationKey") or "")
+
     try:
         reconciliation_record = _reconciliation_repository.require_reconciled(
-            reconciliation_key=request.reconciliationKey,
+            reconciliation_key=reconciliation_key,
             portfolio_id=request.portfolioId,
-            reporting_currency=request.reportingCurrency,
+            reporting_currency=reporting_currency,
             as_of=as_of,
         )
     except ValueError as exc:
@@ -209,8 +262,16 @@ def post_portfolio_performance_attribution(
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail="No se pudo verificar reconciliationKey para Portfolio Attribution.",
+            detail="No se pudo reverificar reconciliación de la medición TWR para Portfolio Attribution.",
         ) from exc
+
+    observed_return = _assert_finite(twr_artifact.get("timeWeightedReturn"), "persistedTwr.timeWeightedReturn")
+    observed_evidence = AttributionEvidence(
+        value=observed_return,
+        available_at=as_of,
+        source="athena_persisted_portfolio_twr",
+        source_ref=f"twr:{request.measurementKey.lower()}",
+    )
 
     constituents: list[PortfolioAttributionConstituent] = []
     for index, item in enumerate(request.constituents):
@@ -254,10 +315,10 @@ def post_portfolio_performance_attribution(
             item=RecommendationPortfolioPerformanceAttributionInput(
                 portfolio_id=request.portfolioId,
                 benchmark_id=request.benchmarkId,
-                reporting_currency=request.reportingCurrency,
+                reporting_currency=reporting_currency,
                 period_start=period_start,
                 period_end=period_end,
-                observed_portfolio_return=_evidence(request.observedPortfolioReturn, "observedPortfolioReturn"),
+                observed_portfolio_return=observed_evidence,
                 constituents=tuple(constituents),
             ),
         )
@@ -267,12 +328,25 @@ def post_portfolio_performance_attribution(
         raise HTTPException(status_code=500, detail="No se pudo calcular Portfolio Performance Attribution PIT.") from exc
 
     payload = result.to_api_dict()
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió política inválida.")
+    policy["cashFlows"] = "portfolio_return_uses_sealed_twr_constituent_cash_flow_attribution_not_estimated"
+    policy["observedReturn"] = "sealed_portfolio_twr_measurement_required"
+    payload["performanceMeasurement"] = {
+        "measurementKey": request.measurementKey.lower(),
+        "ledgerMeasurementKey": twr_artifact["ledgerMeasurementKey"],
+        "ledgerHeadHash": ledger["ledgerHeadHash"],
+        "reconciliationKey": reconciliation_key,
+        "tamperVerified": True,
+        "gate": "required_before_attribution",
+    }
     payload["stateIntegrity"] = {
-        "reconciliationKey": request.reconciliationKey.lower(),
+        "reconciliationKey": reconciliation_key,
         "portfolioStateKey": reconciliation_record["portfolio_state_key"],
         "reconciled": True,
         "tamperVerified": True,
         "gate": "required_before_attribution",
     }
-    _assert_contract(payload)
+    _assert_contract(payload, request.measurementKey)
     return {"data": payload}
