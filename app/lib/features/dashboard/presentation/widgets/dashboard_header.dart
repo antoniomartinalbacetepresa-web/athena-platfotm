@@ -18,6 +18,15 @@ class DashboardHeader extends StatelessWidget {
           ),
           const Spacer(),
           IconButton(
+            tooltip: 'Noticias',
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.news),
+            icon: const Icon(
+              Icons.article_outlined,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
             tooltip: 'Perfil',
             onPressed: () => Navigator.of(context).pushNamed(AppRoutes.profile),
             icon: const Icon(
