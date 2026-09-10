@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../core/routing/app_routes.dart';
+
 class DashboardHeader extends StatelessWidget {
   const DashboardHeader({super.key});
 
@@ -10,14 +12,20 @@ class DashboardHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Row(
         children: [
-
           SvgPicture.asset(
             'assets/branding/athena_logo_wordmark.svg',
             height: 42,
           ),
-
           const Spacer(),
-
+          IconButton(
+            tooltip: 'Perfil',
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.profile),
+            icon: const Icon(
+              Icons.person_outline_rounded,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 8),
           Container(
             width: 44,
             height: 44,
