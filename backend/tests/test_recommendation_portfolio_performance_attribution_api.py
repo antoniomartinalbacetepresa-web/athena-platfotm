@@ -8,6 +8,7 @@ from app.main import app
 
 client = TestClient(app)
 UTC = timezone.utc
+SCOPE = "total_net_liquidation_value_in_reporting_currency"
 
 
 def iso(day: int) -> str:
@@ -53,6 +54,52 @@ def _reconciliation_key(*, portfolio_id: str = "portfolio-1", reconciled: bool =
     return response.json()["data"]["reconciliationKey"]
 
 
+def _measurement_key(monkeypatch, tmp_path, *, portfolio_id: str = "portfolio-1") -> str:
+    ledger_path = tmp_path / f"{portfolio_id}-ledger.jsonl"
+    monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(ledger_path))
+    reconciliation_key = _reconciliation_key(portfolio_id=portfolio_id)
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
+        json={
+            "portfolioId": portfolio_id,
+            "reportingCurrency": "USD",
+            "reconciliationKey": reconciliation_key,
+            "asOf": "2026-09-01T12:00:00Z",
+            "periodStart": iso(1),
+            "periodEnd": iso(31),
+            "boundaries": [
+                {
+                    "observedAt": iso(1),
+                    "availableAt": iso(1),
+                    "preFlowValue": 100.0,
+                    "postFlowValue": 100.0,
+                    "externalFlowAmount": 0.0,
+                    "currency": "USD",
+                    "valuationScope": SCOPE,
+                    "valuationFingerprint": "1" * 64,
+                    "source": "broker_net_liquidation_statement",
+                    "sourceRef": f"{portfolio_id}:nlv:start",
+                },
+                {
+                    "observedAt": iso(31),
+                    "availableAt": iso(31),
+                    "preFlowValue": 103.2,
+                    "postFlowValue": 103.2,
+                    "externalFlowAmount": 0.0,
+                    "currency": "USD",
+                    "valuationScope": SCOPE,
+                    "valuationFingerprint": "2" * 64,
+                    "source": "broker_net_liquidation_statement",
+                    "sourceRef": f"{portfolio_id}:nlv:end",
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["persistence"]["tamperVerified"] is True
+    return response.json()["data"]["measurementKey"]
+
+
 def child(instrument_id: str, symbol: str, total: float, market: float) -> dict[str, object]:
     return {
         "instrumentId": instrument_id,
@@ -76,16 +123,15 @@ def child(instrument_id: str, symbol: str, total: float, market: float) -> dict[
     }
 
 
-def request_body(*, reconciliation_key: str | None = None) -> dict[str, object]:
+def request_body(*, measurement_key: str) -> dict[str, object]:
     return {
         "portfolioId": "portfolio-1",
         "benchmarkId": "SP500_TR",
         "reportingCurrency": "USD",
-        "reconciliationKey": reconciliation_key or _reconciliation_key(),
+        "measurementKey": measurement_key,
         "asOf": datetime(2026, 9, 1, 12, tzinfo=UTC).isoformat(),
         "periodStart": iso(1),
         "periodEnd": iso(31),
-        "observedPortfolioReturn": evidence(0.032, "portfolio:return", day=31),
         "constituents": [
             {
                 "weight": evidence(0.6, "weight:a", day=1),
@@ -99,12 +145,13 @@ def request_body(*, reconciliation_key: str | None = None) -> dict[str, object]:
     }
 
 
-def test_endpoint_reconciles_portfolio_without_enabling_advice_or_weighting() -> None:
+def test_endpoint_reconciles_portfolio_from_sealed_twr_without_enabling_advice_or_weighting(monkeypatch, tmp_path) -> None:
+    measurement_key = _measurement_key(monkeypatch, tmp_path)
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
-        json=request_body(),
+        json=request_body(measurement_key=measurement_key),
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     payload = response.json()["data"]
     assert payload["module"] == "portfolio_performance_attribution"
     assert payload["advisoryStatus"] == "no_advice"
@@ -112,17 +159,23 @@ def test_endpoint_reconciles_portfolio_without_enabling_advice_or_weighting() ->
     assert payload["isWeightingReady"] is False
     assert payload["policy"]["automaticTrading"] is False
     assert payload["policy"]["weighting"] == "historical_beginning_weights_diagnostic_only"
-    assert payload["policy"]["cashFlows"] == "unsupported_fail_closed"
+    assert payload["policy"]["cashFlows"] == "portfolio_return_uses_sealed_twr_constituent_cash_flow_attribution_not_estimated"
+    assert payload["policy"]["observedReturn"] == "sealed_portfolio_twr_measurement_required"
     assert payload["policy"]["residualInterpretation"] == "unexplained_not_automatic_stock_selection_alpha"
     assert payload["stateIntegrity"]["reconciled"] is True
     assert payload["stateIntegrity"]["tamperVerified"] is True
     assert payload["stateIntegrity"]["gate"] == "required_before_attribution"
+    assert payload["performanceMeasurement"]["measurementKey"] == measurement_key
+    assert payload["performanceMeasurement"]["tamperVerified"] is True
+    assert payload["performanceMeasurement"]["gate"] == "required_before_attribution"
+    assert payload["evidence"]["observedPortfolioReturn"]["sourceRef"] == f"twr:{measurement_key}"
+    assert abs(payload["observedPortfolioReturn"] - 0.032) < 1e-12
     assert abs(payload["reconstructedPortfolioReturn"] - 0.032) < 1e-12
     assert len(payload["portfolioAttributionKey"]) == 64
 
 
-def test_endpoint_rejects_lookahead_weight() -> None:
-    body = request_body()
+def test_endpoint_rejects_lookahead_weight(monkeypatch, tmp_path) -> None:
+    body = request_body(measurement_key=_measurement_key(monkeypatch, tmp_path))
     body["constituents"][0]["weight"]["availableAt"] = iso(2)
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
@@ -132,41 +185,55 @@ def test_endpoint_rejects_lookahead_weight() -> None:
     assert "not PIT" in response.json()["detail"]
 
 
-def test_endpoint_rejects_non_reconciling_return() -> None:
-    body = request_body()
-    body["observedPortfolioReturn"]["value"] = 0.05
+def test_endpoint_rejects_legacy_free_observed_return_and_reconciliation_key(monkeypatch, tmp_path) -> None:
+    body = request_body(measurement_key=_measurement_key(monkeypatch, tmp_path))
+    body["observedPortfolioReturn"] = evidence(0.032, "caller:return", day=31)
+    body["reconciliationKey"] = "a" * 64
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
+        json=body,
+    )
+    assert response.status_code == 422
+
+
+def test_endpoint_rejects_unknown_measurement() -> None:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
+        json=request_body(measurement_key="9" * 64),
+    )
+    assert response.status_code == 400
+    assert "No persisted portfolio TWR measurement" in response.json()["detail"]
+
+
+def test_endpoint_rejects_measurement_from_another_portfolio(monkeypatch, tmp_path) -> None:
+    other_measurement = _measurement_key(monkeypatch, tmp_path, portfolio_id="portfolio-other")
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
+        json=request_body(measurement_key=other_measurement),
+    )
+    assert response.status_code == 400
+    assert "another portfolio" in response.json()["detail"]
+
+
+def test_endpoint_rejects_measurement_from_another_period(monkeypatch, tmp_path) -> None:
+    measurement_key = _measurement_key(monkeypatch, tmp_path)
+    body = request_body(measurement_key=measurement_key)
+    body["periodEnd"] = datetime(2026, 8, 30, 12, tzinfo=UTC).isoformat()
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
         json=body,
     )
     assert response.status_code == 400
-    assert "does not reconcile" in response.json()["detail"]
+    assert "period_end" in response.json()["detail"]
 
 
-def test_endpoint_rejects_unreconciled_persisted_state() -> None:
-    response = client.post(
-        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
-        json=request_body(reconciliation_key=_reconciliation_key(reconciled=False)),
-    )
-    assert response.status_code == 400
-    assert "reconciled=true" in response.json()["detail"]
-
-
-def test_endpoint_rejects_reconciliation_from_another_portfolio() -> None:
-    response = client.post(
-        "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
-        json=request_body(reconciliation_key=_reconciliation_key(portfolio_id="portfolio-other")),
-    )
-    assert response.status_code == 400
-    assert "otra cartera" in response.json()["detail"]
-
-
-def test_api_contract_fails_closed_if_weighting_becomes_ready(monkeypatch) -> None:
+def test_api_contract_fails_closed_if_weighting_becomes_ready(monkeypatch, tmp_path) -> None:
+    measurement_key = _measurement_key(monkeypatch, tmp_path)
     real_evaluate = api_module.service.evaluate
 
     class FakeResult:
         def to_api_dict(self) -> dict[str, object]:
-            body = request_body()
+            body = request_body(measurement_key=measurement_key)
             request = api_module.PortfolioPerformanceAttributionRequest(**body)
             constituents = []
             for index, item in enumerate(request.constituents):
@@ -207,7 +274,12 @@ def test_api_contract_fails_closed_if_weighting_becomes_ready(monkeypatch) -> No
                     reporting_currency=request.reportingCurrency,
                     period_start=datetime(2026, 8, 1, 12, tzinfo=UTC),
                     period_end=datetime(2026, 8, 31, 12, tzinfo=UTC),
-                    observed_portfolio_return=api_module._evidence(request.observedPortfolioReturn, "observed"),
+                    observed_portfolio_return=api_module.AttributionEvidence(
+                        value=0.032,
+                        available_at=datetime(2026, 9, 1, 12, tzinfo=UTC),
+                        source="athena_persisted_portfolio_twr",
+                        source_ref=f"twr:{measurement_key}",
+                    ),
                     constituents=tuple(constituents),
                 ),
             ).to_api_dict()
@@ -217,7 +289,7 @@ def test_api_contract_fails_closed_if_weighting_becomes_ready(monkeypatch) -> No
     monkeypatch.setattr(api_module.service, "evaluate", lambda **kwargs: FakeResult())
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-performance-attribution",
-        json=request_body(),
+        json=request_body(measurement_key=measurement_key),
     )
     assert response.status_code == 500
     assert "weighting" in response.json()["detail"].lower()
