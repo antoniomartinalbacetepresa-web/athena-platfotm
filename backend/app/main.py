@@ -11,6 +11,7 @@ from app.api.portfolio_allocation_authority import (
 from app.api.portfolio_allocation_policy import (
     router as portfolio_allocation_policy_router,
 )
+from app.api.readiness import router as readiness_router
 from app.api.recommendation_athena_radar import router as recommendation_athena_radar_router
 from app.api.recommendation_catalysts import router as recommendation_catalysts_router
 from app.api.recommendation_devils_advocate import router as recommendation_devils_advocate_router
@@ -99,6 +100,7 @@ app.include_router(sec_fundamental_pit_router)
 app.include_router(macro_router)
 app.include_router(news_router)
 app.include_router(sources_router)
+app.include_router(readiness_router)
 app.include_router(portfolio_router)
 app.include_router(portfolio_allocation_authority_router)
 app.include_router(portfolio_allocation_policy_router)
