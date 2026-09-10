@@ -23,10 +23,11 @@ class AuthService:
         repository: UserAccountRepository | None = None,
         secret_key: str | None = None,
     ) -> None:
+        # Validate signing configuration before touching persistent auth state.
+        self._secret_key = self._load_secret(secret_key)
         self._repository = repository or UserAccountRepository()
         self._password_hash = PasswordHash.recommended()
         self._dummy_hash = self._password_hash.hash("athena-dummy-password-not-a-user")
-        self._secret_key = self._load_secret(secret_key)
 
     def register(
         self,
