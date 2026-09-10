@@ -18,6 +18,43 @@ class AthenaAuthService {
   final String baseUrl;
   final http.Client client;
 
+  Future<AuthAccount> register({
+    required String email,
+    required String password,
+    String? displayName,
+  }) async {
+    final normalizedEmail = email.trim();
+    final normalizedDisplayName = displayName?.trim();
+    if (normalizedEmail.isEmpty || password.isEmpty) {
+      throw ArgumentError('Email y contraseña son obligatorios.');
+    }
+    if (password.length < 12) {
+      throw ArgumentError('La contraseña debe tener al menos 12 caracteres.');
+    }
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/v1/auth/register'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'email': normalizedEmail,
+        'password': password,
+        if (normalizedDisplayName != null && normalizedDisplayName.isNotEmpty)
+          'displayName': normalizedDisplayName,
+      }),
+    );
+    if (response.statusCode != 201) {
+      throw Exception('No se pudo crear la cuenta (${response.statusCode}).');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map || decoded['status'] != 'registered') {
+      throw const FormatException('Respuesta de registro no válida.');
+    }
+    final account = decoded['account'];
+    if (account is! Map) {
+      throw const FormatException('Cuenta registrada ausente.');
+    }
+    return AuthAccount.fromMap(Map<String, dynamic>.from(account));
+  }
+
   Future<String> login({required String email, required String password}) async {
     final normalizedEmail = email.trim();
     if (normalizedEmail.isEmpty || password.isEmpty) {
