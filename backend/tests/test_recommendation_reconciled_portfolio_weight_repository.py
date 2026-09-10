@@ -18,32 +18,40 @@ AS_OF = datetime(2026, 8, 1, 12, tzinfo=UTC)
 
 def _artifact(*, cash_weight: float = 0.0) -> dict[str, object]:
     service = RecommendationReconciledPortfolioWeightService()
+    if cash_weight == 0.0:
+        first_quantity, first_value, first_weight = 6.0, 60.0, 0.6
+        second_quantity, second_value, second_weight = 4.0, 40.0, 0.4
+        cash_balance, invested_value = 0.0, 100.0
+    else:
+        first_quantity, first_value, first_weight = 5.0, 50.0, 0.5
+        second_quantity, second_value, second_weight = 4.0, 40.0, 0.4
+        cash_balance, invested_value = 10.0, 90.0
     positions = [
         {
             "instrumentId": 101,
             "symbol": "AAA",
-            "quantity": 6.0,
-            "positionValueInReportingCurrency": 60.0,
+            "quantity": first_quantity,
+            "positionValueInReportingCurrency": first_value,
             "canonicalIdentity": {"instrumentId": 101},
             "price": 10.0,
             "priceSourceProvider": "official_market_source",
             "priceObservedAt": AS_OF.isoformat(),
             "priceRetrievedAt": AS_OF.isoformat(),
             "fx": {"rate": 1.0, "historicalPointInTimeEligible": True},
-            "weight": 0.6 if cash_weight == 0.0 else 0.5,
+            "weight": first_weight,
         },
         {
             "instrumentId": 202,
             "symbol": "BBB",
-            "quantity": 4.0,
-            "positionValueInReportingCurrency": 40.0,
+            "quantity": second_quantity,
+            "positionValueInReportingCurrency": second_value,
             "canonicalIdentity": {"instrumentId": 202},
             "price": 10.0,
             "priceSourceProvider": "official_market_source",
             "priceObservedAt": AS_OF.isoformat(),
             "priceRetrievedAt": AS_OF.isoformat(),
             "fx": {"rate": 1.0, "historicalPointInTimeEligible": True},
-            "weight": 0.4 if cash_weight == 0.0 else 0.4,
+            "weight": second_weight,
         },
     ]
     core = {
@@ -54,9 +62,9 @@ def _artifact(*, cash_weight: float = 0.0) -> dict[str, object]:
         "reconciliationKey": "1" * 64,
         "portfolioStateKey": "2" * 64,
         "portfolioValuationEvidenceFingerprint": "3" * 64,
-        "cashBalance": 0.0 if cash_weight == 0.0 else 10.0,
+        "cashBalance": cash_balance,
         "cashWeight": cash_weight,
-        "investedPositionsValue": 100.0 if cash_weight == 0.0 else 90.0,
+        "investedPositionsValue": invested_value,
         "totalPortfolioValue": 100.0,
         "positions": positions,
         "snapshotProvenance": {
@@ -168,7 +176,7 @@ def test_detects_artifact_json_tampering(tmp_path) -> None:
             (json.dumps(body, sort_keys=True, separators=(",", ":")), artifact["weightEvidenceKey"]),
         )
 
-    with pytest.raises(ValueError, match="modificado|no suma"):
+    with pytest.raises(ValueError, match="modificado|no suma|Position weight"):
         repository.get_by_key(weight_evidence_key=artifact["weightEvidenceKey"])
 
 
@@ -187,6 +195,32 @@ def test_detects_indexed_column_tampering(tmp_path) -> None:
         repository.get_by_key(weight_evidence_key=artifact["weightEvidenceKey"])
 
 
+def test_rejects_rehashed_economically_inconsistent_artifact_before_persistence(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    artifact = _artifact()
+    service = RecommendationReconciledPortfolioWeightService()
+    artifact["investedPositionsValue"] = 99.0
+    core_keys = (
+        "artifactVersion",
+        "portfolioId",
+        "asOf",
+        "reportingCurrency",
+        "reconciliationKey",
+        "portfolioStateKey",
+        "portfolioValuationEvidenceFingerprint",
+        "cashBalance",
+        "cashWeight",
+        "investedPositionsValue",
+        "totalPortfolioValue",
+        "positions",
+        "snapshotProvenance",
+    )
+    artifact["weightEvidenceKey"] = service._fingerprint({key: artifact.get(key) for key in core_keys})
+
+    with pytest.raises(ValueError, match="totalPortfolioValue|investedPositionsValue"):
+        repository.append(artifact=artifact)
+
+
 def test_cash_remains_part_of_denominator_and_is_not_renormalized(tmp_path) -> None:
     repository = _repository(tmp_path)
     artifact = _artifact(cash_weight=0.1)
@@ -196,5 +230,6 @@ def test_cash_remains_part_of_denominator_and_is_not_renormalized(tmp_path) -> N
     position_weight_sum = sum(float(item["weight"]) for item in stored["positions"])
 
     assert stored["cashWeight"] == pytest.approx(0.1)
+    assert stored["investedPositionsValue"] == pytest.approx(90.0)
     assert position_weight_sum == pytest.approx(0.9)
     assert position_weight_sum + stored["cashWeight"] == pytest.approx(1.0)
