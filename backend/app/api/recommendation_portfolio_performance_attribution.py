@@ -13,6 +13,9 @@ from app.repositories.recommendation_portfolio_state_reconciliation_repository i
 from app.repositories.recommendation_portfolio_twr_measurement_repository import (
     RecommendationPortfolioTwrMeasurementRepository,
 )
+from app.repositories.recommendation_reconciled_portfolio_weight_repository import (
+    RecommendationReconciledPortfolioWeightRepository,
+)
 from app.services.recommendation_performance_attribution_service import (
     AttributionEvidence,
     FactorContributionEvidence,
@@ -32,6 +35,7 @@ router = APIRouter(
 service = RecommendationPortfolioPerformanceAttributionService()
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _twr_repository = RecommendationPortfolioTwrMeasurementRepository()
+_weight_repository = RecommendationReconciledPortfolioWeightRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
@@ -65,7 +69,8 @@ class ConstituentAttributionRequest(BaseModel):
 
 
 class PortfolioConstituentRequest(BaseModel):
-    weight: EvidenceRequest
+    model_config = ConfigDict(extra="forbid")
+
     attribution: ConstituentAttributionRequest
 
 
@@ -76,6 +81,7 @@ class PortfolioPerformanceAttributionRequest(BaseModel):
     benchmarkId: str = Field(min_length=1)
     reportingCurrency: str = Field(min_length=3, max_length=3)
     measurementKey: str = Field(min_length=64, max_length=64)
+    weightEvidenceKey: str = Field(min_length=64, max_length=64)
     asOf: datetime
     periodStart: datetime
     periodEnd: datetime
@@ -139,7 +145,63 @@ def _require_sealed_nlv_twr(twr_artifact: dict[str, object]) -> list[str]:
     return normalized
 
 
-def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
+def _canonical_weight_map(
+    *,
+    record: dict[str, object],
+    weight_evidence_key: str,
+    period_start: datetime,
+) -> tuple[dict[str, AttributionEvidence], dict[str, object]]:
+    artifact = record.get("artifact")
+    if not isinstance(artifact, dict):
+        raise HTTPException(status_code=500, detail="Weight evidence persistida carece de artifact válido.")
+    cash_weight = _assert_finite(artifact.get("cashWeight"), "weightEvidence.cashWeight")
+    if not math.isclose(cash_weight, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        raise HTTPException(
+            status_code=400,
+            detail="Portfolio Attribution no admite cash inicial distinto de cero hasta disponer de atribución explícita de cash.",
+        )
+    positions = artifact.get("positions")
+    if not isinstance(positions, list) or not positions:
+        raise HTTPException(status_code=400, detail="Weight evidence no contiene posiciones atribuibles.")
+    weights: dict[str, AttributionEvidence] = {}
+    for index, item in enumerate(positions):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=500, detail="Weight evidence contiene posición inválida.")
+        instrument_raw = item.get("instrumentId")
+        if isinstance(instrument_raw, bool) or not isinstance(instrument_raw, int) or instrument_raw <= 0:
+            raise HTTPException(status_code=500, detail="Weight evidence perdió identidad canónica de instrumento.")
+        instrument_id = str(instrument_raw)
+        if instrument_id in weights:
+            raise HTTPException(status_code=500, detail="Weight evidence contiene instrumento duplicado.")
+        weight = _assert_finite(item.get("weight"), f"weightEvidence.positions[{index}].weight")
+        if weight <= 0.0 or weight > 1.0:
+            raise HTTPException(status_code=400, detail="Weight evidence contiene ponderación no positiva/inválida.")
+        weights[instrument_id] = AttributionEvidence(
+            value=weight,
+            available_at=period_start,
+            source="athena_persisted_reconciled_portfolio_weights",
+            source_ref=f"weight-evidence:{weight_evidence_key.lower()}:{instrument_id}",
+        )
+    if not math.isclose(sum(item.value for item in weights.values()), 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise HTTPException(status_code=500, detail="Weight evidence sin cash no reconcilia a 1.0.")
+    binding = {
+        "weightEvidenceKey": weight_evidence_key.lower(),
+        "reconciliationKey": artifact.get("reconciliationKey"),
+        "portfolioStateKey": artifact.get("portfolioStateKey"),
+        "portfolioValuationEvidenceFingerprint": artifact.get("portfolioValuationEvidenceFingerprint"),
+        "cashWeight": cash_weight,
+        "tamperVerified": True,
+        "callerSuppliedWeightsAccepted": False,
+        "gate": "required_before_attribution",
+    }
+    for field in ("reconciliationKey", "portfolioStateKey", "portfolioValuationEvidenceFingerprint"):
+        value = binding.get(field)
+        if not isinstance(value, str) or _SHA256_RE.fullmatch(value.lower()) is None:
+            raise HTTPException(status_code=500, detail=f"Weight evidence perdió {field} válido.")
+    return weights, binding
+
+
+def _assert_contract(payload: dict[str, object], measurement_key: str, weight_evidence_key: str) -> None:
     if payload.get("module") != "portfolio_performance_attribution":
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió módulo inválido.")
     if payload.get("advisoryStatus") != "no_advice":
@@ -174,6 +236,18 @@ def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió snapshotKeys NLV.")
     if any(not isinstance(item, str) or _SHA256_RE.fullmatch(item) is None for item in nlv_keys):
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió snapshotKeys NLV inválidas.")
+
+    weight_binding = payload.get("weightEvidence")
+    if not isinstance(weight_binding, dict):
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió binding de pesos canónicos.")
+    if weight_binding.get("weightEvidenceKey") != weight_evidence_key.lower():
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió weightEvidenceKey sellada.")
+    if weight_binding.get("tamperVerified") is not True or weight_binding.get("callerSuppliedWeightsAccepted") is not False:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution volvió a aceptar pesos libres.")
+    if weight_binding.get("gate") != "required_before_attribution":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió gate de pesos canónicos.")
+    if not math.isclose(_assert_finite(weight_binding.get("cashWeight"), "weightEvidence.cashWeight"), 0.0, rel_tol=0.0, abs_tol=1e-12):
+        raise HTTPException(status_code=500, detail="Portfolio Attribution aceptó cash no atribuido.")
 
     state_integrity = payload.get("stateIntegrity")
     if not isinstance(state_integrity, dict):
@@ -227,8 +301,12 @@ def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
         seen_instruments.add(instrument_id)
         seen_keys.add(child_key)
         weight_sum += _assert_finite(constituent.get("weight"), "constituent.weight")
-        if not isinstance(constituent.get("weightEvidence"), dict):
+        weight_evidence = constituent.get("weightEvidence")
+        if not isinstance(weight_evidence, dict):
             raise HTTPException(status_code=500, detail="Portfolio Attribution perdió provenance de pesos.")
+        expected_ref = f"weight-evidence:{weight_evidence_key.lower()}:{instrument_id}"
+        if weight_evidence.get("source") != "athena_persisted_reconciled_portfolio_weights" or weight_evidence.get("sourceRef") != expected_ref:
+            raise HTTPException(status_code=500, detail="Portfolio Attribution perdió trazabilidad de peso sellado.")
     if not math.isclose(weight_sum, 1.0, rel_tol=0.0, abs_tol=1e-9):
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió pesos inconsistentes.")
 
@@ -248,6 +326,10 @@ def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution interpretó residual como alpha.")
     if policy.get("weighting") != "historical_beginning_weights_diagnostic_only":
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió límite de weighting.")
+    if policy.get("weightEvidence") != "persisted_tamper_verified_reconciled_beginning_weights_required":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió requisito de pesos históricos sellados.")
+    if policy.get("cashAttribution") != "nonzero_beginning_cash_blocked_until_explicit_cash_attribution":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió límite de atribución de cash.")
     if policy.get("cashFlows") != "portfolio_return_uses_sealed_twr_constituent_cash_flow_attribution_not_estimated":
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió tratamiento seguro de cash flows.")
     if policy.get("observedReturn") != "sealed_portfolio_twr_measurement_required":
@@ -260,7 +342,7 @@ def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
 def post_portfolio_performance_attribution(
     request: PortfolioPerformanceAttributionRequest,
 ) -> dict[str, object]:
-    """Reconcile attribution against a persisted TWR whose return and NLV evidence are sealed."""
+    """Reconcile attribution from sealed TWR plus persisted beginning weight evidence."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
@@ -298,13 +380,37 @@ def post_portfolio_performance_attribution(
             reporting_currency=reporting_currency,
             as_of=as_of,
         )
+        weight_record = _weight_repository.require_weight_evidence(
+            weight_evidence_key=request.weightEvidenceKey,
+            portfolio_id=request.portfolioId,
+            reporting_currency=reporting_currency,
+            as_of=period_start,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail="No se pudo reverificar reconciliación de la medición TWR para Portfolio Attribution.",
+            detail="No se pudieron reverificar reconciliación/pesos históricos para Portfolio Attribution.",
         ) from exc
+
+    canonical_weights, weight_binding = _canonical_weight_map(
+        record=weight_record,
+        weight_evidence_key=request.weightEvidenceKey,
+        period_start=period_start,
+    )
+    requested_ids = [item.attribution.instrumentId for item in request.constituents]
+    if any(not value.isdigit() or str(int(value)) != value or int(value) <= 0 for value in requested_ids):
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere instrumentId canónico entero positivo.")
+    if len(set(requested_ids)) != len(requested_ids):
+        raise HTTPException(status_code=400, detail="Portfolio Attribution recibió instrumentId duplicado.")
+    if set(requested_ids) != set(canonical_weights):
+        missing = sorted(set(canonical_weights) - set(requested_ids))
+        extra = sorted(set(requested_ids) - set(canonical_weights))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Portfolio Attribution debe usar exactamente los instrumentos de weight evidence; missing={missing}, extra={extra}.",
+        )
 
     observed_return = _assert_finite(twr_artifact.get("timeWeightedReturn"), "persistedTwr.timeWeightedReturn")
     observed_evidence = AttributionEvidence(
@@ -332,7 +438,7 @@ def post_portfolio_performance_attribution(
         )
         constituents.append(
             PortfolioAttributionConstituent(
-                weight=_evidence(item.weight, f"constituents[{index}].weight"),
+                weight=canonical_weights[child.instrumentId],
                 attribution=RecommendationPerformanceAttributionInput(
                     instrument_id=child.instrumentId,
                     symbol=child.symbol,
@@ -375,6 +481,8 @@ def post_portfolio_performance_attribution(
     policy["cashFlows"] = "portfolio_return_uses_sealed_twr_constituent_cash_flow_attribution_not_estimated"
     policy["observedReturn"] = "sealed_portfolio_twr_measurement_required"
     policy["valuationEvidence"] = "sealed_portfolio_twr_nlv_snapshots_required"
+    policy["weightEvidence"] = "persisted_tamper_verified_reconciled_beginning_weights_required"
+    policy["cashAttribution"] = "nonzero_beginning_cash_blocked_until_explicit_cash_attribution"
     payload["performanceMeasurement"] = {
         "measurementKey": request.measurementKey.lower(),
         "ledgerMeasurementKey": twr_artifact["ledgerMeasurementKey"],
@@ -384,6 +492,7 @@ def post_portfolio_performance_attribution(
         "tamperVerified": True,
         "gate": "required_before_attribution",
     }
+    payload["weightEvidence"] = weight_binding
     payload["stateIntegrity"] = {
         "reconciliationKey": reconciliation_key,
         "portfolioStateKey": reconciliation_record["portfolio_state_key"],
@@ -391,5 +500,5 @@ def post_portfolio_performance_attribution(
         "tamperVerified": True,
         "gate": "required_before_attribution",
     }
-    _assert_contract(payload, request.measurementKey)
+    _assert_contract(payload, request.measurementKey, request.weightEvidenceKey)
     return {"data": payload}
