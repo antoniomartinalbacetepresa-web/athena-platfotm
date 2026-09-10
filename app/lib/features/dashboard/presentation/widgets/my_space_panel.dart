@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_radius.dart';
 import '../../../market/di/market_dependencies.dart';
@@ -202,7 +203,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
             height: 40,
             child: ElevatedButton(
               onPressed: () async {
-                await Navigator.pushNamed(context, '/portfolio');
+                await Navigator.pushNamed(context, AppRoutes.portfolio);
                 await _loadPortfolio();
               },
               child: const Text('Ver cartera'),
