@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +8,54 @@ import 'package:http/testing.dart';
 
 void main() {
   tearDown(() => AuthSession.instance.clear());
+
+  test('register sends normalized JSON and parses account', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        '{"status":"registered","account":{"id":5,"email":"user@example.com","displayName":"Athena User","isActive":true,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        201,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    final account = await service.register(
+      email: ' user@example.com ',
+      password: 'correct horse battery staple',
+      displayName: ' Athena User ',
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/register');
+    expect(captured.headers['Content-Type'], 'application/json');
+    final payload = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(payload['email'], 'user@example.com');
+    expect(payload['displayName'], 'Athena User');
+    expect(payload['password'], 'correct horse battery staple');
+    expect(account.id, 5);
+    expect(account.email, 'user@example.com');
+    expect(account.displayName, 'Athena User');
+  });
+
+  test('register rejects short password before network call', () async {
+    var called = false;
+    final client = MockClient((request) async {
+      called = true;
+      return http.Response('{}', 500);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    expect(
+      () => service.register(
+        email: 'user@example.com',
+        password: 'too-short',
+      ),
+      throwsArgumentError,
+    );
+    expect(called, isFalse);
+  });
 
   test('login uses OAuth form and validates bearer contract', () async {
     late http.Request captured;
