@@ -103,16 +103,24 @@ class AthenaAuthService {
   }
 
   Future<void> logout(String token) async {
+    await _revoke(token, path: '/api/v1/auth/logout');
+  }
+
+  Future<void> logoutAll(String token) async {
+    await _revoke(token, path: '/api/v1/auth/logout-all');
+  }
+
+  Future<void> _revoke(String token, {required String path}) async {
     final normalizedToken = token.trim();
     if (normalizedToken.isEmpty) {
       throw ArgumentError('Token obligatorio.');
     }
     final response = await client.post(
-      Uri.parse('$baseUrl/api/v1/auth/logout'),
+      Uri.parse('$baseUrl$path'),
       headers: {'Authorization': 'Bearer $normalizedToken'},
     );
     if (response.statusCode != 204) {
-      throw Exception('No se pudo cerrar la sesión (${response.statusCode}).');
+      throw Exception('No se pudo revocar la sesión (${response.statusCode}).');
     }
   }
 
