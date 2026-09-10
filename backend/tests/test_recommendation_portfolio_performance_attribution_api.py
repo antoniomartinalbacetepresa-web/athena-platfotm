@@ -8,7 +8,6 @@ from app.main import app
 
 client = TestClient(app)
 UTC = timezone.utc
-SCOPE = "total_net_liquidation_value_in_reporting_currency"
 
 
 def iso(day: int) -> str:
@@ -54,10 +53,32 @@ def _reconciliation_key(*, portfolio_id: str = "portfolio-1", reconciled: bool =
     return response.json()["data"]["reconciliationKey"]
 
 
+def _nlv_snapshot(*, portfolio_id: str, day: int, value: float, tag: str) -> str:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-nlv-snapshots",
+        json={
+            "portfolioId": portfolio_id,
+            "reportingCurrency": "USD",
+            "value": value,
+            "observedAt": iso(day),
+            "availableAt": iso(day),
+            "phase": "regular",
+            "source": "broker_net_liquidation_statement",
+            "sourceRef": f"{portfolio_id}:attribution:{tag}:{value}",
+            "asOf": "2026-09-01T12:00:00Z",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["persistence"]["tamperVerified"] is True
+    return response.json()["data"]["snapshotKey"]
+
+
 def _measurement_key(monkeypatch, tmp_path, *, portfolio_id: str = "portfolio-1") -> str:
     ledger_path = tmp_path / f"{portfolio_id}-ledger.jsonl"
     monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(ledger_path))
     reconciliation_key = _reconciliation_key(portfolio_id=portfolio_id)
+    start_key = _nlv_snapshot(portfolio_id=portfolio_id, day=1, value=100.0, tag="start")
+    end_key = _nlv_snapshot(portfolio_id=portfolio_id, day=31, value=103.2, tag="end")
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
         json={
@@ -68,35 +89,14 @@ def _measurement_key(monkeypatch, tmp_path, *, portfolio_id: str = "portfolio-1"
             "periodStart": iso(1),
             "periodEnd": iso(31),
             "boundaries": [
-                {
-                    "observedAt": iso(1),
-                    "availableAt": iso(1),
-                    "preFlowValue": 100.0,
-                    "postFlowValue": 100.0,
-                    "externalFlowAmount": 0.0,
-                    "currency": "USD",
-                    "valuationScope": SCOPE,
-                    "valuationFingerprint": "1" * 64,
-                    "source": "broker_net_liquidation_statement",
-                    "sourceRef": f"{portfolio_id}:nlv:start",
-                },
-                {
-                    "observedAt": iso(31),
-                    "availableAt": iso(31),
-                    "preFlowValue": 103.2,
-                    "postFlowValue": 103.2,
-                    "externalFlowAmount": 0.0,
-                    "currency": "USD",
-                    "valuationScope": SCOPE,
-                    "valuationFingerprint": "2" * 64,
-                    "source": "broker_net_liquidation_statement",
-                    "sourceRef": f"{portfolio_id}:nlv:end",
-                },
+                {"observedAt": iso(1), "regularSnapshotKey": start_key},
+                {"observedAt": iso(31), "regularSnapshotKey": end_key},
             ],
         },
     )
     assert response.status_code == 200, response.text
     assert response.json()["persistence"]["tamperVerified"] is True
+    assert response.json()["data"]["nlvEvidence"]["callerSuppliedValuesAccepted"] is False
     return response.json()["data"]["measurementKey"]
 
 
