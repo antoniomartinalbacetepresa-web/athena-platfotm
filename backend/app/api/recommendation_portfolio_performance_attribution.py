@@ -106,6 +106,39 @@ def _assert_finite(value: object, field: str) -> float:
     return numeric
 
 
+def _require_sealed_nlv_twr(twr_artifact: dict[str, object]) -> list[str]:
+    nlv = twr_artifact.get("nlvEvidence")
+    if not isinstance(nlv, dict):
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere TWR ligado a snapshots NLV sellados.")
+    if nlv.get("callerSuppliedValuesAccepted") is not False:
+        raise HTTPException(status_code=400, detail="Portfolio Attribution rechaza TWR con valores NLV aportados por el caller.")
+    if nlv.get("tamperVerified") is not True:
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere evidencia NLV tamper-verified.")
+    if nlv.get("binding") != "regular_or_exact_pre_post_external_flow_snapshots":
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere binding NLV canónico.")
+    keys = nlv.get("snapshotKeys")
+    if not isinstance(keys, list) or len(keys) < 2:
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere snapshotKeys NLV persistidas.")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        if not isinstance(key, str) or _SHA256_RE.fullmatch(key.lower()) is None:
+            raise HTTPException(status_code=400, detail="Portfolio Attribution recibió snapshotKey NLV inválida.")
+        normalized_key = key.lower()
+        if normalized_key in seen:
+            raise HTTPException(status_code=400, detail="Portfolio Attribution recibió snapshotKey NLV duplicada.")
+        seen.add(normalized_key)
+        normalized.append(normalized_key)
+    policy = twr_artifact.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(status_code=400, detail="Portfolio TWR persistido perdió policy.")
+    if policy.get("callerSuppliedValuationValues") is not False:
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere prohibición explícita de valores de valoración del caller.")
+    if policy.get("valuationEvidence") != "persisted_tamper_verified_portfolio_nlv_snapshots":
+        raise HTTPException(status_code=400, detail="Portfolio Attribution requiere valoración desde snapshots NLV persistidos.")
+    return normalized
+
+
 def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
     if payload.get("module") != "portfolio_performance_attribution":
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió módulo inválido.")
@@ -136,6 +169,11 @@ def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió ledgerMeasurementKey.")
     if not isinstance(ledger_head, str) or _SHA256_RE.fullmatch(ledger_head) is None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió ledgerHeadHash.")
+    nlv_keys = measurement.get("nlvSnapshotKeys")
+    if not isinstance(nlv_keys, list) or len(nlv_keys) < 2:
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió snapshotKeys NLV.")
+    if any(not isinstance(item, str) or _SHA256_RE.fullmatch(item) is None for item in nlv_keys):
+        raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió snapshotKeys NLV inválidas.")
 
     state_integrity = payload.get("stateIntegrity")
     if not isinstance(state_integrity, dict):
@@ -214,13 +252,15 @@ def _assert_contract(payload: dict[str, object], measurement_key: str) -> None:
         raise HTTPException(status_code=500, detail="Portfolio Attribution perdió tratamiento seguro de cash flows.")
     if policy.get("observedReturn") != "sealed_portfolio_twr_measurement_required":
         raise HTTPException(status_code=500, detail="Portfolio Attribution volvió a aceptar retorno observado libre.")
+    if policy.get("valuationEvidence") != "sealed_portfolio_twr_nlv_snapshots_required":
+        raise HTTPException(status_code=500, detail="Portfolio Attribution perdió requisito de NLV sellado.")
 
 
 @router.post("/portfolio-performance-attribution")
 def post_portfolio_performance_attribution(
     request: PortfolioPerformanceAttributionRequest,
 ) -> dict[str, object]:
-    """Reconcile attribution against a persisted, tamper-verified portfolio TWR measurement."""
+    """Reconcile attribution against a persisted TWR whose return and NLV evidence are sealed."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
@@ -244,6 +284,7 @@ def post_portfolio_performance_attribution(
     twr_artifact = twr_record["artifact"]
     if not isinstance(twr_artifact, dict):
         raise HTTPException(status_code=500, detail="Portfolio TWR persistido carece de artifact válido.")
+    nlv_snapshot_keys = _require_sealed_nlv_twr(twr_artifact)
     state = twr_artifact.get("stateIntegrity")
     ledger = twr_artifact.get("serverSideLedger")
     if not isinstance(state, dict) or not isinstance(ledger, dict):
@@ -333,11 +374,13 @@ def post_portfolio_performance_attribution(
         raise HTTPException(status_code=500, detail="Portfolio Attribution devolvió política inválida.")
     policy["cashFlows"] = "portfolio_return_uses_sealed_twr_constituent_cash_flow_attribution_not_estimated"
     policy["observedReturn"] = "sealed_portfolio_twr_measurement_required"
+    policy["valuationEvidence"] = "sealed_portfolio_twr_nlv_snapshots_required"
     payload["performanceMeasurement"] = {
         "measurementKey": request.measurementKey.lower(),
         "ledgerMeasurementKey": twr_artifact["ledgerMeasurementKey"],
         "ledgerHeadHash": ledger["ledgerHeadHash"],
         "reconciliationKey": reconciliation_key,
+        "nlvSnapshotKeys": nlv_snapshot_keys,
         "tamperVerified": True,
         "gate": "required_before_attribution",
     }
