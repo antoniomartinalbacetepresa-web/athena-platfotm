@@ -76,6 +76,7 @@ from app.api.recommendations import router as recommendations_router
 from app.api.sec import router as sec_router
 from app.api.sec_fundamental_pit import router as sec_fundamental_pit_router
 from app.api.sources import router as sources_router
+from app.api.user_portfolio import router as user_portfolio_router
 
 
 app = FastAPI(
@@ -91,11 +92,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 app.include_router(auth_router)
+app.include_router(user_portfolio_router)
 app.include_router(market_router)
 app.include_router(sec_router)
 app.include_router(sec_fundamental_pit_router)
