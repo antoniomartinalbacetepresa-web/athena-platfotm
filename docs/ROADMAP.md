@@ -1,6 +1,6 @@
 # ATHENA TYCHE — Engineering Completion Roadmap
 
-Updated: 2026-09-10
+Updated: 2026-09-11
 
 This roadmap measures software completion against `docs/MASTER_PROJECT.md`. It does not measure investment performance, predictive skill, profitability, or production authorization.
 
@@ -45,21 +45,21 @@ This number measures the analytical and investment-research core only. It must n
 
 | Area | Progress | Current evidence / remaining work |
 | --- | ---: | --- |
-| Core architecture & backend | 94% | FastAPI, repositories/services, database migrations, readiness diagnostics and authentication exist. Remaining: production hardening, protected merge gates and final cross-module acceptance. |
+| Core architecture & backend | 94% | FastAPI, repositories/services, database migrations, readiness diagnostics, authentication and encrypted owner-scoped profile persistence exist. Remaining: production hardening, protected merge gates and final cross-module acceptance. |
 | Welcome & navigation | 90% | Welcome, account login/registration, guest mode, Dashboard, Market, News, Portfolio and Profile routes exist. Remaining: final end-to-end navigation/accessibility acceptance. |
 | Dashboard | 85% | Responsive dashboard, live panels and operational readiness surface exist. Remaining: end-to-end states and final UX acceptance. |
 | Market | 80% | Real persisted universe, regional ingestion, market-cap/canonical identity logic and standalone UI exist. Remaining: canonical weighting evidence, production coverage and deeper historical acceptance. |
 | News | 65% | Verified backend feed and standalone reusable UI exist. Remaining: importance ranking, estimated impact and AI summary provenance. |
-| Portfolio | 86% | Portfolio UI plus valuation, concentration, correlations, attribution/reconciliation and accounting infrastructure exist. Authenticated personal positions are isolated server-side by JWT-derived ownership. Flutter now has a tested non-destructive sync bridge that transmits only symbol, exchange and quantity, explicitly excluding cost basis, current price, capital and owner identifiers. Remaining: wire the bridge into the complete Portfolio UX with explicit user controls, encrypted sensitive fields and final E2E acceptance. |
-| Profile & authentication | 76% | Argon2 hashing, signed expiring JWT with unique jti/session version, register/token/me/logout/logout-all/change-password APIs, persistent token revocation, persistent login throttling, Flutter auth client support, guest mode and protected Profile exist. Remaining: recovery with verified delivery channel, durable secure client session, broader account lifecycle and encrypted personalization storage. |
+| Portfolio | 86% | Portfolio UI plus valuation, concentration, correlations, attribution/reconciliation and accounting infrastructure exist. Authenticated personal positions are isolated server-side by JWT-derived ownership. Flutter has a tested non-destructive sync bridge that transmits only symbol, exchange and quantity, explicitly excluding cost basis, current price, capital and owner identifiers. Remaining: wire the bridge into the complete Portfolio UX with explicit user controls, encrypted sensitive fields and final E2E acceptance. |
+| Profile & authentication | 78% | Argon2 hashing, signed expiring JWT with unique jti/session version, register/token/me/logout/logout-all/change-password APIs, persistent token revocation, persistent login throttling, Flutter auth client support, guest mode and protected Profile exist. Authenticated preferences now have an encrypted backend contract and Flutter client. Remaining: recovery with verified delivery channel, durable secure client session, profile-preference UX and broader account lifecycle. |
 | ATHENA AI & recommendations | 78% | Research, catalysts, invalidation, factor risk, attribution, journal, devil's advocate, radar, shadow/OOS and diagnostics exist. Remaining: validated user-facing synthesis and longitudinal evidence thresholds. |
 | Market history | 65% | Backfill, PIT preservation and depth-aware readiness gate exist. Remaining: real >=365-day eligible-universe coverage, source continuity and corporate-action acceptance. |
 | Continuous learning | 70% | Calibration/drift/evaluation/shadow/OOS infrastructure exists. Remaining: sufficient real longitudinal OOS evidence and controlled promotion policy. |
-| Personalization | 30% | Authenticated identity now exists. Remaining: encrypted per-user capital, objectives, risk profile, preferences and history. |
-| Security & production hardening | 76% | Fail-closed auth secret, Argon2 hashes, signed expiring JWT, tamper checks, individual and all-session revocation, authenticated password rotation, resource-level portfolio authorization and persistent login rate limiting are validated. Remaining: verified account recovery, encrypted sensitive storage, backups, deployment secret management, threat-model acceptance and required branch checks. |
-| Testing & CI | 94% | Backend pytest plus Flutter analyze/test validate pushed changes; auth revocation, all-session invalidation, password rotation, throttling, cross-user portfolio isolation and privacy-preserving portfolio sync have dedicated coverage. Remaining: mandatory protected-branch checks, broader E2E/security/recovery and release gates. |
+| Personalization | 50% | Owner-scoped risk tolerance, investment horizon, base currency and objective now have a validated encrypted AES-256-GCM persistence contract plus authenticated Flutter client. SQLite stores ciphertext rather than those values in plaintext and tamper detection is tested. Remaining: complete Profile UX, encrypted capital/history where appropriate, key rotation/migration and final E2E acceptance. |
+| Security & production hardening | 80% | Fail-closed auth secret, Argon2 hashes, signed expiring JWT, tamper checks, individual and all-session revocation, authenticated password rotation, resource-level portfolio authorization, persistent login rate limiting and authenticated AES-256-GCM profile encryption are validated. Encryption keys are externally supplied and never persisted in the profile table. Remaining: verified account recovery, durable secure client token storage, encryption-key rotation/management, backups, deployment secret management, threat-model acceptance and required branch checks. |
+| Testing & CI | 95% | Backend pytest plus Flutter analyze/test validate pushed changes; auth revocation, all-session invalidation, password rotation, throttling, cross-user portfolio isolation, privacy-preserving portfolio sync and encrypted profile confidentiality/integrity have dedicated coverage. Remaining: mandatory protected-branch checks, broader E2E/security/recovery and release gates. |
 
-**Overall whole-product engineering completion: approximately 76%.**
+**Overall whole-product engineering completion: approximately 78%.**
 
 ## Definition of 100%
 
@@ -68,8 +68,8 @@ ATHENA reaches 100% engineering completion only when every whole-product area ab
 ## Highest-priority path to 100%
 
 1. Finish the authentication lifecycle: verified account recovery, secure durable client session and remaining account lifecycle controls.
-2. Wire authenticated Portfolio/Profile resources through the complete UX and add encrypted personalization storage before persisting sensitive capital, objectives or risk preferences.
-3. Add backup/recovery, threat-model and deployment-secret hardening.
+2. Wire authenticated Portfolio/Profile resources through the complete UX; preserve encrypted persistence for sensitive personalization and extend it only with an explicit privacy contract.
+3. Add encryption-key rotation/migration, backup/recovery, threat-model and deployment-secret hardening.
 4. Close canonical market-weighting structural blockers without lowering thresholds; external approval remains human-controlled.
 5. Reach real historical depth/coverage and corporate-action-safe acceptance.
 6. Close longitudinal OOS and forecast-error evidence gates without fabricated/synthetic production evidence.
