@@ -254,6 +254,30 @@ class RecommendationPortfolioNlvSnapshotRepository:
         return artifact
 
     @staticmethod
+    def _row(row: Any) -> dict[str, Any]:
+        if row is None:
+            raise RuntimeError("persisted NLV row is missing")
+        try:
+            artifact = json.loads(str(row["artifact_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("persisted NLV artifact_json is invalid") from exc
+        return {
+            "id": int(row["id"]),
+            "snapshot_key": str(row["snapshot_key"]),
+            "portfolio_id": str(row["portfolio_id"]),
+            "reporting_currency": str(row["reporting_currency"]),
+            "observed_at": str(row["observed_at"]),
+            "available_at": str(row["available_at"]),
+            "phase": str(row["phase"]),
+            "value": float(row["value"]),
+            "source": str(row["source"]),
+            "source_ref": str(row["source_ref"]),
+            "artifact_hash": str(row["artifact_hash"]),
+            "artifact": artifact,
+            "created_at": str(row["created_at"]),
+        }
+
+    @staticmethod
     def _serialize(value: object) -> str:
         try:
             return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
