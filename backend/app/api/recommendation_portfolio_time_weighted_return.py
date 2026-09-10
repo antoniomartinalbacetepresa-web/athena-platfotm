@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -11,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
     RecommendationPortfolioStateReconciliationRepository,
+)
+from app.repositories.recommendation_portfolio_twr_measurement_repository import (
+    RecommendationPortfolioTwrMeasurementRepository,
 )
 from app.services.recommendation_portfolio_server_side_twr_service import (
     RecommendationPortfolioServerSideTwrService,
@@ -23,10 +28,12 @@ router = APIRouter(
     tags=["recommendations-professional-research"],
 )
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
+_measurement_repository = RecommendationPortfolioTwrMeasurementRepository()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
 _TOTAL_VALUE_SCOPE = "total_net_liquidation_value_in_reporting_currency"
+_FINAL_SCHEMA = "athena_portfolio_twr_final_measurement_v1"
 
 
 class TwrBoundaryRequest(BaseModel):
@@ -78,6 +85,30 @@ def _finite(value: object, field: str) -> float:
     return numeric
 
 
+def _final_identity(payload: dict[str, object]) -> str:
+    identity = dict(payload)
+    identity.pop("measurementKey", None)
+    identity["finalMeasurementSchema"] = _FINAL_SCHEMA
+    try:
+        return json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Portfolio TWR final contiene datos no serializables/no finitos.") from exc
+
+
+def _seal_final_measurement(payload: dict[str, object]) -> None:
+    ledger_key = payload.get("measurementKey")
+    if not isinstance(ledger_key, str) or _SHA256_RE.fullmatch(ledger_key) is None:
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió measurementKey ledger-bound.")
+    payload["ledgerMeasurementKey"] = ledger_key
+    payload["measurementKey"] = hashlib.sha256(_final_identity(payload).encode("utf-8")).hexdigest()
+
+
 def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> None:
     if payload.get("module") != "portfolio_twr_measurement":
         raise HTTPException(status_code=500, detail="Portfolio TWR devolvió módulo inválido.")
@@ -89,11 +120,17 @@ def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> Non
         raise HTTPException(status_code=500, detail="Portfolio TWR intentó habilitar producción/weighting.")
 
     measurement_key = payload.get("measurementKey")
+    ledger_key = payload.get("ledgerMeasurementKey")
     core_key = payload.get("coreMeasurementKey")
-    if not isinstance(measurement_key, str) or _SHA256_RE.fullmatch(measurement_key) is None:
-        raise HTTPException(status_code=500, detail="Portfolio TWR devolvió measurementKey inválido.")
-    if not isinstance(core_key, str) or _SHA256_RE.fullmatch(core_key) is None:
-        raise HTTPException(status_code=500, detail="Portfolio TWR perdió coreMeasurementKey.")
+    for value, field in (
+        (measurement_key, "measurementKey"),
+        (ledger_key, "ledgerMeasurementKey"),
+        (core_key, "coreMeasurementKey"),
+    ):
+        if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
+            raise HTTPException(status_code=500, detail=f"Portfolio TWR devolvió {field} inválido.")
+    if measurement_key != hashlib.sha256(_final_identity(payload).encode("utf-8")).hexdigest():
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió sellado final contra reconciliación/ledger.")
     _finite(payload.get("timeWeightedReturn"), "timeWeightedReturn")
     _finite(payload.get("externalFlowTotal"), "externalFlowTotal")
 
@@ -104,6 +141,8 @@ def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> Non
     server_ledger = payload.get("serverSideLedger")
     if not isinstance(server_ledger, dict):
         raise HTTPException(status_code=500, detail="Portfolio TWR perdió evidencia de ledger server-side.")
+    if server_ledger.get("serverSide") is not True:
+        raise HTTPException(status_code=500, detail="Portfolio TWR perdió marca server-side explícita.")
     if server_ledger.get("callerSuppliedEventsAccepted") is not False:
         raise HTTPException(status_code=500, detail="Portfolio TWR aceptó eventos de cartera del caller.")
     if server_ledger.get("appendOnly") is not True or server_ledger.get("tamperEvidentHashChain") is not True:
@@ -139,12 +178,7 @@ def _assert_contract(payload: dict[str, object], reconciliation_key: str) -> Non
 def post_portfolio_time_weighted_return(
     request: PortfolioTimeWeightedReturnRequest,
 ) -> dict[str, object]:
-    """Measure TWR from explicit total-NLV PIT boundaries and the canonical server ledger.
-
-    Portfolio cash events are never accepted from the caller. External cash flows,
-    dividends, fees and taxes are selected from the append-only server-side ledger,
-    while every external-flow boundary must reconcile exactly to that ledger.
-    """
+    """Measure and persist TWR from total-NLV PIT boundaries plus canonical server ledger."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
@@ -203,5 +237,42 @@ def post_portfolio_time_weighted_return(
         "tamperVerified": True,
         "gate": "required_before_measurement",
     }
+    _seal_final_measurement(payload)
     _assert_contract(payload, request.reconciliationKey)
-    return {"data": payload}
+    try:
+        record = _measurement_repository.append(artifact=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo persistir Portfolio TWR sellado: {exc}") from exc
+    return {
+        "data": payload,
+        "persistence": {
+            "appendOnly": True,
+            "tamperVerified": True,
+            "artifactHash": record["artifact_hash"],
+        },
+    }
+
+
+@router.get("/portfolio-time-weighted-return/{measurement_key}")
+def get_portfolio_time_weighted_return(measurement_key: str) -> dict[str, object]:
+    """Read a previously persisted final TWR measurement after tamper verification."""
+
+    try:
+        record = _measurement_repository.get_by_key(measurement_key=measurement_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    artifact = record["artifact"]
+    if not isinstance(artifact, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR persistido carece de artifact válido.")
+    state = artifact.get("stateIntegrity")
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=500, detail="Portfolio TWR persistido perdió stateIntegrity.")
+    _assert_contract(artifact, str(state.get("reconciliationKey") or ""))
+    return {
+        "data": artifact,
+        "persistence": {
+            "appendOnly": True,
+            "tamperVerified": True,
+            "artifactHash": record["artifact_hash"],
+        },
+    }
