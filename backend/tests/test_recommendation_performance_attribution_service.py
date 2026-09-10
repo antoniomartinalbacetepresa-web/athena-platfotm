@@ -81,6 +81,7 @@ def test_arithmetic_attribution_preserves_provenance_fx_and_residual_semantics()
     assert payload["policy"]["residualInterpretation"] == "unexplained_not_automatic_stock_selection_alpha"
     assert payload["policy"]["fx"] == "explicit_currency_pair_bound_fail_closed"
     assert payload["policy"]["identity"] == "deterministic_sha256_attribution_key"
+    assert payload["policy"]["identityBinding"] == "numeric_values_plus_pit_provenance_plus_period_and_instrument"
 
 
 def test_attribution_key_is_deterministic_and_changes_with_evidence_identity() -> None:
@@ -100,6 +101,46 @@ def test_attribution_key_is_deterministic_and_changes_with_evidence_identity() -
     ).attribution_key
     assert first == second
     assert first != changed
+
+
+def test_attribution_key_changes_when_numeric_value_changes_even_with_same_provenance() -> None:
+    service = RecommendationPerformanceAttributionService()
+    shared = AttributionEvidence(
+        value=0.12,
+        available_at=dt(10),
+        source="immutable-return-source",
+        source_ref="return-observation-1",
+    )
+    changed = AttributionEvidence(
+        value=0.13,
+        available_at=dt(10),
+        source="immutable-return-source",
+        source_ref="return-observation-1",
+    )
+    first = service.evaluate(as_of=dt(11), item=item(total_return=shared)).attribution_key
+    second = service.evaluate(as_of=dt(11), item=item(total_return=changed)).attribution_key
+    assert first != second
+
+
+def test_attribution_key_changes_when_factor_value_changes_even_with_same_provenance() -> None:
+    service = RecommendationPerformanceAttributionService()
+    first_factor = FactorContributionEvidence(
+        factor="quality",
+        contribution=0.01,
+        available_at=dt(10),
+        source="sealed-factor-source",
+        source_ref="quality-contribution-1",
+    )
+    changed_factor = FactorContributionEvidence(
+        factor="quality",
+        contribution=0.02,
+        available_at=dt(10),
+        source="sealed-factor-source",
+        source_ref="quality-contribution-1",
+    )
+    first = service.evaluate(as_of=dt(11), item=item(factor_contributions=(first_factor,))).attribution_key
+    second = service.evaluate(as_of=dt(11), item=item(factor_contributions=(changed_factor,))).attribution_key
+    assert first != second
 
 
 def test_rejects_wrong_fx_pair() -> None:
