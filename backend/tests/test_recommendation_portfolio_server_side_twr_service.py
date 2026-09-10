@@ -115,7 +115,7 @@ def test_server_side_twr_rejects_omitted_or_invented_external_flow_boundaries(tm
         _boundary(START, pre=100.0, post=100.0, fingerprint="1" * 64),
         _boundary(END, pre=176.0, post=176.0, fingerprint="3" * 64),
     )
-    with pytest.raises(ValueError, match="external cash-flow event has no matching TWR boundary"):
+    with pytest.raises(ValueError, match="known ledger external cash flow is missing an exact TWR valuation boundary"):
         service.evaluate(
             portfolio_id="portfolio-1",
             reporting_currency="EUR",
