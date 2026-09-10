@@ -101,9 +101,6 @@ def test_tampered_token_is_rejected(monkeypatch, tmp_path: Path) -> None:
     _register(monkeypatch, tmp_path)
     token = _login().json()["access_token"]
 
-    # Mutate the first Base64URL character of the signature. Mutating the last
-    # character is not reliable because unused padding bits can yield the same
-    # decoded signature bytes for multiple textual encodings.
     header, payload, signature = token.split(".")
     replacement = "A" if signature[0] != "A" else "B"
     tampered = f"{header}.{payload}.{replacement}{signature[1:]}"
@@ -141,6 +138,54 @@ def test_logout_revokes_the_exact_access_token(monkeypatch, tmp_path: Path) -> N
     assert still_active.status_code == 200
 
 
+def test_logout_all_revokes_every_existing_session_and_allows_new_login(monkeypatch, tmp_path: Path) -> None:
+    _register(monkeypatch, tmp_path)
+    first_token = _login().json()["access_token"]
+    second_token = _login().json()["access_token"]
+
+    logout_all = client.post(
+        "/api/v1/auth/logout-all",
+        headers={"Authorization": f"Bearer {first_token}"},
+    )
+    assert logout_all.status_code == 204
+
+    for old_token in (first_token, second_token):
+        response = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+        assert response.status_code == 401
+
+    fresh_login = _login()
+    assert fresh_login.status_code == 200
+    fresh_token = fresh_login.json()["access_token"]
+    assert client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {fresh_token}"},
+    ).status_code == 200
+
+
+def test_logout_all_is_isolated_to_authenticated_user(monkeypatch, tmp_path: Path) -> None:
+    _register(monkeypatch, tmp_path, email="first@example.com")
+    _register(monkeypatch, tmp_path, email="second@example.com")
+    first_token = _login(email="first@example.com").json()["access_token"]
+    second_token = _login(email="second@example.com").json()["access_token"]
+
+    assert client.post(
+        "/api/v1/auth/logout-all",
+        headers={"Authorization": f"Bearer {first_token}"},
+    ).status_code == 204
+
+    assert client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {first_token}"},
+    ).status_code == 401
+    assert client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {second_token}"},
+    ).status_code == 200
+
+
 def test_login_rate_limit_blocks_repeated_failures(monkeypatch, tmp_path: Path) -> None:
     _register(monkeypatch, tmp_path)
 
@@ -163,6 +208,4 @@ def test_successful_login_resets_rate_limit_counter(monkeypatch, tmp_path: Path)
     successful = _login()
     assert successful.status_code == 200
 
-    # A successful authentication clears the persisted bucket, so failures may
-    # start a new allowance rather than inheriting the previous seven attempts.
     assert _login(password="WrongPassword-after-success-123!").status_code == 401
