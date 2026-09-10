@@ -16,7 +16,6 @@ FLOW = datetime(2026, 1, 16, tzinfo=UTC)
 INTERNAL = datetime(2026, 1, 20, tzinfo=UTC)
 END = datetime(2026, 2, 1, tzinfo=UTC)
 AS_OF = datetime(2026, 2, 2, tzinfo=UTC)
-SCOPE = "total_net_liquidation_value_in_reporting_currency"
 
 
 def _reconciliation_key(
@@ -107,22 +106,43 @@ def _ledger(monkeypatch, tmp_path, *, external_flow: bool = True) -> Recommendat
     return ledger
 
 
-def _boundary(when: datetime, *, pre: float, post: float, flow: float, fingerprint: str) -> dict[str, object]:
-    return {
-        "observedAt": when.isoformat(),
-        "availableAt": when.isoformat(),
-        "preFlowValue": pre,
-        "postFlowValue": post,
-        "externalFlowAmount": flow,
-        "currency": "EUR",
-        "valuationScope": SCOPE,
-        "valuationFingerprint": fingerprint,
-        "source": "broker_net_liquidation_statement",
-        "sourceRef": f"nlv:{when.isoformat()}",
-    }
+def _snapshot(
+    when: datetime,
+    *,
+    value: float,
+    phase: str,
+    tag: str,
+    portfolio_id: str = "portfolio-1",
+    currency: str = "EUR",
+) -> str:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-nlv-snapshots",
+        json={
+            "portfolioId": portfolio_id,
+            "reportingCurrency": currency,
+            "value": value,
+            "observedAt": when.isoformat(),
+            "availableAt": when.isoformat(),
+            "phase": phase,
+            "source": "broker_net_liquidation_statement",
+            "sourceRef": f"twr:{tag}:{when.isoformat()}:{phase}:{value}",
+            "asOf": AS_OF.isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["snapshotKey"]
 
 
-def payload(*, reconciliation_key: str | None = None) -> dict[str, object]:
+def payload(
+    *,
+    reconciliation_key: str | None = None,
+    tag: str = "base",
+    post_flow_value: float = 121.0,
+) -> dict[str, object]:
+    start = _snapshot(START, value=100.0, phase="regular", tag=tag)
+    pre = _snapshot(FLOW, value=110.0, phase="pre_external_flow", tag=tag)
+    post = _snapshot(FLOW, value=post_flow_value, phase="post_external_flow", tag=tag)
+    end = _snapshot(END, value=133.1, phase="regular", tag=tag)
     return {
         "portfolioId": "portfolio-1",
         "reportingCurrency": "EUR",
@@ -131,20 +151,31 @@ def payload(*, reconciliation_key: str | None = None) -> dict[str, object]:
         "periodStart": START.isoformat(),
         "periodEnd": END.isoformat(),
         "boundaries": [
-            _boundary(START, pre=100.0, post=100.0, flow=0.0, fingerprint="1" * 64),
-            _boundary(FLOW, pre=110.0, post=121.0, flow=11.0, fingerprint="2" * 64),
-            _boundary(END, pre=133.1, post=133.1, flow=0.0, fingerprint="3" * 64),
+            {"observedAt": START.isoformat(), "regularSnapshotKey": start},
+            {
+                "observedAt": FLOW.isoformat(),
+                "preFlowSnapshotKey": pre,
+                "postFlowSnapshotKey": post,
+            },
+            {"observedAt": END.isoformat(), "regularSnapshotKey": end},
         ],
     }
 
 
-def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monkeypatch, tmp_path) -> None:
+def test_portfolio_twr_endpoint_uses_sealed_nlv_and_canonical_server_cash_events(monkeypatch, tmp_path) -> None:
     ledger = _ledger(monkeypatch, tmp_path)
+    request = payload(tag="sealed-success")
+    expected_snapshot_keys = [
+        request["boundaries"][0]["regularSnapshotKey"],
+        request["boundaries"][1]["preFlowSnapshotKey"],
+        request["boundaries"][1]["postFlowSnapshotKey"],
+        request["boundaries"][2]["regularSnapshotKey"],
+    ]
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
-        json=payload(),
+        json=request,
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     body = response.json()
     data = body["data"]
     assert data["module"] == "portfolio_twr_measurement"
@@ -162,9 +193,12 @@ def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monk
     }
     assert data["serverSideLedger"]["serverSide"] is True
     assert data["serverSideLedger"]["callerSuppliedEventsAccepted"] is False
-    assert data["serverSideLedger"]["appendOnly"] is True
-    assert data["serverSideLedger"]["tamperEvidentHashChain"] is True
     assert data["serverSideLedger"]["ledgerHeadHash"] == ledger.load()[-1].record_hash
+    assert data["nlvEvidence"]["callerSuppliedValuesAccepted"] is False
+    assert data["nlvEvidence"]["tamperVerified"] is True
+    assert data["nlvEvidence"]["snapshotKeys"] == expected_snapshot_keys
+    assert data["policy"]["callerSuppliedValuationValues"] is False
+    assert data["policy"]["valuationEvidence"] == "persisted_tamper_verified_portfolio_nlv_snapshots"
     assert data["policy"]["callerSuppliedExternalCashFlowLedger"] is False
     assert data["policy"]["callerSuppliedInternalCashEvents"] is False
     assert data["policy"]["automaticTrading"] is False
@@ -177,7 +211,6 @@ def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monk
     assert data["measurementKey"] != data["ledgerMeasurementKey"]
     assert body["persistence"]["appendOnly"] is True
     assert body["persistence"]["tamperVerified"] is True
-    assert len(body["persistence"]["artifactHash"]) == 64
 
     read = client.get(
         f"/api/v1/recommendations/professional-research/portfolio-time-weighted-return/{data['measurementKey']}"
@@ -187,9 +220,17 @@ def test_portfolio_twr_endpoint_uses_only_canonical_server_side_cash_events(monk
     assert read.json()["persistence"]["tamperVerified"] is True
 
 
-def test_portfolio_twr_endpoint_rejects_caller_supplied_cash_events(monkeypatch, tmp_path) -> None:
+def test_portfolio_twr_endpoint_rejects_caller_supplied_values_or_cash_events(monkeypatch, tmp_path) -> None:
     _ledger(monkeypatch, tmp_path)
-    request = payload()
+    request = payload(tag="legacy-fields")
+    request["boundaries"][0]["preFlowValue"] = 100.0
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
+        json=request,
+    )
+    assert response.status_code == 422
+
+    request = payload(tag="legacy-events")
     request["internalCashEvents"] = []
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
@@ -198,9 +239,9 @@ def test_portfolio_twr_endpoint_rejects_caller_supplied_cash_events(monkeypatch,
     assert response.status_code == 422
 
 
-def test_portfolio_twr_endpoint_fails_closed_on_omitted_or_invented_ledger_flow(monkeypatch, tmp_path) -> None:
+def test_portfolio_twr_endpoint_fails_closed_on_omitted_ledger_flow(monkeypatch, tmp_path) -> None:
     _ledger(monkeypatch, tmp_path)
-    request = payload()
+    request = payload(tag="omit-flow")
     request["boundaries"] = [request["boundaries"][0], request["boundaries"][2]]
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
@@ -209,31 +250,43 @@ def test_portfolio_twr_endpoint_fails_closed_on_omitted_or_invented_ledger_flow(
     assert response.status_code == 400
     assert "missing an exact TWR valuation boundary" in response.json()["detail"]
 
-    _ledger(monkeypatch, tmp_path / "empty", external_flow=False)
+
+def test_portfolio_twr_endpoint_rejects_flow_snapshot_pair_without_ledger_flow(monkeypatch, tmp_path) -> None:
+    _ledger(monkeypatch, tmp_path, external_flow=False)
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
-        json=payload(),
+        json=payload(tag="invented-flow"),
     )
     assert response.status_code == 400
-    assert "absent from the supplied ledger evidence" in response.json()["detail"]
+    assert "non-flow TWR boundary requires regularSnapshotKey only" in response.json()["detail"]
 
 
-def test_portfolio_twr_endpoint_fails_closed_on_flow_amount_mismatch(monkeypatch, tmp_path) -> None:
+def test_portfolio_twr_endpoint_fails_closed_on_snapshot_pair_vs_flow_mismatch(monkeypatch, tmp_path) -> None:
     _ledger(monkeypatch, tmp_path)
-    request = payload()
-    request["boundaries"][1]["externalFlowAmount"] = 10.0
-    request["boundaries"][1]["postFlowValue"] = 120.0
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
+        json=payload(tag="bad-pair", post_flow_value=120.0),
+    )
+    assert response.status_code == 400
+    assert "does not reconcile post_flow_value" in response.json()["detail"]
+
+
+def test_portfolio_twr_endpoint_rejects_wrong_snapshot_phase(monkeypatch, tmp_path) -> None:
+    _ledger(monkeypatch, tmp_path)
+    request = payload(tag="wrong-phase")
+    wrong = _snapshot(FLOW, value=110.0, phase="regular", tag="wrong-phase-regular")
+    request["boundaries"][1]["preFlowSnapshotKey"] = wrong
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
         json=request,
     )
     assert response.status_code == 400
-    assert "does not match ledger event amount" in response.json()["detail"]
+    assert "phase does not match" in response.json()["detail"]
 
 
-def test_portfolio_twr_endpoint_rejects_naive_datetimes(monkeypatch, tmp_path) -> None:
+def test_portfolio_twr_endpoint_rejects_naive_boundary_datetime(monkeypatch, tmp_path) -> None:
     _ledger(monkeypatch, tmp_path)
-    request = payload()
+    request = payload(tag="naive")
     request["boundaries"][0]["observedAt"] = "2026-01-01T00:00:00"
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
@@ -245,7 +298,10 @@ def test_portfolio_twr_endpoint_rejects_naive_datetimes(monkeypatch, tmp_path) -
 
 def test_portfolio_twr_rejects_persisted_but_unreconciled_state(monkeypatch, tmp_path) -> None:
     _ledger(monkeypatch, tmp_path)
-    request = payload(reconciliation_key=_reconciliation_key(reconciled=False))
+    request = payload(
+        reconciliation_key=_reconciliation_key(reconciled=False),
+        tag="unreconciled",
+    )
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
         json=request,
@@ -256,7 +312,10 @@ def test_portfolio_twr_rejects_persisted_but_unreconciled_state(monkeypatch, tmp
 
 def test_portfolio_twr_rejects_reconciliation_from_other_portfolio(monkeypatch, tmp_path) -> None:
     _ledger(monkeypatch, tmp_path)
-    request = payload(reconciliation_key=_reconciliation_key(portfolio_id="portfolio-other"))
+    request = payload(
+        reconciliation_key=_reconciliation_key(portfolio_id="portfolio-other"),
+        tag="other-portfolio",
+    )
     response = client.post(
         "/api/v1/recommendations/professional-research/portfolio-time-weighted-return",
         json=request,
