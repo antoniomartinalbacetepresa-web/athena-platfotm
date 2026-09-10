@@ -12,6 +12,7 @@ from app.database.athena_database import AthenaDatabase
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TOTAL_VALUE_SCOPE = "total_net_liquidation_value_in_reporting_currency"
+_FINAL_SCHEMA = "athena_portfolio_twr_final_measurement_v1"
 
 
 class RecommendationPortfolioTwrMeasurementRepository:
@@ -28,6 +29,7 @@ class RecommendationPortfolioTwrMeasurementRepository:
                 CREATE TABLE IF NOT EXISTS athena_portfolio_twr_measurements (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     measurement_key TEXT NOT NULL UNIQUE,
+                    ledger_measurement_key TEXT NOT NULL,
                     core_measurement_key TEXT NOT NULL,
                     reconciliation_key TEXT NOT NULL,
                     portfolio_state_key TEXT NOT NULL,
@@ -72,14 +74,15 @@ class RecommendationPortfolioTwrMeasurementRepository:
             connection.execute(
                 """
                 INSERT INTO athena_portfolio_twr_measurements (
-                    measurement_key, core_measurement_key, reconciliation_key,
-                    portfolio_state_key, ledger_head_hash, portfolio_id,
-                    reporting_currency, period_start, period_end, as_of,
+                    measurement_key, ledger_measurement_key, core_measurement_key,
+                    reconciliation_key, portfolio_state_key, ledger_head_hash,
+                    portfolio_id, reporting_currency, period_start, period_end, as_of,
                     time_weighted_return, artifact_hash, artifact_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     validated["measurementKey"],
+                    validated["ledgerMeasurementKey"],
                     validated["coreMeasurementKey"],
                     validated["stateIntegrity"]["reconciliationKey"],
                     validated["stateIntegrity"]["portfolioStateKey"],
@@ -155,6 +158,7 @@ class RecommendationPortfolioTwrMeasurementRepository:
             raise ValueError("persisted TWR artifact was modified")
         expected = {
             "measurement_key": validated["measurementKey"],
+            "ledger_measurement_key": validated["ledgerMeasurementKey"],
             "core_measurement_key": validated["coreMeasurementKey"],
             "reconciliation_key": validated["stateIntegrity"]["reconciliationKey"],
             "portfolio_state_key": validated["stateIntegrity"]["portfolioStateKey"],
@@ -185,8 +189,11 @@ class RecommendationPortfolioTwrMeasurementRepository:
             raise ValueError("TWR artifact module is invalid")
         if artifact.get("status") != "measured_from_canonical_server_side_portfolio_ledger":
             raise ValueError("TWR artifact is not bound to canonical server-side ledger")
-        self._sha256(artifact.get("measurementKey"), "measurementKey")
+        final_key = self._sha256(artifact.get("measurementKey"), "measurementKey")
+        self._sha256(artifact.get("ledgerMeasurementKey"), "ledgerMeasurementKey")
         self._sha256(artifact.get("coreMeasurementKey"), "coreMeasurementKey")
+        if final_key != self._expected_final_key(artifact):
+            raise ValueError("TWR measurementKey is not bound to the complete final artifact")
         portfolio_id = str(artifact.get("portfolioId") or "").strip()
         if not portfolio_id:
             raise ValueError("TWR artifact portfolioId is required")
@@ -256,6 +263,13 @@ class RecommendationPortfolioTwrMeasurementRepository:
                     raise ValueError(f"{name}[{index}] lost provenance")
         return artifact
 
+    @classmethod
+    def _expected_final_key(cls, artifact: dict[str, Any]) -> str:
+        identity = dict(artifact)
+        identity.pop("measurementKey", None)
+        identity["finalMeasurementSchema"] = _FINAL_SCHEMA
+        return hashlib.sha256(cls._serialize(identity).encode("utf-8")).hexdigest()
+
     @staticmethod
     def _row(row: Any) -> dict[str, Any]:
         try:
@@ -265,6 +279,7 @@ class RecommendationPortfolioTwrMeasurementRepository:
         return {
             "id": int(row["id"]),
             "measurement_key": str(row["measurement_key"]),
+            "ledger_measurement_key": str(row["ledger_measurement_key"]),
             "core_measurement_key": str(row["core_measurement_key"]),
             "reconciliation_key": str(row["reconciliation_key"]),
             "portfolio_state_key": str(row["portfolio_state_key"]),
