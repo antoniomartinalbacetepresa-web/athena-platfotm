@@ -21,6 +21,13 @@ class RegisterRequest(BaseModel):
     displayName: str | None = Field(default=None, max_length=120)
 
 
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    currentPassword: str = Field(min_length=1, max_length=256)
+    newPassword: str = Field(min_length=12, max_length=256)
+
+
 def _service() -> AuthService:
     try:
         return AuthService()
@@ -129,4 +136,23 @@ def logout_all(
 ) -> Response:
     service = _service()
     service.revoke_all_sessions(user_id=int(account["id"]))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: ChangePasswordRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> Response:
+    service = _service()
+    try:
+        changed = service.change_password(
+            user_id=int(account["id"]),
+            current_password=payload.currentPassword,
+            new_password=payload.newPassword,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not changed:
+        raise _credentials_error()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
