@@ -121,3 +121,12 @@ def logout(
     if not service.revoke_access_token(bearer_token):
         raise _credentials_error()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+def logout_all(
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> Response:
+    service = _service()
+    service.revoke_all_sessions(user_id=int(account["id"]))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
