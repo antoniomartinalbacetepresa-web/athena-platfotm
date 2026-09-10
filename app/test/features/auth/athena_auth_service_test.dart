@@ -120,6 +120,21 @@ void main() {
     expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
   });
 
+  test('logoutAll calls global revocation endpoint with bearer token', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.logoutAll(' signed.jwt.token ');
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/logout-all');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+  });
+
   test('logout does not silently accept backend revocation failure', () async {
     final client = MockClient((request) async => http.Response('{}', 401));
     final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
