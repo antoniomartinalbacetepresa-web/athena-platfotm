@@ -45,7 +45,7 @@ class AthenaAuthService {
       throw Exception('No se pudo crear la cuenta (${response.statusCode}).');
     }
     final decoded = jsonDecode(response.body);
-    if (decoded is! Map || decoded['status'] != 'registered') {
+    if (decoded is! Map || decoded['status'] != 'account_created') {
       throw const FormatException('Respuesta de registro no válida.');
     }
     final account = decoded['account'];
@@ -100,6 +100,20 @@ class AthenaAuthService {
       throw const FormatException('Cuenta autenticada ausente.');
     }
     return AuthAccount.fromMap(Map<String, dynamic>.from(account));
+  }
+
+  Future<void> logout(String token) async {
+    final normalizedToken = token.trim();
+    if (normalizedToken.isEmpty) {
+      throw ArgumentError('Token obligatorio.');
+    }
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/v1/auth/logout'),
+      headers: {'Authorization': 'Bearer $normalizedToken'},
+    );
+    if (response.statusCode != 204) {
+      throw Exception('No se pudo cerrar la sesión (${response.statusCode}).');
+    }
   }
 
   void dispose() => client.close();
