@@ -119,7 +119,14 @@ def test_tampered_token_is_rejected(monkeypatch, tmp_path: Path) -> None:
             "password": "CorrectHorseBatteryStaple!",
         },
     ).json()["access_token"]
-    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+
+    # Mutate the first Base64URL character of the signature. Mutating the last
+    # character is not reliable because unused padding bits can yield the same
+    # decoded signature bytes for multiple textual encodings.
+    header, payload, signature = token.split(".")
+    replacement = "A" if signature[0] != "A" else "B"
+    tampered = f"{header}.{payload}.{replacement}{signature[1:]}"
+    assert tampered != token
 
     response = client.get(
         "/api/v1/auth/me",
