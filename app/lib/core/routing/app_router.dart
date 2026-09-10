@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/portfolio/presentation/pages/portfolio_page.dart';
+import '../../features/profile/presentation/pages/profile_page.dart';
 import '../../features/welcome/presentation/pages/welcome_page.dart';
 import 'app_routes.dart';
 
@@ -16,6 +17,11 @@ class AppRouter {
       case AppRoutes.portfolio:
         return MaterialPageRoute(
           builder: (_) => const PortfolioPage(),
+        );
+
+      case AppRoutes.profile:
+        return MaterialPageRoute(
+          builder: (_) => const ProfilePage(),
         );
 
       case AppRoutes.welcome:
