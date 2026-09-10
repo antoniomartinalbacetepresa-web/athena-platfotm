@@ -106,17 +106,19 @@ def _measurement_key(monkeypatch, tmp_path, *, portfolio_id: str = "portfolio-1"
 def _weight_evidence_key(*, portfolio_id: str = "portfolio-1", cash_weight: float = 0.0) -> str:
     service = RecommendationReconciledPortfolioWeightService()
     if cash_weight == 0.0:
-        first_weight, second_weight = 0.6, 0.4
+        first_quantity, first_value, first_weight = 6.0, 60.0, 0.6
+        second_quantity, second_value, second_weight = 4.0, 40.0, 0.4
         cash_balance, invested_value = 0.0, 100.0
     else:
-        first_weight, second_weight = 0.5, 0.4
+        first_quantity, first_value, first_weight = 5.0, 50.0, 0.5
+        second_quantity, second_value, second_weight = 4.0, 40.0, 0.4
         cash_balance, invested_value = 10.0, 90.0
     positions = [
         {
             "instrumentId": 101,
             "symbol": "AAA",
-            "quantity": 6.0,
-            "positionValueInReportingCurrency": 60.0,
+            "quantity": first_quantity,
+            "positionValueInReportingCurrency": first_value,
             "canonicalIdentity": {"instrumentId": 101},
             "price": 10.0,
             "priceSourceProvider": "official_market_source",
@@ -128,8 +130,8 @@ def _weight_evidence_key(*, portfolio_id: str = "portfolio-1", cash_weight: floa
         {
             "instrumentId": 202,
             "symbol": "BBB",
-            "quantity": 4.0,
-            "positionValueInReportingCurrency": 40.0,
+            "quantity": second_quantity,
+            "positionValueInReportingCurrency": second_value,
             "canonicalIdentity": {"instrumentId": 202},
             "price": 10.0,
             "priceSourceProvider": "official_market_source",
