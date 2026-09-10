@@ -61,9 +61,9 @@ def build_operational_readiness(
             "blocker": "canonical_market_weighting_not_ready",
         },
         {
-            "id": "market_history_present",
-            "passed": int(market_history.get("observationCount") or 0) > 0,
-            "blocker": "market_history_missing",
+            "id": "market_history_depth",
+            "passed": market_history.get("historyDepthReady") is True,
+            "blocker": "market_history_depth_insufficient",
         },
         {
             "id": "research_outcome_oos_evidence",
