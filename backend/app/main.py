@@ -32,6 +32,9 @@ from app.api.recommendation_performance_attribution import (
 from app.api.recommendation_portfolio_event_ledger import (
     router as recommendation_portfolio_event_ledger_router,
 )
+from app.api.recommendation_portfolio_nlv_snapshot import (
+    router as recommendation_portfolio_nlv_snapshot_router,
+)
 from app.api.recommendation_portfolio_performance_attribution import (
     router as recommendation_portfolio_performance_attribution_router,
 )
@@ -112,6 +115,7 @@ app.include_router(recommendation_performance_attribution_router)
 app.include_router(recommendation_portfolio_performance_attribution_router)
 app.include_router(recommendation_portfolio_time_weighted_return_router)
 app.include_router(recommendation_portfolio_event_ledger_router)
+app.include_router(recommendation_portfolio_nlv_snapshot_router)
 app.include_router(recommendation_portfolio_state_reconstruction_router)
 app.include_router(recommendation_reconciled_portfolio_weights_router)
 app.include_router(recommendation_investment_journal_router)
