@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -56,6 +57,7 @@ class RecommendationReconciledPortfolioWeightRepository:
     def append(self, *, artifact: dict[str, Any]) -> dict[str, Any]:
         self.initialize()
         validated = self._validator.validate_artifact(artifact)
+        self._validate_economics(validated)
         key = self._sha256(validated.get("weightEvidenceKey"), "weightEvidenceKey")
         serialized = self._serialize(validated)
         artifact_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -139,6 +141,7 @@ class RecommendationReconciledPortfolioWeightRepository:
         if not isinstance(artifact, dict):
             raise ValueError("Registro de weight evidence carece de artifact válido.")
         validated = self._validator.validate_artifact(artifact)
+        self._validate_economics(validated)
         serialized = self._serialize(validated)
         expected_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         if record.get("artifact_hash") != expected_hash:
@@ -157,6 +160,61 @@ class RecommendationReconciledPortfolioWeightRepository:
             if str(record.get(field)) != str(value):
                 raise ValueError(f"Campo persistido {field} no coincide con weight evidence.")
         return record
+
+    @staticmethod
+    def _validate_economics(artifact: dict[str, Any]) -> None:
+        def finite(value: object, field: str, *, positive: bool = False) -> float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{field} debe ser numérico finito.")
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError(f"{field} debe ser numérico finito.")
+            if positive and numeric <= 0.0:
+                raise ValueError(f"{field} debe ser positivo.")
+            if not positive and numeric < 0.0:
+                raise ValueError(f"{field} no puede ser negativo.")
+            return numeric
+
+        cash_balance = finite(artifact.get("cashBalance"), "cashBalance")
+        cash_weight = finite(artifact.get("cashWeight"), "cashWeight")
+        invested = finite(artifact.get("investedPositionsValue"), "investedPositionsValue")
+        total = finite(artifact.get("totalPortfolioValue"), "totalPortfolioValue", positive=True)
+        if not math.isclose(total, cash_balance + invested, rel_tol=1e-12, abs_tol=1e-9):
+            raise ValueError("Weight evidence no reconcilia totalPortfolioValue = cash + investedPositionsValue.")
+        expected_cash_weight = cash_balance / total
+        if not math.isclose(cash_weight, expected_cash_weight, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("cashWeight no coincide con cashBalance / totalPortfolioValue.")
+
+        positions = artifact.get("positions")
+        if not isinstance(positions, list):
+            raise ValueError("Weight evidence perdió positions.")
+        position_total = 0.0
+        seen: set[int] = set()
+        for index, item in enumerate(positions):
+            if not isinstance(item, dict):
+                raise ValueError("Weight evidence contiene posición inválida.")
+            instrument_id = item.get("instrumentId")
+            if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+                raise ValueError("Weight evidence contiene instrumentId no canónico.")
+            if instrument_id in seen:
+                raise ValueError("Weight evidence contiene instrumentId duplicado.")
+            seen.add(instrument_id)
+            position_value = finite(
+                item.get("positionValueInReportingCurrency"),
+                f"positions[{index}].positionValueInReportingCurrency",
+                positive=True,
+            )
+            weight = finite(item.get("weight"), f"positions[{index}].weight")
+            expected_weight = position_value / total
+            if not math.isclose(weight, expected_weight, rel_tol=1e-12, abs_tol=1e-12):
+                raise ValueError("Position weight no coincide con positionValue / totalPortfolioValue.")
+            position_total += position_value
+            if not math.isfinite(position_total):
+                raise ValueError("La suma de posiciones dejó de ser finita.")
+        if not math.isclose(position_total, invested, rel_tol=1e-12, abs_tol=1e-9):
+            raise ValueError("investedPositionsValue no coincide con la suma de posiciones.")
+        if not math.isclose(cash_weight + sum(float(item["weight"]) for item in positions), 1.0, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError("Cash y posiciones no reconcilian al 100%.")
 
     @staticmethod
     def _serialize(value: dict[str, Any]) -> str:
