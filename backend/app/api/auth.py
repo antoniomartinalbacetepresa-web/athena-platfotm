@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,16 +58,34 @@ def register(payload: RegisterRequest) -> dict[str, Any]:
 
 @router.post("/token")
 def token(
+    request: Request,
+    response: Response,
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> dict[str, Any]:
     service = _service()
+    client_id = request.client.host if request.client is not None else "unknown"
+    rate_key = service.login_rate_key(email=form.username, client_id=client_id)
+    rate = service.consume_login_attempt(rate_key=rate_key)
+    if not bool(rate["allowed"]):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos de autenticación. Inténtalo más tarde.",
+            headers={"Retry-After": str(service.LOGIN_WINDOW_SECONDS)},
+        )
+
     account = service.authenticate(email=form.username, password=form.password)
     if account is None:
+        response.headers["X-RateLimit-Limit"] = str(rate["limit"])
+        response.headers["X-RateLimit-Remaining"] = str(rate["remaining"])
         raise _credentials_error()
+
+    service.clear_login_attempts(rate_key=rate_key)
     access_token = service.create_access_token(
         user_id=int(account["id"]),
         email=str(account["email"]),
     )
+    response.headers["X-RateLimit-Limit"] = str(service.LOGIN_ATTEMPT_LIMIT)
+    response.headers["X-RateLimit-Remaining"] = str(service.LOGIN_ATTEMPT_LIMIT)
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -91,3 +109,15 @@ def me(account: Annotated[dict[str, Any], Depends(current_account)]) -> dict[str
         "status": "authenticated",
         "account": account,
     }
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    bearer_token: Annotated[str, Depends(oauth2_scheme)],
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> Response:
+    del account
+    service = _service()
+    if not service.revoke_access_token(bearer_token):
+        raise _credentials_error()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
