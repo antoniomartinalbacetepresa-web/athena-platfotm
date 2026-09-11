@@ -4,6 +4,9 @@ class UserPreferences {
     required this.investmentHorizonYears,
     required this.baseCurrency,
     required this.objective,
+    this.experienceLevel,
+    this.liquidityNeed,
+    this.maxDrawdownTolerancePct,
   });
 
   static const riskTolerances = <String>{
@@ -20,16 +23,34 @@ class UserPreferences {
     'long_term_growth',
   };
 
+  static const experienceLevels = <String>{
+    'beginner',
+    'intermediate',
+    'advanced',
+  };
+
+  static const liquidityNeeds = <String>{
+    'low',
+    'medium',
+    'high',
+  };
+
   final String riskTolerance;
   final int investmentHorizonYears;
   final String baseCurrency;
   final String objective;
+  final String? experienceLevel;
+  final String? liquidityNeed;
+  final int? maxDrawdownTolerancePct;
 
   factory UserPreferences.fromJson(Map<String, dynamic> json) {
     final risk = json['riskTolerance'];
     final horizon = json['investmentHorizonYears'];
     final currency = json['baseCurrency'];
     final objective = json['objective'];
+    final experience = json['experienceLevel'];
+    final liquidity = json['liquidityNeed'];
+    final drawdown = json['maxDrawdownTolerancePct'];
     if (risk is! String || !riskTolerances.contains(risk)) {
       throw const FormatException('riskTolerance no válido.');
     }
@@ -43,11 +64,26 @@ class UserPreferences {
     if (objective is! String || !objectives.contains(objective)) {
       throw const FormatException('objective no válido.');
     }
+    if (experience != null &&
+        (experience is! String || !experienceLevels.contains(experience))) {
+      throw const FormatException('experienceLevel no válido.');
+    }
+    if (liquidity != null &&
+        (liquidity is! String || !liquidityNeeds.contains(liquidity))) {
+      throw const FormatException('liquidityNeed no válido.');
+    }
+    if (drawdown != null &&
+        (drawdown is! int || drawdown < 5 || drawdown > 60)) {
+      throw const FormatException('maxDrawdownTolerancePct no válido.');
+    }
     return UserPreferences(
       riskTolerance: risk,
       investmentHorizonYears: horizon,
       baseCurrency: currency.trim().toUpperCase(),
       objective: objective,
+      experienceLevel: experience as String?,
+      liquidityNeed: liquidity as String?,
+      maxDrawdownTolerancePct: drawdown as int?,
     );
   }
 
@@ -55,6 +91,9 @@ class UserPreferences {
     final risk = riskTolerance.trim();
     final currency = baseCurrency.trim().toUpperCase();
     final targetObjective = objective.trim();
+    final experience = experienceLevel?.trim();
+    final liquidity = liquidityNeed?.trim();
+    final drawdown = maxDrawdownTolerancePct;
     if (!riskTolerances.contains(risk)) {
       throw ArgumentError.value(riskTolerance, 'riskTolerance');
     }
@@ -67,11 +106,29 @@ class UserPreferences {
     if (!objectives.contains(targetObjective)) {
       throw ArgumentError.value(objective, 'objective');
     }
+    if (experience != null &&
+        experience.isNotEmpty &&
+        !experienceLevels.contains(experience)) {
+      throw ArgumentError.value(experienceLevel, 'experienceLevel');
+    }
+    if (liquidity != null &&
+        liquidity.isNotEmpty &&
+        !liquidityNeeds.contains(liquidity)) {
+      throw ArgumentError.value(liquidityNeed, 'liquidityNeed');
+    }
+    if (drawdown != null && (drawdown < 5 || drawdown > 60)) {
+      throw ArgumentError.value(drawdown, 'maxDrawdownTolerancePct');
+    }
     return {
       'riskTolerance': risk,
       'investmentHorizonYears': investmentHorizonYears,
       'baseCurrency': currency,
       'objective': targetObjective,
+      if (experience != null && experience.isNotEmpty)
+        'experienceLevel': experience,
+      if (liquidity != null && liquidity.isNotEmpty)
+        'liquidityNeed': liquidity,
+      if (drawdown != null) 'maxDrawdownTolerancePct': drawdown,
     };
   }
 }
