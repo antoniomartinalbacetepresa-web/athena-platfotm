@@ -104,3 +104,45 @@ def test_backup_verify_restore_cli_flow(
 
     assert row is not None
     assert row[0] == "cli-persisted"
+
+
+def test_restore_drill_cli_flow(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    database_path = tmp_path / "live" / "athena.db"
+    backup_path = tmp_path / "backups" / "athena.db"
+    drill_directory = tmp_path / "drills"
+    _seed_database(database_path)
+
+    assert main(
+        [
+            "--database",
+            str(database_path),
+            "backup",
+            "--output",
+            str(backup_path),
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "--database",
+            str(database_path),
+            "drill",
+            "--backup",
+            str(backup_path),
+            "--working-directory",
+            str(drill_directory),
+        ]
+    ) == 0
+    drill_output = json.loads(
+        capsys.readouterr().out
+    )
+
+    assert drill_output["status"] == "restore_drill_passed"
+    assert drill_output["drill"]["backup"] == str(backup_path)
+    assert drill_output["drill"]["schema_version"] == AthenaDatabase.SCHEMA_VERSION
+    assert drill_directory.is_dir()
+    assert list(drill_directory.iterdir()) == []
