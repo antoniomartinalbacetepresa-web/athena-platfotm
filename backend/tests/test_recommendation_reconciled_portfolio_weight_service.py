@@ -213,9 +213,18 @@ class _ValuationRepository:
         return record
 
 
+class _OwnershipRegistry:
+    def require_current_owner(self, **kwargs: object) -> None:
+        return None
+
+    def link_current_owner(self, **kwargs: object) -> None:
+        return None
+
+
 def test_reconciled_weights_api_is_registered_and_research_only(monkeypatch) -> None:
     monkeypatch.setattr(api_module, "_reconciliation_repository", _ReconciliationRepository())
     monkeypatch.setattr(api_module, "_valuation_repository", _ValuationRepository())
+    monkeypatch.setattr(api_module, "_ownership", _OwnershipRegistry())
     app.dependency_overrides[current_account] = lambda: {"id": 1}
     try:
         with TestClient(app) as client:
