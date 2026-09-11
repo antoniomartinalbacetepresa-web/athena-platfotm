@@ -30,8 +30,21 @@ class DatabaseBackupMetadata:
         }
 
 
+@dataclass(frozen=True)
+class DatabaseBackupRetentionResult:
+    kept: tuple[str, ...]
+    deleted: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kept": list(self.kept),
+            "deleted": list(self.deleted),
+        }
+
+
 class DatabaseBackupService:
     FORMAT_VERSION = 1
+    MANIFEST_SUFFIX = ".manifest.json"
 
     def __init__(
         self,
@@ -278,13 +291,92 @@ class DatabaseBackupService:
             )
             raise
 
+    def apply_retention(
+        self,
+        backup_directory: str | Path,
+        *,
+        keep_last: int,
+        filename_prefix: str = "athena-",
+    ) -> DatabaseBackupRetentionResult:
+        if keep_last < 1:
+            raise ValueError(
+                "La retención debe conservar al menos un backup."
+            )
+        if not filename_prefix or Path(filename_prefix).name != filename_prefix:
+            raise ValueError(
+                "El prefijo de backup no es válido."
+            )
+
+        directory = Path(backup_directory)
+        if not directory.is_dir():
+            raise FileNotFoundError(
+                "El directorio de backups no existe."
+            )
+
+        manifests = sorted(
+            directory.glob(
+                f"{filename_prefix}*.db{self.MANIFEST_SUFFIX}"
+            )
+        )
+        verified: list[tuple[datetime, Path]] = []
+
+        # Fail closed: verify every managed pair before deleting anything.
+        for manifest_path in manifests:
+            backup_name = manifest_path.name[: -len(self.MANIFEST_SUFFIX)]
+            backup_path = manifest_path.with_name(
+                backup_name
+            )
+            metadata = self.verify_backup(
+                backup_path
+            )
+            created_at = self._parse_created_at_utc(
+                metadata.created_at_utc
+            )
+            verified.append(
+                (created_at, backup_path)
+            )
+
+        verified.sort(
+            key=lambda item: (
+                item[0],
+                item[1].name,
+            ),
+            reverse=True,
+        )
+        kept_paths = [
+            path
+            for _, path in verified[:keep_last]
+        ]
+        deleted_paths = [
+            path
+            for _, path in verified[keep_last:]
+        ]
+
+        for backup_path in deleted_paths:
+            manifest_path = self.manifest_path_for(
+                backup_path
+            )
+            backup_path.unlink()
+            manifest_path.unlink()
+
+        return DatabaseBackupRetentionResult(
+            kept=tuple(
+                str(path)
+                for path in kept_paths
+            ),
+            deleted=tuple(
+                str(path)
+                for path in deleted_paths
+            ),
+        )
+
     @staticmethod
     def manifest_path_for(
         backup_path: str | Path,
     ) -> Path:
         path = Path(backup_path)
         return path.with_name(
-            f"{path.name}.manifest.json"
+            f"{path.name}{DatabaseBackupService.MANIFEST_SUFFIX}"
         )
 
     def _validate_database_file(
@@ -382,6 +474,26 @@ class DatabaseBackupService:
             raise RuntimeError(
                 "El manifiesto del backup no es válido."
             ) from exc
+
+    @staticmethod
+    def _parse_created_at_utc(
+        raw: str,
+    ) -> datetime:
+        try:
+            value = datetime.fromisoformat(
+                raw
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                "La fecha del manifiesto de backup no es válida."
+            ) from exc
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise RuntimeError(
+                "La fecha del manifiesto de backup debe incluir zona horaria."
+            )
+        return value.astimezone(
+            timezone.utc
+        )
 
     @staticmethod
     def _sha256(
