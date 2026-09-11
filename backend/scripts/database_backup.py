@@ -66,6 +66,28 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
     )
 
+    retention_parser = subparsers.add_parser(
+        "retain",
+        help=(
+            "Aplica retención fail-closed: verifica todos los backups gestionados antes de borrar los antiguos."
+        ),
+    )
+    retention_parser.add_argument(
+        "--directory",
+        required=True,
+        type=Path,
+    )
+    retention_parser.add_argument(
+        "--keep-last",
+        required=True,
+        type=int,
+    )
+    retention_parser.add_argument(
+        "--prefix",
+        default="athena-",
+        help="Prefijo de los backups gestionados. Por defecto: athena-",
+    )
+
     return parser
 
 
@@ -118,6 +140,19 @@ def main(
                 args.output
             ),
             "metadata": metadata.to_dict(),
+        }
+    elif args.command == "retain":
+        retention = service.apply_retention(
+            args.directory,
+            keep_last=args.keep_last,
+            filename_prefix=args.prefix,
+        )
+        result = {
+            "status": "backup_retention_applied",
+            "directory": str(args.directory),
+            "keep_last": args.keep_last,
+            "prefix": args.prefix,
+            "retention": retention.to_dict(),
         }
     else:
         raise RuntimeError(
