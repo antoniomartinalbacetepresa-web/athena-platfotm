@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
 from app.services.recommendation_portfolio_event_ledger_service import (
     PortfolioLedgerEventInput,
     RecommendationPortfolioEventLedgerService,
@@ -21,6 +22,7 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 FLOW_AT = datetime(2026, 1, 10, tzinfo=UTC)
 TRADE_AT = datetime(2026, 1, 11, tzinfo=UTC)
 AS_OF = datetime(2026, 1, 20, tzinfo=UTC)
+_TEST_OWNER = 101
 
 
 def opening_cash(*, available_at: datetime = START, currency: str = "EUR") -> OpeningCashEvidence:
@@ -223,7 +225,9 @@ def test_reconstruction_fails_closed_on_margin_or_short_state(tmp_path) -> None:
 
 def test_reconstruction_api_is_registered_and_preserves_safety_contract(tmp_path, monkeypatch) -> None:
     path = tmp_path / "ledger.jsonl"
-    ledger = RecommendationPortfolioEventLedgerService(path)
+    ledger = RecommendationPortfolioEventLedgerService(
+        owner_scoped_ledger_path(path, owner_user_id=_TEST_OWNER)
+    )
     append_event(
         ledger,
         event_type="trade_execution",
