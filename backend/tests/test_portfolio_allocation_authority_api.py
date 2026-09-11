@@ -12,6 +12,10 @@ ACCOUNT = {"id": 1, "email": "portfolio-test@example.invalid"}
 
 class FakeCorrelationStore:
     calls = []
+    repositories = []
+
+    def __init__(self, *, repository):
+        self.repositories.append(repository)
 
     def calculate_and_seal(self, **kwargs):
         self.calls.append(kwargs)
@@ -20,6 +24,10 @@ class FakeCorrelationStore:
 
 class FakeAuthorizedAllocation:
     calls = []
+    init_kwargs = []
+
+    def __init__(self, **kwargs):
+        self.init_kwargs.append(kwargs)
 
     def build(self, **kwargs):
         self.calls.append(kwargs)
@@ -34,6 +42,7 @@ def _allocation_payload(**overrides):
 
 def test_correlation_evidence_api_calculates_and_seals_backend_authority(monkeypatch):
     FakeCorrelationStore.calls = []
+    FakeCorrelationStore.repositories = []
     monkeypatch.setattr(portfolio_api, "RecommendationPortfolioCorrelationEvidenceStoreService", FakeCorrelationStore)
     result = portfolio_api.post_portfolio_correlation_evidence(account=ACCOUNT, payload={"leftInstrumentId": 10, "rightInstrumentId": 20, "sourceProvider": "YAHOO_CHART", "knowledgeCutoff": AS_OF})
     assert result["data"]["evidenceFingerprint"] == "a" * 64
@@ -42,17 +51,23 @@ def test_correlation_evidence_api_calculates_and_seals_backend_authority(monkeyp
     assert result["data"]["allocationEligible"] is False
     assert result["data"]["automaticTrading"] is False
     assert FakeCorrelationStore.calls[0]["knowledge_cutoff"] == datetime.fromisoformat(AS_OF)
+    repository = FakeCorrelationStore.repositories[0]
+    assert repository._owner_user_id == ACCOUNT["id"]
 
 
 def test_allocation_api_accepts_only_sealed_fingerprints_not_raw_authority_artifacts(monkeypatch):
     FakeAuthorizedAllocation.calls = []
+    FakeAuthorizedAllocation.init_kwargs = []
     monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", FakeAuthorizedAllocation)
     result = portfolio_api.post_portfolio_allocation_candidate(account=ACCOUNT, payload=_allocation_payload(correlationEvidenceFingerprints=["a" * 64]))
     call = FakeAuthorizedAllocation.calls[0]
+    init_kwargs = FakeAuthorizedAllocation.init_kwargs[0]
     assert call["uncertainty_bound_action_candidate_fingerprint"] == "c" * 64
     assert call["correlation_evidence_fingerprints"] == ["a" * 64]
     assert "economic_contract" not in call
     assert "correlation_evidence" not in call
+    assert init_kwargs["correlation_repository"]._owner_user_id == ACCOUNT["id"]
+    assert init_kwargs["verified_pipeline"]._valuation_repository._owner_user_id == ACCOUNT["id"]
     assert result["data"]["economicContractAuthorityBoundToAllocation"] is True
     assert result["data"]["callerSuppliedEconomicContractAccepted"] is False
     assert result["data"]["correlationAuthorityBoundToAllocation"] is True
@@ -61,6 +76,18 @@ def test_allocation_api_accepts_only_sealed_fingerprints_not_raw_authority_artif
     assert result["data"]["productionEligible"] is False
     assert result["data"]["allocationEligible"] is False
     assert result["data"]["automaticTrading"] is False
+
+
+def test_allocation_api_scopes_injected_evidence_repositories_to_authenticated_owner(monkeypatch):
+    FakeAuthorizedAllocation.calls = []
+    FakeAuthorizedAllocation.init_kwargs = []
+    monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", FakeAuthorizedAllocation)
+    other_account = {"id": 77, "email": "other@example.invalid"}
+    portfolio_api.post_portfolio_allocation_candidate(account=other_account, payload=_allocation_payload())
+    init_kwargs = FakeAuthorizedAllocation.init_kwargs[0]
+    assert init_kwargs["correlation_repository"]._owner_user_id == 77
+    assert init_kwargs["verified_pipeline"]._valuation_repository._owner_user_id == 77
+    assert init_kwargs["correlation_repository"]._owner_user_id != ACCOUNT["id"]
 
 
 def test_allocation_api_rejects_caller_supplied_economic_contract(monkeypatch):
@@ -85,6 +112,8 @@ def test_allocation_api_rejects_raw_correlation_json_without_fingerprint_list(mo
 
 def test_allocation_api_blocks_any_production_escape(monkeypatch):
     class UnsafeAllocation:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
         def build(self, **kwargs):
             result = FakeAuthorizedAllocation().build(**kwargs)
             result["productionEligible"] = True
