@@ -39,7 +39,10 @@ class _LoginPageState extends State<LoginPage> {
         password: _passwordController.text,
       );
       final account = await _service.getMe(token);
-      AuthSession.instance.establish(accessToken: token, account: account);
+      await AuthSession.instance.establishPersisted(
+        accessToken: token,
+        account: account,
+      );
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(
         context,
@@ -50,7 +53,7 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       AuthSession.instance.clear();
       setState(() {
-        _error = 'No se pudo iniciar sesión. Revisa tus credenciales o la configuración segura del backend.';
+        _error = 'No se pudo iniciar sesión. Revisa tus credenciales o la configuración segura del dispositivo/backend.';
       });
     } finally {
       if (mounted) {
@@ -153,7 +156,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'El token de sesión se mantiene solo en memoria en esta fase; no se guarda en almacenamiento local inseguro.',
+                      'La sesión se guarda únicamente en el almacén seguro de la plataforma y se vuelve a validar con el backend antes de restaurarse.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: AthenaColors.textSecondary,

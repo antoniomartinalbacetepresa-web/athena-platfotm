@@ -4,6 +4,15 @@ import 'package:http/http.dart' as http;
 
 import '../models/auth_account.dart';
 
+class AuthSessionRejectedException implements Exception {
+  const AuthSessionRejectedException(this.statusCode);
+
+  final int statusCode;
+
+  @override
+  String toString() => 'AuthSessionRejectedException($statusCode)';
+}
+
 class AthenaAuthService {
   static const String defaultBackendUrl = String.fromEnvironment(
     'ATHENA_BACKEND_URL',
@@ -88,8 +97,11 @@ class AthenaAuthService {
       Uri.parse('$baseUrl/api/v1/auth/me'),
       headers: {'Authorization': 'Bearer $normalizedToken'},
     );
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw AuthSessionRejectedException(response.statusCode);
+    }
     if (response.statusCode != 200) {
-      throw Exception('Sesión no válida (${response.statusCode}).');
+      throw Exception('No se pudo validar la sesión (${response.statusCode}).');
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map || decoded['status'] != 'authenticated') {
