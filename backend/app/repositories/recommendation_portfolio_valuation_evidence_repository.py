@@ -16,7 +16,12 @@ class _ValuationValidator(Protocol):
 
 
 class RecommendationPortfolioValuationEvidenceRepository:
-    """Append-only store for verified PIT portfolio valuation artifacts."""
+    """Append-only store for verified PIT portfolio valuation artifacts.
+
+    Evidence content is globally deduplicated by fingerprint, while ownership is
+    stored separately. This allows two users to legitimately reference the same
+    immutable artifact without making the artifact globally readable.
+    """
 
     def __init__(
         self,
@@ -44,11 +49,28 @@ class RecommendationPortfolioValuationEvidenceRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_portfolio_valuation_evidence_as_of
                 ON athena_recommendation_portfolio_valuation_evidence(as_of, base_currency);
+
+                CREATE TABLE IF NOT EXISTS athena_recommendation_portfolio_valuation_evidence_owners (
+                    owner_user_id INTEGER NOT NULL,
+                    valuation_fingerprint TEXT NOT NULL,
+                    linked_at TEXT NOT NULL,
+                    PRIMARY KEY (owner_user_id, valuation_fingerprint),
+                    FOREIGN KEY (valuation_fingerprint)
+                        REFERENCES athena_recommendation_portfolio_valuation_evidence(valuation_fingerprint)
+                        ON DELETE RESTRICT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_portfolio_valuation_evidence_owner_fingerprint
+                ON athena_recommendation_portfolio_valuation_evidence_owners(
+                    valuation_fingerprint,
+                    owner_user_id
+                );
                 """
             )
 
-    def seal(self, *, artifact: dict[str, Any]) -> dict[str, Any]:
+    def seal(self, *, owner_user_id: int, artifact: dict[str, Any]) -> dict[str, Any]:
         self.initialize()
+        owner_id = self._owner_user_id(owner_user_id)
         validated = self._validated_artifact(artifact)
         valuation_fingerprint = self._sha256(
             validated.get("portfolioValuationEvidenceFingerprint"),
@@ -73,61 +95,84 @@ class RecommendationPortfolioValuationEvidenceRepository:
                     raise RuntimeError("No se pudo recuperar la valoración existente.")
                 if record["artifact"] != validated:
                     raise ValueError("La valoración sellada es inmutable.")
-                return record
+            else:
+                persisted_at = datetime.now(timezone.utc).isoformat()
+                record_core = {
+                    "valuationFingerprint": valuation_fingerprint,
+                    "asOf": as_of,
+                    "baseCurrency": base_currency,
+                    "artifact": validated,
+                    "persistedAt": persisted_at,
+                }
+                record_fingerprint = self._fingerprint(record_core)
+                connection.execute(
+                    """
+                    INSERT INTO athena_recommendation_portfolio_valuation_evidence (
+                        valuation_fingerprint,
+                        as_of,
+                        base_currency,
+                        artifact_json,
+                        persisted_at,
+                        record_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        valuation_fingerprint,
+                        as_of,
+                        base_currency,
+                        serialized,
+                        persisted_at,
+                        record_fingerprint,
+                    ),
+                )
 
-            persisted_at = datetime.now(timezone.utc).isoformat()
-            record_core = {
-                "valuationFingerprint": valuation_fingerprint,
-                "asOf": as_of,
-                "baseCurrency": base_currency,
-                "artifact": validated,
-                "persistedAt": persisted_at,
-            }
-            record_fingerprint = self._fingerprint(record_core)
+            linked_at = datetime.now(timezone.utc).isoformat()
             connection.execute(
                 """
-                INSERT INTO athena_recommendation_portfolio_valuation_evidence (
+                INSERT OR IGNORE INTO athena_recommendation_portfolio_valuation_evidence_owners (
+                    owner_user_id,
                     valuation_fingerprint,
-                    as_of,
-                    base_currency,
-                    artifact_json,
-                    persisted_at,
-                    record_fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    linked_at
+                ) VALUES (?, ?, ?)
                 """,
-                (
-                    valuation_fingerprint,
-                    as_of,
-                    base_currency,
-                    serialized,
-                    persisted_at,
-                    record_fingerprint,
-                ),
+                (owner_id, valuation_fingerprint, linked_at),
             )
             row = connection.execute(
                 """
-                SELECT *
-                FROM athena_recommendation_portfolio_valuation_evidence
-                WHERE valuation_fingerprint = ?
+                SELECT evidence.*
+                FROM athena_recommendation_portfolio_valuation_evidence AS evidence
+                JOIN athena_recommendation_portfolio_valuation_evidence_owners AS ownership
+                  ON ownership.valuation_fingerprint = evidence.valuation_fingerprint
+                WHERE evidence.valuation_fingerprint = ?
+                  AND ownership.owner_user_id = ?
                 """,
-                (valuation_fingerprint,),
+                (valuation_fingerprint, owner_id),
             ).fetchone()
         result = self._row(row)
         if result is None:
-            raise RuntimeError("No se pudo recuperar la valoración sellada.")
+            raise RuntimeError("No se pudo recuperar la valoración sellada para el propietario.")
         return result
 
-    def get(self, *, valuation_fingerprint: str) -> dict[str, Any] | None:
+    def get(
+        self,
+        *,
+        owner_user_id: int,
+        valuation_fingerprint: str,
+    ) -> dict[str, Any] | None:
         self.initialize()
+        owner_id = self._owner_user_id(owner_user_id)
         fingerprint = self._sha256(valuation_fingerprint, "valuation_fingerprint")
         with self._database.connect() as connection:
             row = connection.execute(
                 """
-                SELECT *
-                FROM athena_recommendation_portfolio_valuation_evidence
-                WHERE valuation_fingerprint = ?
+                SELECT evidence.*
+                FROM athena_recommendation_portfolio_valuation_evidence AS evidence
+                JOIN athena_recommendation_portfolio_valuation_evidence_owners AS ownership
+                  ON ownership.valuation_fingerprint = evidence.valuation_fingerprint
+                WHERE evidence.valuation_fingerprint = ?
+                  AND ownership.owner_user_id = ?
                 """,
-                (fingerprint,),
+                (fingerprint, owner_id),
             ).fetchone()
         return self._row(row)
 
@@ -208,6 +253,11 @@ class RecommendationPortfolioValuationEvidenceRepository:
         if len(result) != 64 or any(char not in "0123456789abcdef" for char in result):
             raise ValueError(f"{field} debe ser SHA-256 hexadecimal.")
         return result
+
+    def _owner_user_id(self, value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("owner_user_id debe ser un entero positivo.")
+        return value
 
     def _currency(self, value: object, field: str) -> str:
         result = str(value or "").strip().upper()
