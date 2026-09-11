@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from app.api.auth import current_account
 from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
     RecommendationPortfolioValuationEvidenceRepository,
 )
 from app.services.portfolio_correlation_service import PortfolioCorrelationService
-from app.services.portfolio_instrument_identity_service import (
-    PortfolioInstrumentIdentityService,
-)
+from app.services.portfolio_instrument_identity_service import PortfolioInstrumentIdentityService
 from app.services.recommendation_authorized_allocation_pipeline_service import (
     RecommendationAuthorizedAllocationPipelineService,
 )
@@ -23,10 +22,8 @@ from app.services.recommendation_portfolio_valuation_evidence_service import (
 )
 
 
-router = APIRouter(
-    prefix="/api/v1/portfolio",
-    tags=["portfolio"],
-)
+router = APIRouter(prefix="/api/v1/portfolio", tags=["portfolio"])
+AuthenticatedAccount = Annotated[dict[str, Any], Depends(current_account)]
 
 
 def _aware_payload_datetime(value: object, field: str) -> datetime:
@@ -59,12 +56,7 @@ def _safe_valuation_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
 def _safe_non_advisory_allocation(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("advisoryStatus") != "no_advice":
         raise RuntimeError("Allocation violó el contrato no_advice.")
-    for field in (
-        "recommendationCandidateReady",
-        "productionEligible",
-        "allocationEligible",
-        "automaticTrading",
-    ):
+    for field in ("recommendationCandidateReady", "productionEligible", "allocationEligible", "automaticTrading"):
         if payload.get(field) is not False:
             raise RuntimeError(f"Allocation violó {field}=False.")
     if payload.get("economicContractAuthorityBoundToAllocation") is not True:
@@ -88,15 +80,11 @@ def _safe_non_advisory_allocation(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/instrument-identity")
 def get_portfolio_instrument_identity(
+    account: AuthenticatedAccount,
     symbol: str = Query(..., min_length=1),
     exchange: str | None = Query(None),
 ) -> dict[str, object]:
-    """Resolve one portfolio listing against ATHENA's canonical catalog.
-
-    A unique symbol can be returned for diagnostics even when exchange identity
-    is not verified. Callers must honor isRiskReady=false and must not use that
-    diagnostic resolution for portfolio risk, allocation or weighting.
-    """
+    del account
     service = PortfolioInstrumentIdentityService()
     try:
         result = service.resolve(symbol=symbol, exchange=exchange)
@@ -104,23 +92,15 @@ def get_portfolio_instrument_identity(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo resolver una identidad canónica verificable.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo resolver una identidad canónica verificable.") from exc
 
 
 @router.post("/valuation-evidence")
 def post_portfolio_valuation_evidence(
+    account: AuthenticatedAccount,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, object]:
-    """Build and seal one reproducible PIT valuation of declared long positions.
-
-    The client supplies only declared position quantity/provenance and the exact
-    canonical instrument/provider identities it wants valued. Prices, currencies
-    and FX are reconstructed server-side from evidence knowable at ``asOf``.
-    Cash, liabilities and broker NAV are intentionally not inferred.
-    """
+    del account
     service = RecommendationPortfolioValuationEvidenceService()
     try:
         raw_positions = payload.get("positions")
@@ -130,19 +110,11 @@ def post_portfolio_valuation_evidence(
         if not isinstance(base_currency, str):
             raise ValueError("baseCurrency debe ser una moneda ISO.")
         as_of = _aware_payload_datetime(payload.get("asOf"), "asOf")
-
-        artifact = service.build(
-            positions=raw_positions,
-            base_currency=base_currency,
-            as_of=as_of,
-        )
+        artifact = service.build(positions=raw_positions, base_currency=base_currency, as_of=as_of)
         if service.validate_artifact(artifact) is not artifact:
             raise RuntimeError("El validador sustituyó la evidencia de valoración.")
         safe_artifact = _safe_valuation_artifact(artifact)
-
-        repository = RecommendationPortfolioValuationEvidenceRepository(
-            validator=service,
-        )
+        repository = RecommendationPortfolioValuationEvidenceRepository(validator=service)
         record = repository.seal(artifact=safe_artifact)
         if repository.validate_record(record) is not record:
             raise RuntimeError("El repositorio sustituyó la valoración sellada.")
@@ -152,28 +124,18 @@ def post_portfolio_valuation_evidence(
         if not isinstance(persisted, dict):
             raise RuntimeError("La valoración persistida no respeta el contrato de ATHENA.")
         _safe_valuation_artifact(persisted)
-
-        return {
-            "data": persisted,
-            "persistence": {
-                "sealed": True,
-                "persistedAt": record.get("persisted_at"),
-                "recordFingerprint": record.get("record_fingerprint"),
-            },
-        }
+        return {"data": persisted, "persistence": {"sealed": True, "persistedAt": record.get("persisted_at"), "recordFingerprint": record.get("record_fingerprint")}}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo construir una valoración PIT verificable de la cartera.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo construir una valoración PIT verificable de la cartera.") from exc
 
 
 @router.get("/correlation")
 def get_portfolio_pair_correlation(
+    account: AuthenticatedAccount,
     left_instrument_id: int = Query(..., alias="leftInstrumentId", ge=1),
     right_instrument_id: int = Query(..., alias="rightInstrumentId", ge=1),
     source_provider: str = Query(..., alias="sourceProvider", min_length=1),
@@ -181,38 +143,25 @@ def get_portfolio_pair_correlation(
     observed_from: datetime | None = Query(None, alias="observedFrom"),
     observed_to: datetime | None = Query(None, alias="observedTo"),
 ) -> dict[str, object]:
-    """Return descriptive PIT correlation for two canonical instruments.
-
-    This route remains diagnostic. Allocation must use the sealed authority route
-    below and can never promote this raw response directly into allocation input.
-    """
+    del account
     service = PortfolioCorrelationService()
     try:
-        result = service.calculate_pair(
-            left_instrument_id=left_instrument_id,
-            right_instrument_id=right_instrument_id,
-            source_provider=source_provider,
-            knowledge_cutoff=knowledge_cutoff,
-            observed_from=observed_from,
-            observed_to=observed_to,
-        )
+        result = service.calculate_pair(left_instrument_id=left_instrument_id, right_instrument_id=right_instrument_id, source_provider=source_provider, knowledge_cutoff=knowledge_cutoff, observed_from=observed_from, observed_to=observed_to)
         return {"data": result.to_api_dict()}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo calcular una correlación PIT verificable.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo calcular una correlación PIT verificable.") from exc
 
 
 @router.post("/correlation-evidence")
 def post_portfolio_correlation_evidence(
+    account: AuthenticatedAccount,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, object]:
-    """Compute correlation from backend PIT observations and append-only seal it."""
+    del account
     try:
         left = payload.get("leftInstrumentId")
         right = payload.get("rightInstrumentId")
@@ -224,24 +173,9 @@ def post_portfolio_correlation_evidence(
         if not isinstance(source_provider, str) or not source_provider.strip():
             raise ValueError("sourceProvider es obligatorio.")
         cutoff = _aware_payload_datetime(payload.get("knowledgeCutoff"), "knowledgeCutoff")
-        observed_from = (
-            _aware_payload_datetime(payload.get("observedFrom"), "observedFrom")
-            if payload.get("observedFrom") is not None
-            else None
-        )
-        observed_to = (
-            _aware_payload_datetime(payload.get("observedTo"), "observedTo")
-            if payload.get("observedTo") is not None
-            else None
-        )
-        result = RecommendationPortfolioCorrelationEvidenceStoreService().calculate_and_seal(
-            left_instrument_id=left,
-            right_instrument_id=right,
-            source_provider=source_provider,
-            knowledge_cutoff=cutoff,
-            observed_from=observed_from,
-            observed_to=observed_to,
-        )
+        observed_from = _aware_payload_datetime(payload.get("observedFrom"), "observedFrom") if payload.get("observedFrom") is not None else None
+        observed_to = _aware_payload_datetime(payload.get("observedTo"), "observedTo") if payload.get("observedTo") is not None else None
+        result = RecommendationPortfolioCorrelationEvidenceStoreService().calculate_and_seal(left_instrument_id=left, right_instrument_id=right, source_provider=source_provider, knowledge_cutoff=cutoff, observed_from=observed_from, observed_to=observed_to)
         if result.get("advisoryStatus") != "no_advice":
             raise RuntimeError("La autoridad de correlación intentó emitir advice.")
         for field in ("productionEligible", "allocationEligible", "automaticTrading"):
@@ -253,28 +187,18 @@ def post_portfolio_correlation_evidence(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo sellar evidencia PIT de correlación.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo sellar evidencia PIT de correlación.") from exc
 
 
 @router.post("/allocation-candidate")
 def post_portfolio_allocation_candidate(
+    account: AuthenticatedAccount,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, object]:
-    """Build a non-advisory allocation candidate from backend-sealed authorities.
-
-    The client may reference sealed action/correlation fingerprints and declared
-    positions, but cannot submit action artifacts, economic contracts, portfolio
-    totals or correlation JSON. The backend resolves the exact economic contract
-    committed by the sealed action and rebuilds PIT valuation before allocation.
-    """
+    del account
     try:
         if "economicContract" in payload:
-            raise ValueError(
-                "economicContract no se acepta: el backend lo resuelve desde la autoridad sellada."
-            )
+            raise ValueError("economicContract no se acepta: el backend lo resuelve desde la autoridad sellada.")
         action_fingerprint = payload.get("uncertaintyBoundActionCandidateFingerprint")
         if not isinstance(action_fingerprint, str):
             raise ValueError("uncertaintyBoundActionCandidateFingerprint es obligatorio.")
@@ -291,28 +215,14 @@ def post_portfolio_allocation_candidate(
         if not isinstance(positions, list):
             raise ValueError("positions debe ser una lista.")
         correlation_fingerprints = payload.get("correlationEvidenceFingerprints")
-        if not isinstance(correlation_fingerprints, list) or any(
-            not isinstance(item, str) for item in correlation_fingerprints
-        ):
+        if not isinstance(correlation_fingerprints, list) or any(not isinstance(item, str) for item in correlation_fingerprints):
             raise ValueError("correlationEvidenceFingerprints debe ser una lista de fingerprints.")
         as_of = _aware_payload_datetime(payload.get("asOf"), "asOf")
-
-        result = RecommendationAuthorizedAllocationPipelineService().build(
-            uncertainty_bound_action_candidate_fingerprint=action_fingerprint,
-            allocation_policy_id=allocation_policy_id,
-            reference_capital=float(reference_capital),
-            base_currency=base_currency,
-            positions=positions,
-            correlation_evidence_fingerprints=correlation_fingerprints,
-            as_of=as_of,
-        )
+        result = RecommendationAuthorizedAllocationPipelineService().build(uncertainty_bound_action_candidate_fingerprint=action_fingerprint, allocation_policy_id=allocation_policy_id, reference_capital=float(reference_capital), base_currency=base_currency, positions=positions, correlation_evidence_fingerprints=correlation_fingerprints, as_of=as_of)
         return {"data": _safe_non_advisory_allocation(result)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo construir un allocation candidate verificable.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo construir un allocation candidate verificable.") from exc
