@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.database.athena_database_legacy import AthenaDatabase as _LegacyAthenaDatabase
+from app.database.athena_database_legacy import (
+    AthenaConnection,
+    AthenaDatabase as _LegacyAthenaDatabase,
+)
 
 
 class AthenaDatabase(_LegacyAthenaDatabase):
@@ -74,3 +77,6 @@ class AthenaDatabase(_LegacyAthenaDatabase):
             );
             """
         )
+
+
+__all__ = ["AthenaConnection", "AthenaDatabase"]
