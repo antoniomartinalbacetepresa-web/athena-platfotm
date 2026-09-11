@@ -9,10 +9,17 @@ from app.security.portfolio_owner_context import current_portfolio_owner_id
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWED_KINDS = frozenset({"state_reconciliation", "reconciled_weight"})
+_TABLE = "athena_portfolio_artifact_ownership_v2"
 
 
 class PortfolioArtifactOwnershipRegistry:
-    """Fail-closed ownership registry for immutable keyed portfolio artifacts."""
+    """Fail-closed owner links for immutable keyed portfolio artifacts.
+
+    Artifact bytes may legitimately deduplicate across accounts. Ownership is
+    therefore a many-to-many relation: a user gains a link only after an
+    authenticated workflow independently creates or validates that exact
+    artifact. Merely knowing another user's key never creates a link.
+    """
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -21,18 +28,20 @@ class PortfolioArtifactOwnershipRegistry:
         self._database.initialize()
         with self._database.connect() as connection:
             connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS athena_portfolio_artifact_ownership (
+                f"""
+                CREATE TABLE IF NOT EXISTS {_TABLE} (
                     owner_user_id INTEGER NOT NULL,
                     artifact_kind TEXT NOT NULL,
                     artifact_key TEXT NOT NULL,
                     linked_at TEXT NOT NULL,
-                    PRIMARY KEY (owner_user_id, artifact_kind, artifact_key),
-                    UNIQUE (artifact_kind, artifact_key)
+                    PRIMARY KEY (owner_user_id, artifact_kind, artifact_key)
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_portfolio_artifact_owner_kind
-                ON athena_portfolio_artifact_ownership(owner_user_id, artifact_kind);
+                CREATE INDEX IF NOT EXISTS idx_portfolio_artifact_owner_kind_v2
+                ON {_TABLE}(owner_user_id, artifact_kind);
+
+                CREATE INDEX IF NOT EXISTS idx_portfolio_artifact_key_kind_v2
+                ON {_TABLE}(artifact_kind, artifact_key, owner_user_id);
                 """
             )
 
@@ -42,19 +51,9 @@ class PortfolioArtifactOwnershipRegistry:
         kind = self._kind(artifact_kind)
         key = self._key(artifact_key)
         with self._database.connect() as connection:
-            existing = connection.execute(
-                """
-                SELECT owner_user_id
-                FROM athena_portfolio_artifact_ownership
-                WHERE artifact_kind = ? AND artifact_key = ?
-                """,
-                (kind, key),
-            ).fetchone()
-            if existing is not None and int(existing["owner_user_id"]) != owner_id:
-                raise ValueError("portfolio artifact is already owned by another account")
             connection.execute(
-                """
-                INSERT OR IGNORE INTO athena_portfolio_artifact_ownership (
+                f"""
+                INSERT OR IGNORE INTO {_TABLE} (
                     owner_user_id, artifact_kind, artifact_key, linked_at
                 ) VALUES (?, ?, ?, ?)
                 """,
@@ -68,9 +67,9 @@ class PortfolioArtifactOwnershipRegistry:
         key = self._key(artifact_key)
         with self._database.connect() as connection:
             row = connection.execute(
-                """
+                f"""
                 SELECT 1
-                FROM athena_portfolio_artifact_ownership
+                FROM {_TABLE}
                 WHERE owner_user_id = ? AND artifact_kind = ? AND artifact_key = ?
                 """,
                 (owner_id, kind, key),
