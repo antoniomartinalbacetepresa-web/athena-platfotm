@@ -1,41 +1,41 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from app.database.athena_database import AthenaDatabase
+from app.database.athena_database_legacy import AthenaDatabase as AthenaDatabaseV4
 from app.repositories.corporate_action_repository import CorporateActionRepository
 
 
+def _create_real_v4_database(database_path: Path) -> AthenaDatabaseV4:
+    database = AthenaDatabaseV4(database_path)
+    database.initialize()
+
+    with database.connect() as connection:
+        version = connection.execute(
+            "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
+        ).fetchone()
+
+    assert version is not None
+    assert version["value"] == "4"
+    return database
+
+
 def _create_v4_database_with_existing_action(database_path: Path) -> None:
-    connection = sqlite3.connect(database_path)
-    try:
+    database = _create_real_v4_database(database_path)
+
+    with database.connect() as connection:
+        instrument_id = connection.execute(
+            """
+            INSERT INTO instruments (
+                id, symbol, company_name, exchange_short_name
+            ) VALUES (7, 'AAPL', 'Apple Inc.', 'NASDAQ')
+            """
+        ).lastrowid
+        assert instrument_id == 7
+
         connection.executescript(
             """
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE schema_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            INSERT INTO schema_metadata (key, value)
-            VALUES ('schema_version', '4');
-
-            CREATE TABLE instruments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                company_name TEXT NOT NULL,
-                exchange_short_name TEXT,
-                instrument_type TEXT NOT NULL DEFAULT 'unknown',
-                is_primary_listing INTEGER NOT NULL DEFAULT 0,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (symbol, exchange_short_name)
-            );
-            INSERT INTO instruments (id, symbol, company_name, exchange_short_name)
-            VALUES (7, 'AAPL', 'Apple Inc.', 'NASDAQ');
-
             CREATE TABLE corporate_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 instrument_id INTEGER NOT NULL,
@@ -49,11 +49,15 @@ def _create_v4_database_with_existing_action(database_path: Path) -> None:
                 source_timestamp TEXT,
                 retrieved_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE CASCADE,
+                FOREIGN KEY (instrument_id)
+                    REFERENCES instruments(id)
+                    ON DELETE CASCADE,
                 CHECK (
-                    (action_type = 'dividend' AND cash_amount > 0 AND split_ratio IS NULL)
+                    (action_type = 'dividend' AND cash_amount > 0
+                        AND split_ratio IS NULL)
                     OR
-                    (action_type = 'split' AND split_ratio > 0 AND cash_amount IS NULL)
+                    (action_type = 'split' AND split_ratio > 0
+                        AND cash_amount IS NULL)
                 ),
                 UNIQUE (
                     instrument_id,
@@ -63,6 +67,13 @@ def _create_v4_database_with_existing_action(database_path: Path) -> None:
                     retrieved_at
                 )
             );
+
+            CREATE INDEX idx_corporate_actions_instrument_effective
+            ON corporate_actions (instrument_id, effective_at);
+
+            CREATE INDEX idx_corporate_actions_pit
+            ON corporate_actions (instrument_id, retrieved_at, effective_at);
+
             INSERT INTO corporate_actions (
                 id, instrument_id, action_type, effective_at, cash_amount,
                 currency, source_provider, source_timestamp, retrieved_at
@@ -73,9 +84,6 @@ def _create_v4_database_with_existing_action(database_path: Path) -> None:
             );
             """
         )
-        connection.commit()
-    finally:
-        connection.close()
 
 
 def test_fresh_database_registers_schema_v5_and_corporate_actions(tmp_path: Path) -> None:
@@ -137,21 +145,7 @@ def test_v4_upgrade_preserves_preexisting_corporate_action_rows(tmp_path: Path) 
 
 def test_v4_upgrade_without_corporate_actions_creates_canonical_table(tmp_path: Path) -> None:
     database_path = tmp_path / "v4-no-actions.db"
-    connection = sqlite3.connect(database_path)
-    try:
-        connection.executescript(
-            """
-            CREATE TABLE schema_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            INSERT INTO schema_metadata (key, value) VALUES ('schema_version', '4');
-            """
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    _create_real_v4_database(database_path)
 
     database = AthenaDatabase(database_path)
     database.initialize()
@@ -181,13 +175,10 @@ def test_repository_operates_on_canonical_v5_schema(tmp_path: Path) -> None:
             VALUES ('MSFT', 'Microsoft Corporation', 'NASDAQ')
             """
         ).lastrowid
-
-    assert instrument_id is not None
-    # Repository bootstrap remains idempotent during the transition, but the
-    # table already exists before the repository is instantiated or used.
-    with database.connect() as connection:
         table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='corporate_actions'"
         ).fetchone()
+
+    assert instrument_id is not None
     assert table is not None
     assert repository is not None
