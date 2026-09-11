@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,20 @@ class DatabaseBackupRetentionResult:
         return {
             "kept": list(self.kept),
             "deleted": list(self.deleted),
+        }
+
+
+@dataclass(frozen=True)
+class DatabaseRestoreDrillResult:
+    backup: str
+    schema_version: int
+    verified_at_utc: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "backup": self.backup,
+            "schema_version": self.schema_version,
+            "verified_at_utc": self.verified_at_utc,
         }
 
 
@@ -290,6 +305,62 @@ class DatabaseBackupService:
                 temporary_destination
             )
             raise
+
+    def run_restore_drill(
+        self,
+        backup_path: str | Path,
+        *,
+        working_directory: str | Path | None = None,
+    ) -> DatabaseRestoreDrillResult:
+        source = Path(backup_path)
+        metadata = self.verify_backup(
+            source
+        )
+
+        drill_parent: Path | None = None
+        if working_directory is not None:
+            drill_parent = Path(working_directory)
+            drill_parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            if self._same_path(
+                self._database.database_path.parent,
+                drill_parent,
+            ):
+                raise ValueError(
+                    "El restore drill no puede usar el directorio de la base activa."
+                )
+
+        with tempfile.TemporaryDirectory(
+            prefix="athena-restore-drill-",
+            dir=drill_parent,
+        ) as temporary_directory:
+            restored_path = Path(temporary_directory) / "athena-restored.db"
+            restored_metadata = self.restore_backup(
+                source,
+                restored_path,
+            )
+            restored_schema = self._validate_database_file(
+                restored_path
+            )
+
+            if restored_metadata != metadata:
+                raise RuntimeError(
+                    "El restore drill no conserva los metadatos esperados del backup."
+                )
+            if restored_schema != metadata.schema_version:
+                raise RuntimeError(
+                    "El restore drill no conserva la versión de esquema esperada."
+                )
+
+        return DatabaseRestoreDrillResult(
+            backup=str(source),
+            schema_version=metadata.schema_version,
+            verified_at_utc=datetime.now(
+                timezone.utc
+            ).isoformat(),
+        )
 
     def apply_retention(
         self,
