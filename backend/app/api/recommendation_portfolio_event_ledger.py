@@ -8,6 +8,7 @@ import re
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
 from app.services.recommendation_portfolio_event_ledger_service import (
     PortfolioLedgerEventInput,
     RecommendationPortfolioEventLedgerService,
@@ -46,7 +47,7 @@ def _service() -> RecommendationPortfolioEventLedgerService:
     configured = os.environ.get("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", _DEFAULT_LEDGER_PATH).strip()
     if not configured:
         raise HTTPException(status_code=503, detail="Portfolio event ledger no tiene ruta de persistencia configurada.")
-    return RecommendationPortfolioEventLedgerService(Path(configured))
+    return RecommendationPortfolioEventLedgerService(owner_scoped_ledger_path(Path(configured)))
 
 
 def _policy_payload(service: RecommendationPortfolioEventLedgerService) -> dict[str, object]:
