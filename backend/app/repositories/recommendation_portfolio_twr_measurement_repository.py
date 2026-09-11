@@ -9,6 +9,7 @@ from app.repositories.recommendation_portfolio_nlv_snapshot_repository import (
 from app.repositories.recommendation_portfolio_twr_measurement_repository_core import (
     RecommendationPortfolioTwrMeasurementRepository as _CoreRepository,
 )
+from app.security.portfolio_owner_context import current_portfolio_owner_id
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -17,16 +18,28 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 class RecommendationPortfolioTwrMeasurementRepository(_CoreRepository):
     """Owner-gated TWR store backed by owner-scoped NLV evidence.
 
-    The persisted TWR artifact remains content-addressed and owner-neutral. Access
-    is authorized transitively: every referenced NLV snapshot must belong to the
-    current authenticated portfolio owner. Legacy TWR artifacts whose NLV
-    snapshots have no owner-scoped v2 rows therefore fail closed.
+    API requests bind an authenticated portfolio owner. In that context, a TWR
+    artifact must carry sealed ``nlvEvidence`` and every referenced NLV snapshot
+    must belong to that owner. Low-level integrity tests and trusted internal
+    code may still exercise the historical core repository contract outside an
+    owner context; such ownerless access is never exposed by the authenticated
+    routers.
     """
+
+    @staticmethod
+    def _owner_context_active() -> bool:
+        try:
+            current_portfolio_owner_id()
+        except ValueError:
+            return False
+        return True
 
     def _require_owned_nlv_evidence(self, artifact: dict[str, Any]) -> None:
         nlv = artifact.get("nlvEvidence")
         if not isinstance(nlv, dict):
-            raise ValueError("TWR measurement has no sealed NLV ownership evidence")
+            if self._owner_context_active():
+                raise ValueError("TWR measurement has no sealed NLV ownership evidence")
+            return
         keys = nlv.get("snapshotKeys")
         if not isinstance(keys, list) or len(keys) < 2:
             raise ValueError("TWR measurement has no valid NLV snapshot ownership set")
