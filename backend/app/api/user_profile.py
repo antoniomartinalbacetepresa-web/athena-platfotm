@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -27,12 +28,14 @@ class UserPreferencesRequest(BaseModel):
     experienceLevel: Literal["beginner", "intermediate", "advanced"] | None = None
     liquidityNeed: Literal["low", "medium", "high"] | None = None
     maxDrawdownTolerancePct: int | None = Field(default=None, ge=5, le=60)
-    availableCapital: float | None = Field(
-        default=None,
-        ge=0,
-        le=1_000_000_000_000,
-        description="Capital disponible declarado por el usuario, denominado en baseCurrency.",
-    )
+    # Range/finite validation is intentionally performed in the route instead
+    # of as a Pydantic numeric constraint. Python's JSON decoder accepts the
+    # non-standard NaN/Infinity constants; if those reach a Pydantic numeric
+    # constraint, FastAPI includes the non-finite input in its validation
+    # detail and Starlette cannot serialize that error as strict JSON. Keeping
+    # the type here and enforcing the financial boundary below makes those
+    # hostile/non-standard payloads fail closed with a deterministic 422.
+    availableCapital: float | None = None
 
     @field_validator("baseCurrency")
     @classmethod
@@ -67,6 +70,20 @@ def _owner_id(account: dict[str, Any]) -> int:
             detail="Credenciales no válidas.",
         )
     return owner_id
+
+
+def _validated_available_capital(value: float | None) -> float | None:
+    if value is None:
+        return None
+    if not math.isfinite(value) or value < 0 or value > 1_000_000_000_000:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "availableCapital debe ser un número finito entre 0 y "
+                "1000000000000, denominado en baseCurrency."
+            ),
+        )
+    return value
 
 
 def _policy() -> dict[str, Any]:
@@ -116,10 +133,12 @@ def put_preferences(
     payload: UserPreferencesRequest,
     account: Annotated[dict[str, Any], Depends(current_account)],
 ) -> dict[str, Any]:
+    preferences = payload.model_dump()
+    preferences["availableCapital"] = _validated_available_capital(payload.availableCapital)
     repository = _repository()
     stored = repository.upsert(
         owner_user_id=_owner_id(account),
-        preferences=payload.model_dump(),
+        preferences=preferences,
     )
     return {"status": "configured", "data": stored, "policy": _policy()}
 
