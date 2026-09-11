@@ -135,6 +135,72 @@ def test_history_depth_uses_365_day_span_and_explicit_coverage_threshold(
     assert report.deep_history_instrument_count == 2
     assert report.deep_history_coverage == pytest.approx(2 / 3)
     assert report.history_depth_ready is True
+    assert report.to_api_dict()["sourceContinuityRequired"] is True
+
+
+def test_history_depth_does_not_stitch_different_sources(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    instrument_id = _insert_instrument(instruments, "AAA")
+
+    observations = MarketObservationRepository(database=database)
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": base.isoformat(), "close": 100.0}],
+        source_provider="source_a",
+        retrieved_at=base + timedelta(days=1),
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=[
+            {
+                "timestamp": (base + timedelta(days=365)).isoformat(),
+                "close": 110.0,
+            }
+        ],
+        source_provider="source_b",
+        retrieved_at=base + timedelta(days=366),
+    )
+
+    report = MarketObservationCoverageService(database=database).get_report()
+
+    assert report.covered_instrument_count == 1
+    assert report.earliest_observed_at == base.isoformat()
+    assert report.latest_observed_at == (base + timedelta(days=365)).isoformat()
+    assert report.deep_history_instrument_count == 0
+    assert report.deep_history_coverage == 0.0
+    assert report.history_depth_ready is False
+
+
+def test_history_depth_counts_instrument_once_when_multiple_sources_are_deep(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    instrument_id = _insert_instrument(instruments, "AAA")
+
+    observations = MarketObservationRepository(database=database)
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    for source in ("source_a", "source_b"):
+        observations.save_many(
+            instrument_id=instrument_id,
+            observations=[
+                {"timestamp": base.isoformat(), "close": 100.0},
+                {
+                    "timestamp": (base + timedelta(days=365)).isoformat(),
+                    "close": 110.0,
+                },
+            ],
+            source_provider=source,
+            retrieved_at=base + timedelta(days=366),
+        )
+
+    report = MarketObservationCoverageService(database=database).get_report()
+
+    assert report.deep_history_instrument_count == 1
+    assert report.deep_history_coverage == 1.0
+    assert report.history_depth_ready is True
 
 
 def test_etfs_and_funds_do_not_dilute_history_coverage_denominator(tmp_path: Path) -> None:
