@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 from fastapi import HTTPException
@@ -7,6 +7,7 @@ from app.api import portfolio as portfolio_api
 
 
 AS_OF = "2026-09-05T12:00:00+00:00"
+ACCOUNT = {"id": 1, "email": "portfolio-test@example.invalid"}
 
 
 class FakeCorrelationStore:
@@ -14,16 +15,7 @@ class FakeCorrelationStore:
 
     def calculate_and_seal(self, **kwargs):
         self.calls.append(kwargs)
-        return {
-            "status": "portfolio_correlation_evidence_sealed_non_advisory",
-            "evidenceFingerprint": "a" * 64,
-            "recordFingerprint": "b" * 64,
-            "persistedAt": "2026-09-05T12:01:00+00:00",
-            "advisoryStatus": "no_advice",
-            "productionEligible": False,
-            "allocationEligible": False,
-            "automaticTrading": False,
-        }
+        return {"status": "portfolio_correlation_evidence_sealed_non_advisory", "evidenceFingerprint": "a" * 64, "recordFingerprint": "b" * 64, "persistedAt": "2026-09-05T12:01:00+00:00", "advisoryStatus": "no_advice", "productionEligible": False, "allocationEligible": False, "automaticTrading": False}
 
 
 class FakeAuthorizedAllocation:
@@ -31,64 +23,19 @@ class FakeAuthorizedAllocation:
 
     def build(self, **kwargs):
         self.calls.append(kwargs)
-        return {
-            "status": "verified_allocation_pipeline_non_advisory",
-            "allocationCandidate": {"status": "allocation_candidate_non_advisory"},
-            "economicContractAuthority": {
-                "economicContractFingerprint": "d" * 64,
-                "resolvedFromAppendOnlyBackendAuthority": True,
-            },
-            "economicContractAuthorityBoundToAllocation": True,
-            "callerSuppliedEconomicContractAccepted": False,
-            "correlationAuthority": [],
-            "correlationAuthorityBoundToAllocation": True,
-            "callerSuppliedCorrelationArtifactsAccepted": False,
-            "advisoryStatus": "no_advice",
-            "recommendationCandidateReady": False,
-            "productionEligible": False,
-            "allocationEligible": False,
-            "automaticTrading": False,
-            "policy": {
-                "economicContractMustResolveFromAppendOnlyBackendAuthority": True,
-                "callerSuppliedEconomicContractAccepted": False,
-                "correlationMustResolveFromAppendOnlyBackendAuthority": True,
-                "callerSuppliedCorrelationJsonAccepted": False,
-                "automaticTrading": False,
-            },
-        }
+        return {"status": "verified_allocation_pipeline_non_advisory", "allocationCandidate": {"status": "allocation_candidate_non_advisory"}, "economicContractAuthority": {"economicContractFingerprint": "d" * 64, "resolvedFromAppendOnlyBackendAuthority": True}, "economicContractAuthorityBoundToAllocation": True, "callerSuppliedEconomicContractAccepted": False, "correlationAuthority": [], "correlationAuthorityBoundToAllocation": True, "callerSuppliedCorrelationArtifactsAccepted": False, "advisoryStatus": "no_advice", "recommendationCandidateReady": False, "productionEligible": False, "allocationEligible": False, "automaticTrading": False, "policy": {"economicContractMustResolveFromAppendOnlyBackendAuthority": True, "callerSuppliedEconomicContractAccepted": False, "correlationMustResolveFromAppendOnlyBackendAuthority": True, "callerSuppliedCorrelationJsonAccepted": False, "automaticTrading": False}}
 
 
 def _allocation_payload(**overrides):
-    payload = {
-        "uncertaintyBoundActionCandidateFingerprint": "c" * 64,
-        "allocationPolicyId": "policy-001",
-        "referenceCapital": 10000.0,
-        "baseCurrency": "EUR",
-        "positions": [],
-        "correlationEvidenceFingerprints": [],
-        "asOf": AS_OF,
-    }
+    payload = {"uncertaintyBoundActionCandidateFingerprint": "c" * 64, "allocationPolicyId": "policy-001", "referenceCapital": 10000.0, "baseCurrency": "EUR", "positions": [], "correlationEvidenceFingerprints": [], "asOf": AS_OF}
     payload.update(overrides)
     return payload
 
 
 def test_correlation_evidence_api_calculates_and_seals_backend_authority(monkeypatch):
     FakeCorrelationStore.calls = []
-    monkeypatch.setattr(
-        portfolio_api,
-        "RecommendationPortfolioCorrelationEvidenceStoreService",
-        FakeCorrelationStore,
-    )
-
-    result = portfolio_api.post_portfolio_correlation_evidence(
-        {
-            "leftInstrumentId": 10,
-            "rightInstrumentId": 20,
-            "sourceProvider": "YAHOO_CHART",
-            "knowledgeCutoff": AS_OF,
-        }
-    )
-
+    monkeypatch.setattr(portfolio_api, "RecommendationPortfolioCorrelationEvidenceStoreService", FakeCorrelationStore)
+    result = portfolio_api.post_portfolio_correlation_evidence(account=ACCOUNT, payload={"leftInstrumentId": 10, "rightInstrumentId": 20, "sourceProvider": "YAHOO_CHART", "knowledgeCutoff": AS_OF})
     assert result["data"]["evidenceFingerprint"] == "a" * 64
     assert result["data"]["advisoryStatus"] == "no_advice"
     assert result["data"]["productionEligible"] is False
@@ -99,15 +46,8 @@ def test_correlation_evidence_api_calculates_and_seals_backend_authority(monkeyp
 
 def test_allocation_api_accepts_only_sealed_fingerprints_not_raw_authority_artifacts(monkeypatch):
     FakeAuthorizedAllocation.calls = []
-    monkeypatch.setattr(
-        portfolio_api,
-        "RecommendationAuthorizedAllocationPipelineService",
-        FakeAuthorizedAllocation,
-    )
-    result = portfolio_api.post_portfolio_allocation_candidate(
-        _allocation_payload(correlationEvidenceFingerprints=["a" * 64])
-    )
-
+    monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", FakeAuthorizedAllocation)
+    result = portfolio_api.post_portfolio_allocation_candidate(account=ACCOUNT, payload=_allocation_payload(correlationEvidenceFingerprints=["a" * 64]))
     call = FakeAuthorizedAllocation.calls[0]
     assert call["uncertainty_bound_action_candidate_fingerprint"] == "c" * 64
     assert call["correlation_evidence_fingerprints"] == ["a" * 64]
@@ -125,32 +65,20 @@ def test_allocation_api_accepts_only_sealed_fingerprints_not_raw_authority_artif
 
 def test_allocation_api_rejects_caller_supplied_economic_contract(monkeypatch):
     FakeAuthorizedAllocation.calls = []
-    monkeypatch.setattr(
-        portfolio_api,
-        "RecommendationAuthorizedAllocationPipelineService",
-        FakeAuthorizedAllocation,
-    )
+    monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", FakeAuthorizedAllocation)
     with pytest.raises(HTTPException) as exc_info:
-        portfolio_api.post_portfolio_allocation_candidate(
-            _allocation_payload(
-                economicContract={"economicContractFingerprint": "d" * 64}
-            )
-        )
+        portfolio_api.post_portfolio_allocation_candidate(account=ACCOUNT, payload=_allocation_payload(economicContract={"economicContractFingerprint": "d" * 64}))
     assert exc_info.value.status_code == 400
     assert "economicContract no se acepta" in exc_info.value.detail
     assert FakeAuthorizedAllocation.calls == []
 
 
 def test_allocation_api_rejects_raw_correlation_json_without_fingerprint_list(monkeypatch):
-    monkeypatch.setattr(
-        portfolio_api,
-        "RecommendationAuthorizedAllocationPipelineService",
-        FakeAuthorizedAllocation,
-    )
+    monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", FakeAuthorizedAllocation)
     payload = _allocation_payload(correlationEvidence=[{"correlation": 0.1}])
     payload.pop("correlationEvidenceFingerprints")
     with pytest.raises(HTTPException) as exc_info:
-        portfolio_api.post_portfolio_allocation_candidate(payload)
+        portfolio_api.post_portfolio_allocation_candidate(account=ACCOUNT, payload=payload)
     assert exc_info.value.status_code == 400
     assert "correlationEvidenceFingerprints" in exc_info.value.detail
 
@@ -161,27 +89,16 @@ def test_allocation_api_blocks_any_production_escape(monkeypatch):
             result = FakeAuthorizedAllocation().build(**kwargs)
             result["productionEligible"] = True
             return result
-
-    monkeypatch.setattr(
-        portfolio_api,
-        "RecommendationAuthorizedAllocationPipelineService",
-        UnsafeAllocation,
-    )
+    monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", UnsafeAllocation)
     with pytest.raises(HTTPException) as exc_info:
-        portfolio_api.post_portfolio_allocation_candidate(_allocation_payload())
+        portfolio_api.post_portfolio_allocation_candidate(account=ACCOUNT, payload=_allocation_payload())
     assert exc_info.value.status_code == 409
     assert "productionEligible" in exc_info.value.detail
 
 
 def test_allocation_api_requires_timezone_aware_as_of(monkeypatch):
-    monkeypatch.setattr(
-        portfolio_api,
-        "RecommendationAuthorizedAllocationPipelineService",
-        FakeAuthorizedAllocation,
-    )
+    monkeypatch.setattr(portfolio_api, "RecommendationAuthorizedAllocationPipelineService", FakeAuthorizedAllocation)
     with pytest.raises(HTTPException) as exc_info:
-        portfolio_api.post_portfolio_allocation_candidate(
-            _allocation_payload(asOf="2026-09-05T12:00:00")
-        )
+        portfolio_api.post_portfolio_allocation_candidate(account=ACCOUNT, payload=_allocation_payload(asOf="2026-09-05T12:00:00"))
     assert exc_info.value.status_code == 400
     assert "zona horaria" in exc_info.value.detail
