@@ -9,6 +9,7 @@ import yfinance as yf
 
 class YahooMarketService:
     PROVIDER_ID = "yahoo"
+    DEFAULT_HISTORY_PERIOD = "1y"
 
     def get_quote(self, symbol: str) -> dict[str, Any] | None:
         normalized_symbol = self._normalize_symbol(symbol)
@@ -130,9 +131,14 @@ class YahooMarketService:
         history = ticker.history(
             start=from_date,
             end=yahoo_end_date,
-            period=None if from_date or to_date else "1mo",
+            period=(
+                None
+                if from_date or to_date
+                else self.DEFAULT_HISTORY_PERIOD
+            ),
             interval="1d",
             auto_adjust=False,
+            actions=True,
         )
 
         if history.empty:
@@ -153,6 +159,9 @@ class YahooMarketService:
             if adjusted_close is None:
                 adjusted_close = close_price
 
+            dividend = self._to_float(row.get("Dividends"))
+            stock_split = self._to_float(row.get("Stock Splits"))
+
             result.append(
                 {
                     "symbol": normalized_symbol,
@@ -165,6 +174,10 @@ class YahooMarketService:
                     "close": close_price,
                     "adjustedClose": adjusted_close,
                     "volume": self._to_float(row.get("Volume")),
+                    "dividend": dividend if dividend not in (None, 0.0) else None,
+                    "stockSplit": (
+                        stock_split if stock_split not in (None, 0.0) else None
+                    ),
                     "change": None,
                     "changePercentage": None,
                 }
