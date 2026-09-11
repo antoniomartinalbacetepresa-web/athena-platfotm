@@ -7,6 +7,8 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.auth_service import AuthService
+from app.services.password_recovery_mailer import PasswordRecoveryMailer
+from app.services.password_recovery_service import PasswordRecoveryService
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -28,6 +30,19 @@ class ChangePasswordRequest(BaseModel):
     newPassword: str = Field(min_length=12, max_length=256)
 
 
+class PasswordRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=254)
+
+
+class PasswordRecoveryResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=32, max_length=512)
+    newPassword: str = Field(min_length=12, max_length=256)
+
+
 def _service() -> AuthService:
     try:
         return AuthService()
@@ -35,6 +50,20 @@ def _service() -> AuthService:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Autenticación no configurada de forma segura.",
+        ) from exc
+
+
+def _recovery_service() -> PasswordRecoveryService:
+    return PasswordRecoveryService()
+
+
+def _recovery_mailer() -> PasswordRecoveryMailer:
+    try:
+        return PasswordRecoveryMailer()
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recuperación de cuenta no configurada de forma segura.",
         ) from exc
 
 
@@ -98,6 +127,58 @@ def token(
         "token_type": "bearer",
         "expires_in": service.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
+
+
+@router.post("/recovery/request", status_code=status.HTTP_202_ACCEPTED)
+def request_password_recovery(
+    payload: PasswordRecoveryRequest,
+    request: Request,
+    response: Response,
+) -> dict[str, str]:
+    mailer = _recovery_mailer()
+    service = _recovery_service()
+    client_id = request.client.host if request.client is not None else "unknown"
+    rate_key = service.recovery_rate_key(email=payload.email, client_id=client_id)
+    rate = service.consume_recovery_attempt(rate_key=rate_key)
+    if not bool(rate["allowed"]):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiadas solicitudes de recuperación. Inténtalo más tarde.",
+            headers={"Retry-After": str(service.RECOVERY_WINDOW_SECONDS)},
+        )
+    challenge = service.request(email=payload.email)
+    if challenge is not None:
+        try:
+            mailer.send(challenge)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No se pudo entregar la recuperación de cuenta.",
+            ) from exc
+    response.headers["X-RateLimit-Limit"] = str(rate["limit"])
+    response.headers["X-RateLimit-Remaining"] = str(rate["remaining"])
+    return {
+        "status": "recovery_requested",
+        "message": "Si existe una cuenta válida para ese email, se enviarán instrucciones de recuperación.",
+    }
+
+
+@router.post("/recovery/reset", status_code=status.HTTP_204_NO_CONTENT)
+def reset_password(payload: PasswordRecoveryResetRequest) -> Response:
+    service = _recovery_service()
+    try:
+        changed = service.reset(
+            token=payload.token,
+            new_password=payload.newPassword,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not changed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token de recuperación no válido o caducado.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def current_account(
