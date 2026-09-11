@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
@@ -78,6 +78,7 @@ from app.api.sec_fundamental_pit import router as sec_fundamental_pit_router
 from app.api.sources import router as sources_router
 from app.api.user_portfolio import router as user_portfolio_router
 from app.api.user_profile import router as user_profile_router
+from app.security.portfolio_owner_context import bind_portfolio_owner_context
 
 
 app = FastAPI(
@@ -120,10 +121,19 @@ app.include_router(recommendation_factor_risk_sealed_value_router)
 app.include_router(recommendation_market_factor_exposure_router)
 app.include_router(recommendation_fundamental_factor_evidence_router)
 app.include_router(recommendation_performance_attribution_router)
-app.include_router(recommendation_portfolio_performance_attribution_router)
-app.include_router(recommendation_portfolio_time_weighted_return_router)
+app.include_router(
+    recommendation_portfolio_performance_attribution_router,
+    dependencies=[Depends(bind_portfolio_owner_context)],
+)
+app.include_router(
+    recommendation_portfolio_time_weighted_return_router,
+    dependencies=[Depends(bind_portfolio_owner_context)],
+)
 app.include_router(recommendation_portfolio_event_ledger_router)
-app.include_router(recommendation_portfolio_nlv_snapshot_router)
+app.include_router(
+    recommendation_portfolio_nlv_snapshot_router,
+    dependencies=[Depends(bind_portfolio_owner_context)],
+)
 app.include_router(recommendation_portfolio_state_reconstruction_router)
 app.include_router(recommendation_reconciled_portfolio_weights_router)
 app.include_router(recommendation_investment_journal_router)
