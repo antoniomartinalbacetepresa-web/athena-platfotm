@@ -320,17 +320,23 @@ class ProfilePreferencesForm extends StatefulWidget {
 }
 
 class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
+  static const _unspecified = 'unspecified';
+
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _horizonController;
   late final TextEditingController _currencyController;
+  late final TextEditingController _drawdownController;
   late String _riskTolerance;
   late String _objective;
+  late String _experienceLevel;
+  late String _liquidityNeed;
 
   @override
   void initState() {
     super.initState();
     _horizonController = TextEditingController();
     _currencyController = TextEditingController();
+    _drawdownController = TextEditingController();
     _apply(widget.preferences);
   }
 
@@ -345,24 +351,34 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
   void _apply(UserPreferences? value) {
     _riskTolerance = value?.riskTolerance ?? 'balanced';
     _objective = value?.objective ?? 'balanced_growth';
+    _experienceLevel = value?.experienceLevel ?? _unspecified;
+    _liquidityNeed = value?.liquidityNeed ?? _unspecified;
     _horizonController.text = (value?.investmentHorizonYears ?? 10).toString();
     _currencyController.text = value?.baseCurrency ?? 'EUR';
+    _drawdownController.text = value?.maxDrawdownTolerancePct?.toString() ?? '';
   }
 
   @override
   void dispose() {
     _horizonController.dispose();
     _currencyController.dispose();
+    _drawdownController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final drawdownText = _drawdownController.text.trim();
     final preferences = UserPreferences(
       riskTolerance: _riskTolerance,
       investmentHorizonYears: int.parse(_horizonController.text.trim()),
       baseCurrency: _currencyController.text.trim().toUpperCase(),
       objective: _objective,
+      experienceLevel:
+          _experienceLevel == _unspecified ? null : _experienceLevel,
+      liquidityNeed: _liquidityNeed == _unspecified ? null : _liquidityNeed,
+      maxDrawdownTolerancePct:
+          drawdownText.isEmpty ? null : int.parse(drawdownText),
     );
     await widget.onSave(preferences);
   }
@@ -401,6 +417,16 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
             const Text(
               'Se guardan cifradas en el backend asociado a tu cuenta. ATHENA no mantiene una copia local de estos campos.',
               style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Estas preferencias aportan contexto. No activan recomendaciones, ponderaciones ni operaciones automáticas.',
+              key: Key('personalization-safety-note'),
+              style: TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 11,
+                height: 1.35,
+              ),
             ),
             if (widget.error != null) ...[
               const SizedBox(height: 10),
@@ -451,6 +477,40 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
                     },
             ),
             const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const Key('experience-level-field'),
+              value: _experienceLevel,
+              decoration: const InputDecoration(labelText: 'Experiencia inversora'),
+              items: const [
+                DropdownMenuItem(value: _unspecified, child: Text('No indicada')),
+                DropdownMenuItem(value: 'beginner', child: Text('Principiante')),
+                DropdownMenuItem(value: 'intermediate', child: Text('Intermedia')),
+                DropdownMenuItem(value: 'advanced', child: Text('Avanzada')),
+              ],
+              onChanged: widget.busy
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _experienceLevel = value);
+                    },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const Key('liquidity-need-field'),
+              value: _liquidityNeed,
+              decoration: const InputDecoration(labelText: 'Necesidad de liquidez'),
+              items: const [
+                DropdownMenuItem(value: _unspecified, child: Text('No indicada')),
+                DropdownMenuItem(value: 'low', child: Text('Baja')),
+                DropdownMenuItem(value: 'medium', child: Text('Media')),
+                DropdownMenuItem(value: 'high', child: Text('Alta')),
+              ],
+              onChanged: widget.busy
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _liquidityNeed = value);
+                    },
+            ),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _horizonController,
               enabled: !widget.busy,
@@ -474,6 +534,26 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
                 final currency = value?.trim().toUpperCase() ?? '';
                 if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
                   return 'Introduce un código de moneda de tres letras.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              key: const Key('max-drawdown-field'),
+              controller: _drawdownController,
+              enabled: !widget.busy,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Drawdown máximo tolerable (%)',
+                hintText: 'Opcional: 5–60',
+              ),
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) return null;
+                final drawdown = int.tryParse(text);
+                if (drawdown == null || drawdown < 5 || drawdown > 60) {
+                  return 'Introduce un drawdown entre 5% y 60%, o déjalo vacío.';
                 }
                 return null;
               },
