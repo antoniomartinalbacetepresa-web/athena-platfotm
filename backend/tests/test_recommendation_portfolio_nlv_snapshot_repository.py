@@ -103,13 +103,13 @@ def test_nlv_snapshot_detects_database_tampering(tmp_path):
     artifact = append(repository)["artifact"]
     with repository._database.connect() as connection:
         row = connection.execute(
-            "SELECT artifact_json FROM athena_portfolio_nlv_snapshots WHERE snapshot_key = ?",
+            "SELECT artifact_json FROM athena_portfolio_nlv_snapshots_v2 WHERE snapshot_key = ?",
             (artifact["snapshotKey"],),
         ).fetchone()
         payload = json.loads(str(row["artifact_json"]))
         payload["value"] = 999.0
         connection.execute(
-            "UPDATE athena_portfolio_nlv_snapshots SET artifact_json = ? WHERE snapshot_key = ?",
+            "UPDATE athena_portfolio_nlv_snapshots_v2 SET artifact_json = ? WHERE snapshot_key = ?",
             (json.dumps(payload, sort_keys=True, separators=(",", ":")), artifact["snapshotKey"]),
         )
     with pytest.raises(ValueError):
