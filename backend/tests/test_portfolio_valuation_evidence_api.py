@@ -7,11 +7,12 @@ from app.main import app
 
 FINGERPRINT = "a" * 64
 RECORD_FINGERPRINT = "b" * 64
+OWNER_ID = 1
 
 
 @pytest.fixture(autouse=True)
 def authenticated_account_override():
-    app.dependency_overrides[current_account] = lambda: {"id": 1, "email": "portfolio-test@example.invalid"}
+    app.dependency_overrides[current_account] = lambda: {"id": OWNER_ID, "email": "portfolio-test@example.invalid"}
     try:
         yield
     finally:
@@ -26,8 +27,9 @@ def _request() -> dict:
     return {"baseCurrency": "EUR", "asOf": "2026-09-05T10:00:00+00:00", "positions": [{"instrumentId": 7, "quantity": 5.0, "positionSourceProvider": "user_portfolio", "positionObservedAt": "2026-09-05T09:00:00+00:00", "positionRetrievedAt": "2026-09-05T09:00:01+00:00", "marketSourceProvider": "yahoo_chart"}]}
 
 
-def test_portfolio_valuation_api_builds_validates_and_seals(monkeypatch) -> None:
+def test_portfolio_valuation_api_builds_validates_and_seals_for_authenticated_owner(monkeypatch) -> None:
     calls = []
+    scoped = []
     artifact = _artifact()
     class FakeService:
         def build(self, *, positions, base_currency, as_of):
@@ -39,15 +41,21 @@ def test_portfolio_valuation_api_builds_validates_and_seals(monkeypatch) -> None
     class FakeRepository:
         def __init__(self, *, validator):
             assert isinstance(validator, FakeService)
+    class FakeOwnerScopedRepository:
+        def __init__(self, *, owner_user_id, repository):
+            scoped.append((owner_user_id, repository))
         def seal(self, *, artifact):
             return {"artifact": artifact, "persisted_at": "2026-09-05T10:00:01+00:00", "record_fingerprint": RECORD_FINGERPRINT}
         def validate_record(self, record):
             return record
     monkeypatch.setattr("app.api.portfolio.RecommendationPortfolioValuationEvidenceService", FakeService)
     monkeypatch.setattr("app.api.portfolio.RecommendationPortfolioValuationEvidenceRepository", FakeRepository)
+    monkeypatch.setattr("app.api.portfolio.OwnerScopedPortfolioValuationEvidenceRepository", FakeOwnerScopedRepository)
     response = TestClient(app).post("/api/v1/portfolio/valuation-evidence", json=_request())
     assert response.status_code == 200
     assert calls == [(_request()["positions"], "EUR", "2026-09-05T10:00:00+00:00")]
+    assert scoped[0][0] == OWNER_ID
+    assert isinstance(scoped[0][1], FakeRepository)
     body = response.json()
     assert body["data"]["portfolioValuationEvidenceFingerprint"] == FINGERPRINT
     assert body["data"]["advisoryStatus"] == "no_advice"
