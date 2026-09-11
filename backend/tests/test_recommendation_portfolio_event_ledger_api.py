@@ -1,9 +1,11 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
 
 
 client = TestClient(app)
+_TEST_OWNER = 101
 
 
 def event_payload() -> dict[str, object]:
@@ -57,7 +59,8 @@ def test_portfolio_event_ledger_api_persists_and_projects_external_flow(tmp_path
     assert len(flow_data["flows"]) == 1
     assert flow_data["flows"][0]["amount"] == 11.0
     assert flow_data["flows"][0]["sourceRef"] == "deposit-api-1"
-    assert ledger_path.exists()
+    assert owner_scoped_ledger_path(ledger_path, owner_user_id=_TEST_OWNER).exists()
+    assert not ledger_path.exists()
 
 
 def test_portfolio_event_ledger_api_is_idempotent_for_same_evidence(tmp_path, monkeypatch) -> None:
