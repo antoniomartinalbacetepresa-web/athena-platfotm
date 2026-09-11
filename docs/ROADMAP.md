@@ -45,7 +45,7 @@ This number measures the analytical and investment-research core only. It must n
 
 | Area | Progress | Current evidence / remaining work |
 | --- | ---: | --- |
-| Core architecture & backend | 94% | FastAPI, repositories/services, database migrations, readiness diagnostics, authentication and encrypted owner-scoped profile persistence exist. Remaining: production hardening, protected merge gates and final cross-module acceptance. |
+| Core architecture & backend | 94% | FastAPI, repositories/services, database migrations, readiness diagnostics, authentication, encrypted owner-scoped profile persistence and verified SQLite backup/recovery services exist. Remaining: production hardening, protected merge gates and final cross-module acceptance. |
 | Welcome & navigation | 90% | Welcome, account login/registration, guest mode, Dashboard, Market, News, Portfolio and Profile routes exist. Remaining: final end-to-end navigation/accessibility acceptance. |
 | Dashboard | 85% | Responsive dashboard, live panels and operational readiness surface exist. Remaining: end-to-end states and final UX acceptance. |
 | Market | 80% | Real persisted universe, regional ingestion, market-cap/canonical identity logic and standalone UI exist. Remaining: canonical weighting evidence, production coverage and deeper historical acceptance. |
@@ -56,10 +56,10 @@ This number measures the analytical and investment-research core only. It must n
 | Market history | 65% | Backfill, PIT preservation and depth-aware readiness gate exist. Remaining: real >=365-day eligible-universe coverage, source continuity and corporate-action acceptance. |
 | Continuous learning | 70% | Calibration/drift/evaluation/shadow/OOS infrastructure exists. Remaining: sufficient real longitudinal OOS evidence and controlled promotion policy. |
 | Personalization | 65% | Owner-scoped risk tolerance, investment horizon, base currency and objective have validated AES-256-GCM persistence, authenticated Flutter transport and a real Profile UI for load/save/reload/delete. Profile encryption now supports an explicit current key version, strict historical keyring, exact-version decrypt and transactional re-encryption to the current key; unknown/malformed key versions fail closed. Remaining: richer questionnaire/adaptive personalization, encrypted capital/history where appropriate, deployment key-management procedure and final E2E acceptance. |
-| Security & production hardening | 84% | Fail-closed auth secret, Argon2 hashes, signed expiring JWT, tamper checks, individual and all-session revocation, authenticated password rotation, resource-level portfolio authorization, persistent login rate limiting, durable secure client token storage and authenticated AES-256-GCM profile encryption are validated. Versioned profile-key rotation/migration is transactional and tested, including rollback on corrupted ciphertext. Remaining: verified account recovery, backups, deployment secret management, threat-model acceptance and required branch checks. |
-| Testing & CI | 96% | Backend pytest plus Flutter analyze/test validate pushed changes; auth revocation, all-session invalidation, password rotation, throttling, secure token restoration, cross-user portfolio isolation, privacy-preserving portfolio sync, encrypted profile confidentiality/integrity, profile key rotation/rollback and protected Profile preference form behavior have dedicated coverage. Remaining: mandatory protected-branch checks, broader E2E/security/recovery and release gates. |
+| Security & production hardening | 87% | Fail-closed auth secret, Argon2 hashes, signed expiring JWT, tamper checks, individual and all-session revocation, authenticated password rotation, resource-level portfolio authorization, persistent login rate limiting, durable secure client token storage and authenticated AES-256-GCM profile encryption are validated. Versioned profile-key rotation/migration is transactional and tested. Database backup/recovery now uses SQLite's backup API for WAL-safe snapshots, SHA-256 manifests, `PRAGMA integrity_check`, schema-version validation, non-destructive restore-to-new-path semantics and an operator CLI. Remaining: verified account recovery, deployment secret management, off-site/retention policy plus restore drill, threat-model acceptance and required branch checks. |
+| Testing & CI | 97% | Backend pytest plus Flutter analyze/test validate pushed changes; auth revocation, all-session invalidation, password rotation, throttling, secure token restoration, cross-user portfolio isolation, privacy-preserving portfolio sync, encrypted profile confidentiality/integrity, profile key rotation/rollback, protected Profile preference form behavior and backup/verify/restore safety have dedicated coverage. Remaining: mandatory protected-branch checks, broader E2E/security/recovery and release gates. |
 
-**Overall whole-product engineering completion: approximately 80%.**
+**Overall whole-product engineering completion: approximately 81%.**
 
 ## Definition of 100%
 
@@ -69,7 +69,7 @@ ATHENA reaches 100% engineering completion only when every whole-product area ab
 
 1. Finish the authentication lifecycle: verified account recovery and remaining account-lifecycle controls.
 2. Finish authenticated Portfolio integration and extend encrypted Profile personalization only with an explicit privacy contract; add richer questionnaire/adaptive behavior without insecure local persistence.
-3. Operationalize backup/recovery, deployment key/secret management and threat-model acceptance; keep historical encryption keys only for the migration window and remove them after all rows have been re-encrypted and verified.
+3. Complete production recovery operations: off-site/retention policy, scheduled backups, restore drill, deployment key/secret management and threat-model acceptance; keep historical encryption keys only for the migration window and remove them after all rows have been re-encrypted and verified.
 4. Close canonical market-weighting structural blockers without lowering thresholds; external approval remains human-controlled.
 5. Reach real historical depth/coverage and corporate-action-safe acceptance.
 6. Close longitudinal OOS and forecast-error evidence gates without fabricated/synthetic production evidence.
@@ -79,8 +79,9 @@ ATHENA reaches 100% engineering completion only when every whole-product area ab
 
 ## Latest validated increment
 
-- Start-of-run SHA `198bab2c006fd8c36f87305392b17952b2fba9fd` had GitHub Actions run `34545681337` fully green and already included durable Flutter session persistence using platform secure storage plus server validation on restore.
-- Functional SHA `6dbbd980bc1d7f22a212c10fa03eea324eb31a4c` adds versioned profile encryption-key rotation: current key version, strict historical keyring, exact-version decryption and explicit transactional re-encryption.
-- Dedicated regressions prove v1 data remains readable during a v1→v2 migration, migrated rows work after the old key is removed, a second migration is idempotent, unknown versions fail closed, malformed/ambiguous key configuration is rejected and any corrupt row rolls the migration back rather than partially rotating the database.
-- GitHub Actions run `34546881916` passed Backend tests, Flutter analyze and Flutter tests for that exact functional SHA.
-- The branch still lacks mandatory protection/check enforcement, so green CI is validation evidence but not yet a production release gate.
+- Start-of-run SHA `4156e831853317b15e67b61d943bfa8922ff2c6b` had GitHub Actions run `34547034657` fully green before this increment and the branch remained unprotected.
+- Functional SHA `43174557a33b584f15250ba4f3b8d701b3811562` adds a verified SQLite backup/recovery service. Backups are produced through SQLite's native backup API rather than raw file copies, which is safe with the application's WAL journal mode. Each backup has a SHA-256 manifest, file-size check, `PRAGMA integrity_check` validation and ATHENA schema-version verification.
+- Recovery is deliberately non-destructive: it refuses to restore over the live database or over an existing destination and instead restores a verified snapshot to a new path. Dedicated regressions prove WAL-backed data is captured, tampered backups/manifests are rejected and existing/live destinations are protected.
+- Functional SHA `b004acafc5b8ae077555ad8c15729fdd929c10c5` adds and tests an operator CLI with `backup`, `verify` and `restore` commands over the same fail-closed service.
+- GitHub Actions run `34549331057` passed Backend tests, Flutter analyze and Flutter tests for that exact final functional SHA.
+- The branch still lacks mandatory protection/check enforcement, so green CI is validation evidence but not yet a production release gate. Backup software is now present and tested, but a real production backup schedule, off-site retention policy and restore drill remain required before disaster recovery can be called complete.
