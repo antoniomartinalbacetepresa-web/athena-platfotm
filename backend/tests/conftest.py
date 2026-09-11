@@ -14,7 +14,7 @@ _TEST_OWNER = 101
 
 @pytest.fixture(autouse=True)
 def _owner_context_for_professional_portfolio_tests(request: pytest.FixtureRequest) -> Iterator[None]:
-    module_name = str(getattr(request.module, "__name__", ""))
+    module_name = str(getattr(request.module, "__name__", "")).rsplit(".", 1)[-1]
     if not module_name.startswith("test_recommendation_portfolio"):
         yield
         return
@@ -25,7 +25,14 @@ def _owner_context_for_professional_portfolio_tests(request: pytest.FixtureReque
         "email": "portfolio-test@example.com",
     }
     try:
-        with portfolio_owner_scope(_TEST_OWNER):
+        # API requests establish their own owner context through the JWT-derived
+        # router dependency. Only direct NLV repository tests need an explicit
+        # trusted scope; keeping TWR core tests ownerless preserves their lower-
+        # level sealing/tamper contract without weakening the HTTP boundary.
+        if "nlv_snapshot_repository" in module_name:
+            with portfolio_owner_scope(_TEST_OWNER):
+                yield
+        else:
             yield
     finally:
         if previous is None:
