@@ -90,8 +90,8 @@ class AthenaAuthService {
 
   Future<void> requestPasswordRecovery({required String email}) async {
     final normalizedEmail = email.trim();
-    if (normalizedEmail.isEmpty) {
-      throw ArgumentError('Email obligatorio.');
+    if (normalizedEmail.length < 3 || normalizedEmail.length > 254) {
+      throw ArgumentError('Email de recuperación no válido.');
     }
     final response = await client.post(
       Uri.parse('$baseUrl/api/v1/auth/recovery/request'),
@@ -120,6 +120,11 @@ class AthenaAuthService {
     if (newPassword.length < 12 || newPassword.length > 256) {
       throw ArgumentError(
         'La nueva contraseña debe tener entre 12 y 256 caracteres.',
+      );
+    }
+    if (newPassword.trim() != newPassword) {
+      throw ArgumentError(
+        'La nueva contraseña no puede empezar ni terminar con espacios.',
       );
     }
     final response = await client.post(
