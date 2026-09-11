@@ -135,6 +135,16 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 10),
                     TextButton(
+                      key: const Key('login-recovery'),
+                      onPressed: _loading
+                          ? null
+                          : () => Navigator.pushNamed(
+                                context,
+                                AppRoutes.recovery,
+                              ),
+                      child: const Text('¿Has olvidado tu contraseña?'),
+                    ),
+                    TextButton(
                       onPressed: _loading
                           ? null
                           : () => Navigator.pushNamed(
