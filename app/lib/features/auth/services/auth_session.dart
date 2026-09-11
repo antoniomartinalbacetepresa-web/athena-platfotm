@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../models/auth_account.dart';
 import 'auth_token_store.dart';
 
@@ -88,6 +90,11 @@ class AuthSession {
 
   void clear() {
     _clearMemory();
+    // Existing UI call sites use a synchronous clear contract. Remove the
+    // durable token as well so a local logout cannot intentionally preserve a
+    // credential for the next launch. Explicit security-sensitive flows can
+    // await clearPersisted() when they need deletion failure surfaced.
+    unawaited(_tokenStore.deleteAccessToken().catchError((Object _) {}));
   }
 
   void _clearMemory() {
