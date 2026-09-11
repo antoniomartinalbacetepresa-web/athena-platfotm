@@ -88,7 +88,10 @@ def test_richer_personalization_round_trips_only_inside_encrypted_profile(
     serialized = " ".join(str(value) for value in row)
     assert "intermediate" not in serialized
     assert "low" not in serialized
-    assert "30" not in serialized
+    # Do not search for a short numeric value such as "30" in randomized
+    # Base64 ciphertext: those characters may legitimately occur by chance.
+    # The sensitive field name is a robust plaintext-leak sentinel.
+    assert "maxDrawdownTolerancePct" not in serialized
 
 
 def test_legacy_four_field_payload_remains_accepted(monkeypatch, tmp_path) -> None:
