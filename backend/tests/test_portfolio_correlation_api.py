@@ -34,6 +34,7 @@ def test_portfolio_correlation_api_forwards_pit_contract(monkeypatch):
     end = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
     payload = portfolio_api.get_portfolio_pair_correlation(
+        account={"id": 1},
         left_instrument_id=10,
         right_instrument_id=20,
         source_provider="yahoo_finance",
@@ -62,14 +63,11 @@ def test_portfolio_correlation_api_fails_closed_on_invalid_evidence(monkeypatch)
         def calculate_pair(self, **kwargs):
             raise ValueError("evidencia histórica insuficiente")
 
-    monkeypatch.setattr(
-        portfolio_api,
-        "PortfolioCorrelationService",
-        InvalidEvidenceService,
-    )
+    monkeypatch.setattr(portfolio_api, "PortfolioCorrelationService", InvalidEvidenceService)
 
     with pytest.raises(HTTPException) as exc_info:
         portfolio_api.get_portfolio_pair_correlation(
+            account={"id": 1},
             left_instrument_id=10,
             right_instrument_id=20,
             source_provider="yahoo_finance",
@@ -87,14 +85,11 @@ def test_portfolio_correlation_api_blocks_temporal_leakage(monkeypatch):
         def calculate_pair(self, **kwargs):
             raise RuntimeError("observación posterior al knowledge_cutoff")
 
-    monkeypatch.setattr(
-        portfolio_api,
-        "PortfolioCorrelationService",
-        TemporalLeakService,
-    )
+    monkeypatch.setattr(portfolio_api, "PortfolioCorrelationService", TemporalLeakService)
 
     with pytest.raises(HTTPException) as exc_info:
         portfolio_api.get_portfolio_pair_correlation(
+            account={"id": 1},
             left_instrument_id=10,
             right_instrument_id=20,
             source_provider="yahoo_finance",
