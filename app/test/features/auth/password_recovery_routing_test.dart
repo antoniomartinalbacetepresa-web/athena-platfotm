@@ -21,7 +21,7 @@ void main() {
   });
 
   testWidgets('recovery route consumes token from HTTPS-style query', (tester) async {
-    final token = 'q' * 43;
+    final token = List.filled(43, 'q').join();
     await tester.pumpWidget(
       MaterialApp(
         onGenerateRoute: AppRouter.generate,
