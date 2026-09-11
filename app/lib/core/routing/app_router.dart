@@ -5,7 +5,7 @@ import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/market/presentation/pages/market_page.dart';
 import '../../features/news/presentation/pages/news_page.dart';
-import '../../features/portfolio/presentation/pages/portfolio_page.dart';
+import '../../features/portfolio/presentation/pages/authenticated_portfolio_page.dart';
 import '../../features/profile/presentation/pages/profile_page.dart';
 import '../../features/welcome/presentation/pages/welcome_page.dart';
 import 'app_routes.dart';
@@ -40,7 +40,7 @@ class AppRouter {
 
       case AppRoutes.portfolio:
         return MaterialPageRoute(
-          builder: (_) => const PortfolioPage(),
+          builder: (_) => const AuthenticatedPortfolioPage(),
         );
 
       case AppRoutes.profile:
