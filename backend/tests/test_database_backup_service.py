@@ -36,6 +36,30 @@ def _seed_database(
         )
 
 
+def _set_created_at(
+    service: DatabaseBackupService,
+    backup_path: Path,
+    created_at_utc: str,
+) -> None:
+    manifest_path = service.manifest_path_for(
+        backup_path
+    )
+    manifest = json.loads(
+        manifest_path.read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest["created_at_utc"] = created_at_utc
+    manifest_path.write_text(
+        json.dumps(
+            manifest,
+            indent=2,
+            sort_keys=True,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_create_verify_and_restore_backup(
     tmp_path: Path,
 ) -> None:
@@ -308,3 +332,106 @@ def test_backup_rejects_source_as_destination(
         service.create_backup(
             database.database_path
         )
+
+
+def test_retention_keeps_newest_verified_backups(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(
+        tmp_path / "athena.db"
+    )
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup_dir = tmp_path / "backups"
+
+    backups = [
+        backup_dir / "athena-001.db",
+        backup_dir / "athena-002.db",
+        backup_dir / "athena-003.db",
+    ]
+    timestamps = [
+        "2026-09-08T00:00:00+00:00",
+        "2026-09-09T00:00:00+00:00",
+        "2026-09-10T00:00:00+00:00",
+    ]
+    for path, timestamp in zip(backups, timestamps, strict=True):
+        service.create_backup(path)
+        _set_created_at(service, path, timestamp)
+
+    result = service.apply_retention(
+        backup_dir,
+        keep_last=2,
+    )
+
+    assert result.kept == (
+        str(backups[2]),
+        str(backups[1]),
+    )
+    assert result.deleted == (
+        str(backups[0]),
+    )
+    assert not backups[0].exists()
+    assert not service.manifest_path_for(backups[0]).exists()
+    assert backups[1].exists()
+    assert backups[2].exists()
+
+
+def test_retention_fails_closed_before_deleting_if_managed_backup_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(
+        tmp_path / "athena.db"
+    )
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup_dir = tmp_path / "backups"
+
+    old_backup = backup_dir / "athena-old.db"
+    new_backup = backup_dir / "athena-new.db"
+    service.create_backup(old_backup)
+    service.create_backup(new_backup)
+    _set_created_at(service, old_backup, "2026-09-08T00:00:00+00:00")
+    _set_created_at(service, new_backup, "2026-09-10T00:00:00+00:00")
+
+    with new_backup.open("ab") as handle:
+        handle.write(b"corrupt")
+
+    with pytest.raises(RuntimeError):
+        service.apply_retention(
+            backup_dir,
+            keep_last=1,
+        )
+
+    assert old_backup.exists()
+    assert service.manifest_path_for(old_backup).exists()
+    assert new_backup.exists()
+    assert service.manifest_path_for(new_backup).exists()
+
+
+def test_retention_ignores_unmanaged_files_and_rejects_zero_retention(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(
+        tmp_path / "athena.db"
+    )
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+
+    unrelated = backup_dir / "manual.db"
+    unrelated.write_bytes(b"leave-me-alone")
+
+    with pytest.raises(ValueError, match="al menos un backup"):
+        service.apply_retention(
+            backup_dir,
+            keep_last=0,
+        )
+
+    result = service.apply_retention(
+        backup_dir,
+        keep_last=1,
+    )
+    assert result.kept == ()
+    assert result.deleted == ()
+    assert unrelated.read_bytes() == b"leave-me-alone"
