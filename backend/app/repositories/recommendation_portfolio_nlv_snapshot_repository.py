@@ -13,10 +13,16 @@ from app.database.athena_database import AthenaDatabase
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SCOPE = "total_net_liquidation_value_in_reporting_currency"
 _PHASES = frozenset({"regular", "pre_external_flow", "post_external_flow"})
+_TABLE = "athena_portfolio_nlv_snapshots_v2"
 
 
 class RecommendationPortfolioNlvSnapshotRepository:
-    """Append-only PIT store for independently observed total portfolio NLV snapshots."""
+    """Append-only PIT store for owner-scoped total portfolio NLV snapshots.
+
+    Version 2 deliberately does not import rows from the legacy ownerless table.
+    Ownership cannot be inferred safely after the fact, so legacy rows remain
+    preserved in SQLite but are not reachable through this repository.
+    """
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -25,10 +31,11 @@ class RecommendationPortfolioNlvSnapshotRepository:
         self._database.initialize()
         with self._database.connect() as connection:
             connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS athena_portfolio_nlv_snapshots (
+                f"""
+                CREATE TABLE IF NOT EXISTS {_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    snapshot_key TEXT NOT NULL UNIQUE,
+                    owner_user_id INTEGER NOT NULL CHECK (owner_user_id > 0),
+                    snapshot_key TEXT NOT NULL,
                     portfolio_id TEXT NOT NULL,
                     reporting_currency TEXT NOT NULL,
                     observed_at TEXT NOT NULL,
@@ -40,18 +47,26 @@ class RecommendationPortfolioNlvSnapshotRepository:
                     artifact_hash TEXT NOT NULL,
                     artifact_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    UNIQUE (portfolio_id, source, source_ref),
-                    UNIQUE (portfolio_id, reporting_currency, observed_at, phase, source, source_ref)
+                    UNIQUE (owner_user_id, snapshot_key),
+                    UNIQUE (owner_user_id, portfolio_id, source, source_ref),
+                    UNIQUE (
+                        owner_user_id, portfolio_id, reporting_currency,
+                        observed_at, phase, source, source_ref
+                    )
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_portfolio_nlv_pit
-                ON athena_portfolio_nlv_snapshots(portfolio_id, reporting_currency, observed_at, available_at, id);
+                CREATE INDEX IF NOT EXISTS idx_portfolio_nlv_v2_owner_pit
+                ON {_TABLE}(
+                    owner_user_id, portfolio_id, reporting_currency,
+                    observed_at, available_at, id
+                );
                 """
             )
 
     def append(
         self,
         *,
+        owner_user_id: int,
         portfolio_id: str,
         reporting_currency: str,
         value: float,
@@ -62,6 +77,7 @@ class RecommendationPortfolioNlvSnapshotRepository:
         source_ref: str,
         as_of: datetime,
     ) -> dict[str, Any]:
+        owner_id = self._owner_user_id(owner_user_id)
         self.initialize()
         artifact = self._artifact(
             portfolio_id=portfolio_id,
@@ -79,56 +95,94 @@ class RecommendationPortfolioNlvSnapshotRepository:
         created_at = datetime.now(timezone.utc).isoformat()
         with self._database.connect() as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM athena_portfolio_nlv_snapshots
-                WHERE portfolio_id = ? AND source = ? AND source_ref = ?
+                f"""
+                SELECT * FROM {_TABLE}
+                WHERE owner_user_id = ?
+                  AND portfolio_id = ?
+                  AND source = ?
+                  AND source_ref = ?
                 """,
-                (artifact["portfolioId"], artifact["source"], artifact["sourceRef"]),
+                (
+                    owner_id,
+                    artifact["portfolioId"],
+                    artifact["source"],
+                    artifact["sourceRef"],
+                ),
             ).fetchall()
             for row in rows:
                 record = self.validate_record(self._row(row))
                 if record["snapshot_key"] == artifact["snapshotKey"]:
                     if record["artifact_hash"] != artifact_hash:
-                        raise ValueError("snapshotKey already exists with different NLV content")
+                        raise ValueError(
+                            "snapshotKey already exists with different NLV content"
+                        )
                     return record
-                raise ValueError("NLV provenance already identifies a different persisted snapshot")
+                raise ValueError(
+                    "NLV provenance already identifies a different persisted snapshot"
+                )
             connection.execute(
-                """
-                INSERT INTO athena_portfolio_nlv_snapshots (
-                    snapshot_key, portfolio_id, reporting_currency, observed_at,
-                    available_at, phase, value, source, source_ref, artifact_hash,
+                f"""
+                INSERT INTO {_TABLE} (
+                    owner_user_id, snapshot_key, portfolio_id,
+                    reporting_currency, observed_at, available_at, phase,
+                    value, source, source_ref, artifact_hash,
                     artifact_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    artifact["snapshotKey"], artifact["portfolioId"], artifact["reportingCurrency"],
-                    artifact["observedAt"], artifact["availableAt"], artifact["phase"], artifact["value"],
-                    artifact["source"], artifact["sourceRef"], artifact_hash, serialized, created_at,
+                    owner_id,
+                    artifact["snapshotKey"],
+                    artifact["portfolioId"],
+                    artifact["reportingCurrency"],
+                    artifact["observedAt"],
+                    artifact["availableAt"],
+                    artifact["phase"],
+                    artifact["value"],
+                    artifact["source"],
+                    artifact["sourceRef"],
+                    artifact_hash,
+                    serialized,
+                    created_at,
                 ),
             )
             row = connection.execute(
-                "SELECT * FROM athena_portfolio_nlv_snapshots WHERE snapshot_key = ?",
-                (artifact["snapshotKey"],),
+                f"""
+                SELECT * FROM {_TABLE}
+                WHERE owner_user_id = ? AND snapshot_key = ?
+                """,
+                (owner_id, artifact["snapshotKey"]),
             ).fetchone()
         if row is None:
             raise RuntimeError("persisted NLV snapshot could not be reloaded")
         return self.validate_record(self._row(row))
 
-    def get_by_key(self, *, snapshot_key: str) -> dict[str, Any]:
+    def get_by_key(
+        self,
+        *,
+        owner_user_id: int,
+        snapshot_key: str,
+    ) -> dict[str, Any]:
+        owner_id = self._owner_user_id(owner_user_id)
         self.initialize()
         key = self._sha256(snapshot_key, "snapshot_key")
         with self._database.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM athena_portfolio_nlv_snapshots WHERE snapshot_key = ?",
-                (key,),
+                f"""
+                SELECT * FROM {_TABLE}
+                WHERE owner_user_id = ? AND snapshot_key = ?
+                """,
+                (owner_id, key),
             ).fetchone()
         if row is None:
-            raise ValueError("No persisted portfolio NLV snapshot exists for that snapshotKey")
+            raise ValueError(
+                "No persisted portfolio NLV snapshot exists for that owner and snapshotKey"
+            )
         return self.validate_record(self._row(row))
 
     def require_snapshot(
         self,
         *,
+        owner_user_id: int,
         snapshot_key: str,
         portfolio_id: str,
         reporting_currency: str,
@@ -136,9 +190,13 @@ class RecommendationPortfolioNlvSnapshotRepository:
         phase: str,
         as_of: datetime,
     ) -> dict[str, Any]:
+        owner_id = self._owner_user_id(owner_user_id)
         cutoff = self._aware(as_of, "as_of")
         observed = self._aware(observed_at, "observed_at")
-        record = self.get_by_key(snapshot_key=snapshot_key)
+        record = self.get_by_key(
+            owner_user_id=owner_id,
+            snapshot_key=snapshot_key,
+        )
         artifact = record["artifact"]
         if artifact["portfolioId"] != self._text(portfolio_id, "portfolio_id"):
             raise ValueError("NLV snapshot belongs to another portfolio")
@@ -154,6 +212,7 @@ class RecommendationPortfolioNlvSnapshotRepository:
         return record
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        self._owner_user_id(record.get("owner_user_id"))
         artifact = record.get("artifact")
         if not isinstance(artifact, dict):
             raise ValueError("persisted NLV record has no valid artifact")
@@ -174,8 +233,15 @@ class RecommendationPortfolioNlvSnapshotRepository:
         }
         for field, value in expected.items():
             if str(record.get(field)) != str(value):
-                raise ValueError(f"persisted NLV field {field} does not match artifact")
-        if not math.isclose(float(record.get("value")), float(validated["value"]), rel_tol=0.0, abs_tol=1e-15):
+                raise ValueError(
+                    f"persisted NLV field {field} does not match artifact"
+                )
+        if not math.isclose(
+            float(record.get("value")),
+            float(validated["value"]),
+            rel_tol=0.0,
+            abs_tol=1e-15,
+        ):
             raise ValueError("persisted NLV value does not match artifact")
         return record
 
@@ -184,7 +250,9 @@ class RecommendationPortfolioNlvSnapshotRepository:
         observed = self._aware(kwargs["observed_at"], "observed_at")
         available = self._aware(kwargs["available_at"], "available_at")
         if observed > available or available > cutoff:
-            raise ValueError("NLV snapshot violates observed_at <= available_at <= as_of")
+            raise ValueError(
+                "NLV snapshot violates observed_at <= available_at <= as_of"
+            )
         value = self._finite(kwargs["value"], "value")
         if value < 0.0:
             raise ValueError("NLV snapshot value cannot be negative")
@@ -217,7 +285,9 @@ class RecommendationPortfolioNlvSnapshotRepository:
         key_body.pop("productionEligible")
         key_body.pop("isWeightingReady")
         key_body.pop("policy")
-        body["snapshotKey"] = hashlib.sha256(self._serialize(key_body).encode("utf-8")).hexdigest()
+        body["snapshotKey"] = hashlib.sha256(
+            self._serialize(key_body).encode("utf-8")
+        ).hexdigest()
         return body
 
     def _validate_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
@@ -225,8 +295,22 @@ class RecommendationPortfolioNlvSnapshotRepository:
             raise ValueError("NLV artifact schema is invalid")
         expected_key = artifact.get("snapshotKey")
         self._sha256(expected_key, "snapshotKey")
-        key_body = {k: v for k, v in artifact.items() if k not in {"snapshotKey", "advisoryStatus", "productionEligible", "isWeightingReady", "policy"}}
-        if hashlib.sha256(self._serialize(key_body).encode("utf-8")).hexdigest() != expected_key:
+        key_body = {
+            k: v
+            for k, v in artifact.items()
+            if k
+            not in {
+                "snapshotKey",
+                "advisoryStatus",
+                "productionEligible",
+                "isWeightingReady",
+                "policy",
+            }
+        }
+        if (
+            hashlib.sha256(self._serialize(key_body).encode("utf-8")).hexdigest()
+            != expected_key
+        ):
             raise ValueError("NLV snapshotKey does not match artifact identity")
         self._text(artifact.get("portfolioId"), "portfolioId")
         self._currency(artifact.get("reportingCurrency"))
@@ -241,14 +325,26 @@ class RecommendationPortfolioNlvSnapshotRepository:
             raise ValueError("NLV artifact scope is not total NLV")
         self._text(artifact.get("source"), "source")
         self._text(artifact.get("sourceRef"), "sourceRef")
-        if artifact.get("advisoryStatus") != "no_advice" or artifact.get("productionEligible") is not False or artifact.get("isWeightingReady") is not False:
+        if (
+            artifact.get("advisoryStatus") != "no_advice"
+            or artifact.get("productionEligible") is not False
+            or artifact.get("isWeightingReady") is not False
+        ):
             raise ValueError("NLV artifact violates research-only contract")
         policy = artifact.get("policy")
         if not isinstance(policy, dict):
             raise ValueError("NLV artifact lost policy")
-        if policy.get("automaticTrading") is not False or policy.get("automaticProductionPromotion") is not False:
+        if (
+            policy.get("automaticTrading") is not False
+            or policy.get("automaticProductionPromotion") is not False
+        ):
             raise ValueError("NLV artifact enabled automation")
-        for field in ("cashInference", "liabilityInference", "unsettledInference", "fxInference"):
+        for field in (
+            "cashInference",
+            "liabilityInference",
+            "unsettledInference",
+            "fxInference",
+        ):
             if policy.get(field) != "forbidden":
                 raise ValueError(f"NLV artifact allowed {field}")
         return artifact
@@ -263,6 +359,7 @@ class RecommendationPortfolioNlvSnapshotRepository:
             raise ValueError("persisted NLV artifact_json is invalid") from exc
         return {
             "id": int(row["id"]),
+            "owner_user_id": int(row["owner_user_id"]),
             "snapshot_key": str(row["snapshot_key"]),
             "portfolio_id": str(row["portfolio_id"]),
             "reporting_currency": str(row["reporting_currency"]),
@@ -280,9 +377,23 @@ class RecommendationPortfolioNlvSnapshotRepository:
     @staticmethod
     def _serialize(value: object) -> str:
         try:
-            return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            return json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
         except (TypeError, ValueError) as exc:
-            raise ValueError("NLV artifact contains non-serializable/non-finite data") from exc
+            raise ValueError(
+                "NLV artifact contains non-serializable/non-finite data"
+            ) from exc
+
+    @staticmethod
+    def _owner_user_id(value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("owner_user_id must be a positive integer")
+        return value
 
     @staticmethod
     def _text(value: object, field: str) -> str:
@@ -302,7 +413,9 @@ class RecommendationPortfolioNlvSnapshotRepository:
     def _phase(cls, value: object) -> str:
         text = cls._text(value, "phase").lower()
         if text not in _PHASES:
-            raise ValueError("NLV phase must be regular, pre_external_flow or post_external_flow")
+            raise ValueError(
+                "NLV phase must be regular, pre_external_flow or post_external_flow"
+            )
         return text
 
     @staticmethod
@@ -319,7 +432,11 @@ class RecommendationPortfolioNlvSnapshotRepository:
 
     @staticmethod
     def _aware(value: datetime, field: str) -> datetime:
-        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        if (
+            not isinstance(value, datetime)
+            or value.tzinfo is None
+            or value.utcoffset() is None
+        ):
             raise ValueError(f"{field} must include timezone")
         return value.astimezone(timezone.utc)
 
