@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.recommendation_reconciled_portfolio_weights as api_module
+from app.api.auth import current_account
 from app.main import app
 from app.services.recommendation_reconciled_portfolio_weight_service import (
     RecommendationReconciledPortfolioWeightService,
@@ -215,14 +216,19 @@ class _ValuationRepository:
 def test_reconciled_weights_api_is_registered_and_research_only(monkeypatch) -> None:
     monkeypatch.setattr(api_module, "_reconciliation_repository", _ReconciliationRepository())
     monkeypatch.setattr(api_module, "_valuation_repository", _ValuationRepository())
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/recommendations/professional-research/reconciled-portfolio-weights",
-        json={
-            "reconciliationKey": "a" * 64,
-            "portfolioValuationEvidenceFingerprint": "c" * 64,
-        },
-    )
+    app.dependency_overrides[current_account] = lambda: {"id": 1}
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/recommendations/professional-research/reconciled-portfolio-weights",
+                json={
+                    "reconciliationKey": "a" * 64,
+                    "portfolioValuationEvidenceFingerprint": "c" * 64,
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(current_account, None)
+
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["module"] == "reconciled_portfolio_weights"
