@@ -88,6 +88,55 @@ class AthenaAuthService {
     return token;
   }
 
+  Future<void> requestPasswordRecovery({required String email}) async {
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty) {
+      throw ArgumentError('Email obligatorio.');
+    }
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/v1/auth/recovery/request'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': normalizedEmail}),
+    );
+    if (response.statusCode != 202) {
+      throw Exception(
+        'No se pudo solicitar la recuperación (${response.statusCode}).',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map || decoded['status'] != 'recovery_requested') {
+      throw const FormatException('Respuesta de recuperación no válida.');
+    }
+  }
+
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    final normalizedToken = token.trim();
+    if (normalizedToken.length < 32 || normalizedToken.length > 512) {
+      throw ArgumentError('Token de recuperación no válido.');
+    }
+    if (newPassword.length < 12 || newPassword.length > 256) {
+      throw ArgumentError(
+        'La nueva contraseña debe tener entre 12 y 256 caracteres.',
+      );
+    }
+    final response = await client.post(
+      Uri.parse('$baseUrl/api/v1/auth/recovery/reset'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'token': normalizedToken,
+        'newPassword': newPassword,
+      }),
+    );
+    if (response.statusCode != 204) {
+      throw Exception(
+        'No se pudo restablecer la contraseña (${response.statusCode}).',
+      );
+    }
+  }
+
   Future<AuthAccount> getMe(String token) async {
     final normalizedToken = token.trim();
     if (normalizedToken.isEmpty) {
