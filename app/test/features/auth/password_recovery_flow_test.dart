@@ -43,6 +43,7 @@ void main() {
         return http.Response('', 204);
       }),
     );
+    final validLengthToken = List.filled(32, 't').join();
 
     expect(
       () => service.resetPassword(
@@ -53,7 +54,7 @@ void main() {
     );
     expect(
       () => service.resetPassword(
-        token: 't' * 32,
+        token: validLengthToken,
         newPassword: 'too-short',
       ),
       throwsArgumentError,
@@ -70,16 +71,17 @@ void main() {
         return http.Response('', 204);
       }),
     );
+    final recoveryToken = List.filled(43, 'r').join();
 
     await service.resetPassword(
-      token: 'r' * 43,
+      token: recoveryToken,
       newPassword: 'new password value',
     );
 
     expect(captured.method, 'POST');
     expect(captured.url.path, '/api/v1/auth/recovery/reset');
     final payload = jsonDecode(captured.body) as Map<String, dynamic>;
-    expect(payload['token'], 'r' * 43);
+    expect(payload['token'], recoveryToken);
     expect(payload['newPassword'], 'new password value');
     expect(captured.headers['Authorization'], isNull);
   });
@@ -118,7 +120,7 @@ void main() {
         return http.Response('', 204);
       }),
     );
-    final token = 'z' * 43;
+    final token = List.filled(43, 'z').join();
 
     await tester.pumpWidget(
       MaterialApp(
