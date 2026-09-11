@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -143,6 +144,8 @@ class UserPortfolioRepository:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("quantity debe ser numérica y positiva.")
         normalized = float(value)
+        if not math.isfinite(normalized):
+            raise ValueError("quantity debe ser un número finito positivo.")
         if normalized <= 0 or normalized > 1_000_000_000_000:
             raise ValueError("quantity debe ser positiva y estar dentro del límite operativo.")
         return normalized
