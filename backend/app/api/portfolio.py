@@ -6,6 +6,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.auth import current_account
+from app.repositories.recommendation_portfolio_owner_scoped_evidence import (
+    OwnerScopedPortfolioCorrelationEvidenceRepository,
+    OwnerScopedPortfolioValuationEvidenceRepository,
+)
 from app.repositories.recommendation_portfolio_valuation_evidence_repository import (
     RecommendationPortfolioValuationEvidenceRepository,
 )
@@ -20,10 +24,20 @@ from app.services.recommendation_portfolio_correlation_evidence_store_service im
 from app.services.recommendation_portfolio_valuation_evidence_service import (
     RecommendationPortfolioValuationEvidenceService,
 )
+from app.services.recommendation_verified_allocation_pipeline_service import (
+    RecommendationVerifiedAllocationPipelineService,
+)
 
 
 router = APIRouter(prefix="/api/v1/portfolio", tags=["portfolio"])
 AuthenticatedAccount = Annotated[dict[str, Any], Depends(current_account)]
+
+
+def _owner_user_id(account: dict[str, Any]) -> int:
+    owner_user_id = account.get("id")
+    if isinstance(owner_user_id, bool) or not isinstance(owner_user_id, int) or owner_user_id <= 0:
+        raise RuntimeError("La cuenta autenticada carece de owner_user_id válido.")
+    return owner_user_id
 
 
 def _aware_payload_datetime(value: object, field: str) -> datetime:
@@ -100,9 +114,9 @@ def post_portfolio_valuation_evidence(
     account: AuthenticatedAccount,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, object]:
-    del account
     service = RecommendationPortfolioValuationEvidenceService()
     try:
+        owner_user_id = _owner_user_id(account)
         raw_positions = payload.get("positions")
         if not isinstance(raw_positions, list):
             raise ValueError("positions debe ser una lista.")
@@ -114,7 +128,10 @@ def post_portfolio_valuation_evidence(
         if service.validate_artifact(artifact) is not artifact:
             raise RuntimeError("El validador sustituyó la evidencia de valoración.")
         safe_artifact = _safe_valuation_artifact(artifact)
-        repository = RecommendationPortfolioValuationEvidenceRepository(validator=service)
+        repository = OwnerScopedPortfolioValuationEvidenceRepository(
+            owner_user_id=owner_user_id,
+            repository=RecommendationPortfolioValuationEvidenceRepository(validator=service),
+        )
         record = repository.seal(artifact=safe_artifact)
         if repository.validate_record(record) is not record:
             raise RuntimeError("El repositorio sustituyó la valoración sellada.")
@@ -161,8 +178,8 @@ def post_portfolio_correlation_evidence(
     account: AuthenticatedAccount,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, object]:
-    del account
     try:
+        owner_user_id = _owner_user_id(account)
         left = payload.get("leftInstrumentId")
         right = payload.get("rightInstrumentId")
         if isinstance(left, bool) or not isinstance(left, int) or left <= 0:
@@ -175,7 +192,8 @@ def post_portfolio_correlation_evidence(
         cutoff = _aware_payload_datetime(payload.get("knowledgeCutoff"), "knowledgeCutoff")
         observed_from = _aware_payload_datetime(payload.get("observedFrom"), "observedFrom") if payload.get("observedFrom") is not None else None
         observed_to = _aware_payload_datetime(payload.get("observedTo"), "observedTo") if payload.get("observedTo") is not None else None
-        result = RecommendationPortfolioCorrelationEvidenceStoreService().calculate_and_seal(left_instrument_id=left, right_instrument_id=right, source_provider=source_provider, knowledge_cutoff=cutoff, observed_from=observed_from, observed_to=observed_to)
+        repository = OwnerScopedPortfolioCorrelationEvidenceRepository(owner_user_id=owner_user_id)
+        result = RecommendationPortfolioCorrelationEvidenceStoreService(repository=repository).calculate_and_seal(left_instrument_id=left, right_instrument_id=right, source_provider=source_provider, knowledge_cutoff=cutoff, observed_from=observed_from, observed_to=observed_to)
         if result.get("advisoryStatus") != "no_advice":
             raise RuntimeError("La autoridad de correlación intentó emitir advice.")
         for field in ("productionEligible", "allocationEligible", "automaticTrading"):
@@ -195,8 +213,8 @@ def post_portfolio_allocation_candidate(
     account: AuthenticatedAccount,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, object]:
-    del account
     try:
+        owner_user_id = _owner_user_id(account)
         if "economicContract" in payload:
             raise ValueError("economicContract no se acepta: el backend lo resuelve desde la autoridad sellada.")
         action_fingerprint = payload.get("uncertaintyBoundActionCandidateFingerprint")
@@ -218,7 +236,22 @@ def post_portfolio_allocation_candidate(
         if not isinstance(correlation_fingerprints, list) or any(not isinstance(item, str) for item in correlation_fingerprints):
             raise ValueError("correlationEvidenceFingerprints debe ser una lista de fingerprints.")
         as_of = _aware_payload_datetime(payload.get("asOf"), "asOf")
-        result = RecommendationAuthorizedAllocationPipelineService().build(uncertainty_bound_action_candidate_fingerprint=action_fingerprint, allocation_policy_id=allocation_policy_id, reference_capital=float(reference_capital), base_currency=base_currency, positions=positions, correlation_evidence_fingerprints=correlation_fingerprints, as_of=as_of)
+        valuation_service = RecommendationPortfolioValuationEvidenceService()
+        valuation_repository = OwnerScopedPortfolioValuationEvidenceRepository(
+            owner_user_id=owner_user_id,
+            repository=RecommendationPortfolioValuationEvidenceRepository(validator=valuation_service),
+        )
+        correlation_repository = OwnerScopedPortfolioCorrelationEvidenceRepository(
+            owner_user_id=owner_user_id
+        )
+        verified_pipeline = RecommendationVerifiedAllocationPipelineService(
+            valuation_service=valuation_service,
+            valuation_repository=valuation_repository,
+        )
+        result = RecommendationAuthorizedAllocationPipelineService(
+            correlation_repository=correlation_repository,
+            verified_pipeline=verified_pipeline,
+        ).build(uncertainty_bound_action_candidate_fingerprint=action_fingerprint, allocation_policy_id=allocation_policy_id, reference_capital=float(reference_capital), base_currency=base_currency, positions=positions, correlation_evidence_fingerprints=correlation_fingerprints, as_of=as_of)
         return {"data": _safe_non_advisory_allocation(result)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
