@@ -12,6 +12,10 @@ from app.repositories.recommendation_portfolio_valuation_evidence_repository imp
 )
 
 
+OWNER_A = 101
+OWNER_B = 202
+
+
 class _Validator:
     def validate_artifact(self, artifact):
         if artifact.get("advisoryStatus") != "no_advice":
@@ -92,14 +96,15 @@ def _repo(tmp_path):
     )
 
 
-def test_seal_roundtrip_is_append_only_and_validated(tmp_path):
+def test_seal_roundtrip_is_append_only_owner_scoped_and_validated(tmp_path):
     repository = _repo(tmp_path)
     artifact = _artifact()
 
-    first = repository.seal(artifact=artifact)
-    second = repository.seal(artifact=artifact)
+    first = repository.seal(owner_user_id=OWNER_A, artifact=artifact)
+    second = repository.seal(owner_user_id=OWNER_A, artifact=artifact)
     loaded = repository.get(
-        valuation_fingerprint=artifact["portfolioValuationEvidenceFingerprint"]
+        owner_user_id=OWNER_A,
+        valuation_fingerprint=artifact["portfolioValuationEvidenceFingerprint"],
     )
 
     assert second == first
@@ -109,9 +114,91 @@ def test_seal_roundtrip_is_append_only_and_validated(tmp_path):
     assert repository.validate_record(first) is first
 
 
+def test_other_owner_cannot_read_evidence_until_they_link_same_artifact(tmp_path):
+    repository = _repo(tmp_path)
+    artifact = _artifact()
+    first = repository.seal(owner_user_id=OWNER_A, artifact=artifact)
+
+    assert repository.get(
+        owner_user_id=OWNER_B,
+        valuation_fingerprint=first["valuation_fingerprint"],
+    ) is None
+
+    second_owner_record = repository.seal(owner_user_id=OWNER_B, artifact=artifact)
+
+    assert second_owner_record == first
+    assert repository.get(
+        owner_user_id=OWNER_B,
+        valuation_fingerprint=first["valuation_fingerprint"],
+    ) == first
+
+    with repository._database.connect() as connection:
+        evidence_count = connection.execute(
+            "SELECT COUNT(*) FROM athena_recommendation_portfolio_valuation_evidence"
+        ).fetchone()[0]
+        ownership_count = connection.execute(
+            "SELECT COUNT(*) FROM athena_recommendation_portfolio_valuation_evidence_owners"
+        ).fetchone()[0]
+
+    assert evidence_count == 1
+    assert ownership_count == 2
+
+
+def test_legacy_unowned_evidence_fails_closed(tmp_path):
+    repository = _repo(tmp_path)
+    repository.initialize()
+    artifact = _artifact()
+    validated = repository._validated_artifact(artifact)
+    valuation_fingerprint = artifact["portfolioValuationEvidenceFingerprint"]
+    as_of = artifact["asOf"]
+    persisted_at = "2026-09-05T12:01:00+00:00"
+    core = {
+        "valuationFingerprint": valuation_fingerprint,
+        "asOf": as_of,
+        "baseCurrency": "EUR",
+        "artifact": validated,
+        "persistedAt": persisted_at,
+    }
+    with repository._database.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO athena_recommendation_portfolio_valuation_evidence (
+                valuation_fingerprint,
+                as_of,
+                base_currency,
+                artifact_json,
+                persisted_at,
+                record_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                valuation_fingerprint,
+                as_of,
+                "EUR",
+                repository._serialize(validated),
+                persisted_at,
+                repository._fingerprint(core),
+            ),
+        )
+
+    assert repository.get(
+        owner_user_id=OWNER_A,
+        valuation_fingerprint=valuation_fingerprint,
+    ) is None
+
+
+def test_invalid_owner_ids_fail_closed(tmp_path):
+    repository = _repo(tmp_path)
+    artifact = _artifact()
+
+    for owner_user_id in (0, -1, True, 1.5, "1"):
+        with pytest.raises(ValueError, match="owner_user_id"):
+            repository.seal(owner_user_id=owner_user_id, artifact=artifact)
+
+
 def test_tampered_persisted_json_fails_closed(tmp_path):
     repository = _repo(tmp_path)
-    record = repository.seal(artifact=_artifact())
+    record = repository.seal(owner_user_id=OWNER_A, artifact=_artifact())
 
     with repository._database.connect() as connection:
         tampered = deepcopy(record["artifact"])
@@ -126,7 +213,10 @@ def test_tampered_persisted_json_fails_closed(tmp_path):
         )
 
     with pytest.raises(ValueError):
-        repository.get(valuation_fingerprint=record["valuation_fingerprint"])
+        repository.get(
+            owner_user_id=OWNER_A,
+            valuation_fingerprint=record["valuation_fingerprint"],
+        )
 
 
 def test_non_advisory_invariants_are_required_before_persistence(tmp_path):
@@ -135,7 +225,7 @@ def test_non_advisory_invariants_are_required_before_persistence(tmp_path):
     artifact["productionEligible"] = True
 
     with pytest.raises(ValueError, match="producción"):
-        repository.seal(artifact=artifact)
+        repository.seal(owner_user_id=OWNER_A, artifact=artifact)
 
 
 def test_non_finite_payload_cannot_be_persisted_even_with_weak_validator(tmp_path):
@@ -151,4 +241,4 @@ def test_non_finite_payload_cannot_be_persisted_even_with_weak_validator(tmp_pat
     artifact["positions"][0]["positionValueInBaseCurrency"] = float("nan")
 
     with pytest.raises(ValueError, match="no serializables o no finitos"):
-        repository.seal(artifact=artifact)
+        repository.seal(owner_user_id=OWNER_A, artifact=artifact)
