@@ -20,6 +20,8 @@ from app.repositories.recommendation_portfolio_state_reconciliation_repository i
 from app.repositories.recommendation_portfolio_twr_measurement_repository import (
     RecommendationPortfolioTwrMeasurementRepository,
 )
+from app.security.portfolio_artifact_ownership import PortfolioArtifactOwnershipRegistry
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
 from app.services.recommendation_portfolio_event_ledger_service import (
     RecommendationPortfolioEventLedgerService,
 )
@@ -36,6 +38,7 @@ router = APIRouter(
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
 _measurement_repository = RecommendationPortfolioTwrMeasurementRepository()
 _nlv_repository = RecommendationPortfolioNlvSnapshotRepository()
+_ownership = PortfolioArtifactOwnershipRegistry()
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
@@ -75,7 +78,7 @@ def _ledger_path() -> Path:
     configured = os.environ.get("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", _DEFAULT_LEDGER_PATH).strip()
     if not configured:
         raise HTTPException(status_code=503, detail="Portfolio event ledger no tiene ruta de persistencia configurada.")
-    return Path(configured)
+    return owner_scoped_ledger_path(Path(configured))
 
 
 def _finite(value: object, field: str) -> float:
@@ -325,7 +328,7 @@ def _build_boundaries(
 def post_portfolio_time_weighted_return(
     request: PortfolioTimeWeightedReturnRequest,
 ) -> dict[str, object]:
-    """Measure and persist TWR from sealed NLV snapshots plus canonical server ledger."""
+    """Measure and persist TWR from sealed NLV snapshots plus the current owner's canonical ledger."""
 
     as_of = _aware_utc(request.asOf, "asOf")
     period_start = _aware_utc(request.periodStart, "periodStart")
@@ -335,6 +338,10 @@ def post_portfolio_time_weighted_return(
         raise HTTPException(status_code=400, detail="reportingCurrency debe ser un código ISO de tres letras.")
 
     try:
+        _ownership.require_current_owner(
+            artifact_kind="state_reconciliation",
+            artifact_key=request.reconciliationKey,
+        )
         reconciliation_record = _reconciliation_repository.require_reconciled(
             reconciliation_key=request.reconciliationKey,
             portfolio_id=request.portfolioId,
