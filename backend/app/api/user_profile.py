@@ -27,6 +27,12 @@ class UserPreferencesRequest(BaseModel):
     experienceLevel: Literal["beginner", "intermediate", "advanced"] | None = None
     liquidityNeed: Literal["low", "medium", "high"] | None = None
     maxDrawdownTolerancePct: int | None = Field(default=None, ge=5, le=60)
+    availableCapital: float | None = Field(
+        default=None,
+        ge=0,
+        le=1_000_000_000_000,
+        description="Capital disponible declarado por el usuario, denominado en baseCurrency.",
+    )
 
     @field_validator("baseCurrency")
     @classmethod
@@ -78,6 +84,7 @@ def _policy() -> dict[str, Any]:
             "experienceLevel",
             "liquidityNeed",
             "maxDrawdownTolerancePct",
+            "availableCapital",
         ],
         "automaticRecommendationOverrides": False,
         "productionEligible": False,
