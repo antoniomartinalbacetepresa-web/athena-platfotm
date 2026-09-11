@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
 from app.services.recommendation_portfolio_event_ledger_service import (
     PortfolioLedgerEventInput,
     RecommendationPortfolioEventLedgerService,
@@ -16,6 +17,7 @@ FLOW = datetime(2026, 1, 16, tzinfo=UTC)
 INTERNAL = datetime(2026, 1, 20, tzinfo=UTC)
 END = datetime(2026, 2, 1, tzinfo=UTC)
 AS_OF = datetime(2026, 2, 2, tzinfo=UTC)
+_TEST_OWNER = 101
 
 
 def _reconciliation_key(
@@ -84,7 +86,9 @@ def _append(
 def _ledger(monkeypatch, tmp_path, *, external_flow: bool = True) -> RecommendationPortfolioEventLedgerService:
     path = tmp_path / "portfolio-event-ledger.jsonl"
     monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(path))
-    ledger = RecommendationPortfolioEventLedgerService(path)
+    ledger = RecommendationPortfolioEventLedgerService(
+        owner_scoped_ledger_path(path, owner_user_id=_TEST_OWNER)
+    )
     if external_flow:
         _append(
             ledger,
