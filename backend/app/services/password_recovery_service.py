@@ -22,6 +22,8 @@ class PasswordRecoveryChallenge:
 class PasswordRecoveryService:
     TOKEN_TTL_MINUTES = 30
     MINIMUM_PASSWORD_LENGTH = 12
+    RECOVERY_ATTEMPT_LIMIT = 5
+    RECOVERY_WINDOW_SECONDS = 900
 
     def __init__(
         self,
@@ -34,6 +36,25 @@ class PasswordRecoveryService:
         self._recovery = recovery_repository or PasswordRecoveryRepository()
         self._security = security_repository or AuthSecurityRepository()
         self._password_hash = PasswordHash.recommended()
+
+    def recovery_rate_key(self, *, email: str, client_id: str) -> str:
+        normalized_email = str(email or "").strip().lower()
+        normalized_client = str(client_id or "unknown").strip().lower() or "unknown"
+        digest = hashlib.sha256(
+            f"{normalized_client}|{normalized_email}".encode("utf-8")
+        ).hexdigest()
+        return f"auth-recovery:{digest}"
+
+    def consume_recovery_attempt(self, *, rate_key: str) -> dict[str, object]:
+        now = datetime.now(timezone.utc)
+        epoch = int(now.timestamp())
+        window_epoch = epoch - (epoch % self.RECOVERY_WINDOW_SECONDS)
+        window_start = datetime.fromtimestamp(window_epoch, tz=timezone.utc)
+        return self._security.consume_login_attempt(
+            key=rate_key,
+            window_started_at=window_start,
+            limit=self.RECOVERY_ATTEMPT_LIMIT,
+        )
 
     def request(self, *, email: str) -> PasswordRecoveryChallenge | None:
         raw_token = secrets.token_urlsafe(32)
