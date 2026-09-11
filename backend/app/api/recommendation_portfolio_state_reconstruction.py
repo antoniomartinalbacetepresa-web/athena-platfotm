@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from app.repositories.recommendation_portfolio_state_reconciliation_repository import (
     RecommendationPortfolioStateReconciliationRepository,
 )
+from app.security.portfolio_artifact_ownership import PortfolioArtifactOwnershipRegistry
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
 from app.services.recommendation_portfolio_event_ledger_service import (
     RecommendationPortfolioEventLedgerService,
 )
@@ -36,6 +38,7 @@ router = APIRouter(
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _reconciliation_repository = RecommendationPortfolioStateReconciliationRepository()
+_ownership = PortfolioArtifactOwnershipRegistry()
 
 
 class OpeningCashRequest(BaseModel):
@@ -103,7 +106,7 @@ def _service() -> RecommendationPortfolioStateReconstructionService:
             status_code=503,
             detail="Portfolio event ledger no tiene ruta de persistencia configurada.",
         )
-    ledger = RecommendationPortfolioEventLedgerService(Path(configured))
+    ledger = RecommendationPortfolioEventLedgerService(owner_scoped_ledger_path(Path(configured)))
     return RecommendationPortfolioStateReconstructionService(ledger)
 
 
@@ -160,7 +163,7 @@ def _assert_reconciliation_contract(payload: dict[str, object]) -> None:
 def reconstruct_portfolio_state(
     request: PortfolioStateReconstructionRequest,
 ) -> dict[str, object]:
-    """Reconstruct historical cash and long positions from observed ledger events only."""
+    """Reconstruct historical cash and long positions from the authenticated owner's ledger only."""
 
     service = _service()
     try:
@@ -244,7 +247,7 @@ def reconstruct_portfolio_state(
 def reconcile_portfolio_state(
     request: PortfolioStateReconciliationRequest,
 ) -> dict[str, object]:
-    """Reconcile state and persist the exact PIT evidence append-only."""
+    """Reconcile state and persist the exact PIT evidence append-only for the current owner."""
 
     try:
         snapshot_observed_at = _aware_utc(request.snapshot.observedAt, "snapshot.observedAt")
@@ -291,6 +294,10 @@ def reconcile_portfolio_state(
         }
         _assert_reconciliation_contract(payload)
         record = _reconciliation_repository.append(artifact=payload)
+        _ownership.link_current_owner(
+            artifact_kind="state_reconciliation",
+            artifact_key=str(payload["reconciliationKey"]),
+        )
     except HTTPException:
         raise
     except ValueError as exc:
@@ -314,9 +321,13 @@ def reconcile_portfolio_state(
 
 @router.get("/portfolio-state-reconciliation/{reconciliation_key}")
 def get_portfolio_state_reconciliation(reconciliation_key: str) -> dict[str, object]:
-    """Read a persisted reconciliation only after tamper verification."""
+    """Read a persisted reconciliation only for its authenticated owner after tamper verification."""
 
     try:
+        _ownership.require_current_owner(
+            artifact_kind="state_reconciliation",
+            artifact_key=reconciliation_key,
+        )
         record = _reconciliation_repository.get_by_key(
             reconciliation_key=reconciliation_key,
         )
