@@ -24,6 +24,9 @@ class UserPreferencesRequest(BaseModel):
         "balanced_growth",
         "long_term_growth",
     ]
+    experienceLevel: Literal["beginner", "intermediate", "advanced"] | None = None
+    liquidityNeed: Literal["low", "medium", "high"] | None = None
+    maxDrawdownTolerancePct: int | None = Field(default=None, ge=5, le=60)
 
     @field_validator("baseCurrency")
     @classmethod
@@ -67,6 +70,16 @@ def _policy() -> dict[str, Any]:
         "sensitivePreferencesEncrypted": True,
         "encryption": "AES-256-GCM",
         "keyManagedExternally": True,
+        "encryptedPreferenceFields": [
+            "riskTolerance",
+            "investmentHorizonYears",
+            "baseCurrency",
+            "objective",
+            "experienceLevel",
+            "liquidityNeed",
+            "maxDrawdownTolerancePct",
+        ],
+        "automaticRecommendationOverrides": False,
         "productionEligible": False,
         "automaticTrading": False,
     }
