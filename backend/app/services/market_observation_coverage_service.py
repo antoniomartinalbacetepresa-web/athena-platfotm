@@ -49,6 +49,7 @@ class MarketObservationCoverageReport:
             "deepHistoryCoverage": self.deep_history_coverage,
             "minimumHistoryDays": self.minimum_history_days,
             "minimumDeepHistoryCoverage": self.minimum_deep_history_coverage,
+            "sourceContinuityRequired": True,
             "historyDepthReady": self.history_depth_ready,
             "observationCount": self.observation_count,
             "earliestObservedAt": self.earliest_observed_at,
@@ -58,9 +59,11 @@ class MarketObservationCoverageReport:
                 for key, value in sorted(self.by_source.items())
             },
             "warning": (
-                "historyDepthReady es un mínimo operativo para el horizonte "
-                "actual de 365 días; no implica histórico completo desde el "
-                "origen del mercado ni cobertura suficiente para todos los usos."
+                "historyDepthReady exige un mínimo operativo de 365 días "
+                "dentro de una misma fuente por instrumento; no permite "
+                "fabricar profundidad combinando tramos de proveedores "
+                "distintos y no implica histórico completo desde el origen "
+                "del mercado ni cobertura suficiente para todos los usos."
             ),
         }
 
@@ -125,22 +128,27 @@ class MarketObservationCoverageService:
                 """
             ).fetchone()
 
+            # Deep-history readiness must be demonstrated by one continuous
+            # provider history for an instrument. Combining an early point from
+            # source A with a later point from source B can create an apparent
+            # 365-day span without proving that either source supplies usable
+            # longitudinal history, so such stitching is intentionally rejected.
             deep_row = connection.execute(
                 """
-                SELECT COUNT(*) AS total
+                SELECT COUNT(DISTINCT instrument_id) AS total
                 FROM (
-                    SELECT mo.instrument_id
+                    SELECT mo.instrument_id, mo.source_provider
                     FROM market_observations mo
                     JOIN instruments i ON i.id = mo.instrument_id
                     WHERE i.is_active = 1
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown')))
                           NOT IN ('etf', 'fund')
-                    GROUP BY mo.instrument_id
+                    GROUP BY mo.instrument_id, mo.source_provider
                     HAVING (
                         julianday(MAX(mo.observed_at)) -
                         julianday(MIN(mo.observed_at))
                     ) >= ?
-                ) deep_history
+                ) source_continuous_history
                 """,
                 (self._minimum_history_days,),
             ).fetchone()
