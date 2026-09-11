@@ -129,13 +129,22 @@ app.include_router(
     recommendation_portfolio_time_weighted_return_router,
     dependencies=[Depends(bind_portfolio_owner_context)],
 )
-app.include_router(recommendation_portfolio_event_ledger_router)
+app.include_router(
+    recommendation_portfolio_event_ledger_router,
+    dependencies=[Depends(bind_portfolio_owner_context)],
+)
 app.include_router(
     recommendation_portfolio_nlv_snapshot_router,
     dependencies=[Depends(bind_portfolio_owner_context)],
 )
-app.include_router(recommendation_portfolio_state_reconstruction_router)
-app.include_router(recommendation_reconciled_portfolio_weights_router)
+app.include_router(
+    recommendation_portfolio_state_reconstruction_router,
+    dependencies=[Depends(bind_portfolio_owner_context)],
+)
+app.include_router(
+    recommendation_reconciled_portfolio_weights_router,
+    dependencies=[Depends(bind_portfolio_owner_context)],
+)
 app.include_router(recommendation_investment_journal_router)
 app.include_router(recommendation_devils_advocate_router)
 app.include_router(recommendation_athena_radar_router)
