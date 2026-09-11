@@ -66,6 +66,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
     )
 
+    drill_parser = subparsers.add_parser(
+        "drill",
+        help=(
+            "Ejecuta un restore drill efímero: verifica, restaura, valida y limpia sin tocar la base activa."
+        ),
+    )
+    drill_parser.add_argument(
+        "--backup",
+        required=True,
+        type=Path,
+    )
+    drill_parser.add_argument(
+        "--working-directory",
+        type=Path,
+        default=None,
+        help=(
+            "Directorio temporal opcional para el drill. No puede ser el directorio de la base activa."
+        ),
+    )
+
     retention_parser = subparsers.add_parser(
         "retain",
         help=(
@@ -140,6 +160,15 @@ def main(
                 args.output
             ),
             "metadata": metadata.to_dict(),
+        }
+    elif args.command == "drill":
+        drill = service.run_restore_drill(
+            args.backup,
+            working_directory=args.working_directory,
+        )
+        result = {
+            "status": "restore_drill_passed",
+            "drill": drill.to_dict(),
         }
     elif args.command == "retain":
         retention = service.apply_retention(
