@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Annotated, Any, Iterator
+from typing import Annotated, Any, AsyncIterator, Iterator
 
 from fastapi import Depends, HTTPException, status
 
@@ -32,9 +32,16 @@ def current_portfolio_owner_id() -> int:
     return _validated_owner_id(owner_user_id)
 
 
-def bind_portfolio_owner_context(
+async def bind_portfolio_owner_context(
     account: Annotated[dict[str, Any], Depends(current_account)],
-) -> Iterator[None]:
+) -> AsyncIterator[None]:
+    """Bind the authenticated owner for the lifetime of the request task.
+
+    This dependency is intentionally async so ContextVar set/reset happens in
+    the same event-loop task. A synchronous generator dependency may be entered
+    and exited in different worker-thread contexts, which is unsafe for tokens.
+    """
+
     owner_user_id = _validated_owner_id(account.get("id"))
     token: Token[int | None] = _PORTFOLIO_OWNER_ID.set(owner_user_id)
     try:
