@@ -76,5 +76,6 @@ jobs:
           path: |
             app/flutter-analyze.log
             app/flutter-test.log
+            app/pubspec.lock
           if-no-files-found: warn
           retention-days: 7
