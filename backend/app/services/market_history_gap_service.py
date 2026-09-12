@@ -97,7 +97,6 @@ class MarketHistoryGapService:
 
         self._database.initialize()
         params = (
-            self._minimum_history_days,
             self._maximum_source_gap_days,
             self._minimum_history_days,
             self._minimum_history_days,
@@ -121,7 +120,40 @@ class MarketHistoryGapService:
                 FROM market_observations mo
                 JOIN eligible e ON e.instrument_id = mo.instrument_id
             ),
-            continuity AS (
+            marked_history AS (
+                SELECT instrument_id,
+                       source_provider,
+                       observed_at,
+                       previous_observed_at,
+                       CASE
+                           WHEN previous_observed_at IS NULL THEN 1
+                           WHEN julianday(observed_at) - julianday(previous_observed_at) > ? THEN 1
+                           ELSE 0
+                       END AS starts_new_segment
+                FROM ordered_history
+            ),
+            segmented_history AS (
+                SELECT instrument_id,
+                       source_provider,
+                       observed_at,
+                       previous_observed_at,
+                       starts_new_segment,
+                       SUM(starts_new_segment) OVER (
+                           PARTITION BY instrument_id, source_provider
+                           ORDER BY observed_at
+                           ROWS UNBOUNDED PRECEDING
+                       ) AS segment_id
+                FROM marked_history
+            ),
+            source_segments AS (
+                SELECT instrument_id,
+                       source_provider,
+                       segment_id,
+                       julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS continuous_span_days
+                FROM segmented_history
+                GROUP BY instrument_id, source_provider, segment_id
+            ),
+            source_stats AS (
                 SELECT instrument_id,
                        source_provider,
                        julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS history_span_days,
@@ -132,15 +164,28 @@ class MarketHistoryGapService:
                 FROM ordered_history
                 GROUP BY instrument_id, source_provider
             ),
+            source_quality AS (
+                SELECT ss.instrument_id,
+                       ss.source_provider,
+                       ss.history_span_days,
+                       ss.maximum_gap_days,
+                       COALESCE(MAX(seg.continuous_span_days), 0.0) AS best_continuous_span_days,
+                       MAX(CASE WHEN seg.continuous_span_days >= ? THEN 1 ELSE 0 END) AS has_deep_segment
+                FROM source_stats ss
+                LEFT JOIN source_segments seg
+                  ON seg.instrument_id = ss.instrument_id
+                 AND seg.source_provider = ss.source_provider
+                GROUP BY ss.instrument_id,
+                         ss.source_provider,
+                         ss.history_span_days,
+                         ss.maximum_gap_days
+            ),
             summary AS (
                 SELECT instrument_id,
                        COUNT(*) AS source_count,
-                       MAX(CASE
-                           WHEN history_span_days >= ? AND maximum_gap_days <= ? THEN 1
-                           ELSE 0
-                       END) AS has_deep_source,
+                       MAX(has_deep_segment) AS has_deep_source,
                        MAX(CASE WHEN history_span_days >= ? THEN 1 ELSE 0 END) AS has_long_source
-                FROM continuity
+                FROM source_quality
                 GROUP BY instrument_id
             ),
             ranked AS (
@@ -151,12 +196,13 @@ class MarketHistoryGapService:
                        ROW_NUMBER() OVER (
                            PARTITION BY instrument_id
                            ORDER BY
+                               has_deep_segment DESC,
                                CASE WHEN history_span_days >= ? THEN 0 ELSE 1 END,
-                               CASE WHEN history_span_days >= ? THEN maximum_gap_days END ASC,
+                               best_continuous_span_days DESC,
                                history_span_days DESC,
                                source_provider ASC
                        ) AS source_rank
-                FROM continuity
+                FROM source_quality
             ),
             blockers AS (
                 SELECT e.instrument_id,
