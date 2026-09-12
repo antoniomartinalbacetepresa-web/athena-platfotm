@@ -14,6 +14,8 @@ class PasswordRecoveryRepository:
     """
 
     _TABLE = "athena_password_recovery_tokens"
+    _ACCOUNT_TABLE = "athena_user_accounts"
+    _SESSION_TABLE = "athena_auth_user_sessions"
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -65,9 +67,8 @@ class PasswordRecoveryRepository:
         """Resolve a live challenge without consuming it.
 
         Password policy and account-state checks can therefore complete before
-        the one-time token is irreversibly consumed. The subsequent ``consume``
-        call remains the atomic authority that decides which concurrent reset,
-        if any, wins the token.
+        the one-time token is irreversibly consumed. The subsequent atomic reset
+        remains the authority that decides which concurrent reset, if any, wins.
         """
 
         normalized_hash = self._required(token_hash, "token_hash")
@@ -116,6 +117,107 @@ class PasswordRecoveryRepository:
             if int(cursor.rowcount or 0) != 1:
                 return None
             return int(row["user_id"])
+
+    def complete_password_reset(
+        self,
+        *,
+        token_hash: str,
+        user_id: int,
+        password_hash: str,
+    ) -> bool:
+        """Commit recovery consumption, password rotation and revocation atomically.
+
+        All security state touched by a successful reset lives in the canonical
+        SQLite database. Acquiring the write lock before re-validating the token
+        prevents two concurrent resets from both succeeding. Any SQL failure
+        rolls the whole transaction back, so a recoverable infrastructure error
+        cannot leave the one-time challenge consumed while the old password or
+        old session version remains active.
+        """
+
+        normalized_hash = self._required(token_hash, "token_hash")
+        normalized_password_hash = self._required(password_hash, "password_hash")
+        normalized_user_id = int(user_id)
+        if normalized_user_id <= 0:
+            raise ValueError("user_id debe ser positivo.")
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                f"""
+                SELECT user_id
+                FROM {self._TABLE}
+                WHERE token_hash = ?
+                  AND user_id = ?
+                  AND consumed_at IS NULL
+                  AND expires_at >= ?
+                LIMIT 1
+                """,
+                (normalized_hash, normalized_user_id, now),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                return False
+
+            consumed = connection.execute(
+                f"""
+                UPDATE {self._TABLE}
+                SET consumed_at = ?
+                WHERE token_hash = ?
+                  AND user_id = ?
+                  AND consumed_at IS NULL
+                  AND expires_at >= ?
+                """,
+                (now, normalized_hash, normalized_user_id, now),
+            )
+            if int(consumed.rowcount or 0) != 1:
+                connection.rollback()
+                return False
+
+            password_updated = connection.execute(
+                f"""
+                UPDATE {self._ACCOUNT_TABLE}
+                SET password_hash = ?, updated_at = ?
+                WHERE id = ? AND is_active = 1
+                """,
+                (normalized_password_hash, now, normalized_user_id),
+            )
+            if int(password_updated.rowcount or 0) != 1:
+                connection.rollback()
+                return False
+
+            connection.execute(
+                f"""
+                INSERT OR IGNORE INTO {self._SESSION_TABLE} (
+                    user_id, session_version, updated_at
+                ) VALUES (?, 1, ?)
+                """,
+                (normalized_user_id, now),
+            )
+            session_revoked = connection.execute(
+                f"""
+                UPDATE {self._SESSION_TABLE}
+                SET session_version = session_version + 1,
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (now, normalized_user_id),
+            )
+            if int(session_revoked.rowcount or 0) != 1:
+                connection.rollback()
+                return False
+
+            connection.execute(
+                f"""
+                UPDATE {self._TABLE}
+                SET consumed_at = ?
+                WHERE user_id = ? AND consumed_at IS NULL
+                """,
+                (now, normalized_user_id),
+            )
+            connection.commit()
+        return True
 
     def invalidate_for_user(self, *, user_id: int) -> None:
         if int(user_id) <= 0:
