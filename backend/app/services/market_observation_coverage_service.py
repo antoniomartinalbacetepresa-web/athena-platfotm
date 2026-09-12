@@ -119,23 +119,29 @@ class MarketObservationCoverageService:
                 """
             ).fetchone()
 
-            # Continuity is evaluated per contiguous provider segment. A stale isolated
-            # observation must not permanently poison a later valid 365-day segment,
-            # while provider stitching remains forbidden.
             deep_row = connection.execute(
                 """
-                WITH ordered_history AS (
+                WITH normalized_history AS (
                     SELECT mo.instrument_id,
-                           mo.source_provider,
-                           mo.observed_at,
-                           LAG(mo.observed_at) OVER (
-                               PARTITION BY mo.instrument_id, mo.source_provider
-                               ORDER BY mo.observed_at
-                           ) AS previous_observed_at
+                           CASE
+                               WHEN LOWER(TRIM(mo.source_provider)) IN ('yahoo', 'yahoo_finance') THEN 'yahoo'
+                               ELSE TRIM(mo.source_provider)
+                           END AS source_provider,
+                           mo.observed_at
                     FROM market_observations mo
                     JOIN instruments i ON i.id = mo.instrument_id
                     WHERE i.is_active = 1
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
+                ),
+                ordered_history AS (
+                    SELECT instrument_id,
+                           source_provider,
+                           observed_at,
+                           LAG(observed_at) OVER (
+                               PARTITION BY instrument_id, source_provider
+                               ORDER BY observed_at
+                           ) AS previous_observed_at
+                    FROM normalized_history
                 ),
                 marked_history AS (
                     SELECT instrument_id,
@@ -176,17 +182,26 @@ class MarketObservationCoverageService:
 
             source_rows = connection.execute(
                 """
-                SELECT mo.source_provider,
+                WITH normalized_history AS (
+                    SELECT mo.instrument_id,
+                           CASE
+                               WHEN LOWER(TRIM(mo.source_provider)) IN ('yahoo', 'yahoo_finance') THEN 'yahoo'
+                               ELSE TRIM(mo.source_provider)
+                           END AS source_provider,
+                           mo.observed_at
+                    FROM market_observations mo
+                    JOIN instruments i ON i.id = mo.instrument_id
+                    WHERE i.is_active = 1
+                      AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
+                )
+                SELECT source_provider,
                        COUNT(*) AS observation_count,
-                       COUNT(DISTINCT mo.instrument_id) AS covered_instrument_count,
-                       MIN(mo.observed_at) AS earliest_observed_at,
-                       MAX(mo.observed_at) AS latest_observed_at
-                FROM market_observations mo
-                JOIN instruments i ON i.id = mo.instrument_id
-                WHERE i.is_active = 1
-                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
-                GROUP BY mo.source_provider
-                ORDER BY mo.source_provider
+                       COUNT(DISTINCT instrument_id) AS covered_instrument_count,
+                       MIN(observed_at) AS earliest_observed_at,
+                       MAX(observed_at) AS latest_observed_at
+                FROM normalized_history
+                GROUP BY source_provider
+                ORDER BY source_provider
                 """
             ).fetchall()
 
