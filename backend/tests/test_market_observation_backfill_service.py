@@ -65,6 +65,7 @@ def test_backfill_persists_history_and_skips_known_non_equity(tmp_path: Path) ->
             "AAA": [
                 {
                     "timestamp": datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc).isoformat(),
+                    "sourceProvider": "yahoo",
                     "close": 100.0,
                     "adjustedClose": 99.5,
                     "volume": 1000,
@@ -97,6 +98,63 @@ def test_backfill_persists_history_and_skips_known_non_equity(tmp_path: Path) ->
     assert len(rows) == 1
     assert rows[0]["close"] == 100.0
     assert rows[0]["adjusted_close"] == 99.5
+    assert rows[0]["source_provider"] == "yahoo"
+
+
+def test_backfill_rejects_history_that_declares_different_provider(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    stock_id = _insert(instruments, symbol="AAA", instrument_type="common_stock")
+    provider = FakeHistoryProvider(
+        {
+            "AAA": [
+                {
+                    "timestamp": datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc).isoformat(),
+                    "sourceProvider": "other_provider",
+                    "close": 100.0,
+                }
+            ]
+        }
+    )
+    service = MarketObservationBackfillService(
+        database=database,
+        history_provider=provider,
+    )
+
+    report = service.run(limit=1)
+
+    assert report.failed_count == 1
+    assert report.persisted_instrument_count == 0
+    assert report.observations_inserted == 0
+    assert "procedencia" in report.failures[0]["error"]
+    assert MarketObservationRepository(database=database).list_for_instrument(stock_id) == []
+
+
+def test_backfill_rejects_empty_declared_provider(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    stock_id = _insert(instruments, symbol="AAA", instrument_type="common_stock")
+    provider = FakeHistoryProvider(
+        {
+            "AAA": [
+                {
+                    "timestamp": datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc).isoformat(),
+                    "sourceProvider": "   ",
+                    "close": 100.0,
+                }
+            ]
+        }
+    )
+    service = MarketObservationBackfillService(
+        database=database,
+        history_provider=provider,
+    )
+
+    report = service.run(limit=1)
+
+    assert report.failed_count == 1
+    assert report.observations_inserted == 0
+    assert MarketObservationRepository(database=database).list_for_instrument(stock_id) == []
 
 
 def test_backfill_is_idempotent_and_preserves_first_observation(tmp_path: Path) -> None:
