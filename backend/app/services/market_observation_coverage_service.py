@@ -18,7 +18,7 @@ class MarketObservationCoverageReport:
     by_source: dict[str, dict[str, int | str | None]]
     minimum_history_days: int
     minimum_deep_history_coverage: float
-    maximum_source_gap_days: int
+    maximum_source_gap_days: int = 7
 
     @property
     def instrument_coverage(self) -> float:
