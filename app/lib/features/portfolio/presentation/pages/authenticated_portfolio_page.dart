@@ -3,13 +3,14 @@ import 'package:flutter/material.dart';
 import '../../../auth/services/auth_session.dart';
 import '../../services/portfolio_service.dart';
 import '../controllers/portfolio_cloud_sync_controller.dart';
+import '../widgets/authenticated_portfolio_history_panel.dart';
 import 'portfolio_page.dart';
 
 /// Product-level Portfolio entry point.
 ///
 /// The existing [PortfolioPage] remains the local evidence-rich portfolio UI.
-/// This wrapper adds an explicit authenticated cloud-sync action without
-/// changing local persistence semantics or enabling destructive background sync.
+/// This wrapper adds explicit authenticated cloud sync and a read-only view over
+/// the owner-scoped append-only Event Ledger. Neither action enables trading.
 class AuthenticatedPortfolioPage extends StatefulWidget {
   const AuthenticatedPortfolioPage({super.key});
 
@@ -75,6 +76,29 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     );
   }
 
+  Future<void> _openAuthenticatedHistory() async {
+    if (!AuthSession.instance.isAuthenticated) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Inicia sesión para consultar el historial de tu cuenta ATHENA.',
+          ),
+        ),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => const FractionallySizedBox(
+        heightFactor: 0.78,
+        child: AuthenticatedPortfolioHistoryPanel(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -84,22 +108,35 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
           right: 20,
           bottom: 20,
           child: SafeArea(
-            child: FloatingActionButton.extended(
-              heroTag: 'portfolio-authenticated-sync',
-              onPressed:
-                  _syncController.isSyncing ? null : _syncDeclaredPositions,
-              icon: _syncController.isSyncing
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_upload_outlined),
-              label: Text(
-                _syncController.isSyncing
-                    ? 'Sincronizando…'
-                    : 'Sincronizar cuenta',
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'portfolio-authenticated-history',
+                  tooltip: 'Historial de cuenta',
+                  onPressed: _openAuthenticatedHistory,
+                  child: const Icon(Icons.history),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.extended(
+                  heroTag: 'portfolio-authenticated-sync',
+                  onPressed:
+                      _syncController.isSyncing ? null : _syncDeclaredPositions,
+                  icon: _syncController.isSyncing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_upload_outlined),
+                  label: Text(
+                    _syncController.isSyncing
+                        ? 'Sincronizando…'
+                        : 'Sincronizar cuenta',
+                  ),
+                ),
+              ],
             ),
           ),
         ),
