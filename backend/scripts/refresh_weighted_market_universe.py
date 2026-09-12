@@ -131,8 +131,17 @@ def run_refresh(
             "El readiness de ponderación no devolvió una lista de bloqueos válida."
         )
 
+    catalog_ready = quality.get("isGlobalReady") is True
+    weighting_ready = weighting_readiness.get("ready") is True
+    if not catalog_ready:
+        status = "fallback"
+    elif not weighting_ready:
+        status = "weighting_blocked"
+    else:
+        status = "ready"
+
     return {
-        "status": "ready" if quality.get("isGlobalReady") else "fallback",
+        "status": status,
         "source": result.get("source"),
         "regions": list(selected_regions),
         "pageSize": page_size,
