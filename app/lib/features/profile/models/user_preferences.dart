@@ -7,6 +7,7 @@ class UserPreferences {
     this.experienceLevel,
     this.liquidityNeed,
     this.maxDrawdownTolerancePct,
+    this.availableCapital,
   });
 
   static const riskTolerances = <String>{
@@ -35,6 +36,8 @@ class UserPreferences {
     'high',
   };
 
+  static const double maxAvailableCapital = 1000000000000;
+
   final String riskTolerance;
   final int investmentHorizonYears;
   final String baseCurrency;
@@ -42,6 +45,7 @@ class UserPreferences {
   final String? experienceLevel;
   final String? liquidityNeed;
   final int? maxDrawdownTolerancePct;
+  final double? availableCapital;
 
   factory UserPreferences.fromJson(Map<String, dynamic> json) {
     final risk = json['riskTolerance'];
@@ -51,6 +55,7 @@ class UserPreferences {
     final experience = json['experienceLevel'];
     final liquidity = json['liquidityNeed'];
     final drawdown = json['maxDrawdownTolerancePct'];
+    final availableCapital = json['availableCapital'];
     if (risk is! String || !riskTolerances.contains(risk)) {
       throw const FormatException('riskTolerance no válido.');
     }
@@ -76,6 +81,13 @@ class UserPreferences {
         (drawdown is! int || drawdown < 5 || drawdown > 60)) {
       throw const FormatException('maxDrawdownTolerancePct no válido.');
     }
+    if (availableCapital != null &&
+        (availableCapital is! num ||
+            !availableCapital.isFinite ||
+            availableCapital < 0 ||
+            availableCapital > maxAvailableCapital)) {
+      throw const FormatException('availableCapital no válido.');
+    }
     return UserPreferences(
       riskTolerance: risk,
       investmentHorizonYears: horizon,
@@ -84,6 +96,7 @@ class UserPreferences {
       experienceLevel: experience as String?,
       liquidityNeed: liquidity as String?,
       maxDrawdownTolerancePct: drawdown as int?,
+      availableCapital: (availableCapital as num?)?.toDouble(),
     );
   }
 
@@ -94,6 +107,7 @@ class UserPreferences {
     final experience = experienceLevel?.trim();
     final liquidity = liquidityNeed?.trim();
     final drawdown = maxDrawdownTolerancePct;
+    final capital = availableCapital;
     if (!riskTolerances.contains(risk)) {
       throw ArgumentError.value(riskTolerance, 'riskTolerance');
     }
@@ -119,6 +133,10 @@ class UserPreferences {
     if (drawdown != null && (drawdown < 5 || drawdown > 60)) {
       throw ArgumentError.value(drawdown, 'maxDrawdownTolerancePct');
     }
+    if (capital != null &&
+        (!capital.isFinite || capital < 0 || capital > maxAvailableCapital)) {
+      throw ArgumentError.value(capital, 'availableCapital');
+    }
     return {
       'riskTolerance': risk,
       'investmentHorizonYears': investmentHorizonYears,
@@ -129,6 +147,7 @@ class UserPreferences {
       if (liquidity != null && liquidity.isNotEmpty)
         'liquidityNeed': liquidity,
       if (drawdown != null) 'maxDrawdownTolerancePct': drawdown,
+      if (capital != null) 'availableCapital': capital,
     };
   }
 }
