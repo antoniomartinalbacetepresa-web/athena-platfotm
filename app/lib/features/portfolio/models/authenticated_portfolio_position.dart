@@ -3,6 +3,7 @@ class AuthenticatedPortfolioPosition {
   final String symbol;
   final String? exchange;
   final double quantity;
+  final double? averagePurchasePrice;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -11,6 +12,7 @@ class AuthenticatedPortfolioPosition {
     required this.symbol,
     required this.exchange,
     required this.quantity,
+    this.averagePurchasePrice,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -34,6 +36,19 @@ class AuthenticatedPortfolioPosition {
       throw const FormatException('Posición autenticada sin timestamps válidos.');
     }
     final exchangeRaw = json['exchange'];
+    final averagePurchasePriceRaw = json['averagePurchasePrice'];
+    double? averagePurchasePrice;
+    if (averagePurchasePriceRaw != null) {
+      if (averagePurchasePriceRaw is! num) {
+        throw const FormatException('Posición autenticada sin precio medio válido.');
+      }
+      averagePurchasePrice = averagePurchasePriceRaw.toDouble();
+      if (!averagePurchasePrice.isFinite ||
+          averagePurchasePrice <= 0 ||
+          averagePurchasePrice > 1000000000000) {
+        throw const FormatException('Posición autenticada sin precio medio válido.');
+      }
+    }
     return AuthenticatedPortfolioPosition(
       id: id,
       symbol: symbol.trim().toUpperCase(),
@@ -41,6 +56,7 @@ class AuthenticatedPortfolioPosition {
           ? exchangeRaw.trim().toUpperCase()
           : null,
       quantity: quantity.toDouble(),
+      averagePurchasePrice: averagePurchasePrice,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
