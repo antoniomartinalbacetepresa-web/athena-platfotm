@@ -98,10 +98,7 @@ class MarketHistoryGapService:
         self._database.initialize()
         params = (
             self._minimum_history_days,
-            self._minimum_history_days,
             self._maximum_source_gap_days,
-            self._minimum_history_days,
-            self._minimum_history_days,
             self._minimum_history_days,
             self._minimum_history_days,
             self._minimum_history_days,
@@ -138,7 +135,6 @@ class MarketHistoryGapService:
             summary AS (
                 SELECT instrument_id,
                        COUNT(*) AS source_count,
-                       MAX(history_span_days) AS maximum_history_span_days,
                        MAX(CASE
                            WHEN history_span_days >= ? AND maximum_gap_days <= ? THEN 1
                            ELSE 0
