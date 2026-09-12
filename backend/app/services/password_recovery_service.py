@@ -93,19 +93,12 @@ class PasswordRecoveryService:
         if stored_hash and self._password_hash.verify(password, stored_hash):
             raise ValueError("La nueva contraseña debe ser diferente de la actual.")
 
-        consumed_user_id = self._recovery.consume(token_hash=token_hash)
-        if consumed_user_id is None or int(consumed_user_id) != int(user_id):
-            return False
-
         password_hash = self._password_hash.hash(password)
-        if not self._accounts.update_password_hash(
+        return self._recovery.complete_password_reset(
+            token_hash=token_hash,
             user_id=int(user_id),
             password_hash=password_hash,
-        ):
-            return False
-        self._security.revoke_all_sessions(user_id=int(user_id))
-        self._recovery.invalidate_for_user(user_id=int(user_id))
-        return True
+        )
 
     def invalidate(self, *, user_id: int) -> None:
         self._recovery.invalidate_for_user(user_id=int(user_id))
