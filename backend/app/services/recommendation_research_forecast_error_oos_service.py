@@ -117,6 +117,7 @@ class RecommendationResearchForecastErrorOosService:
                 "distinctResolvedIssuerCount": len(issuer_counts),
                 "maximumErrorsPerResolvedIssuer": max(issuer_counts.values(), default=0),
                 "issuerErrorCounts": dict(sorted(issuer_counts.items())),
+                **self._longitudinal_summary(errors),
                 "metrics": self._metrics(errors),
                 "errorHashes": [str(item["errorHash"]) for item in errors],
             }
@@ -153,6 +154,13 @@ class RecommendationResearchForecastErrorOosService:
             "unresolvedIssuerErrorCount": len(normalized_errors) - len(all_resolved),
             "distinctResolvedIssuerCount": len(issuer_counts),
             "maximumErrorsPerResolvedIssuer": max(issuer_counts.values(), default=0),
+            **self._longitudinal_summary(normalized_errors),
+            "longitudinalSufficiency": {
+                "status": "policy_not_precommitted",
+                "policyId": None,
+                "policyApproved": False,
+                "productionSufficiencyClaimed": False,
+            },
             "horizonCount": len(horizons),
             "horizons": horizons,
             "advisoryStatus": "no_advice",
@@ -173,6 +181,7 @@ class RecommendationResearchForecastErrorOosService:
                 "horizonPooling": "forbidden_exact_elapsed_horizons_only",
                 "skillClaim": "forbidden_descriptive_errors_are_not_proof_of_predictive_skill",
                 "thresholds": "none_selected_here",
+                "longitudinalSufficiency": "requires_separate_precommitted_approved_policy",
                 "learningUse": "diagnostic_only_not_automatic_model_update",
             },
         }
@@ -193,6 +202,17 @@ class RecommendationResearchForecastErrorOosService:
             "unresolvedIssuerErrorCount": 0,
             "distinctResolvedIssuerCount": 0,
             "maximumErrorsPerResolvedIssuer": 0,
+            "firstEvaluationPeriodEnd": None,
+            "lastEvaluationPeriodEnd": None,
+            "distinctEvaluationPeriodCount": 0,
+            "evaluationSpanDays": 0.0,
+            "longitudinalEvidenceStatus": "no_evaluated_periods",
+            "longitudinalSufficiency": {
+                "status": "policy_not_precommitted",
+                "policyId": None,
+                "policyApproved": False,
+                "productionSufficiencyClaimed": False,
+            },
             "horizonCount": 0,
             "horizons": {},
             "advisoryStatus": "no_advice",
@@ -213,8 +233,39 @@ class RecommendationResearchForecastErrorOosService:
                 "horizonPooling": "forbidden_exact_elapsed_horizons_only",
                 "skillClaim": "forbidden_descriptive_errors_are_not_proof_of_predictive_skill",
                 "thresholds": "none_selected_here",
+                "longitudinalSufficiency": "requires_separate_precommitted_approved_policy",
                 "learningUse": "diagnostic_only_not_automatic_model_update",
             },
+        }
+
+    def _longitudinal_summary(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        if not rows:
+            return {
+                "firstEvaluationPeriodEnd": None,
+                "lastEvaluationPeriodEnd": None,
+                "distinctEvaluationPeriodCount": 0,
+                "evaluationSpanDays": 0.0,
+                "longitudinalEvidenceStatus": "no_evaluated_periods",
+            }
+        period_ends = sorted(
+            {
+                self._aware_iso(item.get("periodEnd"), "error.periodEnd")
+                for item in rows
+            }
+        )
+        first = period_ends[0]
+        last = period_ends[-1]
+        span_days = (last - first).total_seconds() / 86400.0
+        return {
+            "firstEvaluationPeriodEnd": first.isoformat(),
+            "lastEvaluationPeriodEnd": last.isoformat(),
+            "distinctEvaluationPeriodCount": len(period_ends),
+            "evaluationSpanDays": span_days,
+            "longitudinalEvidenceStatus": (
+                "multiple_evaluation_periods_observed"
+                if len(period_ends) >= 2 and span_days > 0.0
+                else "single_period_snapshot"
+            ),
         }
 
     def _normalize_error(
