@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
@@ -22,6 +22,7 @@ class MarketHistoryProvider(Protocol):
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+TodayProvider = Callable[[], date]
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,9 @@ class MarketObservationBackfillReport:
     observations_unchanged: int
     failures: tuple[dict[str, str], ...]
     selection_mode: str = "active_universe"
+    effective_from_date: str | None = None
+    effective_to_date: str | None = None
+    history_window_auto_expanded: bool = False
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +57,11 @@ class MarketObservationBackfillReport:
                 "inserted": self.observations_inserted,
                 "unchanged": self.observations_unchanged,
             },
+            "historyWindow": {
+                "fromDate": self.effective_from_date,
+                "toDate": self.effective_to_date,
+                "autoExpandedForBlockers": self.history_window_auto_expanded,
+            },
             "failures": [dict(item) for item in self.failures],
             "pointInTimeOverwritePolicy": "preserve_first_observation_per_source",
         }
@@ -60,6 +69,9 @@ class MarketObservationBackfillReport:
 
 class MarketObservationBackfillService:
     _EXCLUDED_TYPES = frozenset({"etf", "fund"})
+    _DEEP_HISTORY_DAYS = 365
+    _BLOCKER_LOOKBACK_MARGIN_DAYS = 35
+    BLOCKER_LOOKBACK_DAYS = _DEEP_HISTORY_DAYS + _BLOCKER_LOOKBACK_MARGIN_DAYS
 
     def __init__(
         self,
@@ -67,6 +79,7 @@ class MarketObservationBackfillService:
         database: AthenaDatabase | None = None,
         history_provider: MarketHistoryProvider | None = None,
         progress_callback: ProgressCallback | None = None,
+        today_provider: TodayProvider | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._instruments = InstrumentRepository(database=self._database)
@@ -75,6 +88,11 @@ class MarketObservationBackfillService:
             history_provider if history_provider is not None else YahooMarketService()
         )
         self._progress_callback = progress_callback
+        self._today_provider = (
+            today_provider
+            if today_provider is not None
+            else lambda: datetime.now(timezone.utc).date()
+        )
 
     def run(
         self,
@@ -93,6 +111,12 @@ class MarketObservationBackfillService:
         provider = str(source_provider or "").strip()
         if not provider:
             raise ValueError("source_provider es obligatorio.")
+
+        effective_from_date, effective_to_date, auto_expanded = self._resolve_history_window(
+            from_date=from_date,
+            to_date=to_date,
+            blocking_only=blocking_only,
+        )
 
         self._database.initialize()
         rows = self._select_rows(
@@ -130,8 +154,8 @@ class MarketObservationBackfillService:
             try:
                 history = self._history_provider.get_history(
                     symbol=symbol,
-                    from_date=from_date,
-                    to_date=to_date,
+                    from_date=effective_from_date,
+                    to_date=effective_to_date,
                 )
                 if not history:
                     no_history += 1
@@ -189,7 +213,30 @@ class MarketObservationBackfillService:
             observations_unchanged=unchanged,
             failures=tuple(failures),
             selection_mode=("history_blockers" if blocking_only else "active_universe"),
+            effective_from_date=effective_from_date,
+            effective_to_date=effective_to_date,
+            history_window_auto_expanded=auto_expanded,
         )
+
+    def _resolve_history_window(
+        self,
+        *,
+        from_date: str | None,
+        to_date: str | None,
+        blocking_only: bool,
+    ) -> tuple[str | None, str | None, bool]:
+        if not blocking_only or from_date is not None:
+            return from_date, to_date, False
+
+        end_date = self._parse_iso_date(to_date) if to_date is not None else self._today_provider()
+        start_date = end_date - timedelta(days=self.BLOCKER_LOOKBACK_DAYS)
+        return start_date.isoformat(), end_date.isoformat(), True
+
+    def _parse_iso_date(self, value: str) -> date:
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("to_date debe tener formato YYYY-MM-DD y ser una fecha válida.") from exc
 
     def _select_rows(
         self,
