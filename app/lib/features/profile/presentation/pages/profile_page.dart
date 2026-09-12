@@ -325,6 +325,7 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _horizonController;
   late final TextEditingController _currencyController;
+  late final TextEditingController _availableCapitalController;
   late final TextEditingController _drawdownController;
   late String _riskTolerance;
   late String _objective;
@@ -336,6 +337,7 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
     super.initState();
     _horizonController = TextEditingController();
     _currencyController = TextEditingController();
+    _availableCapitalController = TextEditingController();
     _drawdownController = TextEditingController();
     _apply(widget.preferences);
   }
@@ -355,6 +357,7 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
     _liquidityNeed = value?.liquidityNeed ?? _unspecified;
     _horizonController.text = (value?.investmentHorizonYears ?? 10).toString();
     _currencyController.text = value?.baseCurrency ?? 'EUR';
+    _availableCapitalController.text = value?.availableCapital?.toString() ?? '';
     _drawdownController.text = value?.maxDrawdownTolerancePct?.toString() ?? '';
   }
 
@@ -362,13 +365,18 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
   void dispose() {
     _horizonController.dispose();
     _currencyController.dispose();
+    _availableCapitalController.dispose();
     _drawdownController.dispose();
     super.dispose();
   }
 
+  String _normalizedCapitalText() =>
+      _availableCapitalController.text.trim().replaceAll(',', '.');
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final drawdownText = _drawdownController.text.trim();
+    final capitalText = _normalizedCapitalText();
     final preferences = UserPreferences(
       riskTolerance: _riskTolerance,
       investmentHorizonYears: int.parse(_horizonController.text.trim()),
@@ -379,6 +387,7 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
       liquidityNeed: _liquidityNeed == _unspecified ? null : _liquidityNeed,
       maxDrawdownTolerancePct:
           drawdownText.isEmpty ? null : int.parse(drawdownText),
+      availableCapital: capitalText.isEmpty ? null : double.parse(capitalText),
     );
     await widget.onSave(preferences);
   }
@@ -534,6 +543,29 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
                 final currency = value?.trim().toUpperCase() ?? '';
                 if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
                   return 'Introduce un código de moneda de tres letras.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              key: const Key('available-capital-field'),
+              controller: _availableCapitalController,
+              enabled: !widget.busy,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Capital disponible (moneda base)',
+                hintText: 'Opcional: 0–1.000.000.000.000',
+              ),
+              validator: (value) {
+                final text = value?.trim().replaceAll(',', '.') ?? '';
+                if (text.isEmpty) return null;
+                final capital = double.tryParse(text);
+                if (capital == null ||
+                    !capital.isFinite ||
+                    capital < 0 ||
+                    capital > UserPreferences.maxAvailableCapital) {
+                  return 'Introduce un capital entre 0 y 1.000.000.000.000, o déjalo vacío.';
                 }
                 return null;
               },
