@@ -123,7 +123,7 @@ def test_average_purchase_price_rejects_invalid_numeric_boundaries(monkeypatch, 
     _configure(monkeypatch, tmp_path)
     with TestClient(app) as client:
         token = _register_and_token(client, email="invalid-cost-basis@example.com")
-        for value in (0, -1, 1_000_000_000_000.01, float("nan"), float("inf"), float("-inf")):
+        for value in (0, -1, 1_000_000_000_000.01):
             response = client.put(
                 "/api/v1/user/portfolio/positions",
                 headers=_headers(token),
@@ -135,6 +135,19 @@ def test_average_purchase_price_rejects_invalid_numeric_boundaries(monkeypatch, 
                 },
             )
             assert response.status_code == 400, (value, response.text)
+            assert "averagePurchasePrice" in response.json()["detail"]
+
+        headers = {**_headers(token), "Content-Type": "application/json"}
+        for token_value in ("NaN", "Infinity", "-Infinity"):
+            response = client.put(
+                "/api/v1/user/portfolio/positions",
+                headers=headers,
+                content=(
+                    '{"symbol":"NVDA","exchange":"NASDAQ","quantity":1,'
+                    f'"averagePurchasePrice":{token_value}}}'
+                ),
+            )
+            assert response.status_code == 400, (token_value, response.text)
             assert "averagePurchasePrice" in response.json()["detail"]
 
 
