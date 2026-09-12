@@ -109,16 +109,25 @@ class MarketHistoryGapService:
                 WHERE is_active = 1
                   AND LOWER(TRIM(COALESCE(instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
             ),
-            ordered_history AS (
+            normalized_history AS (
                 SELECT mo.instrument_id,
-                       mo.source_provider,
-                       mo.observed_at,
-                       LAG(mo.observed_at) OVER (
-                           PARTITION BY mo.instrument_id, mo.source_provider
-                           ORDER BY mo.observed_at
-                       ) AS previous_observed_at
+                       CASE
+                           WHEN LOWER(TRIM(mo.source_provider)) IN ('yahoo', 'yahoo_finance') THEN 'yahoo'
+                           ELSE TRIM(mo.source_provider)
+                       END AS source_provider,
+                       mo.observed_at
                 FROM market_observations mo
                 JOIN eligible e ON e.instrument_id = mo.instrument_id
+            ),
+            ordered_history AS (
+                SELECT instrument_id,
+                       source_provider,
+                       observed_at,
+                       LAG(observed_at) OVER (
+                           PARTITION BY instrument_id, source_provider
+                           ORDER BY observed_at
+                       ) AS previous_observed_at
+                FROM normalized_history
             ),
             marked_history AS (
                 SELECT instrument_id,
