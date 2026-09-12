@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -226,6 +227,9 @@ def post_portfolio_allocation_candidate(
         reference_capital = payload.get("referenceCapital")
         if isinstance(reference_capital, bool) or not isinstance(reference_capital, (int, float)):
             raise ValueError("referenceCapital debe ser numérico finito y positivo.")
+        reference_capital_value = float(reference_capital)
+        if not math.isfinite(reference_capital_value) or reference_capital_value <= 0:
+            raise ValueError("referenceCapital debe ser numérico finito y positivo.")
         base_currency = payload.get("baseCurrency")
         if not isinstance(base_currency, str):
             raise ValueError("baseCurrency debe ser una moneda ISO.")
@@ -251,7 +255,7 @@ def post_portfolio_allocation_candidate(
         result = RecommendationAuthorizedAllocationPipelineService(
             correlation_repository=correlation_repository,
             verified_pipeline=verified_pipeline,
-        ).build(uncertainty_bound_action_candidate_fingerprint=action_fingerprint, allocation_policy_id=allocation_policy_id, reference_capital=float(reference_capital), base_currency=base_currency, positions=positions, correlation_evidence_fingerprints=correlation_fingerprints, as_of=as_of)
+        ).build(uncertainty_bound_action_candidate_fingerprint=action_fingerprint, allocation_policy_id=allocation_policy_id, reference_capital=reference_capital_value, base_currency=base_currency, positions=positions, correlation_evidence_fingerprints=correlation_fingerprints, as_of=as_of)
         return {"data": _safe_non_advisory_allocation(result)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
