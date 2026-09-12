@@ -43,28 +43,42 @@ def _fake_readiness(_database_path: Path | None) -> dict[str, object]:
     }
 
 
-def test_run_refresh_returns_ready_status_and_forwards_limits(
+def _ready_readiness(_database_path: Path | None) -> dict[str, object]:
+    return {
+        "ready": True,
+        "identityMarketCapCoverage": 0.98,
+        "domicileMarketCapCoverage": 0.94,
+        "canonicalIssuerCount": 1200,
+        "blockers": [],
+    }
+
+
+def _global_ready_importer(**kwargs):
+    return {
+        "source": "yahoo_regional_screener",
+        "received": 300,
+        "accepted": 295,
+        "rejected": 5,
+        "inserted": 250,
+        "updated": 45,
+        "unchanged": 0,
+        "activeSourceMemberships": 295,
+        "catalogQuality": {
+            "isGlobalReady": True,
+            "globallyUsableCount": 280,
+            "usableCoverage": 0.9,
+        },
+    }
+
+
+def test_run_refresh_blocks_ready_status_until_weighting_is_ready(
     tmp_path: Path,
 ) -> None:
     calls: list[dict[str, object]] = []
 
     def fake_importer(**kwargs):
         calls.append(kwargs)
-        return {
-            "source": "yahoo_regional_screener",
-            "received": 300,
-            "accepted": 295,
-            "rejected": 5,
-            "inserted": 250,
-            "updated": 45,
-            "unchanged": 0,
-            "activeSourceMemberships": 295,
-            "catalogQuality": {
-                "isGlobalReady": True,
-                "globallyUsableCount": 280,
-                "usableCoverage": 0.9,
-            },
-        }
+        return _global_ready_importer(**kwargs)
 
     result = run_refresh(
         database_path=tmp_path / "athena.db",
@@ -76,7 +90,7 @@ def test_run_refresh_returns_ready_status_and_forwards_limits(
         readiness_builder=_fake_readiness,
     )
 
-    assert result["status"] == "ready"
+    assert result["status"] == "weighting_blocked"
     assert result["source"] == "yahoo_regional_screener"
     assert result["regions"] == ["us", "de", "jp"]
     assert result["catalogQuality"]["globallyUsableCount"] == 280
@@ -94,6 +108,19 @@ def test_run_refresh_returns_ready_status_and_forwards_limits(
             "max_pages": 2,
         }
     ]
+
+
+def test_run_refresh_returns_ready_only_when_weighting_gate_is_ready() -> None:
+    result = run_refresh(
+        regions=("us", "de", "jp"),
+        importer=_global_ready_importer,
+        profile_builder=_fake_profile,
+        readiness_builder=_ready_readiness,
+    )
+
+    assert result["status"] == "ready"
+    assert result["weightingReadiness"]["ready"] is True
+    assert result["nextWeightingBlockers"] == []
 
 
 def test_run_refresh_reports_exhaustive_mode_when_max_pages_is_none() -> None:
@@ -125,6 +152,7 @@ def test_run_refresh_reports_exhaustive_mode_when_max_pages_is_none() -> None:
         readiness_builder=_fake_readiness,
     )
 
+    assert result["status"] == "weighting_blocked"
     assert result["exhaustive"] is True
     assert result["pageSize"] == 250
     assert result["maxPagesPerRegion"] is None
