@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.database.athena_database import AthenaDatabase
@@ -84,6 +84,7 @@ def test_backfill_persists_history_and_skips_known_non_equity(tmp_path: Path) ->
     assert report.skipped_non_equity_count == 2
     assert report.failed_count == 0
     assert report.observations_inserted == 1
+    assert report.selection_mode == "active_universe"
     assert provider.calls == ["AAA"]
     assert {item["status"] for item in progress} == {
         "persisted",
@@ -181,3 +182,62 @@ def test_backfill_respects_limit_and_offset(tmp_path: Path) -> None:
 
     assert report.selected_count == 1
     assert provider.calls == ["BBB"]
+
+
+def test_backfill_blocking_only_skips_instruments_with_valid_deep_history(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    observations = MarketObservationRepository(database=database)
+    blocked_id = _insert(instruments, symbol="BLOCKED", instrument_type="common_stock")
+    valid_id = _insert(instruments, symbol="VALID", instrument_type="common_stock")
+    _insert(instruments, symbol="ETF1", instrument_type="etf")
+
+    start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    valid_history = [
+        {
+            "timestamp": (start + timedelta(days=day)).isoformat(),
+            "close": 100.0 + day,
+        }
+        for day in range(0, 366, 5)
+    ]
+    if valid_history[-1]["timestamp"] != (start + timedelta(days=365)).isoformat():
+        valid_history.append(
+            {
+                "timestamp": (start + timedelta(days=365)).isoformat(),
+                "close": 465.0,
+            }
+        )
+    observations.save_many(
+        instrument_id=valid_id,
+        observations=valid_history,
+        source_provider="yahoo_finance",
+        retrieved_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+
+    provider = FakeHistoryProvider(
+        {
+            "BLOCKED": [
+                {
+                    "timestamp": datetime(2025, 1, 2, 21, 0, tzinfo=timezone.utc).isoformat(),
+                    "close": 50.0,
+                }
+            ],
+            "VALID": RuntimeError("VALID must not be requested"),
+        }
+    )
+    service = MarketObservationBackfillService(
+        database=database,
+        history_provider=provider,
+    )
+
+    report = service.run(limit=10, blocking_only=True)
+
+    assert blocked_id != valid_id
+    assert report.selected_count == 1
+    assert report.persisted_instrument_count == 1
+    assert report.skipped_non_equity_count == 0
+    assert report.selection_mode == "history_blockers"
+    assert report.to_api_dict()["selectionMode"] == "history_blockers"
+    assert provider.calls == ["BLOCKED"]
