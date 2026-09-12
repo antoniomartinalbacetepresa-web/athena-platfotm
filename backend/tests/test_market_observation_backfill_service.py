@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.database.athena_database import AthenaDatabase
@@ -13,6 +13,7 @@ class FakeHistoryProvider:
     def __init__(self, responses: dict[str, object]) -> None:
         self.responses = responses
         self.calls: list[str] = []
+        self.date_calls: list[tuple[str, str | None, str | None]] = []
 
     def get_history(
         self,
@@ -21,6 +22,7 @@ class FakeHistoryProvider:
         to_date: str | None = None,
     ) -> list[dict[str, object]]:
         self.calls.append(symbol)
+        self.date_calls.append((symbol, from_date, to_date))
         response = self.responses.get(symbol, [])
         if isinstance(response, Exception):
             raise response
@@ -230,6 +232,7 @@ def test_backfill_blocking_only_skips_instruments_with_valid_deep_history(
     service = MarketObservationBackfillService(
         database=database,
         history_provider=provider,
+        today_provider=lambda: date(2026, 1, 2),
     )
 
     report = service.run(limit=10, blocking_only=True)
@@ -241,3 +244,45 @@ def test_backfill_blocking_only_skips_instruments_with_valid_deep_history(
     assert report.selection_mode == "history_blockers"
     assert report.to_api_dict()["selectionMode"] == "history_blockers"
     assert provider.calls == ["BLOCKED"]
+    assert provider.date_calls == [("BLOCKED", "2024-11-28", "2026-01-02")]
+    assert report.effective_from_date == "2024-11-28"
+    assert report.effective_to_date == "2026-01-02"
+    assert report.history_window_auto_expanded is True
+    assert report.to_api_dict()["historyWindow"] == {
+        "fromDate": "2024-11-28",
+        "toDate": "2026-01-02",
+        "autoExpandedForBlockers": True,
+    }
+
+
+def test_blocking_backfill_anchors_automatic_lookback_to_explicit_to_date(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _insert(instruments, symbol="BLOCKED", instrument_type="common_stock")
+    provider = FakeHistoryProvider({"BLOCKED": []})
+    service = MarketObservationBackfillService(database=database, history_provider=provider)
+
+    report = service.run(limit=1, blocking_only=True, to_date="2026-06-30")
+
+    assert provider.date_calls == [("BLOCKED", "2025-05-26", "2026-06-30")]
+    assert report.history_window_auto_expanded is True
+
+
+def test_blocking_backfill_never_overrides_explicit_from_date(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _insert(instruments, symbol="BLOCKED", instrument_type="common_stock")
+    provider = FakeHistoryProvider({"BLOCKED": []})
+    service = MarketObservationBackfillService(database=database, history_provider=provider)
+
+    report = service.run(
+        limit=1,
+        blocking_only=True,
+        from_date="2020-01-01",
+        to_date="2026-06-30",
+    )
+
+    assert provider.date_calls == [("BLOCKED", "2020-01-01", "2026-06-30")]
+    assert report.history_window_auto_expanded is False
