@@ -101,7 +101,7 @@ class MarketObservationBackfillService:
         offset: int = 0,
         from_date: str | None = None,
         to_date: str | None = None,
-        source_provider: str = "yahoo_finance",
+        source_provider: str = YahooMarketService.PROVIDER_ID,
         blocking_only: bool = False,
     ) -> MarketObservationBackfillReport:
         if limit <= 0:
@@ -168,6 +168,10 @@ class MarketObservationBackfillService:
                     )
                     continue
 
+                self._validate_source_provenance(
+                    observations=history,
+                    expected_provider=provider,
+                )
                 stats = self._observations.save_many(
                     instrument_id=instrument_id,
                     observations=history,
@@ -217,6 +221,28 @@ class MarketObservationBackfillService:
             effective_to_date=effective_to_date,
             history_window_auto_expanded=auto_expanded,
         )
+
+    def _validate_source_provenance(
+        self,
+        *,
+        observations: list[dict[str, Any]],
+        expected_provider: str,
+    ) -> None:
+        for observation in observations:
+            declared_raw = observation.get(
+                "sourceProvider",
+                observation.get("source_provider"),
+            )
+            if declared_raw is None:
+                continue
+            declared = str(declared_raw).strip()
+            if not declared:
+                raise ValueError("sourceProvider no puede estar vacío cuando está presente.")
+            if declared != expected_provider:
+                raise ValueError(
+                    "La procedencia del histórico no coincide con source_provider; "
+                    "se rechaza la persistencia para evitar provenance incorrecto."
+                )
 
     def _resolve_history_window(
         self,
