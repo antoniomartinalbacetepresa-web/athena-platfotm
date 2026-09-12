@@ -7,6 +7,7 @@ from typing import Any, Callable, Protocol
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
+from app.services.market_history_gap_service import MarketHistoryGapService
 from app.services.yahoo_market_service import YahooMarketService
 
 
@@ -35,10 +36,12 @@ class MarketObservationBackfillReport:
     observations_inserted: int
     observations_unchanged: int
     failures: tuple[dict[str, str], ...]
+    selection_mode: str = "active_universe"
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
             "status": "completed_with_failures" if self.failed_count else "completed",
+            "selectionMode": self.selection_mode,
             "selectedCount": self.selected_count,
             "processedCount": self.processed_count,
             "persistedInstrumentCount": self.persisted_instrument_count,
@@ -81,6 +84,7 @@ class MarketObservationBackfillService:
         from_date: str | None = None,
         to_date: str | None = None,
         source_provider: str = "yahoo_finance",
+        blocking_only: bool = False,
     ) -> MarketObservationBackfillReport:
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
@@ -91,7 +95,11 @@ class MarketObservationBackfillService:
             raise ValueError("source_provider es obligatorio.")
 
         self._database.initialize()
-        rows = self._instruments.list_active(limit=limit, offset=offset)
+        rows = self._select_rows(
+            limit=limit,
+            offset=offset,
+            blocking_only=blocking_only,
+        )
         retrieved_at = datetime.now(timezone.utc)
 
         persisted_instruments = 0
@@ -180,7 +188,32 @@ class MarketObservationBackfillService:
             observations_inserted=inserted,
             observations_unchanged=unchanged,
             failures=tuple(failures),
+            selection_mode=("history_blockers" if blocking_only else "active_universe"),
         )
+
+    def _select_rows(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        blocking_only: bool,
+    ) -> list[dict[str, Any]]:
+        if not blocking_only:
+            return self._instruments.list_active(limit=limit, offset=offset)
+
+        report = MarketHistoryGapService(database=self._database).get_report(
+            limit=limit,
+            offset=offset,
+        )
+        rows: list[dict[str, Any]] = []
+        for blocker in report.items:
+            row = self._instruments.get_by_id(blocker.instrument_id)
+            if row is None or not bool(row.get("is_active")):
+                raise RuntimeError(
+                    "El diagnóstico histórico cambió durante la selección del backfill."
+                )
+            rows.append(row)
+        return rows
 
     def _emit(
         self,
