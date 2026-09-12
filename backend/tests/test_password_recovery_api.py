@@ -91,6 +91,51 @@ def test_recovery_resets_password_once_and_revokes_existing_sessions(
     assert reused.json()["detail"] == "Token de recuperación no válido o caducado."
 
 
+def test_invalid_recovery_password_does_not_consume_valid_token(
+    monkeypatch, tmp_path: Path
+) -> None:
+    database_path = _configure(monkeypatch, tmp_path)
+    _register()
+    fake_mailer = _FakeMailer()
+    monkeypatch.setattr(auth_api, "_recovery_mailer", lambda: fake_mailer)
+
+    requested = client.post(
+        "/api/v1/auth/recovery/request",
+        json={"email": "recover@example.com"},
+    )
+    assert requested.status_code == 202, requested.text
+    challenge = fake_mailer.challenges[0]
+
+    unchanged = client.post(
+        "/api/v1/auth/recovery/reset",
+        json={"token": challenge.token, "newPassword": _PASSWORD},
+    )
+    assert unchanged.status_code == 400, unchanged.text
+    assert unchanged.json()["detail"] == "La nueva contraseña debe ser diferente de la actual."
+
+    with sqlite3.connect(database_path) as connection:
+        consumed_at = connection.execute(
+            "SELECT consumed_at FROM athena_password_recovery_tokens WHERE token_hash = ?",
+            (hashlib.sha256(challenge.token.encode("utf-8")).hexdigest(),),
+        ).fetchone()
+    assert consumed_at == (None,)
+
+    corrected = client.post(
+        "/api/v1/auth/recovery/reset",
+        json={"token": challenge.token, "newPassword": _NEW_PASSWORD},
+    )
+    assert corrected.status_code == 204, corrected.text
+    assert _login(password=_PASSWORD).status_code == 401
+    assert _login(password=_NEW_PASSWORD).status_code == 200
+
+    reused = client.post(
+        "/api/v1/auth/recovery/reset",
+        json={"token": challenge.token, "newPassword": "AnotherSecurePassword123!"},
+    )
+    assert reused.status_code == 400
+    assert reused.json()["detail"] == "Token de recuperación no válido o caducado."
+
+
 def test_recovery_request_does_not_reveal_unknown_accounts(monkeypatch, tmp_path: Path) -> None:
     _configure(monkeypatch, tmp_path)
     fake_mailer = _FakeMailer()
