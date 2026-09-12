@@ -44,6 +44,15 @@ def _complete_learning(*, forecast_coverage: float = 1.0) -> dict[str, object]:
             "forecastErrorCount": 2,
             "missingForecastErrorCount": 0,
             "measurementCoverage": forecast_coverage,
+            "distinctEvaluationPeriodCount": 2,
+            "evaluationSpanDays": 30.0,
+            "longitudinalEvidenceStatus": "multiple_evaluation_periods_observed",
+            "longitudinalSufficiency": {
+                "status": "precommitted_policy_satisfied",
+                "policyId": "test-policy-only",
+                "policyApproved": True,
+                "acceptanceEvidenceVerified": True,
+            },
             "horizonCount": 1,
             "horizons": {
                 "604800": {
@@ -86,7 +95,7 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     )
     assert readiness["completionPercent"] == 0.0
     assert readiness["passedGateCount"] == 0
-    assert readiness["totalGateCount"] == 6
+    assert readiness["totalGateCount"] == 7
     assert readiness["ready"] is False
     assert "global_market_universe_not_ready" in readiness["blockers"]
     assert "canonical_market_weighting_not_ready" in readiness["blockers"]
@@ -94,6 +103,7 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     assert "corporate_actions_independent_reconciliation_pending" in readiness["blockers"]
     assert "research_outcome_oos_evidence_pending" in readiness["blockers"]
     assert "forecast_error_oos_measurement_incomplete" in readiness["blockers"]
+    assert "forecast_error_oos_longitudinal_sufficiency_pending" in readiness["blockers"]
     assert "external_market_cap_validation_required" in readiness["blockers"]
     assert readiness["policy"]["featureCompletenessClaimed"] is False
     assert readiness["policy"]["productionEligibilityClaimed"] is False
@@ -110,8 +120,8 @@ def test_operational_readiness_reaches_100_only_when_all_gates_pass() -> None:
     )
 
     assert report["completionPercent"] == 100.0
-    assert report["passedGateCount"] == 6
-    assert report["totalGateCount"] == 6
+    assert report["passedGateCount"] == 7
+    assert report["totalGateCount"] == 7
     assert report["ready"] is True
     assert report["blockers"] == []
     assert all(gate["passed"] is True for gate in report["gates"])
@@ -130,7 +140,7 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
         learning=_complete_learning(forecast_coverage=0.99),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
@@ -144,7 +154,7 @@ def test_operational_readiness_rejects_forecast_coverage_above_one() -> None:
         learning=_complete_learning(forecast_coverage=1.01),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
@@ -185,6 +195,46 @@ def test_operational_readiness_reconciles_forecast_counts_and_horizons() -> None
     assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
 
+def test_operational_readiness_rejects_snapshot_or_unapproved_longitudinal_evidence() -> None:
+    learning = _complete_learning()
+    forecast = learning["researchForecastErrorOos"]
+    assert isinstance(forecast, dict)
+    forecast["distinctEvaluationPeriodCount"] = 1
+    forecast["evaluationSpanDays"] = 0.0
+    forecast["longitudinalEvidenceStatus"] = "single_period_snapshot"
+
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=_complete_corporate_actions(),
+        learning=learning,
+    )
+    assert report["completionPercent"] == 85.7
+    assert report["ready"] is False
+    assert report["blockers"] == ["forecast_error_oos_longitudinal_sufficiency_pending"]
+
+    learning = _complete_learning()
+    forecast = learning["researchForecastErrorOos"]
+    assert isinstance(forecast, dict)
+    forecast["longitudinalSufficiency"] = {
+        "status": "policy_not_precommitted",
+        "policyId": None,
+        "policyApproved": False,
+        "acceptanceEvidenceVerified": False,
+    }
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=_complete_corporate_actions(),
+        learning=learning,
+    )
+    assert report["completionPercent"] == 85.7
+    assert report["ready"] is False
+    assert report["blockers"] == ["forecast_error_oos_longitudinal_sufficiency_pending"]
+
+
 def test_operational_readiness_rejects_shallow_history() -> None:
     history = _complete_market_history()
     history["historyDepthReady"] = False
@@ -196,7 +246,7 @@ def test_operational_readiness_rejects_shallow_history() -> None:
         learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
 
@@ -217,7 +267,7 @@ def test_operational_readiness_rejects_legacy_30_percent_history_threshold() -> 
         learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
 
@@ -231,7 +281,7 @@ def test_operational_readiness_fails_closed_when_final_history_evidence_is_missi
         learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
 
@@ -245,7 +295,7 @@ def test_operational_readiness_rejects_non_finite_forecast_coverage() -> None:
         learning=_complete_learning(forecast_coverage=float("inf")),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
@@ -262,7 +312,7 @@ def test_operational_readiness_rejects_unmeasured_or_single_family_corporate_act
         learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 83.3
+    assert report["completionPercent"] == 85.7
     assert report["ready"] is False
     assert report["blockers"] == [
         "corporate_actions_independent_reconciliation_pending"
