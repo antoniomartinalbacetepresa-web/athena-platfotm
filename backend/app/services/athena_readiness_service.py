@@ -84,12 +84,7 @@ def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
 
 
 def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
-    """Require internally reconciled, complete OOS measurement evidence.
-
-    This deliberately does not invent a statistical-skill or minimum-sample threshold.
-    It only prevents malformed or partially measured evidence from satisfying the
-    operational gate while longitudinal acceptance remains a separate open criterion.
-    """
+    """Require internally reconciled, complete OOS measurement evidence."""
 
     if forecast_error.get("status") != "forecast_error_oos_evidence_available":
         return False
@@ -139,6 +134,41 @@ def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
         horizon_measured_total += horizon_measured
 
     return horizon_eligible_total == eligible and horizon_measured_total == measured
+
+
+def _final_forecast_error_longitudinal_sufficiency_passed(
+    forecast_error: dict[str, Any],
+) -> bool:
+    """Require an approved, precommitted longitudinal acceptance policy.
+
+    Multiple observed evaluation periods are necessary to call evidence longitudinal,
+    but they are deliberately not treated as statistically sufficient on their own.
+    The diagnostic service therefore fails closed until a separately governed policy
+    is precommitted, approved, and reports that the observed evidence satisfies it.
+    """
+
+    distinct_periods = _finite_number(
+        forecast_error.get("distinctEvaluationPeriodCount")
+    )
+    span_days = _finite_number(forecast_error.get("evaluationSpanDays"))
+    sufficiency = forecast_error.get("longitudinalSufficiency")
+    if not isinstance(sufficiency, dict):
+        return False
+    policy_id = sufficiency.get("policyId")
+
+    return (
+        forecast_error.get("longitudinalEvidenceStatus")
+        == "multiple_evaluation_periods_observed"
+        and distinct_periods is not None
+        and distinct_periods >= 2
+        and span_days is not None
+        and span_days > 0
+        and sufficiency.get("status") == "precommitted_policy_satisfied"
+        and isinstance(policy_id, str)
+        and bool(policy_id.strip())
+        and sufficiency.get("policyApproved") is True
+        and sufficiency.get("acceptanceEvidenceVerified") is True
+    )
 
 
 def build_operational_readiness(
@@ -196,6 +226,13 @@ def build_operational_readiness(
             "id": "forecast_error_oos_complete",
             "passed": _final_forecast_error_oos_passed(forecast_error),
             "blocker": "forecast_error_oos_measurement_incomplete",
+        },
+        {
+            "id": "forecast_error_oos_longitudinal_sufficiency",
+            "passed": _final_forecast_error_longitudinal_sufficiency_passed(
+                forecast_error
+            ),
+            "blocker": "forecast_error_oos_longitudinal_sufficiency_pending",
         },
     ]
 
