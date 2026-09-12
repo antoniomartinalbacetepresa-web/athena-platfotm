@@ -13,6 +13,10 @@ def _configure(monkeypatch, tmp_path) -> None:
         "ATHENA_DATABASE_PATH",
         str(tmp_path / "athena_user_portfolio.db"),
     )
+    monkeypatch.setenv(
+        "ATHENA_PORTFOLIO_EVENT_LEDGER_PATH",
+        str(tmp_path / "portfolio_event_ledger.jsonl"),
+    )
     monkeypatch.setenv("ATHENA_AUTH_SECRET", TEST_SECRET)
 
 
@@ -42,10 +46,52 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _append_trade(
+    client: TestClient,
+    *,
+    token: str,
+    portfolio_id: str,
+    source_ref: str,
+    occurred_at: str,
+    available_at: str,
+    as_of: str,
+    instrument_id: str,
+) -> dict:
+    response = client.post(
+        "/api/v1/recommendations/professional-research/portfolio-event-ledger/events",
+        headers=_headers(token),
+        json={
+            "portfolioId": portfolio_id,
+            "eventType": "trade_execution",
+            "occurredAt": occurred_at,
+            "availableAt": available_at,
+            "currency": "EUR",
+            "amount": -1000.0,
+            "instrumentId": instrument_id,
+            "quantity": 10.0,
+            "source": "user_declared_execution",
+            "sourceRef": source_ref,
+            "asOf": as_of,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["record"]
+
+
 def test_personal_portfolio_requires_authentication(monkeypatch, tmp_path) -> None:
     _configure(monkeypatch, tmp_path)
     with TestClient(app) as client:
         response = client.get("/api/v1/user/portfolio")
+    assert response.status_code == 401
+
+
+def test_personal_portfolio_history_requires_authentication(monkeypatch, tmp_path) -> None:
+    _configure(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/user/portfolio/history",
+            params={"portfolioId": "primary", "asOf": "2026-09-12T05:00:00Z"},
+        )
     assert response.status_code == 401
 
 
@@ -97,6 +143,92 @@ def test_users_can_only_see_and_delete_their_own_positions(monkeypatch, tmp_path
 
         empty = client.get("/api/v1/user/portfolio", headers=_headers(token_a))
         assert empty.json()["data"]["positions"] == []
+
+
+def test_personal_history_is_owner_scoped_and_point_in_time_filtered(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token_a = _register_and_token(client, email="history-a@example.com")
+        token_b = _register_and_token(client, email="history-b@example.com")
+
+        a_early = _append_trade(
+            client,
+            token=token_a,
+            portfolio_id="primary",
+            source_ref="broker-a-early",
+            occurred_at="2026-09-10T10:00:00Z",
+            available_at="2026-09-10T10:01:00Z",
+            as_of="2026-09-12T05:00:00Z",
+            instrument_id="AAPL:XNAS",
+        )
+        a_late = _append_trade(
+            client,
+            token=token_a,
+            portfolio_id="primary",
+            source_ref="broker-a-late",
+            occurred_at="2026-09-11T10:00:00Z",
+            available_at="2026-09-11T10:01:00Z",
+            as_of="2026-09-12T05:00:00Z",
+            instrument_id="MSFT:XNAS",
+        )
+        b_record = _append_trade(
+            client,
+            token=token_b,
+            portfolio_id="primary",
+            source_ref="broker-b-private",
+            occurred_at="2026-09-09T10:00:00Z",
+            available_at="2026-09-09T10:01:00Z",
+            as_of="2026-09-12T05:00:00Z",
+            instrument_id="NVDA:XNAS",
+        )
+
+        history_a = client.get(
+            "/api/v1/user/portfolio/history",
+            headers=_headers(token_a),
+            params={"portfolioId": "primary", "asOf": "2026-09-12T05:00:00Z"},
+        )
+        assert history_a.status_code == 200, history_a.text
+        payload_a = history_a.json()
+        events_a = payload_a["data"]["events"]
+        assert payload_a["data"]["eventCount"] == 2
+        assert [item["eventKey"] for item in events_a] == [
+            a_late["event"]["eventKey"],
+            a_early["event"]["eventKey"],
+        ]
+        assert b_record["event"]["eventKey"] not in {
+            item["eventKey"] for item in events_a
+        }
+        assert payload_a["policy"]["ownerDerivedFromAuthenticatedToken"] is True
+        assert payload_a["policy"]["clientSuppliedOwnerAccepted"] is False
+        assert payload_a["policy"]["sourceOfTruth"] == (
+            "owner_scoped_append_only_event_ledger"
+        )
+        assert payload_a["policy"]["automaticTrading"] is False
+        assert payload_a["policy"]["orderPlacement"] == "forbidden"
+
+        pit_history_a = client.get(
+            "/api/v1/user/portfolio/history",
+            headers=_headers(token_a),
+            params={"portfolioId": "primary", "asOf": "2026-09-11T09:00:00Z"},
+        )
+        assert pit_history_a.status_code == 200, pit_history_a.text
+        pit_events = pit_history_a.json()["data"]["events"]
+        assert [item["eventKey"] for item in pit_events] == [
+            a_early["event"]["eventKey"]
+        ]
+
+        history_b = client.get(
+            "/api/v1/user/portfolio/history",
+            headers=_headers(token_b),
+            params={"portfolioId": "primary", "asOf": "2026-09-12T05:00:00Z"},
+        )
+        assert history_b.status_code == 200, history_b.text
+        assert [item["eventKey"] for item in history_b.json()["data"]["events"]] == [
+            b_record["event"]["eventKey"]
+        ]
 
 
 def test_client_cannot_supply_portfolio_owner(monkeypatch, tmp_path) -> None:
