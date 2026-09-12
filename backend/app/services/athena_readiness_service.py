@@ -5,6 +5,7 @@ import math
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.services.corporate_action_coverage_service import CorporateActionCoverageService
 from app.services.instrument_type_market_cap_service import (
     InstrumentTypeMarketCapService,
 )
@@ -34,14 +35,7 @@ def _finite_number(value: Any) -> float | None:
 
 
 def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
-    """Require final-depth evidence, not the lower operational diagnostic threshold.
-
-    ``historyDepthReady`` intentionally uses the coverage service's configurable
-    diagnostic threshold (currently 30%). That signal is useful for incremental
-    operations, but it must never be promoted into the final readiness gate. The
-    final gate requires one-provider continuity for at least 365 days across the
-    entire eligible universe and fails closed when any evidence field is absent.
-    """
+    """Require final-depth evidence, not the lower operational diagnostic threshold."""
 
     eligible = _finite_number(market_history.get("historyEligibleInstrumentCount"))
     deep = _finite_number(market_history.get("deepHistoryInstrumentCount"))
@@ -62,11 +56,39 @@ def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
     )
 
 
+def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
+    """Require measured cross-family agreement, not a manual verification flag."""
+
+    event_count = _finite_number(corporate_actions.get("eventCount"))
+    agreed = _finite_number(corporate_actions.get("agreedEventCount"))
+    conflicts = _finite_number(corporate_actions.get("conflictEventCount"))
+    incomplete = _finite_number(corporate_actions.get("incompleteEventCount"))
+    coverage = _finite_number(corporate_actions.get("agreementCoverage"))
+    families = corporate_actions.get("independentProviderFamilies")
+
+    return (
+        corporate_actions.get("crossProviderReconciliationReady") is True
+        and corporate_actions.get("automaticCanonicalization") is False
+        and corporate_actions.get("productionIndependenceClaimed") is False
+        and isinstance(families, list)
+        and len({str(item).strip() for item in families if str(item).strip()}) >= 2
+        and event_count is not None
+        and event_count > 0
+        and agreed is not None
+        and agreed == event_count
+        and conflicts == 0
+        and incomplete == 0
+        and coverage is not None
+        and coverage >= 1.0
+    )
+
+
 def build_operational_readiness(
     *,
     universe: dict[str, Any],
     weighting: dict[str, Any],
     market_history: dict[str, Any],
+    corporate_actions: dict[str, Any],
     learning: dict[str, Any],
 ) -> dict[str, Any]:
     """Aggregate only explicit, evidence-backed operational gates.
@@ -108,6 +130,11 @@ def build_operational_readiness(
             "blocker": "market_history_depth_insufficient",
         },
         {
+            "id": "corporate_actions_cross_provider_reconciliation",
+            "passed": _final_corporate_actions_passed(corporate_actions),
+            "blocker": "corporate_actions_independent_reconciliation_pending",
+        },
+        {
             "id": "research_outcome_oos_evidence",
             "passed": (
                 research_outcome.get("status")
@@ -132,11 +159,7 @@ def build_operational_readiness(
         if isinstance(weighting_blockers, list)
         else []
     )
-    blockers = [
-        str(gate["blocker"])
-        for gate in gates
-        if gate["passed"] is not True
-    ]
+    blockers = [str(gate["blocker"]) for gate in gates if gate["passed"] is not True]
     for blocker in inherited_weighting_blockers:
         if blocker not in blockers:
             blockers.append(blocker)
@@ -158,9 +181,7 @@ def build_operational_readiness(
         "gates": gates,
         "blockers": blockers,
         "policy": {
-            "oneHundredPercentMeaning": (
-                "all_current_operational_evidence_gates_passed_only"
-            ),
+            "oneHundredPercentMeaning": "all_current_operational_evidence_gates_passed_only",
             "featureCompletenessClaimed": False,
             "productionEligibilityClaimed": False,
             "automaticTrading": False,
@@ -178,27 +199,17 @@ def build_readiness_report(
     if effective_as_of.tzinfo is None or effective_as_of.utcoffset() is None:
         raise ValueError("as_of debe incluir zona horaria.")
 
-    universe = PersistedMarketUniverseService(
-        database=effective_database,
-    ).get_quality_report().to_api_dict()
-    weighting = MarketWeightingReadinessService(
-        database=effective_database,
-    ).get_report(as_of=effective_as_of).to_api_dict()
-    instrument_types = InstrumentTypeMarketCapService(
-        database=effective_database,
-    ).get_report().to_api_dict()
-    market_history = MarketObservationCoverageService(
-        database=effective_database,
-    ).get_report().to_api_dict()
-    learning = RecommendationLearningStatusService(
-        database=effective_database,
-    ).get_status(
-        as_of=effective_as_of,
-    )
+    universe = PersistedMarketUniverseService(database=effective_database).get_quality_report().to_api_dict()
+    weighting = MarketWeightingReadinessService(database=effective_database).get_report(as_of=effective_as_of).to_api_dict()
+    instrument_types = InstrumentTypeMarketCapService(database=effective_database).get_report().to_api_dict()
+    market_history = MarketObservationCoverageService(database=effective_database).get_report().to_api_dict()
+    corporate_actions = CorporateActionCoverageService(database=effective_database).get_report(as_of=effective_as_of).to_api_dict()
+    learning = RecommendationLearningStatusService(database=effective_database).get_status(as_of=effective_as_of)
     operational_readiness = build_operational_readiness(
         universe=universe,
         weighting=weighting,
         market_history=market_history,
+        corporate_actions=corporate_actions,
         learning=learning,
     )
 
@@ -210,6 +221,7 @@ def build_readiness_report(
         "marketWeighting": weighting,
         "instrumentTypes": instrument_types,
         "marketHistory": market_history,
+        "corporateActions": corporate_actions,
         "recommendationLearning": learning,
         "automaticActivation": False,
     }
