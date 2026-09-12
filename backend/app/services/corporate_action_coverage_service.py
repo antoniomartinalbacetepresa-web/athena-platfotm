@@ -68,13 +68,14 @@ class CorporateActionCoverageService:
     """Aggregate PIT cross-provider evidence without selecting a canonical source.
 
     Only provider identifiers explicitly mapped to different source families count
-    as independent technical evidence. Production currently knows Yahoo only, so
-    this report intentionally remains blocked until a genuinely separate provider
-    integration is added and classified.
+    as independent technical evidence. A registered adapter is necessary but not
+    sufficient for readiness: the report remains blocked until observations from
+    at least two families are actually persisted and agree event by event.
     """
 
     DEFAULT_PROVIDER_FAMILIES: Mapping[str, str] = {
         "yahoo": "yahoo",
+        "alpha_vantage": "alpha_vantage",
     }
     _EXCLUDED_TYPES = ("etf", "fund")
 
