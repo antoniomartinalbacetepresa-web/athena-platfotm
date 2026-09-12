@@ -49,7 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--from-date",
         dest="from_date",
-        help="Fecha inicial YYYY-MM-DD. Si se omite Yahoo usa su ventana predeterminada.",
+        help=(
+            "Fecha inicial YYYY-MM-DD. Si se omite con --blocking-only, ATHENA "
+            "solicita automáticamente 400 días hasta --to-date o hasta hoy; fuera "
+            "de ese modo Yahoo conserva su ventana predeterminada."
+        ),
     )
     parser.add_argument(
         "--to-date",
