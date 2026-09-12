@@ -125,6 +125,33 @@ def test_history_gap_report_accepts_any_single_deep_source_without_stitching(tmp
     assert report.items == ()
 
 
+def test_history_gap_report_clears_old_gap_when_later_segment_is_deep(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
+    observations = MarketObservationRepository(database=database)
+    old_point = datetime(2023, 1, 1, 21, 0, tzinfo=timezone.utc)
+    segment_start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": old_point.isoformat(), "close": 80.0}],
+        source_provider="yahoo_finance",
+        retrieved_at=old_point + timedelta(days=1),
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(segment_start),
+        source_provider="yahoo_finance",
+        retrieved_at=segment_start + timedelta(days=366),
+    )
+
+    report = MarketHistoryGapService(database=database).get_report()
+
+    assert report.total_blocking_count == 0
+    assert report.discontinuous_source_count == 0
+    assert report.items == ()
+
+
 def test_history_gap_report_paginates_without_changing_totals(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instruments = InstrumentRepository(database=database)
