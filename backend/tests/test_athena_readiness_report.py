@@ -40,7 +40,19 @@ def _complete_learning(*, forecast_coverage: float = 1.0) -> dict[str, object]:
         },
         "researchForecastErrorOos": {
             "status": "forecast_error_oos_evidence_available",
+            "eligibleOutcomeCount": 2,
+            "forecastErrorCount": 2,
+            "missingForecastErrorCount": 0,
             "measurementCoverage": forecast_coverage,
+            "horizonCount": 1,
+            "horizons": {
+                "604800": {
+                    "eligibleOutcomeCount": 2,
+                    "forecastErrorCount": 2,
+                    "missingForecastErrorCount": 0,
+                    "measurementCoverage": 1.0,
+                }
+            },
         },
     }
 
@@ -119,6 +131,56 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
     )
 
     assert report["completionPercent"] == 83.3
+    assert report["ready"] is False
+    assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
+
+
+def test_operational_readiness_rejects_forecast_coverage_above_one() -> None:
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(forecast_coverage=1.01),
+    )
+
+    assert report["completionPercent"] == 83.3
+    assert report["ready"] is False
+    assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
+
+
+def test_operational_readiness_reconciles_forecast_counts_and_horizons() -> None:
+    learning = _complete_learning()
+    forecast = learning["researchForecastErrorOos"]
+    assert isinstance(forecast, dict)
+    forecast["forecastErrorCount"] = 1
+
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=_complete_corporate_actions(),
+        learning=learning,
+    )
+    assert report["ready"] is False
+    assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
+
+    learning = _complete_learning()
+    forecast = learning["researchForecastErrorOos"]
+    assert isinstance(forecast, dict)
+    horizons = forecast["horizons"]
+    assert isinstance(horizons, dict)
+    horizon = horizons["604800"]
+    assert isinstance(horizon, dict)
+    horizon["missingForecastErrorCount"] = 1
+
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=_complete_corporate_actions(),
+        learning=learning,
+    )
     assert report["ready"] is False
     assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
