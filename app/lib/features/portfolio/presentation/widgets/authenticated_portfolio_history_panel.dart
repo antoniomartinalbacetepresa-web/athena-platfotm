@@ -154,7 +154,7 @@ class _AuthenticatedPortfolioHistoryPanelState
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Text(
-                'Hay más eventos en el ledger. Refina el corte temporal o consulta una página posterior.',
+                'Hay más eventos en el ledger; esta vista muestra solo los más recientes dentro del límite actual.',
                 textAlign: TextAlign.center,
               ),
             );
