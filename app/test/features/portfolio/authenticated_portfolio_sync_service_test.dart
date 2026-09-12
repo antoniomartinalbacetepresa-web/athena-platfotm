@@ -28,12 +28,13 @@ void main() {
     String symbol = 'AAPL',
     String exchange = 'NASDAQ',
     double shares = 3,
+    double averagePrice = 123.45,
   }) =>
       PortfolioPosition(
         symbol: symbol,
         companyName: 'Sensitive Local Name',
         shares: shares,
-        averagePrice: 123.45,
+        averagePrice: averagePrice,
         currentPrice: 150.00,
         costBasisDate: DateTime.parse('2024-01-02T00:00:00Z'),
         priceCurrency: 'USD',
@@ -41,7 +42,7 @@ void main() {
         currentPriceSourceProvider: 'market-provider',
       );
 
-  test('sync transmits only declared identity and quantity', () async {
+  test('sync transmits only declared holding and encrypted cost-basis input', () async {
     session.establish(accessToken: 'signed.jwt.token', account: account());
     final putBodies = <Map<String, dynamic>>[];
     var getCount = 0;
@@ -56,7 +57,7 @@ void main() {
           );
         }
         return http.Response(
-          '{"data":{"positions":[{"id":9,"symbol":"AAPL","exchange":"NASDAQ","quantity":3.0,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}],"positionCount":1}}',
+          '{"data":{"positions":[{"id":9,"symbol":"AAPL","exchange":"NASDAQ","quantity":3.0,"averagePurchasePrice":123.45,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}],"positionCount":1}}',
           200,
         );
       }
@@ -64,7 +65,7 @@ void main() {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         putBodies.add(body);
         return http.Response(
-          '{"data":{"id":9,"symbol":"AAPL","exchange":"NASDAQ","quantity":3.0,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+          '{"data":{"id":9,"symbol":"AAPL","exchange":"NASDAQ","quantity":3.0,"averagePurchasePrice":123.45,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
           200,
         );
       }
@@ -84,19 +85,23 @@ void main() {
       'symbol': 'AAPL',
       'exchange': 'NASDAQ',
       'quantity': 3.0,
+      'averagePurchasePrice': 123.45,
     });
     expect(putBodies.single.containsKey('averagePrice'), isFalse);
     expect(putBodies.single.containsKey('currentPrice'), isFalse);
     expect(putBodies.single.containsKey('costBasisDate'), isFalse);
     expect(putBodies.single.containsKey('capital'), isFalse);
+    expect(putBodies.single.containsKey('profitLoss'), isFalse);
     expect(putBodies.single.containsKey('ownerUserId'), isFalse);
     expect(putBodies.single.containsKey('userId'), isFalse);
+    expect(putBodies.single.containsKey('productionEligible'), isFalse);
+    expect(putBodies.single.containsKey('automaticTrading'), isFalse);
     expect(report.localPositionCount, 1);
     expect(report.remotePositionCountBefore, 0);
     expect(report.upsertedPositionCount, 1);
     expect(report.remotePositionCountAfter, 1);
     expect(report.destructiveChangesApplied, isFalse);
-    expect(report.sensitiveCostBasisTransmitted, isFalse);
+    expect(report.sensitiveCostBasisTransmitted, isTrue);
   });
 
   test('sync rejects duplicate local listing identities before network', () async {
@@ -123,7 +128,7 @@ void main() {
     expect(called, isFalse);
   });
 
-  test('sync rejects non-finite or non-positive quantities before network', () async {
+  test('sync rejects invalid quantity or average price before network', () async {
     session.establish(accessToken: 'signed.jwt.token', account: account());
     var called = false;
     final client = MockClient((request) async {
@@ -143,6 +148,14 @@ void main() {
     );
     await expectLater(
       sync.syncDeclaredPositions([localPosition(shares: double.nan)]),
+      throwsArgumentError,
+    );
+    await expectLater(
+      sync.syncDeclaredPositions([localPosition(averagePrice: 0)]),
+      throwsArgumentError,
+    );
+    await expectLater(
+      sync.syncDeclaredPositions([localPosition(averagePrice: double.infinity)]),
       throwsArgumentError,
     );
     expect(called, isFalse);
