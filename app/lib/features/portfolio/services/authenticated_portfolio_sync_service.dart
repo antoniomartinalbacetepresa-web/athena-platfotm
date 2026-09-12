@@ -16,18 +16,22 @@ class AuthenticatedPortfolioSyncReport {
   final int remotePositionCountAfter;
 
   bool get destructiveChangesApplied => false;
-  bool get sensitiveCostBasisTransmitted => false;
+  bool get sensitiveCostBasisTransmitted => true;
 }
 
 /// Bridges the existing local portfolio UI with the authenticated owner-scoped
-/// backend without silently migrating sensitive portfolio fields.
+/// backend while persisting only the declared average purchase price as
+/// sensitive cost basis. The backend encrypts that field before storage.
 ///
 /// Deliberate safety rules:
-/// - only symbol, exchange and quantity are transmitted;
-/// - average cost, capital, P/L and cost-basis dates remain local;
+/// - symbol, exchange, quantity and declared average purchase price are sent;
+/// - current market price, capital, P/L and cost-basis dates remain local;
 /// - remote positions missing locally are never deleted automatically;
-/// - ownership is never supplied by the client and remains token-derived.
+/// - ownership is never supplied by the client and remains token-derived;
+/// - this sync does not authorize recommendations or trading.
 class AuthenticatedPortfolioSyncService {
+  static const double _maxEconomicValue = 1000000000000;
+
   AuthenticatedPortfolioSyncService({
     AuthenticatedPortfolioService? remoteService,
   })  : _remoteService = remoteService ?? AuthenticatedPortfolioService(),
@@ -50,6 +54,7 @@ class AuthenticatedPortfolioSyncService {
           symbol: position.symbol,
           exchange: position.exchange,
           quantity: position.shares,
+          averagePurchasePrice: position.averagePrice,
         ),
       );
     }
@@ -71,11 +76,22 @@ class AuthenticatedPortfolioSyncService {
       if (symbol.isEmpty || symbol.length > 32) {
         throw ArgumentError.value(position.symbol, 'symbol', 'Símbolo no válido.');
       }
-      if (!position.shares.isFinite || position.shares <= 0) {
+      if (!position.shares.isFinite ||
+          position.shares <= 0 ||
+          position.shares > _maxEconomicValue) {
         throw ArgumentError.value(
           position.shares,
           'shares',
-          'La cantidad declarada debe ser positiva y finita.',
+          'La cantidad declarada debe ser positiva, finita y estar dentro del límite operativo.',
+        );
+      }
+      if (!position.averagePrice.isFinite ||
+          position.averagePrice <= 0 ||
+          position.averagePrice > _maxEconomicValue) {
+        throw ArgumentError.value(
+          position.averagePrice,
+          'averagePrice',
+          'El precio medio declarado debe ser positivo, finito y estar dentro del límite operativo.',
         );
       }
       final identity = '$symbol|$exchange';
