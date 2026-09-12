@@ -83,6 +83,64 @@ def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
     )
 
 
+def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
+    """Require internally reconciled, complete OOS measurement evidence.
+
+    This deliberately does not invent a statistical-skill or minimum-sample threshold.
+    It only prevents malformed or partially measured evidence from satisfying the
+    operational gate while longitudinal acceptance remains a separate open criterion.
+    """
+
+    if forecast_error.get("status") != "forecast_error_oos_evidence_available":
+        return False
+
+    eligible = _finite_number(forecast_error.get("eligibleOutcomeCount"))
+    measured = _finite_number(forecast_error.get("forecastErrorCount"))
+    missing = _finite_number(forecast_error.get("missingForecastErrorCount"))
+    coverage = _finite_number(forecast_error.get("measurementCoverage"))
+    horizon_count = _finite_number(forecast_error.get("horizonCount"))
+    horizons = forecast_error.get("horizons")
+
+    if (
+        eligible is None
+        or eligible <= 0
+        or measured is None
+        or measured != eligible
+        or missing != 0
+        or coverage is None
+        or not math.isclose(coverage, 1.0, rel_tol=0.0, abs_tol=1e-12)
+        or horizon_count is None
+        or horizon_count <= 0
+        or not isinstance(horizons, dict)
+        or len(horizons) != int(horizon_count)
+    ):
+        return False
+
+    horizon_eligible_total = 0.0
+    horizon_measured_total = 0.0
+    for horizon in horizons.values():
+        if not isinstance(horizon, dict):
+            return False
+        horizon_eligible = _finite_number(horizon.get("eligibleOutcomeCount"))
+        horizon_measured = _finite_number(horizon.get("forecastErrorCount"))
+        horizon_missing = _finite_number(horizon.get("missingForecastErrorCount"))
+        horizon_coverage = _finite_number(horizon.get("measurementCoverage"))
+        if (
+            horizon_eligible is None
+            or horizon_eligible <= 0
+            or horizon_measured is None
+            or horizon_measured != horizon_eligible
+            or horizon_missing != 0
+            or horizon_coverage is None
+            or not math.isclose(horizon_coverage, 1.0, rel_tol=0.0, abs_tol=1e-12)
+        ):
+            return False
+        horizon_eligible_total += horizon_eligible
+        horizon_measured_total += horizon_measured
+
+    return horizon_eligible_total == eligible and horizon_measured_total == measured
+
+
 def build_operational_readiness(
     *,
     universe: dict[str, Any],
@@ -104,14 +162,6 @@ def build_operational_readiness(
         research_outcome = {}
     if not isinstance(forecast_error, dict):
         forecast_error = {}
-
-    forecast_measurement_coverage = forecast_error.get("measurementCoverage")
-    forecast_measurement_complete = (
-        isinstance(forecast_measurement_coverage, (int, float))
-        and not isinstance(forecast_measurement_coverage, bool)
-        and math.isfinite(float(forecast_measurement_coverage))
-        and float(forecast_measurement_coverage) >= 1.0
-    )
 
     gates = [
         {
@@ -144,11 +194,7 @@ def build_operational_readiness(
         },
         {
             "id": "forecast_error_oos_complete",
-            "passed": (
-                forecast_error.get("status")
-                == "forecast_error_oos_evidence_available"
-                and forecast_measurement_complete
-            ),
+            "passed": _final_forecast_error_oos_passed(forecast_error),
             "blocker": "forecast_error_oos_measurement_incomplete",
         },
     ]
