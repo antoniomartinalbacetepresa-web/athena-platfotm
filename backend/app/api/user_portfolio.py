@@ -4,7 +4,7 @@ import math
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import current_account
 from app.repositories.user_portfolio_repository import UserPortfolioRepository
@@ -22,17 +22,10 @@ class PositionUpsertRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=32)
     exchange: str | None = Field(default=None, max_length=32)
     quantity: float = Field(gt=0, le=1_000_000_000_000)
-    averagePurchasePrice: float | None = Field(default=None, gt=0, le=1_000_000_000_000)
-
-    @field_validator("averagePurchasePrice")
-    @classmethod
-    def validate_average_purchase_price(cls, value: float | None) -> float | None:
-        if value is None:
-            return None
-        numeric = float(value)
-        if not math.isfinite(numeric):
-            raise ValueError("averagePurchasePrice debe ser finito y positivo.")
-        return numeric
+    # Keep finiteness/range validation at the HTTP boundary below. Pydantic can
+    # accept IEEE-754 NaN/Infinity as floats; raising a model validation error
+    # that embeds those values can itself become non-JSON-serializable.
+    averagePurchasePrice: float | None = None
 
 
 def _repository() -> UserPortfolioRepository:
@@ -88,13 +81,27 @@ def put_personal_portfolio_position(
     account: Annotated[dict[str, Any], Depends(current_account)],
 ) -> dict[str, Any]:
     owner_id = _owner_id(account)
+    average_purchase_price = payload.averagePurchasePrice
+    if average_purchase_price is not None:
+        if (
+            not math.isfinite(average_purchase_price)
+            or average_purchase_price <= 0
+            or average_purchase_price > 1_000_000_000_000
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "averagePurchasePrice debe ser numérico finito, positivo "
+                    "y estar dentro del límite operativo."
+                ),
+            )
     try:
         position = _repository().upsert(
             owner_user_id=owner_id,
             symbol=payload.symbol,
             exchange=payload.exchange,
             quantity=payload.quantity,
-            average_purchase_price=payload.averagePurchasePrice,
+            average_purchase_price=average_purchase_price,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
