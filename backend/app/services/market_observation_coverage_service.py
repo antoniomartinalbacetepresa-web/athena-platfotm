@@ -58,10 +58,11 @@ class MarketObservationCoverageReport:
             "latestObservedAt": self.latest_observed_at,
             "bySource": {key: dict(value) for key, value in sorted(self.by_source.items())},
             "warning": (
-                "historyDepthReady exige un mínimo operativo de 365 días dentro de una "
-                "misma fuente por instrumento y rechaza tramos con huecos superiores "
-                "al máximo permitido; no permite fabricar profundidad combinando "
-                "proveedores distintos ni implica histórico completo desde el origen."
+                "historyDepthReady exige un mínimo operativo de 365 días dentro de un "
+                "tramo continuo de una misma fuente por instrumento y rechaza huecos "
+                "superiores al máximo permitido dentro de ese tramo; no permite fabricar "
+                "profundidad combinando proveedores distintos ni implica histórico completo "
+                "desde el origen."
             ),
         }
 
@@ -118,10 +119,9 @@ class MarketObservationCoverageService:
                 """
             ).fetchone()
 
-            # MIN/MAX alone is insufficient: two isolated observations 365 days
-            # apart must not masquerade as continuous history. Provider stitching
-            # is also forbidden. Seven calendar days accommodates normal market
-            # closures while failing closed on materially missing stretches.
+            # Continuity is evaluated per contiguous provider segment. A stale isolated
+            # observation must not permanently poison a later valid 365-day segment,
+            # while provider stitching remains forbidden.
             deep_row = connection.execute(
                 """
                 WITH ordered_history AS (
@@ -137,23 +137,41 @@ class MarketObservationCoverageService:
                     WHERE i.is_active = 1
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                 ),
-                source_continuity AS (
+                marked_history AS (
                     SELECT instrument_id,
                            source_provider,
-                           julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS history_span_days,
-                           MAX(CASE
-                               WHEN previous_observed_at IS NULL THEN 0.0
-                               ELSE julianday(observed_at) - julianday(previous_observed_at)
-                           END) AS maximum_gap_days
+                           observed_at,
+                           CASE
+                               WHEN previous_observed_at IS NULL THEN 1
+                               WHEN julianday(observed_at) - julianday(previous_observed_at) > ? THEN 1
+                               ELSE 0
+                           END AS starts_new_segment
                     FROM ordered_history
-                    GROUP BY instrument_id, source_provider
+                ),
+                segmented_history AS (
+                    SELECT instrument_id,
+                           source_provider,
+                           observed_at,
+                           SUM(starts_new_segment) OVER (
+                               PARTITION BY instrument_id, source_provider
+                               ORDER BY observed_at
+                               ROWS UNBOUNDED PRECEDING
+                           ) AS segment_id
+                    FROM marked_history
+                ),
+                source_segments AS (
+                    SELECT instrument_id,
+                           source_provider,
+                           segment_id,
+                           julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS history_span_days
+                    FROM segmented_history
+                    GROUP BY instrument_id, source_provider, segment_id
                 )
                 SELECT COUNT(DISTINCT instrument_id) AS total
-                FROM source_continuity
+                FROM source_segments
                 WHERE history_span_days >= ?
-                  AND maximum_gap_days <= ?
                 """,
-                (self._minimum_history_days, self._maximum_source_gap_days),
+                (self._maximum_source_gap_days, self._minimum_history_days),
             ).fetchone()
 
             source_rows = connection.execute(
