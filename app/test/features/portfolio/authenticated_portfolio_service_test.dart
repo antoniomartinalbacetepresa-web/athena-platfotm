@@ -38,13 +38,13 @@ void main() {
     expect(called, isFalse);
   });
 
-  test('load sends bearer token and parses only owner-visible positions', () async {
+  test('load sends bearer token and parses owner-visible encrypted cost basis', () async {
     session.establish(accessToken: 'signed.jwt.token', account: account());
     late http.Request captured;
     final client = MockClient((request) async {
       captured = request;
       return http.Response(
-        '{"data":{"positions":[{"id":3,"symbol":"AAPL","exchange":"NASDAQ","quantity":4.5,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:01:00Z"}],"positionCount":1},"policy":{"ownerDerivedFromAuthenticatedToken":true}}',
+        '{"data":{"positions":[{"id":3,"symbol":"AAPL","exchange":"NASDAQ","quantity":4.5,"averagePurchasePrice":187.25,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:01:00Z"}],"positionCount":1},"policy":{"ownerDerivedFromAuthenticatedToken":true,"sensitiveCostBasisEncrypted":true}}',
         200,
       );
     });
@@ -62,15 +62,33 @@ void main() {
     expect(positions.single.id, 3);
     expect(positions.single.symbol, 'AAPL');
     expect(positions.single.quantity, 4.5);
+    expect(positions.single.averagePurchasePrice, 187.25);
   });
 
-  test('upsert never sends owner identity supplied by the client', () async {
+  test('legacy position without average purchase price remains compatible', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final client = MockClient((request) async => http.Response(
+          '{"data":{"positions":[{"id":3,"symbol":"AAPL","exchange":"NASDAQ","quantity":4.5,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:01:00Z"}],"positionCount":1}}',
+          200,
+        ));
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: client,
+      session: session,
+    );
+
+    final positions = await service.loadPositions();
+
+    expect(positions.single.averagePurchasePrice, isNull);
+  });
+
+  test('upsert sends cost basis but never client owner or trading authority', () async {
     session.establish(accessToken: 'signed.jwt.token', account: account());
     late http.Request captured;
     final client = MockClient((request) async {
       captured = request;
       return http.Response(
-        '{"data":{"id":4,"symbol":"MSFT","exchange":"NASDAQ","quantity":2.0,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        '{"data":{"id":4,"symbol":"MSFT","exchange":"NASDAQ","quantity":2.0,"averagePurchasePrice":405.5,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
         200,
       );
     });
@@ -84,6 +102,7 @@ void main() {
       symbol: ' msft ',
       exchange: ' nasdaq ',
       quantity: 2,
+      averagePurchasePrice: 405.5,
     );
 
     final body = jsonDecode(captured.body) as Map<String, dynamic>;
@@ -92,9 +111,42 @@ void main() {
     expect(body['symbol'], 'MSFT');
     expect(body['exchange'], 'NASDAQ');
     expect(body['quantity'], 2.0);
+    expect(body['averagePurchasePrice'], 405.5);
     expect(body.containsKey('ownerUserId'), isFalse);
     expect(body.containsKey('userId'), isFalse);
+    expect(body.containsKey('currentPrice'), isFalse);
+    expect(body.containsKey('capital'), isFalse);
+    expect(body.containsKey('productionEligible'), isFalse);
+    expect(body.containsKey('automaticTrading'), isFalse);
     expect(position.id, 4);
+    expect(position.averagePurchasePrice, 405.5);
+  });
+
+  test('upsert rejects invalid average purchase price before network', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    var called = false;
+    final client = MockClient((request) async {
+      called = true;
+      return http.Response('{}', 500);
+    });
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: client,
+      session: session,
+    );
+
+    for (final value in <double>[0, -1, double.nan, double.infinity]) {
+      await expectLater(
+        service.upsertPosition(
+          symbol: 'MSFT',
+          exchange: 'NASDAQ',
+          quantity: 2,
+          averagePurchasePrice: value,
+        ),
+        throwsArgumentError,
+      );
+    }
+    expect(called, isFalse);
   });
 
   test('delete uses bearer token and server position id', () async {
