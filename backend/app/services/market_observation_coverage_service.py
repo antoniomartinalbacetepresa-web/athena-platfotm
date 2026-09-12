@@ -18,6 +18,7 @@ class MarketObservationCoverageReport:
     by_source: dict[str, dict[str, int | str | None]]
     minimum_history_days: int
     minimum_deep_history_coverage: float
+    maximum_source_gap_days: int
 
     @property
     def instrument_coverage(self) -> float:
@@ -49,21 +50,18 @@ class MarketObservationCoverageReport:
             "deepHistoryCoverage": self.deep_history_coverage,
             "minimumHistoryDays": self.minimum_history_days,
             "minimumDeepHistoryCoverage": self.minimum_deep_history_coverage,
+            "maximumSourceGapDays": self.maximum_source_gap_days,
             "sourceContinuityRequired": True,
             "historyDepthReady": self.history_depth_ready,
             "observationCount": self.observation_count,
             "earliestObservedAt": self.earliest_observed_at,
             "latestObservedAt": self.latest_observed_at,
-            "bySource": {
-                key: dict(value)
-                for key, value in sorted(self.by_source.items())
-            },
+            "bySource": {key: dict(value) for key, value in sorted(self.by_source.items())},
             "warning": (
-                "historyDepthReady exige un mínimo operativo de 365 días "
-                "dentro de una misma fuente por instrumento; no permite "
-                "fabricar profundidad combinando tramos de proveedores "
-                "distintos y no implica histórico completo desde el origen "
-                "del mercado ni cobertura suficiente para todos los usos."
+                "historyDepthReady exige un mínimo operativo de 365 días dentro de una "
+                "misma fuente por instrumento y rechaza tramos con huecos superiores "
+                "al máximo permitido; no permite fabricar profundidad combinando "
+                "proveedores distintos ni implica histórico completo desde el origen."
             ),
         }
 
@@ -71,6 +69,7 @@ class MarketObservationCoverageReport:
 class MarketObservationCoverageService:
     DEFAULT_MINIMUM_HISTORY_DAYS = 365
     DEFAULT_MINIMUM_DEEP_HISTORY_COVERAGE = 0.30
+    DEFAULT_MAXIMUM_SOURCE_GAP_DAYS = 7
     _EXCLUDED_TYPES = ("etf", "fund")
 
     def __init__(
@@ -79,93 +78,95 @@ class MarketObservationCoverageService:
         *,
         minimum_history_days: int = DEFAULT_MINIMUM_HISTORY_DAYS,
         minimum_deep_history_coverage: float = DEFAULT_MINIMUM_DEEP_HISTORY_COVERAGE,
+        maximum_source_gap_days: int = DEFAULT_MAXIMUM_SOURCE_GAP_DAYS,
     ) -> None:
         if minimum_history_days <= 0:
             raise ValueError("minimum_history_days debe ser mayor que 0.")
         if not 0 < minimum_deep_history_coverage <= 1:
-            raise ValueError(
-                "minimum_deep_history_coverage debe estar entre 0 y 1."
-            )
+            raise ValueError("minimum_deep_history_coverage debe estar entre 0 y 1.")
+        if maximum_source_gap_days <= 0:
+            raise ValueError("maximum_source_gap_days debe ser mayor que 0.")
         self._database = database if database is not None else AthenaDatabase()
         self._minimum_history_days = int(minimum_history_days)
-        self._minimum_deep_history_coverage = float(
-            minimum_deep_history_coverage
-        )
+        self._minimum_deep_history_coverage = float(minimum_deep_history_coverage)
+        self._maximum_source_gap_days = int(maximum_source_gap_days)
 
     def get_report(self) -> MarketObservationCoverageReport:
         self._database.initialize()
         with self._database.connect() as connection:
             active_row = connection.execute(
-                """
-                SELECT COUNT(*) AS total
-                FROM instruments
-                WHERE is_active = 1
-                """
+                "SELECT COUNT(*) AS total FROM instruments WHERE is_active = 1"
             ).fetchone()
-
             eligible_row = connection.execute(
                 """
                 SELECT COUNT(*) AS total
                 FROM instruments
                 WHERE is_active = 1
-                  AND LOWER(TRIM(COALESCE(instrument_type, 'unknown')))
-                      NOT IN ('etf', 'fund')
+                  AND LOWER(TRIM(COALESCE(instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                 """
             ).fetchone()
-
             overall = connection.execute(
                 """
-                SELECT
-                    COUNT(*) AS observation_count,
-                    COUNT(DISTINCT mo.instrument_id) AS covered_instrument_count,
-                    MIN(mo.observed_at) AS earliest_observed_at,
-                    MAX(mo.observed_at) AS latest_observed_at
+                SELECT COUNT(*) AS observation_count,
+                       COUNT(DISTINCT mo.instrument_id) AS covered_instrument_count,
+                       MIN(mo.observed_at) AS earliest_observed_at,
+                       MAX(mo.observed_at) AS latest_observed_at
                 FROM market_observations mo
                 JOIN instruments i ON i.id = mo.instrument_id
                 WHERE i.is_active = 1
-                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown')))
-                      NOT IN ('etf', 'fund')
+                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                 """
             ).fetchone()
 
-            # Deep-history readiness must be demonstrated by one continuous
-            # provider history for an instrument. Combining an early point from
-            # source A with a later point from source B can create an apparent
-            # 365-day span without proving that either source supplies usable
-            # longitudinal history, so such stitching is intentionally rejected.
+            # MIN/MAX alone is insufficient: two isolated observations 365 days
+            # apart must not masquerade as continuous history. Provider stitching
+            # is also forbidden. Seven calendar days accommodates normal market
+            # closures while failing closed on materially missing stretches.
             deep_row = connection.execute(
                 """
-                SELECT COUNT(DISTINCT instrument_id) AS total
-                FROM (
-                    SELECT mo.instrument_id, mo.source_provider
+                WITH ordered_history AS (
+                    SELECT mo.instrument_id,
+                           mo.source_provider,
+                           mo.observed_at,
+                           LAG(mo.observed_at) OVER (
+                               PARTITION BY mo.instrument_id, mo.source_provider
+                               ORDER BY mo.observed_at
+                           ) AS previous_observed_at
                     FROM market_observations mo
                     JOIN instruments i ON i.id = mo.instrument_id
                     WHERE i.is_active = 1
-                      AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown')))
-                          NOT IN ('etf', 'fund')
-                    GROUP BY mo.instrument_id, mo.source_provider
-                    HAVING (
-                        julianday(MAX(mo.observed_at)) -
-                        julianday(MIN(mo.observed_at))
-                    ) >= ?
-                ) source_continuous_history
+                      AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
+                ),
+                source_continuity AS (
+                    SELECT instrument_id,
+                           source_provider,
+                           julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS history_span_days,
+                           MAX(CASE
+                               WHEN previous_observed_at IS NULL THEN 0.0
+                               ELSE julianday(observed_at) - julianday(previous_observed_at)
+                           END) AS maximum_gap_days
+                    FROM ordered_history
+                    GROUP BY instrument_id, source_provider
+                )
+                SELECT COUNT(DISTINCT instrument_id) AS total
+                FROM source_continuity
+                WHERE history_span_days >= ?
+                  AND maximum_gap_days <= ?
                 """,
-                (self._minimum_history_days,),
+                (self._minimum_history_days, self._maximum_source_gap_days),
             ).fetchone()
 
             source_rows = connection.execute(
                 """
-                SELECT
-                    mo.source_provider,
-                    COUNT(*) AS observation_count,
-                    COUNT(DISTINCT mo.instrument_id) AS covered_instrument_count,
-                    MIN(mo.observed_at) AS earliest_observed_at,
-                    MAX(mo.observed_at) AS latest_observed_at
+                SELECT mo.source_provider,
+                       COUNT(*) AS observation_count,
+                       COUNT(DISTINCT mo.instrument_id) AS covered_instrument_count,
+                       MIN(mo.observed_at) AS earliest_observed_at,
+                       MAX(mo.observed_at) AS latest_observed_at
                 FROM market_observations mo
                 JOIN instruments i ON i.id = mo.instrument_id
                 WHERE i.is_active = 1
-                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown')))
-                      NOT IN ('etf', 'fund')
+                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                 GROUP BY mo.source_provider
                 ORDER BY mo.source_provider
                 """
@@ -176,41 +177,20 @@ class MarketObservationCoverageService:
             by_source[str(row["source_provider"])] = {
                 "observationCount": int(row["observation_count"]),
                 "coveredInstrumentCount": int(row["covered_instrument_count"]),
-                "earliestObservedAt": (
-                    str(row["earliest_observed_at"])
-                    if row["earliest_observed_at"] is not None
-                    else None
-                ),
-                "latestObservedAt": (
-                    str(row["latest_observed_at"])
-                    if row["latest_observed_at"] is not None
-                    else None
-                ),
+                "earliestObservedAt": str(row["earliest_observed_at"]) if row["earliest_observed_at"] is not None else None,
+                "latestObservedAt": str(row["latest_observed_at"]) if row["latest_observed_at"] is not None else None,
             }
 
         return MarketObservationCoverageReport(
             active_instrument_count=int(active_row["total"] if active_row else 0),
-            history_eligible_instrument_count=int(
-                eligible_row["total"] if eligible_row else 0
-            ),
-            covered_instrument_count=int(
-                overall["covered_instrument_count"] if overall else 0
-            ),
-            deep_history_instrument_count=int(
-                deep_row["total"] if deep_row else 0
-            ),
+            history_eligible_instrument_count=int(eligible_row["total"] if eligible_row else 0),
+            covered_instrument_count=int(overall["covered_instrument_count"] if overall else 0),
+            deep_history_instrument_count=int(deep_row["total"] if deep_row else 0),
             observation_count=int(overall["observation_count"] if overall else 0),
-            earliest_observed_at=(
-                str(overall["earliest_observed_at"])
-                if overall and overall["earliest_observed_at"] is not None
-                else None
-            ),
-            latest_observed_at=(
-                str(overall["latest_observed_at"])
-                if overall and overall["latest_observed_at"] is not None
-                else None
-            ),
+            earliest_observed_at=str(overall["earliest_observed_at"]) if overall and overall["earliest_observed_at"] is not None else None,
+            latest_observed_at=str(overall["latest_observed_at"]) if overall and overall["latest_observed_at"] is not None else None,
             by_source=by_source,
             minimum_history_days=self._minimum_history_days,
             minimum_deep_history_coverage=self._minimum_deep_history_coverage,
+            maximum_source_gap_days=self._maximum_source_gap_days,
         )
