@@ -129,6 +129,32 @@ def test_history_depth_rejects_sparse_same_source_span(tmp_path: Path) -> None:
     assert report.history_depth_ready is False
 
 
+def test_history_depth_accepts_valid_segment_after_older_source_gap(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
+    observations = MarketObservationRepository(database=database)
+    old_point = datetime(2023, 1, 1, 21, 0, tzinfo=timezone.utc)
+    segment_start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": old_point.isoformat(), "close": 80.0}],
+        source_provider="yahoo_finance",
+        retrieved_at=old_point + timedelta(days=1),
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(segment_start),
+        source_provider="yahoo_finance",
+        retrieved_at=segment_start + timedelta(days=366),
+    )
+
+    report = MarketObservationCoverageService(database=database).get_report()
+
+    assert report.deep_history_instrument_count == 1
+    assert report.deep_history_coverage == 1.0
+    assert report.history_depth_ready is True
+
+
 def test_history_depth_does_not_stitch_different_sources(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
