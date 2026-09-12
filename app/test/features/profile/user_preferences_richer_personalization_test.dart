@@ -11,12 +11,14 @@ void main() {
       'experienceLevel': 'intermediate',
       'liquidityNeed': 'low',
       'maxDrawdownTolerancePct': 30,
+      'availableCapital': 125000,
     });
 
     expect(preferences.baseCurrency, 'EUR');
     expect(preferences.experienceLevel, 'intermediate');
     expect(preferences.liquidityNeed, 'low');
     expect(preferences.maxDrawdownTolerancePct, 30);
+    expect(preferences.availableCapital, 125000.0);
     expect(preferences.toJson(), {
       'riskTolerance': 'growth',
       'investmentHorizonYears': 15,
@@ -25,6 +27,7 @@ void main() {
       'experienceLevel': 'intermediate',
       'liquidityNeed': 'low',
       'maxDrawdownTolerancePct': 30,
+      'availableCapital': 125000.0,
     });
   });
 
@@ -39,9 +42,11 @@ void main() {
     expect(preferences.experienceLevel, isNull);
     expect(preferences.liquidityNeed, isNull);
     expect(preferences.maxDrawdownTolerancePct, isNull);
+    expect(preferences.availableCapital, isNull);
     expect(preferences.toJson().containsKey('experienceLevel'), isFalse);
     expect(preferences.toJson().containsKey('liquidityNeed'), isFalse);
     expect(preferences.toJson().containsKey('maxDrawdownTolerancePct'), isFalse);
+    expect(preferences.toJson().containsKey('availableCapital'), isFalse);
   });
 
   test('invalid richer personalization values fail closed', () {
@@ -72,6 +77,36 @@ void main() {
         baseCurrency: 'EUR',
         objective: 'balanced_growth',
         maxDrawdownTolerancePct: 61,
+      ).toJson(),
+      throwsArgumentError,
+    );
+    expect(
+      () => UserPreferences.fromJson({
+        'riskTolerance': 'balanced',
+        'investmentHorizonYears': 10,
+        'baseCurrency': 'EUR',
+        'objective': 'balanced_growth',
+        'availableCapital': double.nan,
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => const UserPreferences(
+        riskTolerance: 'balanced',
+        investmentHorizonYears: 10,
+        baseCurrency: 'EUR',
+        objective: 'balanced_growth',
+        availableCapital: -1,
+      ).toJson(),
+      throwsArgumentError,
+    );
+    expect(
+      () => const UserPreferences(
+        riskTolerance: 'balanced',
+        investmentHorizonYears: 10,
+        baseCurrency: 'EUR',
+        objective: 'balanced_growth',
+        availableCapital: 1000000000000.01,
       ).toJson(),
       throwsArgumentError,
     );
