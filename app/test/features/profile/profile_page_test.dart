@@ -54,9 +54,10 @@ void main() {
         findsOneWidget);
 
     final textFields = find.byType(TextFormField);
-    expect(textFields, findsNWidgets(3));
+    expect(textFields, findsNWidgets(4));
 
     await tester.enterText(textFields.at(0), '0');
+    await tester.ensureVisible(find.text('GUARDAR'));
     await tester.tap(find.text('GUARDAR'));
     await tester.pump();
     expect(find.text('Introduce un horizonte entre 1 y 60 años.'), findsOneWidget);
@@ -64,6 +65,7 @@ void main() {
 
     await tester.enterText(textFields.at(0), '15');
     await tester.enterText(textFields.at(1), 'usd');
+    await tester.ensureVisible(find.text('GUARDAR'));
     await tester.tap(find.text('GUARDAR'));
     await tester.pump();
 
@@ -75,6 +77,7 @@ void main() {
     expect(saved!.experienceLevel, isNull);
     expect(saved!.liquidityNeed, isNull);
     expect(saved!.maxDrawdownTolerancePct, isNull);
+    expect(saved!.availableCapital, isNull);
 
     await tester.tap(find.text('RECARGAR'));
     await tester.pump();
@@ -98,6 +101,7 @@ void main() {
                 experienceLevel: 'advanced',
                 liquidityNeed: 'low',
                 maxDrawdownTolerancePct: 35,
+                availableCapital: 125000.5,
               ),
               busy: false,
               onReload: () async {},
@@ -111,7 +115,9 @@ void main() {
     expect(find.byKey(const Key('experience-level-field')), findsOneWidget);
     expect(find.byKey(const Key('liquidity-need-field')), findsOneWidget);
     expect(find.byKey(const Key('max-drawdown-field')), findsOneWidget);
+    expect(find.byKey(const Key('available-capital-field')), findsOneWidget);
 
+    await tester.ensureVisible(find.text('GUARDAR'));
     await tester.tap(find.text('GUARDAR'));
     await tester.pump();
 
@@ -119,9 +125,55 @@ void main() {
     expect(saved!.experienceLevel, 'advanced');
     expect(saved!.liquidityNeed, 'low');
     expect(saved!.maxDrawdownTolerancePct, 35);
+    expect(saved!.availableCapital, 125000.5);
     expect(saved!.riskTolerance, 'growth');
     expect(saved!.investmentHorizonYears, 18);
     expect(saved!.objective, 'long_term_growth');
+  });
+
+  testWidgets('available capital accepts decimal comma and stays fail closed',
+      (tester) async {
+    UserPreferences? saved;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProfilePreferencesForm(
+              preferences: const UserPreferences(
+                riskTolerance: 'balanced',
+                investmentHorizonYears: 10,
+                baseCurrency: 'EUR',
+                objective: 'balanced_growth',
+              ),
+              busy: false,
+              onReload: () async {},
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final capitalField = find.byKey(const Key('available-capital-field'));
+    await tester.enterText(capitalField, '-1');
+    await tester.ensureVisible(find.text('GUARDAR'));
+    await tester.tap(find.text('GUARDAR'));
+    await tester.pump();
+    expect(
+      find.text(
+        'Introduce un capital entre 0 y 1.000.000.000.000, o déjalo vacío.',
+      ),
+      findsOneWidget,
+    );
+    expect(saved, isNull);
+
+    await tester.enterText(capitalField, '15000,75');
+    await tester.tap(find.text('GUARDAR'));
+    await tester.pump();
+    expect(saved, isNotNull);
+    expect(saved!.availableCapital, 15000.75);
+    expect(saved!.baseCurrency, 'EUR');
   });
 
   testWidgets('drawdown validation stays fail closed', (tester) async {
@@ -148,6 +200,7 @@ void main() {
     );
 
     await tester.enterText(find.byKey(const Key('max-drawdown-field')), '4');
+    await tester.ensureVisible(find.text('GUARDAR'));
     await tester.tap(find.text('GUARDAR'));
     await tester.pump();
 
