@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -19,6 +20,46 @@ from app.services.persisted_market_universe_service import (
 from app.services.recommendation_learning_status_service import (
     RecommendationLearningStatusService,
 )
+
+
+_FINAL_REQUIRED_HISTORY_DAYS = 365
+_FINAL_REQUIRED_DEEP_HISTORY_COVERAGE = 1.0
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
+    """Require final-depth evidence, not the lower operational diagnostic threshold.
+
+    ``historyDepthReady`` intentionally uses the coverage service's configurable
+    diagnostic threshold (currently 30%). That signal is useful for incremental
+    operations, but it must never be promoted into the final readiness gate. The
+    final gate requires one-provider continuity for at least 365 days across the
+    entire eligible universe and fails closed when any evidence field is absent.
+    """
+
+    eligible = _finite_number(market_history.get("historyEligibleInstrumentCount"))
+    deep = _finite_number(market_history.get("deepHistoryInstrumentCount"))
+    coverage = _finite_number(market_history.get("deepHistoryCoverage"))
+    minimum_days = _finite_number(market_history.get("minimumHistoryDays"))
+
+    return (
+        market_history.get("historyDepthReady") is True
+        and market_history.get("sourceContinuityRequired") is True
+        and eligible is not None
+        and eligible > 0
+        and deep is not None
+        and deep >= eligible
+        and coverage is not None
+        and coverage >= _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
+        and minimum_days is not None
+        and minimum_days >= _FINAL_REQUIRED_HISTORY_DAYS
+    )
 
 
 def build_operational_readiness(
@@ -46,6 +87,7 @@ def build_operational_readiness(
     forecast_measurement_complete = (
         isinstance(forecast_measurement_coverage, (int, float))
         and not isinstance(forecast_measurement_coverage, bool)
+        and math.isfinite(float(forecast_measurement_coverage))
         and float(forecast_measurement_coverage) >= 1.0
     )
 
@@ -62,7 +104,7 @@ def build_operational_readiness(
         },
         {
             "id": "market_history_depth",
-            "passed": market_history.get("historyDepthReady") is True,
+            "passed": _final_market_history_depth_passed(market_history),
             "blocker": "market_history_depth_insufficient",
         },
         {
