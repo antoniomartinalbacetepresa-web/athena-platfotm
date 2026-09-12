@@ -10,6 +10,7 @@ class AuthenticatedPortfolioService {
     'ATHENA_BACKEND_URL',
     defaultValue: 'http://127.0.0.1:8000',
   );
+  static const double _maxEconomicValue = 1000000000000;
 
   AuthenticatedPortfolioService({
     String baseUrl = _defaultBackendUrl,
@@ -53,14 +54,25 @@ class AuthenticatedPortfolioService {
     required String symbol,
     String? exchange,
     required double quantity,
+    double? averagePurchasePrice,
   }) async {
     final normalizedSymbol = symbol.trim().toUpperCase();
     final normalizedExchange = exchange?.trim().toUpperCase();
     if (normalizedSymbol.isEmpty || normalizedSymbol.length > 32) {
       throw ArgumentError.value(symbol, 'symbol', 'Símbolo no válido.');
     }
-    if (!quantity.isFinite || quantity <= 0) {
+    if (!quantity.isFinite || quantity <= 0 || quantity > _maxEconomicValue) {
       throw ArgumentError.value(quantity, 'quantity', 'Cantidad no válida.');
+    }
+    if (averagePurchasePrice != null &&
+        (!averagePurchasePrice.isFinite ||
+            averagePurchasePrice <= 0 ||
+            averagePurchasePrice > _maxEconomicValue)) {
+      throw ArgumentError.value(
+        averagePurchasePrice,
+        'averagePurchasePrice',
+        'Precio medio no válido.',
+      );
     }
 
     final body = <String, dynamic>{
@@ -69,6 +81,8 @@ class AuthenticatedPortfolioService {
           ? null
           : normalizedExchange,
       'quantity': quantity,
+      if (averagePurchasePrice != null)
+        'averagePurchasePrice': averagePurchasePrice,
     };
     final response = await _client.put(
       Uri.parse('$_baseUrl/api/v1/user/portfolio/positions'),
