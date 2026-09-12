@@ -41,7 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--offset",
         type=int,
         default=0,
-        help="Desplazamiento dentro de instrumentos activos ordenados por símbolo.",
+        help=(
+            "Desplazamiento dentro de instrumentos activos o, con --blocking-only, "
+            "dentro de la cola de bloqueadores históricos."
+        ),
     )
     parser.add_argument(
         "--from-date",
@@ -53,6 +56,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="to_date",
         help="Fecha final inclusiva YYYY-MM-DD.",
     )
+    parser.add_argument(
+        "--blocking-only",
+        action="store_true",
+        help=(
+            "Procesa únicamente instrumentos que siguen bloqueando el criterio de "
+            "histórico profundo (sin observaciones, span insuficiente o discontinuidad)."
+        ),
+    )
     return parser
 
 
@@ -62,6 +73,7 @@ def run(
     offset: int,
     from_date: str | None,
     to_date: str | None,
+    blocking_only: bool = False,
 ) -> dict[str, Any]:
     if limit <= 0:
         raise ValueError("--limit debe ser mayor que 0.")
@@ -79,6 +91,7 @@ def run(
         offset=offset,
         from_date=from_date,
         to_date=to_date,
+        blocking_only=blocking_only,
     )
     return report.to_api_dict()
 
@@ -90,6 +103,7 @@ def main() -> None:
         offset=args.offset,
         from_date=args.from_date,
         to_date=args.to_date,
+        blocking_only=args.blocking_only,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
