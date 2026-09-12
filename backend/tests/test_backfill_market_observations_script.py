@@ -26,6 +26,7 @@ def test_backfill_script_uses_bounded_defaults() -> None:
     assert args.offset == 0
     assert args.from_date is None
     assert args.to_date is None
+    assert args.blocking_only is False
     assert backfill_market_observations.MAX_LIMIT == 500
 
 
@@ -39,7 +40,7 @@ def test_backfill_script_rejects_unbounded_batch() -> None:
         )
 
 
-def test_backfill_script_forwards_dates_and_pagination(monkeypatch) -> None:
+def test_backfill_script_forwards_dates_pagination_and_selection_mode(monkeypatch) -> None:
     fake = FakeService()
     monkeypatch.setattr(
         backfill_market_observations,
@@ -52,6 +53,7 @@ def test_backfill_script_forwards_dates_and_pagination(monkeypatch) -> None:
         offset=20,
         from_date="2025-01-01",
         to_date="2026-01-01",
+        blocking_only=True,
     )
 
     assert report == {"status": "completed", "selectedCount": 2}
@@ -61,5 +63,6 @@ def test_backfill_script_forwards_dates_and_pagination(monkeypatch) -> None:
             "offset": 20,
             "from_date": "2025-01-01",
             "to_date": "2026-01-01",
+            "blocking_only": True,
         }
     ]
