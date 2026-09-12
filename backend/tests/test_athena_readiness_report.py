@@ -8,6 +8,17 @@ from app.services.athena_readiness_service import build_operational_readiness
 from scripts.athena_readiness_report import build_report
 
 
+def _complete_market_history() -> dict[str, object]:
+    return {
+        "historyDepthReady": True,
+        "sourceContinuityRequired": True,
+        "historyEligibleInstrumentCount": 10,
+        "deepHistoryInstrumentCount": 10,
+        "deepHistoryCoverage": 1.0,
+        "minimumHistoryDays": 365,
+    }
+
+
 def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     report = build_report(
@@ -54,7 +65,7 @@ def test_operational_readiness_reaches_100_only_when_all_gates_pass() -> None:
     report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
-        market_history={"historyDepthReady": True},
+        market_history=_complete_market_history(),
         learning={
             "researchOutcomeOos": {
                 "status": "research_outcome_oos_evidence_available",
@@ -82,7 +93,7 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
     report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
-        market_history={"historyDepthReady": True},
+        market_history=_complete_market_history(),
         learning={
             "researchOutcomeOos": {
                 "status": "research_outcome_oos_evidence_available",
@@ -102,10 +113,12 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
 
 
 def test_operational_readiness_rejects_shallow_history() -> None:
+    history = _complete_market_history()
+    history["historyDepthReady"] = False
     report = build_operational_readiness(
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
-        market_history={"historyDepthReady": False, "observationCount": 100000},
+        market_history=history,
         learning={
             "researchOutcomeOos": {
                 "status": "research_outcome_oos_evidence_available",
@@ -120,6 +133,76 @@ def test_operational_readiness_rejects_shallow_history() -> None:
     assert report["completionPercent"] == 80.0
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
+
+
+def test_operational_readiness_rejects_legacy_30_percent_history_threshold() -> None:
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history={
+            "historyDepthReady": True,
+            "sourceContinuityRequired": True,
+            "historyEligibleInstrumentCount": 10,
+            "deepHistoryInstrumentCount": 3,
+            "deepHistoryCoverage": 0.3,
+            "minimumHistoryDays": 365,
+        },
+        learning={
+            "researchOutcomeOos": {
+                "status": "research_outcome_oos_evidence_available",
+            },
+            "researchForecastErrorOos": {
+                "status": "forecast_error_oos_evidence_available",
+                "measurementCoverage": 1.0,
+            },
+        },
+    )
+
+    assert report["completionPercent"] == 80.0
+    assert report["ready"] is False
+    assert report["blockers"] == ["market_history_depth_insufficient"]
+
+
+def test_operational_readiness_fails_closed_when_final_history_evidence_is_missing() -> None:
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history={"historyDepthReady": True},
+        learning={
+            "researchOutcomeOos": {
+                "status": "research_outcome_oos_evidence_available",
+            },
+            "researchForecastErrorOos": {
+                "status": "forecast_error_oos_evidence_available",
+                "measurementCoverage": 1.0,
+            },
+        },
+    )
+
+    assert report["completionPercent"] == 80.0
+    assert report["ready"] is False
+    assert report["blockers"] == ["market_history_depth_insufficient"]
+
+
+def test_operational_readiness_rejects_non_finite_forecast_coverage() -> None:
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        learning={
+            "researchOutcomeOos": {
+                "status": "research_outcome_oos_evidence_available",
+            },
+            "researchForecastErrorOos": {
+                "status": "forecast_error_oos_evidence_available",
+                "measurementCoverage": float("inf"),
+            },
+        },
+    )
+
+    assert report["completionPercent"] == 80.0
+    assert report["ready"] is False
+    assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
 
 def test_athena_readiness_report_requires_timezone_aware_as_of(tmp_path: Path) -> None:
