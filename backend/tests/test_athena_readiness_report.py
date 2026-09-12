@@ -19,6 +19,32 @@ def _complete_market_history() -> dict[str, object]:
     }
 
 
+def _complete_corporate_actions() -> dict[str, object]:
+    return {
+        "crossProviderReconciliationReady": True,
+        "automaticCanonicalization": False,
+        "productionIndependenceClaimed": False,
+        "eventCount": 2,
+        "agreedEventCount": 2,
+        "conflictEventCount": 0,
+        "incompleteEventCount": 0,
+        "agreementCoverage": 1.0,
+        "independentProviderFamilies": ["yahoo", "exchange"],
+    }
+
+
+def _complete_learning(*, forecast_coverage: float = 1.0) -> dict[str, object]:
+    return {
+        "researchOutcomeOos": {
+            "status": "research_outcome_oos_evidence_available",
+        },
+        "researchForecastErrorOos": {
+            "status": "forecast_error_oos_evidence_available",
+            "measurementCoverage": forecast_coverage,
+        },
+    }
+
+
 def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     report = build_report(
@@ -37,10 +63,10 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     assert report["marketHistory"]["observationCount"] == 0
     assert report["marketHistory"]["instrumentCoverage"] == 0.0
     assert report["marketHistory"]["historyDepthReady"] is False
-    assert (
-        report["recommendationLearning"]["automaticModelMutation"]
-        is False
-    )
+    assert report["corporateActions"]["eventCount"] == 0
+    assert report["corporateActions"]["crossProviderReconciliationReady"] is False
+    assert report["corporateActions"]["productionIndependenceClaimed"] is False
+    assert report["recommendationLearning"]["automaticModelMutation"] is False
 
     readiness = report["operationalReadiness"]
     assert readiness["scope"] == (
@@ -48,11 +74,12 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     )
     assert readiness["completionPercent"] == 0.0
     assert readiness["passedGateCount"] == 0
-    assert readiness["totalGateCount"] == 5
+    assert readiness["totalGateCount"] == 6
     assert readiness["ready"] is False
     assert "global_market_universe_not_ready" in readiness["blockers"]
     assert "canonical_market_weighting_not_ready" in readiness["blockers"]
     assert "market_history_depth_insufficient" in readiness["blockers"]
+    assert "corporate_actions_independent_reconciliation_pending" in readiness["blockers"]
     assert "research_outcome_oos_evidence_pending" in readiness["blockers"]
     assert "forecast_error_oos_measurement_incomplete" in readiness["blockers"]
     assert "external_market_cap_validation_required" in readiness["blockers"]
@@ -66,20 +93,13 @@ def test_operational_readiness_reaches_100_only_when_all_gates_pass() -> None:
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history=_complete_market_history(),
-        learning={
-            "researchOutcomeOos": {
-                "status": "research_outcome_oos_evidence_available",
-            },
-            "researchForecastErrorOos": {
-                "status": "forecast_error_oos_evidence_available",
-                "measurementCoverage": 1.0,
-            },
-        },
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(),
     )
 
     assert report["completionPercent"] == 100.0
-    assert report["passedGateCount"] == 5
-    assert report["totalGateCount"] == 5
+    assert report["passedGateCount"] == 6
+    assert report["totalGateCount"] == 6
     assert report["ready"] is True
     assert report["blockers"] == []
     assert all(gate["passed"] is True for gate in report["gates"])
@@ -94,22 +114,13 @@ def test_operational_readiness_requires_full_forecast_error_coverage() -> None:
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history=_complete_market_history(),
-        learning={
-            "researchOutcomeOos": {
-                "status": "research_outcome_oos_evidence_available",
-            },
-            "researchForecastErrorOos": {
-                "status": "forecast_error_oos_evidence_available",
-                "measurementCoverage": 0.99,
-            },
-        },
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(forecast_coverage=0.99),
     )
 
-    assert report["completionPercent"] == 80.0
+    assert report["completionPercent"] == 83.3
     assert report["ready"] is False
-    assert report["blockers"] == [
-        "forecast_error_oos_measurement_incomplete",
-    ]
+    assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
 
 
 def test_operational_readiness_rejects_shallow_history() -> None:
@@ -119,18 +130,11 @@ def test_operational_readiness_rejects_shallow_history() -> None:
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history=history,
-        learning={
-            "researchOutcomeOos": {
-                "status": "research_outcome_oos_evidence_available",
-            },
-            "researchForecastErrorOos": {
-                "status": "forecast_error_oos_evidence_available",
-                "measurementCoverage": 1.0,
-            },
-        },
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 80.0
+    assert report["completionPercent"] == 83.3
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
 
@@ -147,18 +151,11 @@ def test_operational_readiness_rejects_legacy_30_percent_history_threshold() -> 
             "deepHistoryCoverage": 0.3,
             "minimumHistoryDays": 365,
         },
-        learning={
-            "researchOutcomeOos": {
-                "status": "research_outcome_oos_evidence_available",
-            },
-            "researchForecastErrorOos": {
-                "status": "forecast_error_oos_evidence_available",
-                "measurementCoverage": 1.0,
-            },
-        },
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 80.0
+    assert report["completionPercent"] == 83.3
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
 
@@ -168,18 +165,11 @@ def test_operational_readiness_fails_closed_when_final_history_evidence_is_missi
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history={"historyDepthReady": True},
-        learning={
-            "researchOutcomeOos": {
-                "status": "research_outcome_oos_evidence_available",
-            },
-            "researchForecastErrorOos": {
-                "status": "forecast_error_oos_evidence_available",
-                "measurementCoverage": 1.0,
-            },
-        },
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(),
     )
 
-    assert report["completionPercent"] == 80.0
+    assert report["completionPercent"] == 83.3
     assert report["ready"] is False
     assert report["blockers"] == ["market_history_depth_insufficient"]
 
@@ -189,20 +179,44 @@ def test_operational_readiness_rejects_non_finite_forecast_coverage() -> None:
         universe={"isGlobalReady": True},
         weighting={"ready": True, "blockers": []},
         market_history=_complete_market_history(),
-        learning={
-            "researchOutcomeOos": {
-                "status": "research_outcome_oos_evidence_available",
-            },
-            "researchForecastErrorOos": {
-                "status": "forecast_error_oos_evidence_available",
-                "measurementCoverage": float("inf"),
-            },
-        },
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(forecast_coverage=float("inf")),
     )
 
-    assert report["completionPercent"] == 80.0
+    assert report["completionPercent"] == 83.3
     assert report["ready"] is False
     assert report["blockers"] == ["forecast_error_oos_measurement_incomplete"]
+
+
+def test_operational_readiness_rejects_unmeasured_or_single_family_corporate_actions() -> None:
+    weak_evidence = _complete_corporate_actions()
+    weak_evidence["independentProviderFamilies"] = ["yahoo"]
+
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=weak_evidence,
+        learning=_complete_learning(),
+    )
+
+    assert report["completionPercent"] == 83.3
+    assert report["ready"] is False
+    assert report["blockers"] == [
+        "corporate_actions_independent_reconciliation_pending"
+    ]
+
+    non_finite_evidence = _complete_corporate_actions()
+    non_finite_evidence["agreementCoverage"] = float("inf")
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": []},
+        market_history=_complete_market_history(),
+        corporate_actions=non_finite_evidence,
+        learning=_complete_learning(),
+    )
+    assert report["ready"] is False
+    assert "corporate_actions_independent_reconciliation_pending" in report["blockers"]
 
 
 def test_athena_readiness_report_requires_timezone_aware_as_of(tmp_path: Path) -> None:
