@@ -81,7 +81,8 @@ class PasswordRecoveryService:
         normalized_token = str(token or "").strip()
         if len(normalized_token) < 32:
             return False
-        user_id = self._recovery.consume(token_hash=self._token_hash(normalized_token))
+        token_hash = self._token_hash(normalized_token)
+        user_id = self._recovery.valid_user_id(token_hash=token_hash)
         if user_id is None:
             return False
         account = self._accounts.get_by_id(int(user_id))
@@ -91,6 +92,11 @@ class PasswordRecoveryService:
         stored_hash = str(account.get("password_hash") or "")
         if stored_hash and self._password_hash.verify(password, stored_hash):
             raise ValueError("La nueva contraseña debe ser diferente de la actual.")
+
+        consumed_user_id = self._recovery.consume(token_hash=token_hash)
+        if consumed_user_id is None or int(consumed_user_id) != int(user_id):
+            return False
+
         password_hash = self._password_hash.hash(password)
         if not self._accounts.update_password_hash(
             user_id=int(user_id),
