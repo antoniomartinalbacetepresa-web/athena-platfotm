@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../auth/services/auth_session.dart';
+import '../models/authenticated_portfolio_history.dart';
 import '../models/authenticated_portfolio_position.dart';
 
 class AuthenticatedPortfolioService {
@@ -48,6 +49,39 @@ class AuthenticatedPortfolioService {
           return AuthenticatedPortfolioPosition.fromJson(item);
         })
         .toList(growable: false);
+  }
+
+  Future<AuthenticatedPortfolioHistory> loadHistory({
+    String portfolioId = 'primary',
+    DateTime? asOf,
+    int limit = 100,
+  }) async {
+    final normalizedPortfolioId = portfolioId.trim();
+    if (normalizedPortfolioId.isEmpty || normalizedPortfolioId.length > 128) {
+      throw ArgumentError.value(
+        portfolioId,
+        'portfolioId',
+        'Portfolio id no válido.',
+      );
+    }
+    if (limit < 1 || limit > 500) {
+      throw ArgumentError.value(limit, 'limit', 'Limit debe estar entre 1 y 500.');
+    }
+    final cutoff = (asOf ?? DateTime.now()).toUtc();
+    final uri = Uri.parse('$_baseUrl/api/v1/user/portfolio/history').replace(
+      queryParameters: {
+        'portfolioId': normalizedPortfolioId,
+        'asOf': cutoff.toIso8601String(),
+        'limit': '$limit',
+      },
+    );
+    final response = await _client.get(uri, headers: _authenticatedHeaders());
+    final payload = _decodeObject(response);
+    final data = payload['data'];
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Respuesta de historial sin data válida.');
+    }
+    return AuthenticatedPortfolioHistory.fromJson(data);
   }
 
   Future<AuthenticatedPortfolioPosition> upsertPosition({
