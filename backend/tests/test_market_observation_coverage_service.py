@@ -61,7 +61,8 @@ def test_market_observation_coverage_reports_overall_and_sources(tmp_path: Path)
     assert report.observation_count == 3
     assert report.earliest_observed_at == base.isoformat()
     assert report.latest_observed_at == (base + timedelta(days=2)).isoformat()
-    assert report.by_source["yahoo_finance"]["observationCount"] == 2
+    assert report.by_source["yahoo"]["observationCount"] == 2
+    assert "yahoo_finance" not in report.by_source
     assert report.by_source["secondary_source"]["coveredInstrumentCount"] == 1
 
 
@@ -153,6 +154,40 @@ def test_history_depth_accepts_valid_segment_after_older_source_gap(tmp_path: Pa
     assert report.deep_history_instrument_count == 1
     assert report.deep_history_coverage == 1.0
     assert report.history_depth_ready is True
+
+
+def test_history_depth_preserves_continuity_across_yahoo_alias_transition(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
+    observations = MarketObservationRepository(database=database)
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    legacy = [
+        {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0 + day / 100}
+        for day in range(0, 181, 5)
+    ]
+    canonical = [
+        {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0 + day / 100}
+        for day in range(185, 366, 5)
+    ]
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=legacy,
+        source_provider="yahoo_finance",
+        retrieved_at=base + timedelta(days=181),
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=canonical,
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+
+    report = MarketObservationCoverageService(database=database).get_report()
+
+    assert report.deep_history_instrument_count == 1
+    assert report.deep_history_coverage == 1.0
+    assert report.by_source["yahoo"]["observationCount"] == len(legacy) + len(canonical)
+    assert "yahoo_finance" not in report.by_source
 
 
 def test_history_depth_does_not_stitch_different_sources(tmp_path: Path) -> None:
