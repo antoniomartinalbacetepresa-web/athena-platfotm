@@ -61,6 +61,31 @@ class PasswordRecoveryRepository:
                 ((now.replace(microsecond=0)).isoformat(),),
             )
 
+    def valid_user_id(self, *, token_hash: str) -> int | None:
+        """Resolve a live challenge without consuming it.
+
+        Password policy and account-state checks can therefore complete before
+        the one-time token is irreversibly consumed. The subsequent ``consume``
+        call remains the atomic authority that decides which concurrent reset,
+        if any, wins the token.
+        """
+
+        normalized_hash = self._required(token_hash, "token_hash")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT user_id
+                FROM {self._TABLE}
+                WHERE token_hash = ?
+                  AND consumed_at IS NULL
+                  AND expires_at >= ?
+                LIMIT 1
+                """,
+                (normalized_hash, now),
+            ).fetchone()
+        return None if row is None else int(row["user_id"])
+
     def consume(self, *, token_hash: str) -> int | None:
         normalized_hash = self._required(token_hash, "token_hash")
         now = datetime.now(timezone.utc).isoformat()
