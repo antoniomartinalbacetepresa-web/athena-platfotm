@@ -89,8 +89,10 @@ def test_history_gap_report_classifies_actionable_blockers(tmp_path: Path) -> No
     assert report.items[0].instrument_id == no_history_id
     assert report.items[0].best_source_provider is None
     assert report.items[1].reason == "insufficient_span"
+    assert report.items[1].best_source_provider == "yahoo"
     assert report.items[1].best_history_span_days == pytest.approx(100.0)
     assert report.items[2].reason == "discontinuous_source"
+    assert report.items[2].best_source_provider == "yahoo"
     assert report.items[2].best_history_span_days == pytest.approx(365.0)
     assert report.items[2].best_maximum_gap_days == pytest.approx(365.0)
     assert deep_id not in {item.instrument_id for item in report.items}
@@ -121,6 +123,38 @@ def test_history_gap_report_accepts_any_single_deep_source_without_stitching(tmp
     )
 
     report = MarketHistoryGapService(database=database).get_report()
+    assert report.total_blocking_count == 0
+    assert report.items == ()
+
+
+def test_history_gap_report_treats_yahoo_legacy_alias_as_same_provider(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
+    observations = MarketObservationRepository(database=database)
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    legacy = [
+        {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0 + day / 100}
+        for day in range(0, 181, 5)
+    ]
+    canonical = [
+        {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0 + day / 100}
+        for day in range(185, 366, 5)
+    ]
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=legacy,
+        source_provider="yahoo_finance",
+        retrieved_at=base + timedelta(days=181),
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=canonical,
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+
+    report = MarketHistoryGapService(database=database).get_report()
+
     assert report.total_blocking_count == 0
     assert report.items == ()
 
