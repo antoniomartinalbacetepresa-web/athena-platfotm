@@ -1,19 +1,27 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import math
+import os
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import current_account
 from app.repositories.user_portfolio_repository import UserPortfolioRepository
+from app.security.portfolio_owner_storage import owner_scoped_ledger_path
+from app.services.recommendation_portfolio_event_ledger_service import (
+    RecommendationPortfolioEventLedgerService,
+)
 
 
 router = APIRouter(
     prefix="/api/v1/user/portfolio",
     tags=["user-portfolio"],
 )
+_DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
 
 
 class PositionUpsertRequest(BaseModel):
@@ -43,6 +51,30 @@ def _owner_id(account: dict[str, Any]) -> int:
     return user_id
 
 
+def _history_service(owner_user_id: int) -> RecommendationPortfolioEventLedgerService:
+    configured = os.environ.get(
+        "ATHENA_PORTFOLIO_EVENT_LEDGER_PATH",
+        _DEFAULT_LEDGER_PATH,
+    ).strip()
+    if not configured:
+        raise HTTPException(
+            status_code=503,
+            detail="Historial de cartera no tiene persistencia configurada.",
+        )
+    return RecommendationPortfolioEventLedgerService(
+        owner_scoped_ledger_path(Path(configured), owner_user_id=owner_user_id)
+    )
+
+
+def _aware_utc(value: datetime, field: str) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} debe incluir zona horaria.",
+        )
+    return value.astimezone(timezone.utc)
+
+
 def _policy() -> dict[str, bool]:
     return {
         "ownerDerivedFromAuthenticatedToken": True,
@@ -54,6 +86,19 @@ def _policy() -> dict[str, bool]:
         "storageEncrypted": False,
         "productionEligible": False,
         "automaticTrading": False,
+    }
+
+
+def _history_policy() -> dict[str, object]:
+    return {
+        "ownerDerivedFromAuthenticatedToken": True,
+        "clientSuppliedOwnerAccepted": False,
+        "sourceOfTruth": "owner_scoped_append_only_event_ledger",
+        "pointInTimeFiltered": True,
+        "advisoryStatus": "no_advice",
+        "productionEligible": False,
+        "automaticTrading": False,
+        "orderPlacement": "forbidden",
     }
 
 
@@ -72,6 +117,64 @@ def get_personal_portfolio(
             "positionCount": len(positions),
         },
         "policy": _policy(),
+    }
+
+
+@router.get("/history")
+def get_personal_portfolio_history(
+    account: Annotated[dict[str, Any], Depends(current_account)],
+    portfolio_id: str = Query(..., alias="portfolioId", min_length=1, max_length=128),
+    as_of: datetime = Query(..., alias="asOf"),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict[str, Any]:
+    """Read the authenticated owner's append-only portfolio history as known at asOf."""
+
+    owner_id = _owner_id(account)
+    cutoff = _aware_utc(as_of, "asOf")
+    try:
+        records = _history_service(owner_id).load()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="El historial de cartera no supera la verificación de integridad.",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo leer el historial de cartera.",
+        ) from exc
+
+    visible = [
+        record
+        for record in records
+        if record.event.portfolio_id == portfolio_id
+        and record.event.available_at <= cutoff
+    ]
+    visible.sort(
+        key=lambda record: (
+            record.event.occurred_at,
+            record.event.available_at,
+            record.sequence,
+        ),
+        reverse=True,
+    )
+    selected = visible[:limit]
+    return {
+        "data": {
+            "portfolioId": portfolio_id,
+            "asOf": cutoff.isoformat(),
+            "events": [
+                {
+                    "sequence": record.sequence,
+                    "recordHash": record.record_hash,
+                    **record.event.canonical_dict(),
+                }
+                for record in selected
+            ],
+            "eventCount": len(selected),
+            "hasMore": len(visible) > len(selected),
+        },
+        "policy": _history_policy(),
     }
 
 
