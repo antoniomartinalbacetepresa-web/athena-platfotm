@@ -15,13 +15,15 @@ _FORBIDDEN_SOURCE_MARKERS = ("financialmodelingprep", "financial modeling prep")
 class RecommendationResearchEvaluationSpecificationService:
     """Freeze one measurable ex-ante forecast against an exact Research Cycle.
 
-    Version 1 intentionally supports only total return over an exact elapsed
-    horizon starting at the frozen cycle asOf. This keeps the first professional
-    OOS error contract narrow, auditable and free of post-outcome target changes.
+    V1 fixes the evaluation period at cycle.asOf. V2 allows an explicitly later
+    prospective start. V3 keeps that prospective contract and additionally binds
+    the model inputs by content hash and PIT availability, without claiming input
+    quality, predictive skill, production eligibility, or trading authority.
     """
 
     ARTIFACT_VERSION = "research-evaluation-specification-v1"
     PROSPECTIVE_ARTIFACT_VERSION = "research-evaluation-specification-v2"
+    PIT_INPUT_ARTIFACT_VERSION = "research-evaluation-specification-v3"
 
     def build(
         self,
@@ -35,6 +37,7 @@ class RecommendationResearchEvaluationSpecificationService:
         source_ref: str,
         method: str,
         period_start: datetime | None = None,
+        input_evidence: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         specification_id_normalized = self._text(specification_id, "specification_id")
         cycle = self._cycle(cycle_record)
@@ -49,6 +52,8 @@ class RecommendationResearchEvaluationSpecificationService:
         forecast = self._finite(expected_total_return, "expected_total_return")
         evidence_available_at = self._aware_utc(available_at, "available_at")
         prospective = period_start is not None
+        if input_evidence is not None and not prospective:
+            raise ValueError("input_evidence PIT solo se admite en un periodo prospectivo explícito.")
         start = self._aware_utc(period_start, "period_start") if prospective else cycle_as_of
         if prospective and start <= cycle_as_of:
             raise ValueError("El periodo prospectivo debe comenzar después de cycle.asOf.")
@@ -61,9 +66,20 @@ class RecommendationResearchEvaluationSpecificationService:
         self._assert_source_allowed(normalized_source)
         self._assert_source_allowed(normalized_source_ref)
 
+        normalized_inputs = None
+        version = self.ARTIFACT_VERSION
+        if prospective:
+            version = self.PROSPECTIVE_ARTIFACT_VERSION
+        if input_evidence is not None:
+            normalized_inputs = self._normalize_input_evidence(
+                input_evidence,
+                forecast_available_at=evidence_available_at,
+            )
+            version = self.PIT_INPUT_ARTIFACT_VERSION
+
         period_end = start + timedelta(seconds=horizon)
         core = {
-            "artifactVersion": self.PROSPECTIVE_ARTIFACT_VERSION if prospective else self.ARTIFACT_VERSION,
+            "artifactVersion": version,
             "specificationId": specification_id_normalized,
             "cycleHash": cycle_hash,
             "instrumentId": instrument_id,
@@ -81,7 +97,28 @@ class RecommendationResearchEvaluationSpecificationService:
                 "method": normalized_method,
             },
         }
+        if normalized_inputs is not None:
+            core["inputEvidence"] = normalized_inputs
         specification_hash = self._canonical_hash(core)
+        policy = {
+            "automaticTrading": False,
+            "automaticProductionPromotion": False,
+            "automaticModelMutation": False,
+            "targetDefinition": "precommitted_before_or_at_prospective_period_start" if prospective else "precommitted_before_or_at_frozen_cycle_as_of",
+            "metricScope": "total_return_only_v1",
+            "period": "starts_after_cycle_as_of_with_exact_elapsed_horizon" if prospective else "starts_exactly_at_cycle_as_of_with_exact_elapsed_horizon",
+            "postOutcomeEditing": "forbidden_append_only_persistence_required",
+            "evaluation": "signed_and_absolute_error_only_no_hit_rate_or_skill_claim",
+            "thresholds": "none_selected_here",
+            "causalClaim": "forbidden",
+        }
+        if normalized_inputs is not None:
+            policy.update(
+                {
+                    "inputProvenance": "content_hash_bound_inputs_available_before_forecast_output",
+                    "inputQualityClaim": "forbidden",
+                }
+            )
         return {
             "module": "research_evaluation_specification",
             **core,
@@ -91,18 +128,7 @@ class RecommendationResearchEvaluationSpecificationService:
             "isWeightingReady": False,
             "recommendationCandidateReady": False,
             "productionLearningEligible": False,
-            "policy": {
-                "automaticTrading": False,
-                "automaticProductionPromotion": False,
-                "automaticModelMutation": False,
-                "targetDefinition": "precommitted_before_or_at_prospective_period_start" if prospective else "precommitted_before_or_at_frozen_cycle_as_of",
-                "metricScope": "total_return_only_v1",
-                "period": "starts_after_cycle_as_of_with_exact_elapsed_horizon" if prospective else "starts_exactly_at_cycle_as_of_with_exact_elapsed_horizon",
-                "postOutcomeEditing": "forbidden_append_only_persistence_required",
-                "evaluation": "signed_and_absolute_error_only_no_hit_rate_or_skill_claim",
-                "thresholds": "none_selected_here",
-                "causalClaim": "forbidden",
-            },
+            "policy": policy,
         }
 
     def validate_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
@@ -111,9 +137,15 @@ class RecommendationResearchEvaluationSpecificationService:
         if artifact.get("module") != "research_evaluation_specification":
             raise ValueError("Evaluation specification perdió module.")
         version = artifact.get("artifactVersion")
-        if version not in (self.ARTIFACT_VERSION, self.PROSPECTIVE_ARTIFACT_VERSION):
+        allowed_versions = (
+            self.ARTIFACT_VERSION,
+            self.PROSPECTIVE_ARTIFACT_VERSION,
+            self.PIT_INPUT_ARTIFACT_VERSION,
+        )
+        if version not in allowed_versions:
             raise ValueError("Versión de evaluation specification no compatible.")
-        prospective = version == self.PROSPECTIVE_ARTIFACT_VERSION
+        prospective = version in (self.PROSPECTIVE_ARTIFACT_VERSION, self.PIT_INPUT_ARTIFACT_VERSION)
+        pit_inputs = version == self.PIT_INPUT_ARTIFACT_VERSION
         if artifact.get("advisoryStatus") != "no_advice":
             raise ValueError("Evaluation specification perdió no_advice.")
         for field in (
@@ -125,7 +157,7 @@ class RecommendationResearchEvaluationSpecificationService:
             if artifact.get(field) is not False:
                 raise ValueError(f"Evaluation specification intentó activar {field}.")
         if artifact.get("metric") != "total_return":
-            raise ValueError("Evaluation specification v1 solo admite total_return.")
+            raise ValueError("Evaluation specification solo admite total_return.")
         self._positive_int(artifact.get("horizonSeconds"), "horizonSeconds")
         self._finite(artifact.get("expectedValue"), "expectedValue")
         cycle_as_of = self._aware_iso(artifact.get("cycleAsOf"), "cycleAsOf")
@@ -150,6 +182,18 @@ class RecommendationResearchEvaluationSpecificationService:
         self._assert_source_allowed(source)
         self._assert_source_allowed(source_ref)
 
+        normalized_inputs = None
+        if pit_inputs:
+            raw_inputs = artifact.get("inputEvidence")
+            normalized_inputs = self._normalize_input_evidence(
+                raw_inputs,
+                forecast_available_at=available_at,
+            )
+            if raw_inputs != normalized_inputs:
+                raise ValueError("inputEvidence no está en forma canónica.")
+        elif "inputEvidence" in artifact:
+            raise ValueError("inputEvidence requiere el contrato prospectivo v3.")
+
         policy = artifact.get("policy")
         if not isinstance(policy, dict):
             raise ValueError("Evaluation specification perdió policy.")
@@ -164,11 +208,18 @@ class RecommendationResearchEvaluationSpecificationService:
             "thresholds": "none_selected_here",
             "causalClaim": "forbidden",
         }
+        if pit_inputs:
+            required_policy.update(
+                {
+                    "inputProvenance": "content_hash_bound_inputs_available_before_forecast_output",
+                    "inputQualityClaim": "forbidden",
+                }
+            )
         for key, expected in required_policy.items():
             if policy.get(key) != expected:
                 raise ValueError(f"Evaluation specification violó policy.{key}.")
 
-        core_keys = (
+        core_keys = [
             "artifactVersion",
             "specificationId",
             "cycleHash",
@@ -181,7 +232,9 @@ class RecommendationResearchEvaluationSpecificationService:
             "horizonSeconds",
             "expectedValue",
             "forecastEvidence",
-        )
+        ]
+        if pit_inputs:
+            core_keys.append("inputEvidence")
         core = {key: artifact.get(key) for key in core_keys}
         expected_hash = self._canonical_hash(core)
         if self._sha256(artifact.get("specificationHash"), "specificationHash") != expected_hash:
@@ -191,6 +244,48 @@ class RecommendationResearchEvaluationSpecificationService:
         self._text(artifact.get("symbol"), "symbol")
         self._text(artifact.get("specificationId"), "specificationId")
         return artifact
+
+    def _normalize_input_evidence(
+        self,
+        value: object,
+        *,
+        forecast_available_at: datetime,
+    ) -> list[dict[str, str]]:
+        if not isinstance(value, list) or not value:
+            raise ValueError("inputEvidence debe contener al menos una entrada PIT verificable.")
+        normalized: list[dict[str, str]] = []
+        seen_hashes: set[str] = set()
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise ValueError(f"inputEvidence[{index}] debe ser un objeto.")
+            source = self._text(item.get("source"), f"inputEvidence[{index}].source")
+            source_ref = self._text(item.get("sourceRef"), f"inputEvidence[{index}].sourceRef")
+            self._assert_source_allowed(source)
+            self._assert_source_allowed(source_ref)
+            available_at = self._aware_iso(
+                item.get("availableAt"),
+                f"inputEvidence[{index}].availableAt",
+            )
+            if available_at > forecast_available_at:
+                raise ValueError(
+                    f"inputEvidence[{index}] no estaba disponible al generar la previsión."
+                )
+            content_hash = self._sha256(
+                item.get("contentHash"),
+                f"inputEvidence[{index}].contentHash",
+            )
+            if content_hash in seen_hashes:
+                raise ValueError("inputEvidence contiene contentHash duplicado.")
+            seen_hashes.add(content_hash)
+            normalized.append(
+                {
+                    "source": source,
+                    "sourceRef": source_ref,
+                    "availableAt": available_at.isoformat(),
+                    "contentHash": content_hash,
+                }
+            )
+        return normalized
 
     def _cycle(self, record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(record, dict):
