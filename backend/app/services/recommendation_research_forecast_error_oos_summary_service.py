@@ -53,11 +53,13 @@ class RecommendationResearchForecastErrorOosSummaryService:
             raise ValueError("Cada forecast error requiere exactamente su specification persistida.")
 
         specs_by_hash: dict[str, dict[str, Any]] = {}
+        specification_versions: set[str] = set()
         for record in specification_records:
             artifact = record.get("artifact") if isinstance(record, dict) else None
             if not isinstance(artifact, dict):
                 raise ValueError("Specification record inválido.")
             self._specification_service.validate_artifact(artifact)
+            specification_versions.add(str(artifact["artifactVersion"]))
             spec_hash = self._sha256(artifact.get("specificationHash"), "specificationHash")
             persisted_hash = self._sha256(record.get("specification_hash"), "record.specification_hash")
             if spec_hash != persisted_hash:
@@ -66,10 +68,16 @@ class RecommendationResearchForecastErrorOosSummaryService:
                 raise ValueError("specification_records contiene specificationHash duplicado.")
             self._assert_created_by_cutoff(record, cutoff, "specification")
             sealed_at = self._aware_iso(record.get("created_at"), "specification.created_at")
+            available_at = self._aware_iso(artifact["forecastEvidence"]["availableAt"], "forecastEvidence.availableAt")
+            if available_at > sealed_at:
+                raise ValueError("Specification usa evidencia no disponible al sellar la previsión.")
             period_start = self._aware_iso(artifact.get("periodStart"), "specification.periodStart")
             if sealed_at > period_start:
                 raise ValueError("Specification sin sellado ex-ante antes o al inicio del periodo.")
             specs_by_hash[spec_hash] = artifact
+
+        if len(specification_versions) != 1:
+            raise ValueError("OOS summary no puede mezclar contratos de forecast v1 y v2.")
 
         rows: list[dict[str, Any]] = []
         seen_errors: set[str] = set()

@@ -100,6 +100,9 @@ class RecommendationResearchEvaluationSpecificationRepository:
 
             period_start = self._aware_iso(validated.get("periodStart"), "periodStart")
             sealed_at = self._aware_utc(self._now_provider(), "now_provider")
+            available_at = self._aware_iso(validated["forecastEvidence"]["availableAt"], "forecastEvidence.availableAt")
+            if available_at > sealed_at:
+                raise ValueError("La evidencia de previsión no estaba disponible al sellarla.")
             if sealed_at > period_start:
                 raise ValueError(
                     "El periodo ya comenzó: esta previsión no puede sellarse retrospectivamente como ex-ante."
@@ -149,6 +152,9 @@ class RecommendationResearchEvaluationSpecificationRepository:
             raise ValueError("Registro de evaluation specification carece de artifact válido.")
         validated = self._service.validate_artifact(artifact)
         created_at = self._aware_iso(record.get("created_at"), "created_at")
+        available_at = self._aware_iso(validated["forecastEvidence"]["availableAt"], "forecastEvidence.availableAt")
+        if available_at > created_at:
+            raise ValueError("La evidencia persistida no estaba disponible al sellar la previsión.")
         period_start = self._aware_iso(validated.get("periodStart"), "periodStart")
         if created_at > period_start:
             raise ValueError("La specification persistida no fue sellada antes o al inicio de su periodo.")

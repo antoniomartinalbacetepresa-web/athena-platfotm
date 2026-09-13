@@ -21,6 +21,7 @@ class RecommendationResearchEvaluationSpecificationService:
     """
 
     ARTIFACT_VERSION = "research-evaluation-specification-v1"
+    PROSPECTIVE_ARTIFACT_VERSION = "research-evaluation-specification-v2"
 
     def build(
         self,
@@ -33,6 +34,7 @@ class RecommendationResearchEvaluationSpecificationService:
         source: str,
         source_ref: str,
         method: str,
+        period_start: datetime | None = None,
     ) -> dict[str, Any]:
         specification_id_normalized = self._text(specification_id, "specification_id")
         cycle = self._cycle(cycle_record)
@@ -46,24 +48,29 @@ class RecommendationResearchEvaluationSpecificationService:
         horizon = self._positive_int(horizon_seconds, "horizon_seconds")
         forecast = self._finite(expected_total_return, "expected_total_return")
         evidence_available_at = self._aware_utc(available_at, "available_at")
-        if evidence_available_at > cycle_as_of:
-            raise ValueError("La previsión debe estar disponible a más tardar en cycle.asOf.")
+        prospective = period_start is not None
+        start = self._aware_utc(period_start, "period_start") if prospective else cycle_as_of
+        if prospective and start <= cycle_as_of:
+            raise ValueError("El periodo prospectivo debe comenzar después de cycle.asOf.")
+        if evidence_available_at > start:
+            boundary = "period_start" if prospective else "cycle.asOf"
+            raise ValueError(f"La previsión debe estar disponible a más tardar en {boundary}.")
         normalized_source = self._text(source, "source")
         normalized_source_ref = self._text(source_ref, "source_ref")
         normalized_method = self._text(method, "method")
         self._assert_source_allowed(normalized_source)
         self._assert_source_allowed(normalized_source_ref)
 
-        period_end = cycle_as_of + timedelta(seconds=horizon)
+        period_end = start + timedelta(seconds=horizon)
         core = {
-            "artifactVersion": self.ARTIFACT_VERSION,
+            "artifactVersion": self.PROSPECTIVE_ARTIFACT_VERSION if prospective else self.ARTIFACT_VERSION,
             "specificationId": specification_id_normalized,
             "cycleHash": cycle_hash,
             "instrumentId": instrument_id,
             "symbol": symbol,
             "cycleAsOf": cycle_as_of.isoformat(),
             "metric": "total_return",
-            "periodStart": cycle_as_of.isoformat(),
+            "periodStart": start.isoformat(),
             "periodEnd": period_end.isoformat(),
             "horizonSeconds": horizon,
             "expectedValue": forecast,
@@ -88,9 +95,9 @@ class RecommendationResearchEvaluationSpecificationService:
                 "automaticTrading": False,
                 "automaticProductionPromotion": False,
                 "automaticModelMutation": False,
-                "targetDefinition": "precommitted_before_or_at_frozen_cycle_as_of",
+                "targetDefinition": "precommitted_before_or_at_prospective_period_start" if prospective else "precommitted_before_or_at_frozen_cycle_as_of",
                 "metricScope": "total_return_only_v1",
-                "period": "starts_exactly_at_cycle_as_of_with_exact_elapsed_horizon",
+                "period": "starts_after_cycle_as_of_with_exact_elapsed_horizon" if prospective else "starts_exactly_at_cycle_as_of_with_exact_elapsed_horizon",
                 "postOutcomeEditing": "forbidden_append_only_persistence_required",
                 "evaluation": "signed_and_absolute_error_only_no_hit_rate_or_skill_claim",
                 "thresholds": "none_selected_here",
@@ -103,8 +110,10 @@ class RecommendationResearchEvaluationSpecificationService:
             raise ValueError("Evaluation specification debe ser un objeto.")
         if artifact.get("module") != "research_evaluation_specification":
             raise ValueError("Evaluation specification perdió module.")
-        if artifact.get("artifactVersion") != self.ARTIFACT_VERSION:
+        version = artifact.get("artifactVersion")
+        if version not in (self.ARTIFACT_VERSION, self.PROSPECTIVE_ARTIFACT_VERSION):
             raise ValueError("Versión de evaluation specification no compatible.")
+        prospective = version == self.PROSPECTIVE_ARTIFACT_VERSION
         if artifact.get("advisoryStatus") != "no_advice":
             raise ValueError("Evaluation specification perdió no_advice.")
         for field in (
@@ -122,16 +131,19 @@ class RecommendationResearchEvaluationSpecificationService:
         cycle_as_of = self._aware_iso(artifact.get("cycleAsOf"), "cycleAsOf")
         period_start = self._aware_iso(artifact.get("periodStart"), "periodStart")
         period_end = self._aware_iso(artifact.get("periodEnd"), "periodEnd")
-        if period_start != cycle_as_of:
+        if prospective and period_start <= cycle_as_of:
+            raise ValueError("periodStart prospectivo debe ser posterior a cycleAsOf.")
+        if not prospective and period_start != cycle_as_of:
             raise ValueError("periodStart debe coincidir exactamente con cycleAsOf.")
-        if int((period_end - period_start).total_seconds()) != int(artifact["horizonSeconds"]):
+        if (period_end - period_start).total_seconds() != artifact["horizonSeconds"]:
             raise ValueError("periodEnd no coincide con horizonSeconds.")
         evidence = artifact.get("forecastEvidence")
         if not isinstance(evidence, dict):
             raise ValueError("Evaluation specification perdió forecastEvidence.")
         available_at = self._aware_iso(evidence.get("availableAt"), "forecastEvidence.availableAt")
-        if available_at > cycle_as_of:
-            raise ValueError("forecastEvidence introduce hindsight respecto a cycleAsOf.")
+        if available_at > period_start:
+            boundary = "periodStart" if prospective else "cycleAsOf"
+            raise ValueError(f"forecastEvidence introduce hindsight respecto a {boundary}.")
         source = self._text(evidence.get("source"), "forecastEvidence.source")
         source_ref = self._text(evidence.get("sourceRef"), "forecastEvidence.sourceRef")
         self._text(evidence.get("method"), "forecastEvidence.method")
@@ -145,7 +157,8 @@ class RecommendationResearchEvaluationSpecificationService:
             "automaticTrading": False,
             "automaticProductionPromotion": False,
             "automaticModelMutation": False,
-            "targetDefinition": "precommitted_before_or_at_frozen_cycle_as_of",
+            "targetDefinition": "precommitted_before_or_at_prospective_period_start" if prospective else "precommitted_before_or_at_frozen_cycle_as_of",
+            "period": "starts_after_cycle_as_of_with_exact_elapsed_horizon" if prospective else "starts_exactly_at_cycle_as_of_with_exact_elapsed_horizon",
             "metricScope": "total_return_only_v1",
             "postOutcomeEditing": "forbidden_append_only_persistence_required",
             "thresholds": "none_selected_here",

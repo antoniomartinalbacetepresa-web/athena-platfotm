@@ -47,6 +47,39 @@ forecast generation must precommit prospectively; a future contract that uses
 a later start must explicitly version that period definition and align outcome
 attribution, rather than silently backdating a timestamp or changing v1.
 
+## Explicit prospective contract v2
+
+The separate POST route
+`/api/v1/recommendations/professional-research/research-cycle/{cycle_hash}/prospective-evaluation-specification`
+accepts the existing forecast fields plus a required timezone-aware
+`periodStart`. It produces `research-evaluation-specification-v2`, with
+`periodStart > cycleAsOf` and `periodEnd = periodStart + horizonSeconds`.
+The original endpoint and v1 period definition are unchanged.
+
+The cycle cutoff is retained, not moved forward to the forecast-generation
+time. The output forecast may become available after that cutoff, but must
+already be available at the repository-controlled sealing time, which must be
+no later than the selected period start. New writes and read validation enforce
+this availability boundary; summaries check it independently. The POST response
+includes the original `persistence.sealedAt` on idempotent retries.
+
+The existing unique `(cycle_hash, horizon_seconds)` target remains in force:
+v2 does not allow replacing a sealed forecast by moving its start or changing
+its method, expected return, or version. Both contracts share the same storage
+and verification path; no parallel forecast database was introduced.
+
+Existing outcome attribution already allows periods after the cycle cutoff.
+Forecast errors and summaries still require the exact specification period.
+The summary builder rejects pooling v1 and v2 even for the same method and
+horizon. The new lifecycle regression uses the existing attribution, outcome,
+specification, and error repositories with deterministic test evidence only.
+
+This is a prospective submission contract, not a new automatic forecasting
+model or a production scheduler. It does not prove that an external method's
+inputs were PIT-safe just because its output was sealed on time. Model-input
+provenance, cohort preselection, and longitudinal production evidence remain
+separate gates.
+
 ## Remaining boundaries
 
 The OOS service consumes records verified by the existing repository and

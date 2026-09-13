@@ -60,6 +60,10 @@ class ForecastErrorRequest(BaseModel):
     outcomeHash: str = Field(min_length=64, max_length=64)
 
 
+class ProspectiveEvaluationSpecificationRequest(EvaluationSpecificationRequest):
+    periodStart: datetime
+
+
 class ForecastErrorOosSummaryRequest(BaseModel):
     summaryId: str = Field(min_length=1, max_length=200)
     asOf: datetime
@@ -78,6 +82,25 @@ def post_evaluation_specification(
     request: EvaluationSpecificationRequest,
 ) -> dict[str, object]:
     """Freeze one measurable ex-ante total-return target before posterior outcomes."""
+    return _persist_evaluation_specification(cycle_hash, request)
+
+
+@router.post("/research-cycle/{cycle_hash}/prospective-evaluation-specification")
+def post_prospective_evaluation_specification(
+    cycle_hash: str,
+    request: ProspectiveEvaluationSpecificationRequest,
+) -> dict[str, object]:
+    """Seal a v2 target for a later period without shifting the research cutoff."""
+    period_start = _aware_utc(request.periodStart, "periodStart")
+    return _persist_evaluation_specification(cycle_hash, request, period_start=period_start)
+
+
+def _persist_evaluation_specification(
+    cycle_hash: str,
+    request: EvaluationSpecificationRequest,
+    *,
+    period_start: datetime | None = None,
+) -> dict[str, object]:
     available_at = _aware_utc(request.availableAt, "availableAt")
     try:
         cycle_record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
@@ -90,6 +113,7 @@ def post_evaluation_specification(
             source=request.source,
             source_ref=request.sourceRef,
             method=request.method,
+            period_start=period_start,
         )
         persisted = specification_repository.append(artifact=artifact)
     except HTTPException:
@@ -106,6 +130,7 @@ def post_evaluation_specification(
                 "appendOnly": True,
                 "tamperEvident": True,
                 "specificationHash": persisted["specification_hash"],
+                "sealedAt": persisted["created_at"],
                 "storageClaim": "tamper_evident_append_only_repository_not_worm_storage",
             },
         }
