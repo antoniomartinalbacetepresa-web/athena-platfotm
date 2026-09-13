@@ -101,6 +101,7 @@ def test_validates_model_provenance_and_keeps_synthesis_non_advisory() -> None:
 
     assert result.assessed_count == 1
     assert result.included_count == 1
+    assert len(result.assessments) == 1
     item = result.items[0]
     assert item.evidence_provider == "google_news_rss"
     assert item.publisher == "Example Wire"
@@ -112,6 +113,7 @@ def test_validates_model_provenance_and_keeps_synthesis_non_advisory() -> None:
 
     api = result.to_api_dict()
     assert api["status"] == "validated_external_model_output"
+    assert len(api["assessments"]) == 1
     assert api["modelExecutionVerified"] is False
     assert api["productionTruthClaimed"] is False
     assert api["independentCorroborationClaimed"] is False
@@ -120,7 +122,7 @@ def test_validates_model_provenance_and_keeps_synthesis_non_advisory() -> None:
     assert api["automaticTrading"] is False
 
 
-def test_filters_by_importance_without_hiding_assessment_coverage() -> None:
+def test_filters_by_importance_without_hiding_assessment_details() -> None:
     service = RecommendationNewsSynthesisService()
     radar = _radar(second=True)
     assessments = (
@@ -144,6 +146,12 @@ def test_filters_by_importance_without_hiding_assessment_coverage() -> None:
     assert result.included_count == 1
     assert result.excluded_count == 1
     assert [item.evidence_id for item in result.items] == ["news-1"]
+    assert [item.evidence_id for item in result.assessments] == ["news-1", "news-2"]
+    assert result.assessments[1].importance == "low"
+    api = result.to_api_dict()
+    assert [item["evidenceId"] for item in api["assessments"]] == ["news-1", "news-2"]
+    assert [item["evidenceId"] for item in api["items"]] == ["news-1"]
+    assert "complete_audit_coverage" in api["filteringInterpretation"]
 
 
 def test_rejects_fingerprint_mismatch() -> None:
@@ -256,6 +264,7 @@ def test_assessment_fingerprint_is_deterministic() -> None:
     second = service.build(radar_result=radar, assessments=(assessment,))
 
     assert first.items[0].assessment_fingerprint == second.items[0].assessment_fingerprint
+    assert first.assessments[0].assessment_fingerprint == second.assessments[0].assessment_fingerprint
 
 
 def test_rejects_noncanonical_radar_urgency_even_with_valid_evidence() -> None:
