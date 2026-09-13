@@ -103,7 +103,7 @@ def test_news_evidence_preserves_structured_provenance_and_pit_availability() ->
     assert radar["policy"]["automaticTrading"] is False
     assert (
         radar["policy"]["structuredProvenance"]
-        == "news_evidence_requires_provider_publisher_published_at_and_https_source_ref"
+        == "news_and_investors_evidence_require_provider_publisher_published_at_and_https_source_ref"
     )
 
 
