@@ -85,7 +85,7 @@ class _PersonalizedExplanationPanelState
         children: [
           const Icon(
             Icons.auto_awesome_outlined,
-            color: AthenaColors.gold,
+            color: AthenaColors.primary,
             size: 20,
           ),
           const SizedBox(width: AthenaSpacing.sm),
@@ -199,7 +199,7 @@ class _ExplanationCopy extends StatelessWidget {
         Text(
           title,
           style: theme.textTheme.titleSmall?.copyWith(
-            color: AthenaColors.textPrimary,
+            color: AthenaColors.text,
             fontWeight: FontWeight.w600,
           ),
         ),
