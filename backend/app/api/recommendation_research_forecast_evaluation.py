@@ -64,6 +64,17 @@ class ProspectiveEvaluationSpecificationRequest(EvaluationSpecificationRequest):
     periodStart: datetime
 
 
+class ForecastInputEvidenceRequest(BaseModel):
+    source: str = Field(min_length=1)
+    sourceRef: str = Field(min_length=1)
+    availableAt: datetime
+    contentHash: str = Field(min_length=64, max_length=64)
+
+
+class PitSafeProspectiveEvaluationSpecificationRequest(ProspectiveEvaluationSpecificationRequest):
+    inputEvidence: list[ForecastInputEvidenceRequest] = Field(min_length=1, max_length=200)
+
+
 class ForecastErrorOosSummaryRequest(BaseModel):
     summaryId: str = Field(min_length=1, max_length=200)
     asOf: datetime
@@ -95,11 +106,36 @@ def post_prospective_evaluation_specification(
     return _persist_evaluation_specification(cycle_hash, request, period_start=period_start)
 
 
+@router.post("/research-cycle/{cycle_hash}/pit-safe-prospective-evaluation-specification")
+def post_pit_safe_prospective_evaluation_specification(
+    cycle_hash: str,
+    request: PitSafeProspectiveEvaluationSpecificationRequest,
+) -> dict[str, object]:
+    """Seal v3 with content-hash-bound inputs that existed before forecast output."""
+    period_start = _aware_utc(request.periodStart, "periodStart")
+    input_evidence = [
+        {
+            "source": item.source,
+            "sourceRef": item.sourceRef,
+            "availableAt": _aware_utc(item.availableAt, f"inputEvidence[{index}].availableAt"),
+            "contentHash": item.contentHash,
+        }
+        for index, item in enumerate(request.inputEvidence)
+    ]
+    return _persist_evaluation_specification(
+        cycle_hash,
+        request,
+        period_start=period_start,
+        input_evidence=input_evidence,
+    )
+
+
 def _persist_evaluation_specification(
     cycle_hash: str,
     request: EvaluationSpecificationRequest,
     *,
     period_start: datetime | None = None,
+    input_evidence: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     available_at = _aware_utc(request.availableAt, "availableAt")
     try:
@@ -114,6 +150,7 @@ def _persist_evaluation_specification(
             source_ref=request.sourceRef,
             method=request.method,
             period_start=period_start,
+            input_evidence=input_evidence,
         )
         persisted = specification_repository.append(artifact=artifact)
     except HTTPException:
