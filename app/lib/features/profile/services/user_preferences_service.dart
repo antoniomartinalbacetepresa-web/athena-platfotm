@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../auth/services/auth_session.dart';
+import '../models/user_personalization.dart';
 import '../models/user_preferences.dart';
 
 class UserPreferencesService {
@@ -45,6 +46,31 @@ class UserPreferencesService {
       throw const FormatException('Preferencias cifradas no válidas.');
     }
     return UserPreferences.fromJson(preferences);
+  }
+
+  Future<UserPersonalization?> loadPersonalization() async {
+    final response = await _client.get(
+      Uri.parse('$_baseUrl/api/v1/user/profile/personalization'),
+      headers: _authenticatedHeaders(),
+    );
+    final payload = _decodeObject(response);
+    final status = payload['status'];
+    if (status == 'not_configured') {
+      if (payload['data'] != null) {
+        throw const FormatException(
+          'Personalización no configurada con datos inesperados.',
+        );
+      }
+      return null;
+    }
+    if (status != 'configured') {
+      throw const FormatException('Estado de personalización no válido.');
+    }
+    final data = payload['data'];
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Respuesta de personalización sin data válida.');
+    }
+    return UserPersonalization.fromJson(data);
   }
 
   Future<UserPreferences> save(UserPreferences preferences) async {
