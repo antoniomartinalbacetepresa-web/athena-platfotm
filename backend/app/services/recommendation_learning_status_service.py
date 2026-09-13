@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.longitudinal_oos_policy_repository import (
+    LongitudinalOosPolicyRepository,
+)
 from app.repositories.recommendation_research_forecast_error_repository import (
     RecommendationResearchForecastErrorRepository,
 )
@@ -15,6 +18,9 @@ from app.repositories.recommendation_shadow_live_candidate_repository import (
 )
 from app.repositories.recommendation_shadow_repository import (
     RecommendationShadowRepository,
+)
+from app.services.governed_forecast_error_oos_service import (
+    GovernedForecastErrorOosService,
 )
 from app.services.recommendation_calibration_service import (
     RecommendationCalibrationService,
@@ -52,6 +58,8 @@ class RecommendationLearningStatusService:
         | None = None,
         research_forecast_error_oos_service: RecommendationResearchForecastErrorOosService
         | None = None,
+        governed_forecast_error_oos_service: GovernedForecastErrorOosService
+        | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
         if shadow_longitudinal_service is not None:
@@ -79,9 +87,18 @@ class RecommendationLearningStatusService:
             research_forecast_error_repository
             or RecommendationResearchForecastErrorRepository(self._database)
         )
-        self._research_forecast_error_oos_service = (
+        measurement_service = (
             research_forecast_error_oos_service
             or RecommendationResearchForecastErrorOosService()
+        )
+        self._research_forecast_error_oos_service = (
+            governed_forecast_error_oos_service
+            or GovernedForecastErrorOosService(
+                measurement_service=measurement_service,
+                policy_repository=LongitudinalOosPolicyRepository(
+                    database=self._database
+                ),
+            )
         )
 
     def get_status(
@@ -319,6 +336,15 @@ class RecommendationLearningStatusService:
             raise ValueError("Forecast-error OOS intentó seleccionar thresholds.")
         if policy.get("statisticalIndependence") != "not_claimed":
             raise ValueError("Forecast-error OOS intentó reclamar independencia estadística.")
+        sufficiency = payload.get("longitudinalSufficiency")
+        if not isinstance(sufficiency, dict):
+            raise ValueError("Forecast-error OOS perdió gobernanza longitudinal.")
+        if sufficiency.get("productionSufficiencyClaimed") is not False:
+            raise ValueError("La suficiencia longitudinal no puede autodeclararse productiva.")
+        if sufficiency.get("automaticApproval") is not False:
+            raise ValueError("La suficiencia longitudinal no puede aprobarse automáticamente.")
+        if sufficiency.get("automaticProductionPromotion") is not False:
+            raise ValueError("La suficiencia longitudinal no puede promover producción.")
 
     def _assert_research_outcome_oos_safe(self, payload: object) -> None:
         if not isinstance(payload, dict):
