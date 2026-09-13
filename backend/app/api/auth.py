@@ -164,8 +164,20 @@ def request_password_recovery(
 
 
 @router.post("/recovery/reset", status_code=status.HTTP_204_NO_CONTENT)
-def reset_password(payload: PasswordRecoveryResetRequest) -> Response:
+def reset_password(
+    payload: PasswordRecoveryResetRequest,
+    request: Request,
+) -> Response:
     service = _recovery_service()
+    client_id = request.client.host if request.client is not None else "unknown"
+    rate_key = service.reset_rate_key(client_id=client_id)
+    rate = service.consume_reset_attempt(rate_key=rate_key)
+    if not bool(rate["allowed"]):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos de restablecimiento. Inténtalo más tarde.",
+            headers={"Retry-After": str(service.RESET_WINDOW_SECONDS)},
+        )
     try:
         changed = service.reset(
             token=payload.token,
@@ -178,7 +190,10 @@ def reset_password(payload: PasswordRecoveryResetRequest) -> Response:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token de recuperación no válido o caducado.",
         )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    result = Response(status_code=status.HTTP_204_NO_CONTENT)
+    result.headers["X-RateLimit-Limit"] = str(rate["limit"])
+    result.headers["X-RateLimit-Remaining"] = str(rate["remaining"])
+    return result
 
 
 def current_account(
