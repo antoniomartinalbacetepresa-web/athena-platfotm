@@ -109,6 +109,7 @@ def test_cycle_api_transports_structured_news_provenance_end_to_end(
     cycle_hash = data["integrity"]["cycleHash"]
     persisted = cycle_api.cycle_repository.get_by_hash(cycle_hash=cycle_hash)
     evidence = persisted["package"]["radar"]["candidates"][0]["evidence"][0]
+    assert evidence["category"] == "news"
     assert evidence["provider"] == "google_news_rss"
     assert evidence["publisher"] == "Example Publisher"
     assert evidence["publishedAt"] == PUBLISHED_AT.isoformat()
@@ -136,6 +137,7 @@ def test_cycle_api_transports_structured_investor_provenance_end_to_end(
     cycle_hash = data["integrity"]["cycleHash"]
     persisted = cycle_api.cycle_repository.get_by_hash(cycle_hash=cycle_hash)
     evidence = persisted["package"]["radar"]["candidates"][0]["evidence"][0]
+    assert evidence["category"] == "investors"
     assert evidence["provider"] == "issuer_ir"
     assert evidence["publisher"] == "Apple Inc."
     assert evidence["sourceRef"].startswith("https://investor.apple.com/")
