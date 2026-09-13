@@ -23,11 +23,13 @@ class InvestorDocumentInput:
 class RecommendationInvestorEvidenceService:
     """Convert primary investor/filing documents into PIT Radar evidence.
 
-    This boundary preserves document provenance. It does not infer truth,
-    investment impact, recommendation scores, or source independence.
+    This boundary preserves document provenance and observed availability.
+    It never infers truth, source independence, investment impact or trading authority.
     """
 
-    _ALLOWED_DOCUMENT_TYPES = frozenset({"sec_filing", "annual_report", "quarterly_report", "earnings_release", "investor_presentation"})
+    _ALLOWED_DOCUMENT_TYPES = frozenset(
+        {"sec_filing", "annual_report", "quarterly_report", "earnings_release", "investor_presentation"}
+    )
 
     def build(self, *, document: InvestorDocumentInput, urgency: str = "routine") -> AthenaRadarEvidenceInput:
         issuer_id = self._text(document.issuer_id, "issuer_id")
@@ -45,7 +47,9 @@ class RecommendationInvestorEvidenceService:
         lowered = f"{provider} {primary_source} {document_url}".casefold().replace(" ", "")
         if "financialmodelingprep" in lowered or provider.casefold() == "fmp":
             raise ValueError("FMP/Financial Modeling Prep no está permitido.")
-        identity = "|".join((issuer_id.casefold(), document_type, primary_source.casefold(), document_url.casefold(), published_at.isoformat()))
+        identity = "|".join(
+            (issuer_id.casefold(), document_type, primary_source.casefold(), document_url.casefold(), published_at.isoformat())
+        )
         evidence_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return AthenaRadarEvidenceInput(
             evidence_id=evidence_id,
@@ -63,6 +67,7 @@ class RecommendationInvestorEvidenceService:
     def policy(self) -> dict[str, object]:
         return {
             "status": "structured_investor_provenance_ready",
+            "availabilitySemantics": "retrieved_at_is_PIT_availability",
             "productionTruthClaimed": False,
             "independentCorroborationClaimed": False,
             "recommendationInfluence": False,
