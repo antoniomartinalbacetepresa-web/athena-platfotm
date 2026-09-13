@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 
 _ALLOWED_CATEGORIES = frozenset(
@@ -103,7 +104,7 @@ class AthenaRadarResult:
                 "temporal": "all_radar_evidence_available_at_must_be_lte_as_of",
                 "publicationTemporal": "published_at_is_metadata_and_must_not_replace_observed_availability",
                 "provenance": "every_radar_evidence_item_requires_source_and_source_ref",
-                "structuredProvenance": "provider_publisher_and_published_at_are_preserved_when_supplied",
+                "structuredProvenance": "news_evidence_requires_provider_publisher_published_at_and_https_source_ref",
                 "identity": "canonical_candidate_and_evidence_identity_must_be_unique",
                 "deduplication": "duplicate_provenance_cannot_raise_research_urgency_twice",
                 "missingEvidence": "unknown_not_zero_or_benign_and_candidate_requires_explicit_evidence",
@@ -200,6 +201,13 @@ class RecommendationAthenaRadarService:
                     )
                 if provider is not None:
                     self._assert_source_allowed(provider, source_ref)
+                if category == "news":
+                    self._assert_structured_news_provenance(
+                        provider=provider,
+                        publisher=publisher,
+                        published_at=published_at,
+                        source_ref=source_ref,
+                    )
 
                 provenance_key = (source.casefold(), source_ref.casefold())
                 if provenance_key in seen_provenance:
@@ -269,3 +277,21 @@ class RecommendationAthenaRadarService:
             raise ValueError("FMP/Financial Modeling Prep no está permitido como fuente de ATHENA Radar.")
         if "financialmodelingprep" in normalized_ref:
             raise ValueError("FMP/Financial Modeling Prep no está permitido como provenance de ATHENA Radar.")
+
+    def _assert_structured_news_provenance(
+        self,
+        *,
+        provider: str | None,
+        publisher: str | None,
+        published_at: datetime | None,
+        source_ref: str,
+    ) -> None:
+        if provider is None:
+            raise ValueError("La evidencia news requiere provider explícito para preservar provenance.")
+        if publisher is None:
+            raise ValueError("La evidencia news requiere publisher explícito para preservar provenance.")
+        if published_at is None:
+            raise ValueError("La evidencia news requiere published_at explícito para preservar temporalidad PIT.")
+        parsed = urlparse(source_ref)
+        if parsed.scheme.casefold() != "https" or not parsed.netloc:
+            raise ValueError("La evidencia news requiere source_ref HTTPS absoluto y trazable.")
