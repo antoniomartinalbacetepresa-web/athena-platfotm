@@ -65,7 +65,7 @@ class RecommendationResearchForecastErrorRepository:
             ensure_ascii=False,
             allow_nan=False,
         )
-        created_at = datetime.now().astimezone().isoformat()
+        created_at = datetime.now(timezone.utc).isoformat()
 
         with self._database.connect() as connection:
             existing_pair = connection.execute(
@@ -141,18 +141,26 @@ class RecommendationResearchForecastErrorRepository:
             raise ValueError("outcome_hashes supera el límite de 5000.")
         if len(set(normalized_hashes)) != len(normalized_hashes):
             raise ValueError("outcome_hashes contiene duplicados.")
-        cutoff = as_of.astimezone(timezone.utc).isoformat()
+        cutoff = as_of.astimezone(timezone.utc)
         placeholders = ",".join("?" for _ in normalized_hashes)
         query = f"""
             SELECT *
             FROM athena_research_forecast_errors
             WHERE outcome_hash IN ({placeholders})
-              AND created_at <= ?
             ORDER BY horizon_seconds ASC, outcome_hash ASC, id ASC
         """
         with self._database.connect() as connection:
-            rows = connection.execute(query, (*normalized_hashes, cutoff)).fetchall()
-        return [self.validate_record(self._row(row)) for row in rows]
+            rows = connection.execute(query, normalized_hashes).fetchall()
+        records = []
+        for row in rows:
+            # Legacy rows may carry local offsets. ISO text order is not instant
+            # order; parse before filtering and retain microsecond precision.
+            created_at = datetime.fromisoformat(str(row["created_at"]))
+            if created_at.tzinfo is None or created_at.utcoffset() is None:
+                raise ValueError("created_at debe incluir zona horaria.")
+            if created_at.astimezone(timezone.utc) <= cutoff:
+                records.append(self.validate_record(self._row(row)))
+        return records
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         artifact = record.get("artifact")

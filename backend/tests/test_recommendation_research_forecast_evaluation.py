@@ -292,3 +292,43 @@ def test_forecast_evaluation_routes_are_registered() -> None:
     assert "/api/v1/recommendations/professional-research/evaluation-specification/{specification_hash}" in paths
     assert "/api/v1/recommendations/professional-research/forecast-error" in paths
     assert "/api/v1/recommendations/professional-research/forecast-error/{error_hash}" in paths
+
+
+@pytest.mark.parametrize(
+    ("created_at", "included"),
+    [
+        ("2026-06-01T14:00:00+02:00", True),
+        ("2026-06-01T14:00:00.000001+02:00", False),
+        ("2026-06-01T07:00:00-05:00", True),
+        ("2026-06-01T07:00:01-05:00", False),
+        ("2026-06-01T11:59:59.999999+00:00", True),
+    ],
+)
+def test_forecast_error_pit_cutoff_compares_instants(
+    tmp_path: Path, created_at: str, included: bool
+) -> None:
+    specification = _specification()
+    outcome = _outcome_record()
+    service = RecommendationResearchForecastErrorService()
+    artifact = service.evaluate(
+        specification_record={
+            "specification_hash": specification["specificationHash"],
+            "artifact": specification,
+        },
+        outcome_record=outcome,
+    )
+    database = AthenaDatabase(tmp_path / "offsets.db")
+    repository = RecommendationResearchForecastErrorRepository(database, service)
+    record = repository.append(artifact=artifact)
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_research_forecast_errors SET created_at = ? WHERE error_hash = ?",
+            (created_at, record["error_hash"]),
+        )
+    result = repository.get_for_outcomes_at_or_before(
+        outcome_hashes=[outcome["outcome_hash"]],
+        as_of=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+    )
+    assert [row["error_hash"] for row in result] == (
+        [record["error_hash"]] if included else []
+    )
