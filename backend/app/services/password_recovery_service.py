@@ -24,6 +24,8 @@ class PasswordRecoveryService:
     MINIMUM_PASSWORD_LENGTH = 12
     RECOVERY_ATTEMPT_LIMIT = 5
     RECOVERY_WINDOW_SECONDS = 900
+    RESET_ATTEMPT_LIMIT = 10
+    RESET_WINDOW_SECONDS = 900
 
     def __init__(
         self,
@@ -45,15 +47,40 @@ class PasswordRecoveryService:
         ).hexdigest()
         return f"auth-recovery:{digest}"
 
+    def reset_rate_key(self, *, client_id: str) -> str:
+        normalized_client = str(client_id or "unknown").strip().lower() or "unknown"
+        digest = hashlib.sha256(normalized_client.encode("utf-8")).hexdigest()
+        return f"auth-recovery-reset:{digest}"
+
     def consume_recovery_attempt(self, *, rate_key: str) -> dict[str, object]:
+        return self._consume_rate_attempt(
+            rate_key=rate_key,
+            limit=self.RECOVERY_ATTEMPT_LIMIT,
+            window_seconds=self.RECOVERY_WINDOW_SECONDS,
+        )
+
+    def consume_reset_attempt(self, *, rate_key: str) -> dict[str, object]:
+        return self._consume_rate_attempt(
+            rate_key=rate_key,
+            limit=self.RESET_ATTEMPT_LIMIT,
+            window_seconds=self.RESET_WINDOW_SECONDS,
+        )
+
+    def _consume_rate_attempt(
+        self,
+        *,
+        rate_key: str,
+        limit: int,
+        window_seconds: int,
+    ) -> dict[str, object]:
         now = datetime.now(timezone.utc)
         epoch = int(now.timestamp())
-        window_epoch = epoch - (epoch % self.RECOVERY_WINDOW_SECONDS)
+        window_epoch = epoch - (epoch % int(window_seconds))
         window_start = datetime.fromtimestamp(window_epoch, tz=timezone.utc)
         return self._security.consume_login_attempt(
             key=rate_key,
             window_started_at=window_start,
-            limit=self.RECOVERY_ATTEMPT_LIMIT,
+            limit=int(limit),
         )
 
     def request(self, *, email: str) -> PasswordRecoveryChallenge | None:
