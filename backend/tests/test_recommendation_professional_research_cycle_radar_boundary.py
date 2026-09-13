@@ -101,6 +101,7 @@ def test_professional_cycle_accepts_only_radar_that_revalidates_canonically() ->
     result = _bind(radar).to_api_dict()
 
     assert result["researchUrgency"] == "material"
+    assert result["policy"]["provenance"].startswith("radar_is_revalidated_canonically")
     assert result["policy"]["automaticTrading"] is False
     assert result["productionEligible"] is False
 
