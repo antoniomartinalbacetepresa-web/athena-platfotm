@@ -65,6 +65,10 @@ class RecommendationResearchForecastErrorOosSummaryService:
             if spec_hash in specs_by_hash:
                 raise ValueError("specification_records contiene specificationHash duplicado.")
             self._assert_created_by_cutoff(record, cutoff, "specification")
+            sealed_at = self._aware_iso(record.get("created_at"), "specification.created_at")
+            period_start = self._aware_iso(artifact.get("periodStart"), "specification.periodStart")
+            if sealed_at > period_start:
+                raise ValueError("Specification sin sellado ex-ante antes o al inicio del periodo.")
             specs_by_hash[spec_hash] = artifact
 
         rows: list[dict[str, Any]] = []
@@ -99,6 +103,9 @@ class RecommendationResearchForecastErrorOosSummaryService:
                 specification.get("periodEnd")
             ) != str(artifact.get("periodEnd")):
                 raise ValueError("Forecast error y specification no coinciden en periodo.")
+            for field in ("instrumentId", "symbol", "metric", "horizonSeconds", "expectedValue"):
+                if specification.get(field) != artifact.get(field):
+                    raise ValueError(f"Forecast error y specification no coinciden en {field}.")
 
             evidence = specification.get("forecastEvidence")
             if not isinstance(evidence, dict):
@@ -121,6 +128,11 @@ class RecommendationResearchForecastErrorOosSummaryService:
             period_end = self._aware_iso(artifact.get("periodEnd"), "periodEnd")
             if period_end <= period_start or period_end > cutoff:
                 raise ValueError("Forecast error contiene periodo posterior o inválido para summary asOf.")
+            error_created_at = self._aware_iso(record.get("created_at"), "forecast_error.created_at")
+            if error_created_at < period_end:
+                raise ValueError("Forecast error fue persistido antes de madurar su horizonte.")
+            if (period_end - period_start).total_seconds() != horizon:
+                raise ValueError("Forecast error no coincide con horizonSeconds exacto.")
             signed = self._finite(artifact.get("signedError"), "signedError")
             absolute = self._finite(artifact.get("absoluteError"), "absoluteError")
             squared = self._finite(artifact.get("squaredError"), "squaredError")

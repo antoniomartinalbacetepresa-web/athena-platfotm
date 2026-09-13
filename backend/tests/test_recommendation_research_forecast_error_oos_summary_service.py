@@ -218,3 +218,55 @@ def test_oos_summary_detects_tampering() -> None:
     artifact["metrics"]["meanAbsoluteError"] = 0.0
     with pytest.raises(ValueError, match="modificado"):
         service.validate_artifact(artifact)
+
+
+@pytest.mark.parametrize("delay", [timedelta(microseconds=1), timedelta(days=1), timedelta(days=31)])
+def test_oos_summary_rejects_specification_physically_sealed_after_start(delay: timedelta) -> None:
+    errors, specs = dataset()
+    start = datetime.fromisoformat(str(specs[0]["artifact"]["periodStart"]))
+    specs[0]["created_at"] = (start + delay).isoformat()
+    with pytest.raises(ValueError, match="sellado ex-ante"):
+        RecommendationResearchForecastErrorOosSummaryService().build(
+            summary_id="late-seal", as_of=AS_OF, error_records=errors, specification_records=specs,
+        )
+
+
+def test_oos_summary_rejects_error_persisted_before_horizon_maturity() -> None:
+    errors, specs = dataset()
+    end = datetime.fromisoformat(str(specs[0]["artifact"]["periodEnd"]))
+    errors[0]["created_at"] = (end - timedelta(microseconds=1)).isoformat()
+    with pytest.raises(ValueError, match="antes de madurar"):
+        RecommendationResearchForecastErrorOosSummaryService().build(
+            summary_id="premature-error", as_of=AS_OF, error_records=errors, specification_records=specs,
+        )
+
+
+@pytest.mark.parametrize(("field", "value"), [("instrumentId", "other"), ("symbol", "OTHER"),
+                                                ("horizonSeconds", HORIZON + 1), ("expectedValue", 0.5)])
+def test_oos_summary_rejects_rehashed_error_with_different_specification_identity(field: str, value: object) -> None:
+    errors, specs = dataset()
+    artifact = errors[0]["artifact"]
+    artifact[field] = value
+    artifact["signedError"] = artifact["realizedValue"] - artifact["expectedValue"]
+    artifact["absoluteError"] = abs(artifact["signedError"])
+    artifact["squaredError"] = artifact["signedError"] ** 2
+    core = {key: artifact[key] for key in (
+        "artifactVersion", "specificationHash", "outcomeHash", "cycleHash", "instrumentId",
+        "symbol", "metric", "periodStart", "periodEnd", "horizonSeconds", "expectedValue",
+        "realizedValue", "signedError", "absoluteError", "squaredError",
+    )}
+    artifact["errorHash"] = canonical_hash(core)
+    errors[0]["error_hash"] = artifact["errorHash"]
+    with pytest.raises(ValueError, match=field):
+        RecommendationResearchForecastErrorOosSummaryService().build(
+            summary_id="wrong-binding", as_of=AS_OF, error_records=errors, specification_records=specs,
+        )
+
+
+def test_oos_summary_rejects_missing_physical_seal_timestamp() -> None:
+    errors, specs = dataset()
+    del specs[0]["created_at"]
+    with pytest.raises(ValueError, match="specification.created_at"):
+        RecommendationResearchForecastErrorOosSummaryService().build(
+            summary_id="unsealed", as_of=AS_OF, error_records=errors, specification_records=specs,
+        )

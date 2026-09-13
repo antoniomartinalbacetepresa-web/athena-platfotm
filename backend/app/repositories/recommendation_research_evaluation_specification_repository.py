@@ -59,12 +59,6 @@ class RecommendationResearchEvaluationSpecificationRepository:
         specification_hash = self._sha256(validated["specificationHash"], "specificationHash")
         cycle_hash = self._sha256(validated["cycleHash"], "cycleHash")
         horizon_seconds = int(validated["horizonSeconds"])
-        sealed_at = self._aware_utc(self._now_provider(), "now_provider")
-        period_end = self._aware_iso(validated.get("periodEnd"), "periodEnd")
-        if sealed_at >= period_end:
-            raise ValueError(
-                "El horizonte ya terminó: esta previsión no puede sellarse retrospectivamente como ex-ante."
-            )
         serialized = json.dumps(
             validated,
             sort_keys=True,
@@ -72,7 +66,6 @@ class RecommendationResearchEvaluationSpecificationRepository:
             ensure_ascii=False,
             allow_nan=False,
         )
-        created_at = sealed_at.isoformat()
 
         with self._database.connect() as connection:
             existing_id = connection.execute(
@@ -104,6 +97,14 @@ class RecommendationResearchEvaluationSpecificationRepository:
             ).fetchone()
             if existing_hash is not None:
                 raise ValueError("specificationHash ya existe con otra identidad.")
+
+            period_start = self._aware_iso(validated.get("periodStart"), "periodStart")
+            sealed_at = self._aware_utc(self._now_provider(), "now_provider")
+            if sealed_at > period_start:
+                raise ValueError(
+                    "El periodo ya comenzó: esta previsión no puede sellarse retrospectivamente como ex-ante."
+                )
+            created_at = sealed_at.isoformat()
 
             connection.execute(
                 """
@@ -148,9 +149,9 @@ class RecommendationResearchEvaluationSpecificationRepository:
             raise ValueError("Registro de evaluation specification carece de artifact válido.")
         validated = self._service.validate_artifact(artifact)
         created_at = self._aware_iso(record.get("created_at"), "created_at")
-        period_end = self._aware_iso(validated.get("periodEnd"), "periodEnd")
-        if created_at >= period_end:
-            raise ValueError("La specification persistida no fue sellada antes de terminar su horizonte.")
+        period_start = self._aware_iso(validated.get("periodStart"), "periodStart")
+        if created_at > period_start:
+            raise ValueError("La specification persistida no fue sellada antes o al inicio de su periodo.")
         expected = {
             "specification_id": validated["specificationId"],
             "specification_hash": validated["specificationHash"],

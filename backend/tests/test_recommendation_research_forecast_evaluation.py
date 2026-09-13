@@ -142,7 +142,7 @@ def _precommit_repository(database: AthenaDatabase):
     return RecommendationResearchEvaluationSpecificationRepository(
         database,
         RecommendationResearchEvaluationSpecificationService(),
-        now_provider=lambda: CYCLE_AS_OF + timedelta(minutes=1),
+        now_provider=lambda: CYCLE_AS_OF,
     )
 
 
@@ -194,6 +194,39 @@ def test_repository_rejects_physical_retroactive_sealing(tmp_path: Path) -> None
     )
     with pytest.raises(ValueError, match="no puede sellarse retrospectivamente"):
         repository.append(artifact=_specification())
+
+
+@pytest.mark.parametrize("delay", [timedelta(microseconds=1), timedelta(days=1)])
+def test_repository_rejects_sealing_after_period_start_before_maturity(tmp_path: Path, delay: timedelta) -> None:
+    repository = RecommendationResearchEvaluationSpecificationRepository(
+        AthenaDatabase(tmp_path / "late-start.db"),
+        now_provider=lambda: CYCLE_AS_OF + delay,
+    )
+    with pytest.raises(ValueError, match="periodo ya comenzó"):
+        repository.append(artifact=_specification())
+
+
+def test_existing_precommitted_specification_can_be_retried_after_maturity(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "retry.db")
+    artifact = _specification()
+    first = _precommit_repository(database).append(artifact=artifact)
+    later_repository = RecommendationResearchEvaluationSpecificationRepository(
+        database, now_provider=lambda: CYCLE_AS_OF + timedelta(days=31),
+    )
+    assert later_repository.append(artifact=artifact) == first
+
+
+def test_legacy_late_specification_fails_read_validation(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "legacy-late.db")
+    repository = _precommit_repository(database)
+    record = repository.append(artifact=_specification())
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_research_evaluation_specifications SET created_at = ? WHERE specification_hash = ?",
+            ((CYCLE_AS_OF + timedelta(microseconds=1)).isoformat(), record["specification_hash"]),
+        )
+    with pytest.raises(ValueError, match="inicio de su periodo"):
+        repository.get_by_hash(specification_hash=record["specification_hash"])
 
 
 def test_specification_repository_prevents_moving_goalposts(tmp_path: Path) -> None:

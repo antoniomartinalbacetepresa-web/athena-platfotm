@@ -28,6 +28,25 @@ measured forecast error; merely appearing in cohort metadata is insufficient.
 No threshold values are selected or lowered by these checks. This stricter
 validation may invalidate a previously passing diagnostic with missing errors.
 
+## Physical precommitment boundary
+
+New evaluation specifications must be sealed no later than `periodStart`, not
+merely before `periodEnd`. Read validation also rejects legacy rows sealed after
+the start; changing declared `forecastEvidence.availableAt` does not rescue
+them. Repeating an identical, already valid append after maturity returns its
+original immutable record rather than creating a new seal.
+
+The summary builder independently checks specification sealing timestamps and
+error maturity, and binds instrument, symbol, metric, horizon, and expected
+value to the exact specification. A self-consistent error hash alone cannot
+justify attaching a different instrument or target to that specification.
+
+Version 1 fixes `periodStart` at the frozen cycle cutoff. Consequently, attaching
+a forecast to an already past cycle is intentionally blocked. Operational
+forecast generation must precommit prospectively; a future contract that uses
+a later start must explicitly version that period definition and align outcome
+attribution, rather than silently backdating a timestamp or changing v1.
+
 ## Remaining boundaries
 
 The OOS service consumes records verified by the existing repository and
@@ -35,6 +54,11 @@ summary-integrity layers; temporal validation is not a replacement for hash
 verification or proof of source quality. Maturity alone also does not prove
 that a forecast was physically sealed ex ante: specification persistence and
 cohort selection must retain their separate precommitment checks.
+
+These timestamps are repository-controlled, but they are not externally
+anchored WORM or signed timestamp evidence. Privileged database modification
+and historical summaries without retained sealing metadata remain separate
+hardening/provenance concerns; these checks do not claim to close them.
 
 Real longitudinal evidence, an approved sufficiency policy, dependency-aware
 stability assessment, and separately governed promotion remain necessary.
