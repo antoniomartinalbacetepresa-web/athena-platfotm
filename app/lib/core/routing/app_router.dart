@@ -7,7 +7,7 @@ import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/market/presentation/pages/market_page.dart';
 import '../../features/news/presentation/pages/news_page.dart';
 import '../../features/portfolio/presentation/pages/authenticated_portfolio_page.dart';
-import '../../features/profile/presentation/pages/profile_page.dart';
+import '../../features/profile/presentation/pages/profile_personalization_shell.dart';
 import '../../features/welcome/presentation/pages/welcome_page.dart';
 import 'app_routes.dart';
 
@@ -64,7 +64,7 @@ class AppRouter {
 
       case AppRoutes.profile:
         return MaterialPageRoute(
-          builder: (_) => const ProfilePage(),
+          builder: (_) => const ProfilePersonalizationShell(),
         );
 
       case AppRoutes.welcome:
