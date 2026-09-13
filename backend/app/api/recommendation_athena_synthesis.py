@@ -179,7 +179,15 @@ def _input_contract(
         "evidenceIds": list(contract["evidenceIds"]),
         "coveredCategories": list(contract["coveredCategories"]),
         "inputFingerprint": fingerprint,
-        "requiredCoverage": "all_cycle_radar_evidence_and_required_canonical_category_syntheses",
+        "requiredCoverage": "all_cycle_radar_evidence",
+        "canonicalCategorySynthesesRequired": [
+            category
+            for category, present in (
+                ("news", contract["hasNews"]),
+                ("investors", contract["hasInvestors"]),
+            )
+            if present
+        ],
         "advisoryStatus": "no_advice",
         "recommendationInfluence": False,
         "automaticTrading": False,
@@ -204,7 +212,9 @@ def post_athena_synthesis(cycle_hash: str, request: AthenaSynthesisRequest) -> d
         input_contract = _input_contract(cycle_record, news_record, investors_record, contract)
         supplied = request.inputFingerprint.strip().lower()
         if supplied != input_contract["inputFingerprint"]:
-            raise ValueError("inputFingerprint no coincide con News/Investors/ciclo canónicos.")
+            raise ValueError(
+                "input_fingerprint/inputFingerprint no coincide con News/Investors/ciclo canónicos."
+            )
         base_fingerprint = _base_input_fingerprint(cycle_record, news_record, contract)
         result = athena_service.build(
             cycle_record=cycle_record,
