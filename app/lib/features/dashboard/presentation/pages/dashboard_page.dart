@@ -7,6 +7,7 @@ import '../widgets/dashboard_header.dart';
 import '../widgets/market_panel.dart';
 import '../widgets/my_space_panel.dart';
 import '../widgets/news_panel.dart';
+import '../widgets/personalized_explanation_panel.dart';
 import '../widgets/recommendations_panel.dart';
 import '../widgets/relevant_investors_panel.dart';
 import '../widgets/system_readiness_panel.dart';
@@ -40,6 +41,8 @@ class DashboardPage extends StatelessWidget {
                       height: 112,
                       child: SystemReadinessPanel(),
                     ),
+                    const SizedBox(height: AthenaSpacing.md),
+                    const PersonalizedExplanationPanel(),
                     const SizedBox(height: AthenaSpacing.md),
                     LayoutBuilder(
                       builder: (context, constraints) {
