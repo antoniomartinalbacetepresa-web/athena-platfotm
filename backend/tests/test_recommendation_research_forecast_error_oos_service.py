@@ -269,3 +269,69 @@ def test_forecast_error_oos_pending_without_cohort_is_safe() -> None:
     assert result["productionLearningEligible"] is False
     assert result["policy"]["automaticModelMutation"] is False
     assert result["policy"]["thresholds"] == "none_selected_here"
+
+
+def _temporal_row() -> dict[str, object]:
+    return _row(
+        seed="a", instrument_id="instrument-a", symbol="AAA",
+        issuer_id="issuer-a", horizon_seconds=HORIZON_30, total_return=0.08,
+    )
+
+
+@pytest.mark.parametrize("with_error", [False, True])
+def test_immature_cohort_rows_are_rejected_even_without_forecast_error(with_error: bool) -> None:
+    row = _temporal_row()
+    row["periodEnd"] = (AS_OF + timedelta(seconds=1)).isoformat()
+    row["periodStart"] = (AS_OF + timedelta(seconds=1 - HORIZON_30)).isoformat()
+    with pytest.raises(ValueError, match="horizonte no madurado"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=_cohort([row]),
+            error_records=[_error(row, error_seed="1", expected=0.1)] if with_error else [],
+        )
+
+
+@pytest.mark.parametrize("delta_seconds", [-1, 1])
+def test_cohort_period_must_match_exact_horizon(delta_seconds: int) -> None:
+    row = _temporal_row()
+    row["periodEnd"] = (PERIOD_START + timedelta(seconds=HORIZON_30 + delta_seconds)).isoformat()
+    with pytest.raises(ValueError, match="horizonSeconds exacto"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=_cohort([row]), error_records=[],
+        )
+
+
+def test_forecast_error_cannot_be_persisted_before_horizon_matures() -> None:
+    row = _temporal_row()
+    end = datetime.fromisoformat(str(row["periodEnd"]))
+    with pytest.raises(ValueError, match="antes de madurar"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=_cohort([row]),
+            error_records=[_error(row, error_seed="1", expected=0.1,
+                                  created_at=end - timedelta(microseconds=1))],
+        )
+
+
+def test_horizon_maturity_boundary_accepts_same_instant_with_different_offset() -> None:
+    row = _temporal_row()
+    end = datetime.fromisoformat(str(row["periodEnd"]))
+    row["periodStart"] = PERIOD_START.astimezone(timezone(timedelta(hours=2))).isoformat()
+    row["periodEnd"] = end.astimezone(timezone(timedelta(hours=-5))).isoformat()
+    cohort = _cohort([row])
+    cohort["artifact"]["asOf"] = end.isoformat()
+    result = RecommendationResearchForecastErrorOosService().evaluate(
+        as_of=end, cohort_record=cohort,
+        error_records=[_error(row, error_seed="1", expected=0.1, created_at=end)],
+    )
+    assert result["forecastErrorCount"] == 1
+    assert result["productionLearningEligible"] is False
+
+
+def test_cohort_horizon_must_be_mature_at_cohort_cutoff_not_only_diagnostic_cutoff() -> None:
+    row = _temporal_row()
+    cohort = _cohort([row])
+    end = datetime.fromisoformat(str(row["periodEnd"]))
+    cohort["artifact"]["asOf"] = (end - timedelta(microseconds=1)).isoformat()
+    with pytest.raises(ValueError, match="horizonte no madurado"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=cohort, error_records=[],
+        )

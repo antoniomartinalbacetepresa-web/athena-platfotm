@@ -50,10 +50,14 @@ def _measurement() -> dict[str, object]:
         "evaluationSpanDays": 40.0,
         "distinctEvaluationPeriodCount": 4,
         "eligibleOutcomeCount": 12,
+        "forecastErrorCount": 12,
         "distinctResolvedIssuerCount": 5,
         "firstEvaluationPeriodEnd": "2026-01-02T00:00:00+00:00",
         "lastEvaluationPeriodEnd": "2026-02-11T00:00:00+00:00",
-        "horizons": {"604800": {}, "2592000": {}},
+        "horizons": {
+            "604800": {"forecastErrorCount": 6},
+            "2592000": {"forecastErrorCount": 6},
+        },
     }
 
 
@@ -192,3 +196,30 @@ def test_test_only_policy_can_prove_mechanics_without_production_claim() -> None
     assert result["productionSufficiencyClaimed"] is False
     assert result["automaticApproval"] is False
     assert result["automaticProductionPromotion"] is False
+
+
+def test_eligible_outcomes_do_not_substitute_for_measured_forecast_errors() -> None:
+    policy = _policy()
+    measurement = _measurement()
+    measurement["forecastErrorCount"] = 9
+    result = LongitudinalOosSufficiencyPolicyService().evaluate(
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
+        policy_record=policy,
+        approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+    )
+    assert result["status"] == "precommitted_policy_not_satisfied"
+    assert result["acceptanceEvidenceVerified"] is False
+
+
+def test_required_horizon_without_measured_errors_cannot_satisfy_policy() -> None:
+    policy = _policy()
+    measurement = _measurement()
+    measurement["horizons"]["2592000"] = {"forecastErrorCount": 0}
+    result = LongitudinalOosSufficiencyPolicyService().evaluate(
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
+        policy_record=policy,
+        approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+    )
+    assert result["policyApproved"] is True
+    assert result["acceptanceEvidenceVerified"] is False
+    assert result["productionSufficiencyClaimed"] is False

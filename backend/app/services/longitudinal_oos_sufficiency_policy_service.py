@@ -115,14 +115,20 @@ class LongitudinalOosSufficiencyPolicyService:
             float(measurement.get("evaluationSpanDays", -1)) >= c["minimumEvaluationSpanDays"],
             int(measurement.get("distinctEvaluationPeriodCount", -1)) >= c["minimumDistinctEvaluationPeriods"],
             int(measurement.get("eligibleOutcomeCount", -1)) >= c["minimumEligibleOutcomes"],
+            int(measurement.get("forecastErrorCount", -1)) >= c["minimumEligibleOutcomes"],
             int(measurement.get("distinctResolvedIssuerCount", -1)) >= c["minimumDistinctResolvedIssuers"],
         ]
         horizons = measurement.get("horizons")
         if not isinstance(horizons, dict):
             checks.append(False)
         else:
-            available = {int(key) for key in horizons.keys()}
-            checks.append(set(c["requiredHorizonSeconds"]).issubset(available))
+            # A cohort horizon key can exist while every forecast error is
+            # missing. Only actually measured horizons satisfy evidence gates.
+            checks.append(all(
+                isinstance(horizons.get(str(horizon)), dict)
+                and int(horizons[str(horizon)].get("forecastErrorCount", 0)) > 0
+                for horizon in c["requiredHorizonSeconds"]
+            ))
         checks.append(temporal_precommitment_verified)
         satisfied = all(checks)
         return self._result(

@@ -45,6 +45,7 @@ class RecommendationResearchForecastErrorOosService:
             outcome_hash = self._sha_text(row.get("outcomeHash"), "cohort.outcomeHash")
             if outcome_hash in by_outcome:
                 raise ValueError("La cohorte OOS repite outcomeHash.")
+            self._validate_period(row, cutoff=cohort_as_of, field="cohort")
             by_outcome[outcome_hash] = row
 
         normalized_errors: list[dict[str, Any]] = []
@@ -285,6 +286,9 @@ class RecommendationResearchForecastErrorOosService:
         created_at = self._aware_iso(record.get("created_at"), "error.created_at")
         if created_at > cutoff:
             raise ValueError("Forecast error fue persistido después del as_of diagnóstico.")
+        period_end = self._validate_period(artifact, cutoff=cutoff, field="error")
+        if created_at < period_end:
+            raise ValueError("Forecast error fue persistido antes de madurar su horizonte.")
         return {
             "errorHash": error_hash,
             "specificationHash": self._sha_text(
@@ -307,6 +311,18 @@ class RecommendationResearchForecastErrorOosService:
             "absoluteError": self._finite(artifact.get("absoluteError"), "error.absoluteError"),
             "squaredError": self._finite(artifact.get("squaredError"), "error.squaredError"),
         }
+
+    def _validate_period(
+        self, payload: dict[str, Any], *, cutoff: datetime, field: str
+    ) -> datetime:
+        start = self._aware_iso(payload.get("periodStart"), f"{field}.periodStart")
+        end = self._aware_iso(payload.get("periodEnd"), f"{field}.periodEnd")
+        horizon = self._positive_int(payload.get("horizonSeconds"), f"{field}.horizonSeconds")
+        if end <= start or (end - start).total_seconds() != horizon:
+            raise ValueError(f"{field}: periodo no coincide con horizonSeconds exacto.")
+        if end > cutoff:
+            raise ValueError(f"{field}: horizonte no madurado al corte PIT.")
+        return end
 
     def _assert_error_matches_cohort_row(
         self, error: dict[str, Any], row: dict[str, Any]
