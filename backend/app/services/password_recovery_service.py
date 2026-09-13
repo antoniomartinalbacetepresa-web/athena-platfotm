@@ -130,6 +130,14 @@ class PasswordRecoveryService:
     def invalidate(self, *, user_id: int) -> None:
         self._recovery.invalidate_for_user(user_id=int(user_id))
 
+    def invalidate_token(self, *, token: str) -> bool:
+        """Consume one exact recovery token without changing account state."""
+        normalized_token = str(token or "").strip()
+        if len(normalized_token) < 32:
+            return False
+        token_hash = self._token_hash(normalized_token)
+        return self._recovery.consume(token_hash=token_hash) is not None
+
     def _token_hash(self, token: str) -> str:
         return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 

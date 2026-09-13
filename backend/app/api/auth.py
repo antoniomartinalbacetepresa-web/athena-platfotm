@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -7,10 +8,14 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.auth_service import AuthService
-from app.services.password_recovery_mailer import PasswordRecoveryMailer
+from app.services.password_recovery_mailer import (
+    PasswordRecoveryDeliveryError,
+    PasswordRecoveryMailer,
+)
 from app.services.password_recovery_service import PasswordRecoveryService
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
@@ -150,11 +155,19 @@ def request_password_recovery(
     if challenge is not None:
         try:
             mailer.send(challenge)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No se pudo entregar la recuperación de cuenta.",
-            ) from exc
+        except PasswordRecoveryDeliveryError:
+            try:
+                invalidated = service.invalidate_token(token=challenge.token)
+            except Exception:
+                invalidated = False
+                logger.error(
+                    "Password recovery delivery failed and the undelivered challenge could not be invalidated."
+                )
+            else:
+                logger.warning(
+                    "Password recovery delivery failed; undelivered challenge invalidated=%s.",
+                    invalidated,
+                )
     response.headers["X-RateLimit-Limit"] = str(rate["limit"])
     response.headers["X-RateLimit-Remaining"] = str(rate["remaining"])
     return {

@@ -9,6 +9,10 @@ from urllib.parse import urlencode
 from app.services.password_recovery_service import PasswordRecoveryChallenge
 
 
+class PasswordRecoveryDeliveryError(RuntimeError):
+    """Expected delivery-boundary failure that must not reveal account state."""
+
+
 class PasswordRecoveryMailer:
     """SMTP delivery for password-recovery links.
 
@@ -37,23 +41,28 @@ class PasswordRecoveryMailer:
             raise RuntimeError("ATHENA_RECOVERY_SMTP_PORT no es válido.")
 
     def send(self, challenge: PasswordRecoveryChallenge) -> None:
-        separator = "&" if "?" in self._base_url else "?"
-        recovery_url = f"{self._base_url}{separator}{urlencode({'token': challenge.token})}"
-        message = EmailMessage()
-        message["Subject"] = "Recuperación de acceso a ATHENA TYCHE"
-        message["From"] = self._sender
-        message["To"] = challenge.email
-        message.set_content(
-            "Se ha solicitado restablecer tu contraseña de ATHENA TYCHE.\n\n"
-            f"Enlace de recuperación: {recovery_url}\n\n"
-            f"El enlace caduca a las {challenge.expires_at.isoformat()}.\n"
-            "Si no solicitaste este cambio, ignora este mensaje."
-        )
-        with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
-            smtp.ehlo()
-            if self._use_starttls:
-                smtp.starttls(context=ssl.create_default_context())
+        try:
+            separator = "&" if "?" in self._base_url else "?"
+            recovery_url = f"{self._base_url}{separator}{urlencode({'token': challenge.token})}"
+            message = EmailMessage()
+            message["Subject"] = "Recuperación de acceso a ATHENA TYCHE"
+            message["From"] = self._sender
+            message["To"] = challenge.email
+            message.set_content(
+                "Se ha solicitado restablecer tu contraseña de ATHENA TYCHE.\n\n"
+                f"Enlace de recuperación: {recovery_url}\n\n"
+                f"El enlace caduca a las {challenge.expires_at.isoformat()}.\n"
+                "Si no solicitaste este cambio, ignora este mensaje."
+            )
+            with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
                 smtp.ehlo()
-            if self._username:
-                smtp.login(self._username, self._password)
-            smtp.send_message(message)
+                if self._use_starttls:
+                    smtp.starttls(context=ssl.create_default_context())
+                    smtp.ehlo()
+                if self._username:
+                    smtp.login(self._username, self._password)
+                smtp.send_message(message)
+        except Exception as exc:
+            raise PasswordRecoveryDeliveryError(
+                "No se pudo entregar la recuperación de cuenta."
+            ) from exc
