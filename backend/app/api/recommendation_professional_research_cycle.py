@@ -50,6 +50,9 @@ class CycleRadarEvidenceRequest(BaseModel):
     availableAt: datetime
     source: str = Field(min_length=1)
     sourceRef: str = Field(min_length=1)
+    provider: str | None = None
+    publisher: str | None = None
+    publishedAt: datetime | None = None
 
 
 class CycleJournalReferenceRequest(BaseModel):
@@ -181,6 +184,13 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
                             available_at=_aware_utc(item.availableAt, "radarEvidence.availableAt"),
                             source=item.source,
                             source_ref=item.sourceRef,
+                            provider=item.provider,
+                            publisher=item.publisher,
+                            published_at=(
+                                _aware_utc(item.publishedAt, "radarEvidence.publishedAt")
+                                if item.publishedAt is not None
+                                else None
+                            ),
                         )
                         for item in request.radarEvidence
                     ),
@@ -238,9 +248,6 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
         journal_payload = journal.to_api_dict()
         devils_payload = devils_advocate.to_api_dict()
 
-        # Validate the entire durable package before the first persistent side
-        # effect. Invalid PIT, identity, provenance, FMP, advice, weighting,
-        # hashes or trading contracts cannot leave a partial cycle record.
         cycle_repository.validate_package(
             cycle_payload=payload,
             radar_payload=radar_payload,
