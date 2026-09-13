@@ -151,7 +151,8 @@ def test_athena_contract_fails_closed_until_investors_synthesis_exists(tmp_path:
     data = contract.json()["data"]
     assert data["investorsSynthesisHash"] == investors_hash
     assert data["coveredCategories"] == ["investors"]
-    assert data["requiredCoverage"] == "all_cycle_radar_evidence_and_required_canonical_category_syntheses"
+    assert data["requiredCoverage"] == "all_cycle_radar_evidence"
+    assert data["canonicalCategorySynthesesRequired"] == ["investors"]
 
 
 def test_full_investors_to_athena_cycle_binds_hash_and_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
