@@ -14,6 +14,9 @@ from app.api.portfolio_allocation_policy import (
 )
 from app.api.readiness import router as readiness_router
 from app.api.recommendation_athena_radar import router as recommendation_athena_radar_router
+from app.api.recommendation_athena_synthesis import (
+    router as recommendation_athena_synthesis_router,
+)
 from app.api.recommendation_catalysts import router as recommendation_catalysts_router
 from app.api.recommendation_devils_advocate import router as recommendation_devils_advocate_router
 from app.api.recommendation_factor_risk_sealed_value import (
@@ -153,6 +156,7 @@ app.include_router(recommendation_devils_advocate_router)
 app.include_router(recommendation_athena_radar_router)
 app.include_router(recommendation_professional_research_cycle_router)
 app.include_router(recommendation_news_synthesis_router)
+app.include_router(recommendation_athena_synthesis_router)
 app.include_router(recommendation_research_outcome_attribution_router)
 app.include_router(recommendation_research_outcome_oos_cohort_router)
 app.include_router(recommendation_research_forecast_evaluation_router)
