@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.services.recommendation_athena_radar_service import AthenaRadarResult
+from app.services.recommendation_athena_radar_service import (
+    AthenaRadarCandidateInput,
+    AthenaRadarResult,
+    RecommendationAthenaRadarService,
+)
 from app.services.recommendation_devils_advocate_service import DevilsAdvocateResult
 from app.services.recommendation_investment_journal_service import InvestmentJournalSnapshot
 
@@ -65,7 +69,7 @@ class ProfessionalResearchCycleResult:
                 "temporal": "radar_journal_and_devils_advocate_share_exact_pit_as_of",
                 "journalBinding": "devils_advocate_must_match_exact_journal_revision_and_snapshot_hash",
                 "identity": "instrument_and_symbol_must_match_across_the_research_cycle",
-                "provenance": "all_underlying_module_evidence_keeps_explicit_source_and_source_ref",
+                "provenance": "radar_is_revalidated_canonically_and_all_underlying_evidence_keeps_explicit_source_and_source_ref",
                 "fx": "explicit_or_unknown_never_implicitly_neutral",
                 "sourceSecurity": "fmp_and_financialmodelingprep_sources_forbidden_across_cycle",
                 "scoring": "research_urgency_is_not_expected_return_probability_or_recommendation_score",
@@ -104,6 +108,7 @@ class RecommendationProfessionalResearchCycleService:
         if len(radar.candidates) != 1:
             raise ValueError("El ciclo profesional debe enlazar exactamente un candidato Radar.")
 
+        radar = self._assert_canonical_radar(radar)
         radar_payload = radar.to_api_dict()
         journal_payload = journal.to_api_dict()
         devils_payload = devils_advocate.to_api_dict()
@@ -164,6 +169,27 @@ class RecommendationProfessionalResearchCycleService:
             devils_advocate_hash=devils_advocate_hash,
             cycle_hash=cycle_hash,
         )
+
+    def _assert_canonical_radar(self, radar: AthenaRadarResult) -> AthenaRadarResult:
+        """Re-run the Radar trust boundary and reject manually forged result objects."""
+        radar_as_of = self._aware_iso(radar.as_of, "radar.as_of")
+        candidate_inputs = tuple(
+            AthenaRadarCandidateInput(
+                instrument_id=candidate.instrument_id,
+                symbol=candidate.symbol,
+                evidence=candidate.evidence,
+            )
+            for candidate in radar.candidates
+        )
+        canonical = RecommendationAthenaRadarService().build(
+            as_of=radar_as_of,
+            candidates=candidate_inputs,
+        )
+        if radar.to_api_dict() != canonical.to_api_dict():
+            raise ValueError(
+                "radar no coincide con el resultado canónico recalculado; provenance, identidad o research_urgency fueron alterados."
+            )
+        return canonical
 
     def _assert_safe_contract(self, payload: dict[str, Any], module: str) -> None:
         if payload.get("advisoryStatus") != "no_advice":
