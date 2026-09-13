@@ -25,14 +25,19 @@ def evidence(
     source: str = "Reuters",
     source_ref: str | None = None,
 ) -> AthenaRadarEvidenceInput:
+    available_at = AS_OF - timedelta(minutes=minutes_before)
+    is_news = category == "news"
     return AthenaRadarEvidenceInput(
         evidence_id=evidence_id,
         category=category,
         urgency=urgency,
         summary=f"Evidence {evidence_id}",
-        available_at=AS_OF - timedelta(minutes=minutes_before),
+        available_at=available_at,
         source=source,
-        source_ref=source_ref or f"reuters:{evidence_id}",
+        source_ref=source_ref or f"https://news.example.test/{evidence_id}",
+        provider="test_news_adapter" if is_news else None,
+        publisher="Reuters" if is_news else None,
+        published_at=available_at - timedelta(minutes=1) if is_news else None,
     )
 
 
@@ -126,8 +131,8 @@ def test_radar_tie_break_is_deterministic() -> None:
     result = service.build(
         as_of=AS_OF,
         candidates=(
-            candidate("issuer:b", "BBB", evidence("b", source_ref="ref:b")),
-            candidate("issuer:a", "AAA", evidence("a", source_ref="ref:a")),
+            candidate("issuer:b", "BBB", evidence("b", source_ref="https://news.example.test/b")),
+            candidate("issuer:a", "AAA", evidence("a", source_ref="https://news.example.test/a")),
         ),
     )
     assert [item.instrument_id for item in result.candidates] == ["issuer:a", "issuer:b"]
@@ -184,8 +189,8 @@ def test_radar_rejects_duplicate_candidate_identity() -> None:
         RecommendationAthenaRadarService().build(
             as_of=AS_OF,
             candidates=(
-                candidate("Issuer:A", "aaa", evidence("one", source_ref="ref:one")),
-                candidate("issuer:a", "AAA", evidence("two", source_ref="ref:two")),
+                candidate("Issuer:A", "aaa", evidence("one", source_ref="https://news.example.test/one")),
+                candidate("issuer:a", "AAA", evidence("two", source_ref="https://news.example.test/two")),
             ),
         )
 
@@ -195,8 +200,8 @@ def test_radar_rejects_duplicate_evidence_id() -> None:
         RecommendationAthenaRadarService().build(
             as_of=AS_OF,
             candidates=(
-                candidate("issuer:a", "AAA", evidence("same", source_ref="ref:one")),
-                candidate("issuer:b", "BBB", evidence("same", source_ref="ref:two")),
+                candidate("issuer:a", "AAA", evidence("same", source_ref="https://news.example.test/one")),
+                candidate("issuer:b", "BBB", evidence("same", source_ref="https://news.example.test/two")),
             ),
         )
 
@@ -206,8 +211,8 @@ def test_radar_rejects_duplicate_provenance() -> None:
         RecommendationAthenaRadarService().build(
             as_of=AS_OF,
             candidates=(
-                candidate("issuer:a", "AAA", evidence("one", source_ref="same:ref")),
-                candidate("issuer:b", "BBB", evidence("two", source_ref="same:ref")),
+                candidate("issuer:a", "AAA", evidence("one", source_ref="https://news.example.test/same")),
+                candidate("issuer:b", "BBB", evidence("two", source_ref="https://news.example.test/same")),
             ),
         )
 
