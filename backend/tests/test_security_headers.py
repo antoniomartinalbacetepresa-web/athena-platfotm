@@ -49,3 +49,41 @@ def test_cors_preflight_keeps_security_headers() -> None:
     _assert_common_security_headers(response)
     assert response.headers["access-control-allow-origin"] == origin
     assert "strict-transport-security" not in response.headers
+
+
+def test_api_documentation_remains_available_outside_production(monkeypatch) -> None:
+    monkeypatch.delenv("ATHENA_ENV", raising=False)
+
+    with TestClient(app, base_url="http://testserver") as client:
+        docs = client.get("/docs")
+        schema = client.get("/openapi.json")
+
+    assert docs.status_code == 200
+    assert schema.status_code == 200
+    _assert_common_security_headers(docs)
+    _assert_common_security_headers(schema)
+
+
+def test_production_hides_docs_redoc_and_openapi_with_generic_404(monkeypatch) -> None:
+    monkeypatch.setenv("ATHENA_ENV", "production")
+
+    with TestClient(app, base_url="https://testserver") as client:
+        responses = [client.get(path) for path in ("/docs", "/redoc", "/openapi.json")]
+
+    for response in responses:
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Not Found"}
+        _assert_common_security_headers(response)
+        assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_production_docs_guard_does_not_hide_application_routes(monkeypatch) -> None:
+    monkeypatch.setenv("ATHENA_ENV", "prod")
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    _assert_common_security_headers(response)
+    assert response.headers["strict-transport-security"] == "max-age=31536000"
