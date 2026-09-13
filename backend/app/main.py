@@ -28,6 +28,9 @@ from app.api.recommendation_investment_journal import (
 from app.api.recommendation_market_factor_exposure import (
     router as recommendation_market_factor_exposure_router,
 )
+from app.api.recommendation_news_synthesis import (
+    router as recommendation_news_synthesis_router,
+)
 from app.api.recommendation_performance_attribution import (
     router as recommendation_performance_attribution_router,
 )
@@ -149,6 +152,7 @@ app.include_router(recommendation_investment_journal_router)
 app.include_router(recommendation_devils_advocate_router)
 app.include_router(recommendation_athena_radar_router)
 app.include_router(recommendation_professional_research_cycle_router)
+app.include_router(recommendation_news_synthesis_router)
 app.include_router(recommendation_research_outcome_attribution_router)
 app.include_router(recommendation_research_outcome_oos_cohort_router)
 app.include_router(recommendation_research_forecast_evaluation_router)
