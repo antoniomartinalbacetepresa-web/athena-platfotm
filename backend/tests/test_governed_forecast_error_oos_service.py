@@ -19,7 +19,9 @@ class _MeasurementService:
         return dict(self.measurement)
 
 
-def _measurement() -> dict:
+def _measurement(*, first_period_end: datetime | None = None) -> dict:
+    first = first_period_end or (datetime.now(timezone.utc) + timedelta(days=1))
+    last = first + timedelta(days=210)
     return {
         "module": "research_forecast_error_oos_diagnostic",
         "status": "forecast_error_oos_evidence_available",
@@ -29,6 +31,8 @@ def _measurement() -> dict:
         "measurementCoverage": 1.0,
         "distinctResolvedIssuerCount": 24,
         "distinctEvaluationPeriodCount": 8,
+        "firstEvaluationPeriodEnd": first.isoformat(),
+        "lastEvaluationPeriodEnd": last.isoformat(),
         "evaluationSpanDays": 210.0,
         "horizonCount": 2,
         "horizons": {
@@ -76,17 +80,21 @@ def test_governed_oos_reads_persisted_policy_and_human_approval(tmp_path) -> Non
         evidence_ref="signed-approval",
         human_review_confirmed=True,
     )
+    first_period = datetime.now(timezone.utc) + timedelta(days=1)
     service = GovernedForecastErrorOosService(
-        measurement_service=_MeasurementService(_measurement()),
+        measurement_service=_MeasurementService(
+            _measurement(first_period_end=first_period)
+        ),
         policy_repository=repository,
     )
 
     result = service.evaluate(
-        as_of=datetime.now(timezone.utc), cohort_record=None, error_records=[]
+        as_of=first_period + timedelta(days=211), cohort_record=None, error_records=[]
     )
 
     assert result["longitudinalSufficiency"]["status"] == "precommitted_policy_satisfied"
     assert result["longitudinalSufficiency"]["policyApproved"] is True
+    assert result["longitudinalSufficiency"]["temporalPrecommitmentVerified"] is True
     assert result["longitudinalSufficiency"]["acceptanceEvidenceVerified"] is True
     assert result["longitudinalSufficiency"]["productionSufficiencyClaimed"] is False
     assert result["productionLearningEligible"] is False
@@ -100,17 +108,21 @@ def test_governed_oos_fails_closed_without_policy(tmp_path) -> None:
     repository = LongitudinalOosPolicyRepository(
         database=AthenaDatabase(tmp_path / "athena.db")
     )
+    first_period = datetime.now(timezone.utc) + timedelta(days=1)
     service = GovernedForecastErrorOosService(
-        measurement_service=_MeasurementService(_measurement()),
+        measurement_service=_MeasurementService(
+            _measurement(first_period_end=first_period)
+        ),
         policy_repository=repository,
     )
 
     result = service.evaluate(
-        as_of=datetime.now(timezone.utc), cohort_record=None, error_records=[]
+        as_of=first_period + timedelta(days=211), cohort_record=None, error_records=[]
     )
 
     assert result["longitudinalSufficiency"]["status"] == "policy_not_precommitted"
     assert result["longitudinalSufficiency"]["policyApproved"] is False
+    assert result["longitudinalSufficiency"]["temporalPrecommitmentVerified"] is False
     assert result["productionLearningEligible"] is False
 
 
@@ -160,7 +172,8 @@ def test_policy_can_be_approved_but_real_measurement_can_still_fail(tmp_path) ->
         evidence_ref="signed-approval",
         human_review_confirmed=True,
     )
-    measurement = _measurement()
+    first_period = datetime.now(timezone.utc) + timedelta(days=1)
+    measurement = _measurement(first_period_end=first_period)
     measurement["evaluationSpanDays"] = 30.0
     service = GovernedForecastErrorOosService(
         measurement_service=_MeasurementService(measurement),
@@ -168,10 +181,49 @@ def test_policy_can_be_approved_but_real_measurement_can_still_fail(tmp_path) ->
     )
 
     result = service.evaluate(
-        as_of=datetime.now(timezone.utc), cohort_record=None, error_records=[]
+        as_of=first_period + timedelta(days=211), cohort_record=None, error_records=[]
     )
 
     assert result["longitudinalSufficiency"]["status"] == "precommitted_policy_not_satisfied"
     assert result["longitudinalSufficiency"]["policyApproved"] is True
+    assert result["longitudinalSufficiency"]["temporalPrecommitmentVerified"] is True
+    assert result["longitudinalSufficiency"]["acceptanceEvidenceVerified"] is False
+    assert result["productionLearningEligible"] is False
+
+
+def test_governed_oos_rejects_retroactive_approval_of_historical_evidence(tmp_path) -> None:
+    repository = LongitudinalOosPolicyRepository(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+    policy = repository.register_policy(
+        policy_id="longitudinal-oos-v1",
+        version=1,
+        criteria=_criteria(),
+        precommitted_by="research-governance",
+        evidence_ref="policy-review",
+    )
+    repository.approve_policy(
+        policy_fingerprint=policy["artifact"]["policyFingerprint"],
+        approved_by="human-reviewer",
+        evidence_ref="signed-approval",
+        human_review_confirmed=True,
+    )
+    first_period = datetime.now(timezone.utc) - timedelta(days=211)
+    service = GovernedForecastErrorOosService(
+        measurement_service=_MeasurementService(
+            _measurement(first_period_end=first_period)
+        ),
+        policy_repository=repository,
+    )
+
+    result = service.evaluate(
+        as_of=datetime.now(timezone.utc) + timedelta(days=1),
+        cohort_record=None,
+        error_records=[],
+    )
+
+    assert result["longitudinalSufficiency"]["status"] == "precommitted_policy_not_satisfied"
+    assert result["longitudinalSufficiency"]["policyApproved"] is True
+    assert result["longitudinalSufficiency"]["temporalPrecommitmentVerified"] is False
     assert result["longitudinalSufficiency"]["acceptanceEvidenceVerified"] is False
     assert result["productionLearningEligible"] is False

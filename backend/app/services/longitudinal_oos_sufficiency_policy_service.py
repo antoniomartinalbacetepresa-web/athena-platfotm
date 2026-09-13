@@ -10,7 +10,7 @@ from typing import Any
 class LongitudinalOosSufficiencyPolicyService:
     """Evaluate OOS evidence against an externally selected, human-approved policy.
 
-    This service deliberately does not choose thresholds or approve policies.  It
+    This service deliberately does not choose thresholds or approve policies. It
     only validates an explicit precommitment and binds any approval to the exact
     canonical policy fingerprint before evaluating observed evidence.
     """
@@ -58,7 +58,10 @@ class LongitudinalOosSufficiencyPolicyService:
                     "minimumDistinctResolvedIssuers",
                 ),
                 "requiredHorizonSeconds": sorted(
-                    {self._positive_int(value, "requiredHorizonSeconds") for value in self._list(criteria.get("requiredHorizonSeconds"))}
+                    {
+                        self._positive_int(value, "requiredHorizonSeconds")
+                        for value in self._list(criteria.get("requiredHorizonSeconds"))
+                    }
                 ),
                 "dependencyHandling": self._text(
                     criteria.get("dependencyHandling"), "dependencyHandling"
@@ -73,19 +76,39 @@ class LongitudinalOosSufficiencyPolicyService:
             raise ValueError("policyFingerprint no coincide con el contenido precomprometido.")
 
         if approval_record is None:
-            return self._result(normalized, fingerprint, "policy_approval_required", False, False, [])
+            return self._result(
+                normalized, fingerprint, "policy_approval_required", False, False, [], False
+            )
         approval = approval_record.get("artifact") if isinstance(approval_record, dict) else None
         if not isinstance(approval, dict):
             raise ValueError("La aprobación longitudinal persistida no es válida.")
         if approval.get("status") != "approved":
-            return self._result(normalized, fingerprint, "policy_approval_required", False, False, [])
+            return self._result(
+                normalized, fingerprint, "policy_approval_required", False, False, [], False
+            )
         if self._sha(approval.get("policyFingerprint"), "approval.policyFingerprint") != fingerprint:
-            return self._result(normalized, fingerprint, "policy_approval_stale", False, False, [])
+            return self._result(
+                normalized, fingerprint, "policy_approval_stale", False, False, [], False
+            )
         self._text(approval.get("approvedBy"), "approval.approvedBy")
         self._text(approval.get("evidenceRef"), "approval.evidenceRef")
         approved_at = self._iso(approval.get("approvedAt"), "approval.approvedAt")
         if approved_at > cutoff:
             raise ValueError("La aprobación longitudinal es posterior al as_of.")
+
+        first_evaluation = self._optional_iso(
+            measurement.get("firstEvaluationPeriodEnd"),
+            "measurement.firstEvaluationPeriodEnd",
+        )
+        last_evaluation = self._optional_iso(
+            measurement.get("lastEvaluationPeriodEnd"),
+            "measurement.lastEvaluationPeriodEnd",
+        )
+        temporal_precommitment_verified = bool(
+            first_evaluation is not None
+            and last_evaluation is not None
+            and approved_at < first_evaluation <= last_evaluation <= cutoff
+        )
 
         c = normalized["criteria"]
         checks = [
@@ -100,6 +123,7 @@ class LongitudinalOosSufficiencyPolicyService:
         else:
             available = {int(key) for key in horizons.keys()}
             checks.append(set(c["requiredHorizonSeconds"]).issubset(available))
+        checks.append(temporal_precommitment_verified)
         satisfied = all(checks)
         return self._result(
             normalized,
@@ -108,9 +132,19 @@ class LongitudinalOosSufficiencyPolicyService:
             True,
             satisfied,
             checks,
+            temporal_precommitment_verified,
         )
 
-    def _result(self, policy: dict[str, Any], fingerprint: str, status: str, approved: bool, verified: bool, checks: list[bool]) -> dict[str, Any]:
+    def _result(
+        self,
+        policy: dict[str, Any],
+        fingerprint: str,
+        status: str,
+        approved: bool,
+        verified: bool,
+        checks: list[bool],
+        temporal_precommitment_verified: bool,
+    ) -> dict[str, Any]:
         return {
             "status": status,
             "policyId": policy["policyId"],
@@ -118,6 +152,7 @@ class LongitudinalOosSufficiencyPolicyService:
             "policyFingerprint": fingerprint,
             "policyApproved": approved,
             "acceptanceEvidenceVerified": verified,
+            "temporalPrecommitmentVerified": temporal_precommitment_verified,
             "productionSufficiencyClaimed": False,
             "criteriaCheckCount": len(checks),
             "satisfiedCriteriaCount": sum(1 for value in checks if value),
@@ -133,6 +168,7 @@ class LongitudinalOosSufficiencyPolicyService:
             "policyFingerprint": None,
             "policyApproved": False,
             "acceptanceEvidenceVerified": False,
+            "temporalPrecommitmentVerified": False,
             "productionSufficiencyClaimed": False,
             "criteriaCheckCount": 0,
             "satisfiedCriteriaCount": 0,
@@ -148,15 +184,34 @@ class LongitudinalOosSufficiencyPolicyService:
             "policyId": service._text(policy_id, "policyId"),
             "version": service._positive_int(version, "version"),
             "criteria": {
-                "minimumEvaluationSpanDays": service._nonnegative_number(criteria.get("minimumEvaluationSpanDays"), "minimumEvaluationSpanDays"),
-                "minimumDistinctEvaluationPeriods": service._positive_int(criteria.get("minimumDistinctEvaluationPeriods"), "minimumDistinctEvaluationPeriods"),
-                "minimumEligibleOutcomes": service._positive_int(criteria.get("minimumEligibleOutcomes"), "minimumEligibleOutcomes"),
-                "minimumDistinctResolvedIssuers": service._positive_int(criteria.get("minimumDistinctResolvedIssuers"), "minimumDistinctResolvedIssuers"),
-                "requiredHorizonSeconds": sorted({service._positive_int(v, "requiredHorizonSeconds") for v in service._list(criteria.get("requiredHorizonSeconds"))}),
-                "dependencyHandling": service._text(criteria.get("dependencyHandling"), "dependencyHandling"),
+                "minimumEvaluationSpanDays": service._nonnegative_number(
+                    criteria.get("minimumEvaluationSpanDays"), "minimumEvaluationSpanDays"
+                ),
+                "minimumDistinctEvaluationPeriods": service._positive_int(
+                    criteria.get("minimumDistinctEvaluationPeriods"),
+                    "minimumDistinctEvaluationPeriods",
+                ),
+                "minimumEligibleOutcomes": service._positive_int(
+                    criteria.get("minimumEligibleOutcomes"), "minimumEligibleOutcomes"
+                ),
+                "minimumDistinctResolvedIssuers": service._positive_int(
+                    criteria.get("minimumDistinctResolvedIssuers"),
+                    "minimumDistinctResolvedIssuers",
+                ),
+                "requiredHorizonSeconds": sorted(
+                    {
+                        service._positive_int(v, "requiredHorizonSeconds")
+                        for v in service._list(criteria.get("requiredHorizonSeconds"))
+                    }
+                ),
+                "dependencyHandling": service._text(
+                    criteria.get("dependencyHandling"), "dependencyHandling"
+                ),
             },
         }
-        return hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        return hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
     @staticmethod
     def _aware(value: datetime, field: str) -> datetime:
@@ -169,6 +224,11 @@ class LongitudinalOosSufficiencyPolicyService:
             raise ValueError(f"{field} debe ser ISO-8601.")
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return self._aware(parsed, field)
+
+    def _optional_iso(self, value: Any, field: str) -> datetime | None:
+        if value is None:
+            return None
+        return self._iso(value, field)
 
     @staticmethod
     def _text(value: Any, field: str) -> str:
