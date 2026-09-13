@@ -87,6 +87,7 @@ from app.api.sec_fundamental_pit import router as sec_fundamental_pit_router
 from app.api.sources import router as sources_router
 from app.api.user_portfolio import router as user_portfolio_router
 from app.api.user_profile import router as user_profile_router
+from app.security.http_headers import SecurityHeadersMiddleware
 from app.security.portfolio_owner_context import bind_portfolio_owner_context
 
 
@@ -106,6 +107,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(auth_router)
 app.include_router(user_portfolio_router)
