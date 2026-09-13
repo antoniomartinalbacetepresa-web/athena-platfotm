@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +10,9 @@ from pydantic import BaseModel, Field
 
 from app.repositories.recommendation_athena_synthesis_repository import (
     RecommendationAthenaSynthesisRepository,
+)
+from app.repositories.recommendation_investors_synthesis_repository import (
+    RecommendationInvestorsSynthesisRepository,
 )
 from app.repositories.recommendation_news_synthesis_repository import (
     RecommendationNewsSynthesisRepository,
@@ -28,6 +33,7 @@ router = APIRouter(
 
 cycle_repository = RecommendationProfessionalResearchCycleRepository()
 news_repository = RecommendationNewsSynthesisRepository()
+investors_repository = RecommendationInvestorsSynthesisRepository()
 athena_repository = RecommendationAthenaSynthesisRepository()
 athena_service = RecommendationAthenaSynthesisService()
 
@@ -61,6 +67,17 @@ def _aware_datetime(value: datetime, field: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field} debe incluir zona horaria.")
     return value.astimezone(timezone.utc)
+
+
+def _canonical_hash(payload: object) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _cycle_evidence_contract(cycle_record: dict[str, Any]) -> dict[str, Any]:
@@ -101,43 +118,68 @@ def _cycle_evidence_contract(cycle_record: dict[str, Any]) -> dict[str, Any]:
         "evidenceIds": tuple(sorted(evidence_ids)),
         "coveredCategories": tuple(sorted(categories)),
         "hasNews": "news" in categories,
+        "hasInvestors": "investors" in categories,
     }
 
 
-def _dependencies(cycle_hash: str) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
+def _dependencies(
+    cycle_hash: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None, dict[str, Any]]:
     cycle_record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
     contract = _cycle_evidence_contract(cycle_record)
     news_record: dict[str, Any] | None = None
+    investors_record: dict[str, Any] | None = None
     if contract["hasNews"]:
         news_record = news_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
         if news_record["radar_hash"] != cycle_record["radar_hash"]:
             raise ValueError("La síntesis News no coincide con el radarHash del Research Cycle.")
-    return cycle_record, news_record, contract
+    if contract["hasInvestors"]:
+        investors_record = investors_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
+        if investors_record["radar_hash"] != cycle_record["radar_hash"]:
+            raise ValueError("Investors synthesis no coincide con el radarHash del Research Cycle.")
+    return cycle_record, news_record, investors_record, contract
+
+
+def _base_input_fingerprint(
+    cycle_record: dict[str, Any],
+    news_record: dict[str, Any] | None,
+    contract: dict[str, Any],
+) -> str:
+    return athena_service.input_fingerprint(
+        cycle_hash=cycle_record["cycle_hash"],
+        radar_hash=cycle_record["radar_hash"],
+        news_synthesis_hash=(news_record["synthesis_hash"] if news_record is not None else None),
+        input_as_of=contract["inputAsOf"],
+        evidence_ids=contract["evidenceIds"],
+        covered_categories=contract["coveredCategories"],
+    )
 
 
 def _input_contract(
     cycle_record: dict[str, Any],
     news_record: dict[str, Any] | None,
+    investors_record: dict[str, Any] | None,
     contract: dict[str, Any],
 ) -> dict[str, Any]:
     news_hash = news_record["synthesis_hash"] if news_record is not None else None
-    fingerprint = athena_service.input_fingerprint(
-        cycle_hash=cycle_record["cycle_hash"],
-        radar_hash=cycle_record["radar_hash"],
-        news_synthesis_hash=news_hash,
-        input_as_of=contract["inputAsOf"],
-        evidence_ids=contract["evidenceIds"],
-        covered_categories=contract["coveredCategories"],
+    investors_hash = investors_record["synthesis_hash"] if investors_record is not None else None
+    base_fingerprint = _base_input_fingerprint(cycle_record, news_record, contract)
+    fingerprint = _canonical_hash(
+        {
+            "baseAthenaInputFingerprint": base_fingerprint,
+            "investorsSynthesisHash": investors_hash,
+        }
     )
     return {
         "cycleHash": cycle_record["cycle_hash"],
         "radarHash": cycle_record["radar_hash"],
         **({"newsSynthesisHash": news_hash} if news_hash is not None else {}),
+        **({"investorsSynthesisHash": investors_hash} if investors_hash is not None else {}),
         "inputAsOf": contract["inputAsOf"].isoformat(),
         "evidenceIds": list(contract["evidenceIds"]),
         "coveredCategories": list(contract["coveredCategories"]),
         "inputFingerprint": fingerprint,
-        "requiredCoverage": "all_cycle_radar_evidence",
+        "requiredCoverage": "all_cycle_radar_evidence_and_required_canonical_category_syntheses",
         "advisoryStatus": "no_advice",
         "recommendationInfluence": False,
         "automaticTrading": False,
@@ -146,27 +188,24 @@ def _input_contract(
 
 @router.get("/research-cycle/{cycle_hash}/athena-synthesis/input-contract")
 def get_athena_synthesis_input_contract(cycle_hash: str) -> dict[str, Any]:
-    """Expose the immutable fingerprint that an external model must echo."""
     try:
-        cycle_record, news_record, contract = _dependencies(cycle_hash)
-        return {"data": _input_contract(cycle_record, news_record, contract)}
+        cycle_record, news_record, investors_record, contract = _dependencies(cycle_hash)
+        return {"data": _input_contract(cycle_record, news_record, investors_record, contract)}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo construir el contrato de ATHENA synthesis.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo construir el contrato de ATHENA synthesis.") from exc
 
 
 @router.post("/research-cycle/{cycle_hash}/athena-synthesis")
-def post_athena_synthesis(
-    cycle_hash: str,
-    request: AthenaSynthesisRequest,
-) -> dict[str, Any]:
-    """Validate and persist one external explanatory synthesis for a frozen cycle."""
+def post_athena_synthesis(cycle_hash: str, request: AthenaSynthesisRequest) -> dict[str, Any]:
     try:
-        cycle_record, news_record, _ = _dependencies(cycle_hash)
+        cycle_record, news_record, investors_record, contract = _dependencies(cycle_hash)
+        input_contract = _input_contract(cycle_record, news_record, investors_record, contract)
+        supplied = request.inputFingerprint.strip().lower()
+        if supplied != input_contract["inputFingerprint"]:
+            raise ValueError("inputFingerprint no coincide con News/Investors/ciclo canónicos.")
+        base_fingerprint = _base_input_fingerprint(cycle_record, news_record, contract)
         result = athena_service.build(
             cycle_record=cycle_record,
             news_synthesis_record=news_record,
@@ -174,7 +213,7 @@ def post_athena_synthesis(
                 model_provider=request.modelProvider,
                 model_name=request.modelName,
                 model_version=request.modelVersion,
-                input_fingerprint=request.inputFingerprint,
+                input_fingerprint=base_fingerprint,
                 generated_at=_aware_datetime(request.generatedAt, "generatedAt"),
                 summary=request.summary,
                 rationale=request.rationale,
@@ -183,21 +222,34 @@ def post_athena_synthesis(
             ),
         )
         payload = result.to_api_dict()
+        payload["inputFingerprint"] = supplied
+        investors_hash = investors_record["synthesis_hash"] if investors_record is not None else None
+        if investors_hash is not None:
+            payload["investorsSynthesisHash"] = investors_hash
+        payload["outputFingerprint"] = _canonical_hash(
+            {
+                "inputFingerprint": supplied,
+                "modelProvider": payload["modelProvider"],
+                "modelName": payload["modelName"],
+                "modelVersion": payload["modelVersion"],
+                "generatedAt": payload["generatedAt"],
+                "summary": payload["summary"],
+                "rationale": payload["rationale"],
+                "uncertainties": payload["uncertainties"],
+                "evidenceIds": payload["evidenceIds"],
+                "investorsSynthesisHash": investors_hash,
+            }
+        )
         record = athena_repository.append(
             cycle_hash=cycle_record["cycle_hash"],
             radar_hash=cycle_record["radar_hash"],
-            news_synthesis_hash=(
-                news_record["synthesis_hash"] if news_record is not None else None
-            ),
+            news_synthesis_hash=(news_record["synthesis_hash"] if news_record is not None else None),
             synthesis_payload=payload,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo validar y persistir ATHENA synthesis.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo validar y persistir ATHENA synthesis.") from exc
     return {
         "data": {
             "artifactBindingVerified": True,
@@ -209,6 +261,7 @@ def post_athena_synthesis(
                 "cycleHash": record["cycle_hash"],
                 "radarHash": record["radar_hash"],
                 "newsSynthesisHash": record["news_synthesis_hash"],
+                "investorsSynthesisHash": investors_hash,
                 "createdAt": record["created_at"],
                 "storageClaim": "single_canonical_athena_synthesis_per_cycle_append_only_not_worm_storage",
             },
@@ -218,22 +271,23 @@ def post_athena_synthesis(
 
 @router.get("/research-cycle/{cycle_hash}/athena-synthesis")
 def get_athena_synthesis(cycle_hash: str) -> dict[str, Any]:
-    """Read ATHENA synthesis only while all dependency hashes still match."""
     try:
-        cycle_record, news_record, _ = _dependencies(cycle_hash)
+        cycle_record, news_record, investors_record, _ = _dependencies(cycle_hash)
         record = athena_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
         if record["radar_hash"] != cycle_record["radar_hash"]:
             raise ValueError("ATHENA synthesis no coincide con el Radar actual del ciclo.")
         expected_news_hash = news_record["synthesis_hash"] if news_record is not None else None
         if record["news_synthesis_hash"] != expected_news_hash:
             raise ValueError("ATHENA synthesis no coincide con la síntesis News canónica.")
+        expected_investors_hash = investors_record["synthesis_hash"] if investors_record is not None else None
+        stored_synthesis = record["package"]["synthesis"]
+        if stored_synthesis.get("investorsSynthesisHash") != expected_investors_hash:
+            if not (expected_investors_hash is None and "investorsSynthesisHash" not in stored_synthesis):
+                raise ValueError("ATHENA synthesis no coincide con Investors synthesis canónica.")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo verificar ATHENA synthesis persistida.",
-        ) from exc
+        raise HTTPException(status_code=500, detail="No se pudo verificar ATHENA synthesis persistida.") from exc
     return {
         "data": {
             "artifactBindingVerified": True,
@@ -245,6 +299,7 @@ def get_athena_synthesis(cycle_hash: str) -> dict[str, Any]:
                 "cycleHash": record["cycle_hash"],
                 "radarHash": record["radar_hash"],
                 "newsSynthesisHash": record["news_synthesis_hash"],
+                "investorsSynthesisHash": expected_investors_hash,
                 "createdAt": record["created_at"],
                 "storageClaim": "single_canonical_athena_synthesis_per_cycle_append_only_not_worm_storage",
             },
