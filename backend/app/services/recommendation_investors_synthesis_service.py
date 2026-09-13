@@ -7,7 +7,11 @@ import json
 import math
 from typing import Any
 
-from app.services.recommendation_athena_radar_service import AthenaRadarResult
+from app.services.recommendation_athena_radar_service import (
+    AthenaRadarCandidateInput,
+    AthenaRadarResult,
+    RecommendationAthenaRadarService,
+)
 
 
 _ALLOWED_IMPORTANCE = {"low", "medium", "high", "critical"}
@@ -58,17 +62,19 @@ class InvestorsSynthesisResult:
 class RecommendationInvestorsSynthesisService:
     """Bind external Investors/IR/filing assessments to exact PIT Radar evidence."""
 
+    def __init__(self) -> None:
+        self._radar = RecommendationAthenaRadarService()
+
     def build(
         self,
         *,
         radar_result: AthenaRadarResult,
         assessments: tuple[InvestorsModelAssessmentInput, ...],
     ) -> InvestorsSynthesisResult:
-        if not isinstance(radar_result, AthenaRadarResult):
-            raise ValueError("radar_result debe ser AthenaRadarResult.")
-        as_of = self._parse_iso(radar_result.as_of, "radar_result.as_of")
+        canonical_radar = self._canonical_radar(radar_result)
+        as_of = self._parse_iso(canonical_radar.as_of, "radar_result.as_of")
         investors: dict[str, tuple[str, str, Any]] = {}
-        for candidate in radar_result.candidates:
+        for candidate in canonical_radar.candidates:
             for evidence in candidate.evidence:
                 if evidence.category == "investors":
                     investors[evidence.evidence_id] = (
@@ -176,6 +182,26 @@ class RecommendationInvestorsSynthesisService:
             "availableAt": self._aware(evidence.available_at, "evidence.available_at").isoformat(),
             "sourceSummary": self._text(evidence.summary, "evidence.summary"),
         })
+
+    def _canonical_radar(self, radar_result: AthenaRadarResult) -> AthenaRadarResult:
+        if not isinstance(radar_result, AthenaRadarResult):
+            raise ValueError("radar_result debe ser AthenaRadarResult.")
+        rebuilt = self._radar.build(
+            as_of=self._parse_iso(radar_result.as_of, "radar_result.as_of"),
+            candidates=tuple(
+                AthenaRadarCandidateInput(
+                    instrument_id=candidate.instrument_id,
+                    symbol=candidate.symbol,
+                    evidence=candidate.evidence,
+                )
+                for candidate in radar_result.candidates
+            ),
+        )
+        if rebuilt != radar_result:
+            raise ValueError(
+                "radar_result debe coincidir exactamente con ATHENA Radar canónico; resultados fabricados o manipulados están prohibidos."
+            )
+        return rebuilt
 
     def _hash(self, payload: object) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
