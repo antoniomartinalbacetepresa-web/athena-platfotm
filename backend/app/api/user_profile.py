@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import current_account
 from app.repositories.encrypted_user_profile_repository import EncryptedUserProfileRepository
+from app.services.user_personalization_service import UserPersonalizationService
 
 
 router = APIRouter(prefix="/api/v1/user/profile", tags=["user-profile"])
@@ -126,6 +127,31 @@ def get_preferences(
         "data": stored,
         "policy": _policy(),
     }
+
+
+@router.get("/personalization")
+def get_personalization(
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, Any]:
+    repository = _repository()
+    try:
+        stored = repository.get_for_owner(_owner_id(account))
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="El perfil cifrado no supera la verificación de integridad.",
+        ) from exc
+    if stored is None:
+        return {"status": "not_configured", "data": None}
+    preferences = stored.get("preferences")
+    try:
+        projection = UserPersonalizationService().build(preferences)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="El perfil cifrado no contiene preferencias válidas para personalización.",
+        ) from exc
+    return {"status": "configured", "data": projection}
 
 
 @router.put("/preferences")
