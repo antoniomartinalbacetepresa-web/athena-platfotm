@@ -16,7 +16,7 @@ from app.services.recommendation_athena_radar_service import (
 
 
 _IMPORTANCE_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-_ALLOWED_IMACT_DIRECTIONS = frozenset(
+_ALLOWED_IMPACT_DIRECTIONS = frozenset(
     {"negative", "neutral", "positive", "mixed", "uncertain"}
 )
 _FORBIDDEN_SOURCE_TOKENS = ("financialmodelingprep", "fmp")
@@ -90,6 +90,7 @@ class NewsSynthesisResult:
     assessed_count: int
     included_count: int
     excluded_count: int
+    assessments: tuple[NewsSynthesisItem, ...]
     items: tuple[NewsSynthesisItem, ...]
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -100,7 +101,11 @@ class NewsSynthesisResult:
             "assessedCount": self.assessed_count,
             "includedCount": self.included_count,
             "excludedCount": self.excluded_count,
+            "assessments": [item.to_api_dict() for item in self.assessments],
             "items": [item.to_api_dict() for item in self.items],
+            "filteringInterpretation": (
+                "items_is_filtered_research_view_while_assessments_preserves_complete_audit_coverage"
+            ),
             "interpretation": {
                 "importance": "external_model_research_triage_not_investment_score",
                 "impact": "external_model_estimate_not_observed_fact",
@@ -232,7 +237,7 @@ class RecommendationNewsSynthesisService:
             impact_direction = self._required_text(
                 raw.impact_direction, "assessment.impact_direction"
             ).lower()
-            if impact_direction not in _ALLOWED_IMACT_DIRECTIONS:
+            if impact_direction not in _ALLOWED_IMPACT_DIRECTIONS:
                 raise ValueError(
                     "assessment.impact_direction debe ser negative, neutral, positive, mixed o uncertain."
                 )
@@ -292,6 +297,13 @@ class RecommendationNewsSynthesisService:
                 "Las evaluaciones del modelo deben cubrir exactamente toda la evidencia news."
             )
 
+        validated.sort(
+            key=lambda item: (
+                item.instrument_id.casefold(),
+                item.symbol,
+                item.evidence_id,
+            )
+        )
         included = [
             item
             for item in validated
@@ -311,6 +323,7 @@ class RecommendationNewsSynthesisService:
             assessed_count=len(validated),
             included_count=len(included),
             excluded_count=len(validated) - len(included),
+            assessments=tuple(validated),
             items=tuple(included),
         )
 
