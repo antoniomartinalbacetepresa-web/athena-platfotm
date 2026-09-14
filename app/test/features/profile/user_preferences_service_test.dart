@@ -68,7 +68,7 @@ void main() {
     final client = MockClient((request) async {
       captured = request;
       return http.Response(
-        '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","availableCapital":25000.5},"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":25000.5},"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
         200,
       );
     });
@@ -95,6 +95,7 @@ void main() {
       'investmentHorizonYears': 15,
       'baseCurrency': 'EUR',
       'objective': 'long_term_growth',
+      'language': 'es',
       'availableCapital': 25000.5,
     });
     expect(body.containsKey('ownerUserId'), isFalse);
@@ -102,10 +103,11 @@ void main() {
     expect(body.containsKey('automaticTrading'), isFalse);
     expect(body.containsKey('productionEligible'), isFalse);
     expect(stored.baseCurrency, 'EUR');
+    expect(stored.language, 'es');
     expect(stored.availableCapital, 25000.5);
   });
 
-  test('load parses encrypted available capital returned by backend', () async {
+  test('legacy profile response defaults language to Spanish', () async {
     session.establish(accessToken: 'profile.jwt', account: account());
     final client = MockClient((request) async => http.Response(
           '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","availableCapital":75000}},"policy":{"sensitivePreferencesEncrypted":true}}',
@@ -120,8 +122,24 @@ void main() {
     final stored = await service.load();
 
     expect(stored, isNotNull);
-    expect(stored!.availableCapital, 75000.0);
+    expect(stored!.language, UserPreferences.defaultLanguage);
+    expect(stored.availableCapital, 75000.0);
     expect(stored.baseCurrency, 'USD');
+  });
+
+  test('unsupported server language fails closed in client parser', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+          '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","language":"en"}}}',
+          200,
+        ));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local',
+      client: client,
+      session: session,
+    );
+
+    await expectLater(service.load(), throwsA(isA<FormatException>()));
   });
 
   test('delete is authenticated and accepts only 204', () async {
