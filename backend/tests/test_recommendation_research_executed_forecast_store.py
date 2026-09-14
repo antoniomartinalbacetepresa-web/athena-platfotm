@@ -23,6 +23,25 @@ def persist(store, specification, raw):
     )
 
 
+def test_inference_generated_forecast_is_sealed_once(context, tmp_path):
+    import json
+    store, runner, template, raw = setup_store(context, tmp_path)
+    model = json.loads(raw)
+    model["coefficient"] = 0.0002
+    raw = json.dumps(model).encode()
+    result = store.generate_and_persist(specification_template=template, model_bytes=raw,
+                                       pinned_artifact_hash=hashlib.sha256(raw).hexdigest())
+    final = result["specification"]["artifact"]
+    assert final["expectedValue"] == 0.02
+    assert result["receipt"]["artifact"]["output"]["expectedValue"] == 0.02
+    assert template["expectedValue"] == 0.01
+    assert persist(store, final, raw)["reused"] is True
+    with pytest.raises(ValueError, match="identidad prospectiva nueva"):
+        store.generate_and_persist(specification_template=template, model_bytes=raw,
+                                   pinned_artifact_hash=hashlib.sha256(raw).hexdigest())
+    assert len(runner.calls) == 1
+
+
 def test_observed_execution_atomic_storage_and_gate(context, tmp_path, monkeypatch):
     store, runner, specification, raw = setup_store(context, tmp_path)
     result = persist(store, specification, raw)

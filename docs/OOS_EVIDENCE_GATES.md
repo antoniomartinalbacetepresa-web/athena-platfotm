@@ -1,5 +1,23 @@
 # Forecast-error OOS evidence gates
 
+## Inference-derived prospective forecasts
+
+The internal `generate_and_persist` workflow now calls the trusted executor's
+`generate` operation. The unpersisted specification template fixes identity,
+inputs, horizon and a forecast-availability deadline; its expected value is not
+evidence and does not constrain the output. Observed finite `total_return` and
+backend completion time determine the final expected value, availability and
+specification hash. The original template is unchanged. Exact inputs are
+revalidated, and the final specification and receipt-v2 are sealed atomically
+using the existing tables. No caller can submit an execution observation here.
+
+Generating against an existing identity/cycle-horizon is rejected before
+inference. Retry the finalized specification with `execute_and_persist` instead.
+Deployment still needs a real compatible runner, pinned model artifact and
+prospectively selected cohorts. Cross-process first inference is not serialized;
+write conflicts remain fail-closed. Synthetic runner regressions are software
+evidence only, not productive forecasts, skill, approval or promotion authority.
+
 Integrated workflow retries reload and validate an existing exact specification/
 receipt-v2 pair before invoking the runner. They require the same model bytes and
 deployment pin and preserve original execution identity and seal timestamps,

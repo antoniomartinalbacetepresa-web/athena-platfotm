@@ -42,6 +42,24 @@ def execute(executor, specification, model_bytes):
     )
 
 
+def test_generation_uses_observed_output_not_template_estimate(context, tmp_path):
+    executor, runner, spec, raw = setup_executor(context, tmp_path)
+    from copy import deepcopy
+    original = deepcopy(spec)
+    model = json.loads(raw)
+    model["coefficient"] = 0.0002
+    raw = json.dumps(model).encode()
+    result = executor.generate(specification_template=spec, model_bytes=raw,
+                               pinned_artifact_hash=hashlib.sha256(raw).hexdigest())
+    final = result["specification"]
+    assert final["expectedValue"] == 0.02
+    assert final["specificationHash"] != original["specificationHash"]
+    assert result["observation"]["specificationHash"] == final["specificationHash"]
+    assert final["forecastEvidence"]["availableAt"] == result["observation"]["executedAt"]
+    assert spec == original
+    assert len(runner.calls) == 1
+
+
 def test_executor_observes_real_runner_output_using_exact_bytes_and_payload(context, tmp_path):
     executor, runner, spec, raw = setup_executor(context, tmp_path)
     observed = execute(executor, spec, raw)

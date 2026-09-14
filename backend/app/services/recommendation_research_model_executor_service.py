@@ -40,6 +40,25 @@ class RecommendationResearchModelExecutorService:
         self, *, specification: dict[str, Any], model_bytes: bytes,
         pinned_artifact_hash: str,
     ) -> dict[str, Any]:
+        return self._execute(specification=specification, model_bytes=model_bytes,
+                             pinned_artifact_hash=pinned_artifact_hash, derive_forecast=False)
+
+    def generate(
+        self, *, specification_template: dict[str, Any], model_bytes: bytes,
+        pinned_artifact_hash: str,
+    ) -> dict[str, Any]:
+        """Internal inference-derived forecast; template availability is a deadline.
+
+        The template is not persisted evidence. Its expectedValue is ignored;
+        actual output and completion time determine the final specification.
+        """
+        return self._execute(specification=specification_template, model_bytes=model_bytes,
+                             pinned_artifact_hash=pinned_artifact_hash, derive_forecast=True)
+
+    def _execute(
+        self, *, specification: dict[str, Any], model_bytes: bytes,
+        pinned_artifact_hash: str, derive_forecast: bool,
+    ) -> dict[str, Any]:
         original_specification = specification
         specification_digest = self._hash(specification)
         # A caller/runner closure may retain the original dictionary. Never
@@ -98,8 +117,17 @@ class RecommendationResearchModelExecutorService:
             raise ValueError("El output observado debe ser numérico finito.") from exc
         if not math.isfinite(value):
             raise ValueError("El output observado debe ser numérico finito.")
-        if value != specification["expectedValue"]:
+        if not derive_forecast and value != specification["expectedValue"]:
             raise ValueError("El output observado no coincide con la previsión prospectiva.")
+        if derive_forecast:
+            specification["expectedValue"] = value
+            specification["forecastEvidence"]["availableAt"] = completed_at.isoformat()
+            keys = ("artifactVersion", "specificationId", "cycleHash", "instrumentId", "symbol", "cycleAsOf", "metric", "periodStart", "periodEnd", "horizonSeconds", "expectedValue", "forecastEvidence", "inputEvidence")
+            specification["specificationHash"] = self._hash({key: specification[key] for key in keys})
+            RecommendationResearchEvaluationSpecificationService().validate_artifact(specification)
+            snapshot = self._manifest.materialize_specification(specification)
+            if self._hash(snapshot["inputs"]) != input_snapshot_hash:
+                raise ValueError("Los inputs cambiaron al construir la previsión observada.")
         observed_output = {"metric": "total_return", "expectedValue": float(value)}
         core = {
             "artifactVersion": "research-model-execution-observation-v1",
@@ -118,9 +146,12 @@ class RecommendationResearchModelExecutorService:
             "productionEligible": False, "productionLearningEligible": False,
             "automaticProductionPromotion": False, "automaticTrading": False,
         }
-        return self.validate_observation(
+        validated = self.validate_observation(
             observation=observation, specification=specification, model_bytes=model_bytes,
         )
+        if derive_forecast:
+            return {"specification": specification, "observation": validated}
+        return validated
 
     def validate_observation(
         self, *, observation: dict[str, Any], specification: dict[str, Any],

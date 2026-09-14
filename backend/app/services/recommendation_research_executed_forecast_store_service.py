@@ -76,6 +76,37 @@ class RecommendationResearchExecutedForecastStoreService:
             specification=specification, model_bytes=model_bytes,
             pinned_artifact_hash=pinned_artifact_hash,
         )
+        return self._persist_observed(specification=specification, observation=observation, model_bytes=model_bytes)
+
+    def generate_and_persist(
+        self, *, specification_template: dict[str, Any], model_bytes: bytes, pinned_artifact_hash: str,
+    ) -> dict[str, Any]:
+        """Generate a new forecast from inference, then atomically seal both records.
+
+        Existing identities fail closed: retries must use the original finalized
+        specification with execute_and_persist, not generate another output.
+        """
+        RecommendationResearchEvaluationSpecificationService().validate_artifact(specification_template)
+        self.specifications.initialize()
+        self.receipts.initialize()
+        with self._database.connect() as connection:
+            existing = connection.execute(
+                "SELECT 1 FROM athena_research_evaluation_specifications "
+                "WHERE specification_id = ? OR (cycle_hash = ? AND horizon_seconds = ?)",
+                (specification_template["specificationId"], specification_template["cycleHash"], specification_template["horizonSeconds"]),
+            ).fetchone()
+        if existing is not None:
+            raise ValueError("La generación requiere una identidad prospectiva nueva; reutilice la specification final original.")
+        generated = self._executor.generate(
+            specification_template=specification_template, model_bytes=model_bytes,
+            pinned_artifact_hash=pinned_artifact_hash,
+        )
+        return self._persist_observed(specification=generated["specification"],
+                                      observation=generated["observation"], model_bytes=model_bytes)
+
+    def _persist_observed(
+        self, *, specification: dict[str, Any], observation: dict[str, Any], model_bytes: bytes,
+    ) -> dict[str, Any]:
         snapshot = self._executor._manifest.materialize_specification(specification)
         # Validate payloads before acquiring the database write lock. Repository
         # read initialization also writes schema metadata on this legacy database.
