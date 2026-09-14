@@ -21,6 +21,7 @@ class UserAccountRepository:
     _TABLE = "athena_user_accounts"
     _PROFILE_TABLE = "athena_user_profile_preferences"
     _PORTFOLIO_TABLE = "athena_user_portfolio_positions"
+    _SESSION_TABLE = "athena_auth_user_sessions"
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -103,6 +104,61 @@ class UserAccountRepository:
                 (normalized_hash, now, int(user_id)),
             )
         return int(cursor.rowcount or 0) == 1
+
+    def update_password_hash_and_rotate_sessions(
+        self,
+        *,
+        user_id: int,
+        password_hash: str,
+    ) -> bool:
+        """Rotate the credential and session version in one transaction.
+
+        A password change is not secure if the new credential commits while old
+        bearer sessions remain valid. The account hash and the canonical session
+        version therefore share one SQLite write transaction: any failure in the
+        session rotation rolls the password update back as well.
+        """
+        normalized_user_id = int(user_id)
+        if normalized_user_id <= 0:
+            return False
+        normalized_hash = self._required(password_hash, "password_hash")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            password_updated = connection.execute(
+                f"""
+                UPDATE {self._TABLE}
+                SET password_hash = ?, updated_at = ?
+                WHERE id = ? AND is_active = 1
+                """,
+                (normalized_hash, now, normalized_user_id),
+            )
+            if int(password_updated.rowcount or 0) != 1:
+                connection.rollback()
+                return False
+
+            connection.execute(
+                f"""
+                INSERT OR IGNORE INTO {self._SESSION_TABLE} (
+                    user_id, session_version, updated_at
+                ) VALUES (?, 1, ?)
+                """,
+                (normalized_user_id, now),
+            )
+            session_rotated = connection.execute(
+                f"""
+                UPDATE {self._SESSION_TABLE}
+                SET session_version = session_version + 1,
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (now, normalized_user_id),
+            )
+            if int(session_rotated.rowcount or 0) != 1:
+                connection.rollback()
+                return False
+            connection.commit()
+        return True
 
     def deactivate(self, *, user_id: int) -> bool:
         """Deactivate one account without deleting audit-relevant identity data."""
