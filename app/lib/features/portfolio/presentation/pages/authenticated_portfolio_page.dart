@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../auth/services/auth_session.dart';
 import '../../models/portfolio_position.dart';
+import '../../services/authenticated_portfolio_service.dart';
 import '../../services/portfolio_service.dart';
 import '../controllers/portfolio_cloud_sync_controller.dart';
 import '../widgets/authenticated_portfolio_history_panel.dart';
@@ -19,11 +20,13 @@ class AuthenticatedPortfolioPage extends StatefulWidget {
     super.key,
     this.positionsLoader,
     this.syncController,
+    this.historyService,
     this.child,
   });
 
   final PortfolioPositionsLoader? positionsLoader;
   final PortfolioCloudSyncController? syncController;
+  final AuthenticatedPortfolioService? historyService;
   final Widget? child;
 
   @override
@@ -68,17 +71,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   Future<void> _syncDeclaredPositions() async {
     if (_syncController.isSyncing) return;
-    if (!AuthSession.instance.isAuthenticated) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Inicia sesión para sincronizar posiciones con tu cuenta ATHENA.',
-          ),
-        ),
-      );
-      return;
-    }
+    if (!AuthSession.instance.isAuthenticated) return;
 
     try {
       final positions = await _loadDeclaredPositions();
@@ -99,37 +92,39 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       await AuthSession.instance.clearAfterRemoteInvalidation();
     }
 
-    if (!mounted || _syncController.message == null) return;
+    if (!mounted) return;
+    setState(() {});
+    if (_syncController.message == null) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(_syncController.message!)),
     );
   }
 
   Future<void> _openAuthenticatedHistory() async {
-    if (!AuthSession.instance.isAuthenticated) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Inicia sesión para consultar el historial de tu cuenta ATHENA.',
-          ),
-        ),
-      );
-      return;
-    }
+    if (!AuthSession.instance.isAuthenticated) return;
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => const FractionallySizedBox(
+      builder: (context) => FractionallySizedBox(
         heightFactor: 0.78,
-        child: AuthenticatedPortfolioHistoryPanel(),
+        child: AuthenticatedPortfolioHistoryPanel(
+          service: widget.historyService,
+        ),
       ),
     );
+
+    if (!mounted) return;
+    // The history surface can discover that the server no longer accepts the
+    // credential. Rebuild the parent after the modal closes so authenticated
+    // controls cannot keep looking available after that authoritative reject.
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
+    final isAuthenticated = AuthSession.instance.isAuthenticated;
     return Stack(
       children: [
         widget.child ?? const PortfolioPage(),
@@ -141,19 +136,35 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                if (!isAuthenticated) ...[
+                  const Card(
+                    key: Key('portfolio-authentication-required'),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Text(
+                        'Inicia sesión para usar el historial y la sincronización de cuenta.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 FloatingActionButton.small(
                   key: const Key('portfolio-authenticated-history'),
                   heroTag: 'portfolio-authenticated-history',
-                  tooltip: 'Historial de cuenta',
-                  onPressed: _openAuthenticatedHistory,
+                  tooltip: isAuthenticated
+                      ? 'Historial de cuenta'
+                      : 'Inicia sesión para consultar el historial',
+                  onPressed: isAuthenticated ? _openAuthenticatedHistory : null,
                   child: const Icon(Icons.history),
                 ),
                 const SizedBox(height: 12),
                 FloatingActionButton.extended(
                   key: const Key('portfolio-authenticated-sync'),
                   heroTag: 'portfolio-authenticated-sync',
-                  onPressed:
-                      _syncController.isSyncing ? null : _syncDeclaredPositions,
+                  onPressed: !isAuthenticated || _syncController.isSyncing
+                      ? null
+                      : _syncDeclaredPositions,
                   icon: _syncController.isSyncing
                       ? const SizedBox(
                           width: 18,
@@ -162,9 +173,11 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
                         )
                       : const Icon(Icons.cloud_upload_outlined),
                   label: Text(
-                    _syncController.isSyncing
-                        ? 'Sincronizando…'
-                        : 'Sincronizar cuenta',
+                    !isAuthenticated
+                        ? 'Inicia sesión'
+                        : _syncController.isSyncing
+                            ? 'Sincronizando…'
+                            : 'Sincronizar cuenta',
                   ),
                 ),
               ],
