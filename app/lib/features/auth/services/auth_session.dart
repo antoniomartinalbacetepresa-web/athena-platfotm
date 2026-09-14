@@ -88,6 +88,20 @@ class AuthSession {
     _clearMemory();
   }
 
+  Future<bool> clearAfterRemoteInvalidation() async {
+    // Once the server has irreversibly invalidated the credential/account, the
+    // client must stop presenting an authenticated in-memory state even if the
+    // platform secure-storage deletion fails. A retained token is stale and is
+    // revalidated/rejected on the next restore attempt.
+    _clearMemory();
+    try {
+      await _tokenStore.deleteAccessToken();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   void clear() {
     _clearMemory();
     // Existing UI call sites use a synchronous clear contract. Remove the
