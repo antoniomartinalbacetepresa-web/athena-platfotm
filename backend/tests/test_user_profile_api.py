@@ -85,6 +85,8 @@ def test_preferences_are_owner_scoped_and_ciphertext_only(monkeypatch, tmp_path)
         assert stored.status_code == 200, stored.text
         body = stored.json()
         assert body["data"]["preferences"]["baseCurrency"] == "EUR"
+        assert body["data"]["preferences"]["language"] == "es"
+        assert "language" in body["policy"]["encryptedPreferenceFields"]
         assert body["policy"]["sensitivePreferencesEncrypted"] is True
         assert body["policy"]["encryption"] == "AES-256-GCM"
         assert body["policy"]["productionEligible"] is False
@@ -99,6 +101,7 @@ def test_preferences_are_owner_scoped_and_ciphertext_only(monkeypatch, tmp_path)
         )
         assert own.status_code == 200
         assert own.json()["status"] == "configured"
+        assert own.json()["data"]["preferences"]["language"] == "es"
         assert foreign.status_code == 200
         assert foreign.json()["status"] == "not_configured"
         assert foreign.json()["data"] is None
@@ -112,6 +115,20 @@ def test_preferences_are_owner_scoped_and_ciphertext_only(monkeypatch, tmp_path)
     assert "balanced" not in serialized
     assert "long_term_growth" not in serialized
     assert "EUR" not in serialized
+
+
+def test_profile_language_is_spanish_only_until_multilingual_ui_exists(monkeypatch, tmp_path) -> None:
+    _configure(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token = _register_and_token(client, email="profile-language@example.com")
+        payload = _preferences()
+        payload["language"] = "en"
+        response = client.put(
+            "/api/v1/user/profile/preferences",
+            headers=_headers(token),
+            json=payload,
+        )
+    assert response.status_code == 422
 
 
 def test_client_cannot_supply_owner_or_unknown_fields(monkeypatch, tmp_path) -> None:
