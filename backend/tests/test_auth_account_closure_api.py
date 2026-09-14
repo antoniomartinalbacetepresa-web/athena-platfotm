@@ -45,7 +45,7 @@ def test_close_account_requires_current_password_and_preserves_account_on_failur
     ).status_code == 200
 
 
-def test_close_account_deactivates_identity_revokes_sessions_and_blocks_relogin(monkeypatch, tmp_path: Path) -> None:
+def test_close_account_anonymizes_identity_revokes_sessions_and_blocks_relogin(monkeypatch, tmp_path: Path) -> None:
     first_token = _register_and_login(monkeypatch, tmp_path)
     second_login = client.post(
         "/api/v1/auth/token",
@@ -73,9 +73,9 @@ def test_close_account_deactivates_identity_revokes_sessions_and_blocks_relogin(
     )
     assert relogin.status_code == 401
 
-    account = UserAccountRepository().get_by_email("close@example.com")
-    assert account is not None
-    assert int(account["is_active"]) == 0
+    # Closure must release the original direct identifier rather than retaining
+    # a queryable inactive identity under the person's email address.
+    assert UserAccountRepository().get_by_email("close@example.com") is None
 
 
 def test_closed_account_cannot_be_recovered(monkeypatch, tmp_path: Path) -> None:
@@ -87,7 +87,7 @@ def test_closed_account_cannot_be_recovered(monkeypatch, tmp_path: Path) -> None
     ).status_code == 204
 
     # The public endpoint stays enumeration-safe. The service contract guarantees
-    # inactive accounts do not receive a usable challenge.
+    # closed/anonymized accounts do not receive a usable challenge.
     from app.services.password_recovery_service import PasswordRecoveryService
 
     assert PasswordRecoveryService().request(email="close@example.com") is None
