@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -67,10 +68,12 @@ class AuthService:
         return True
 
     def close_account(self, *, user_id: int, current_password: str) -> bool:
-        """Deactivate an account after re-authentication and revoke all sessions.
+        """Close an account after re-authentication, minimizing retained identity PII.
 
-        Deactivation happens before session-version rotation so a failure in the
-        latter still fails closed: account_from_token rejects inactive accounts.
+        A stable numeric id remains for referential/audit integrity, but the direct
+        email, display name and old credential hash are replaced before all
+        sessions are rotated. If session rotation later fails, inactive account
+        state still causes token validation to fail closed.
         """
         account = self._repository.get_by_id(int(user_id))
         if account is None or int(account.get("is_active") or 0) != 1:
@@ -78,7 +81,11 @@ class AuthService:
         stored_hash = str(account.get("password_hash") or "")
         if not stored_hash or not self._password_hash.verify(str(current_password or ""), stored_hash):
             return False
-        if not self._repository.deactivate(user_id=int(user_id)):
+        replacement_hash = self._password_hash.hash(secrets.token_urlsafe(48))
+        if not self._repository.close_and_anonymize(
+            user_id=int(user_id),
+            replacement_password_hash=replacement_hash,
+        ):
             return False
         self._security_repository.revoke_all_sessions(user_id=int(user_id))
         return True
