@@ -28,6 +28,19 @@ class PersistedMarketForecastInputService:
         knowledge_cutoff: datetime,
         forecast_available_at: datetime,
     ) -> list[dict[str, str]]:
+        return [item["evidence"] for item in self.materialize(
+            selections=selections, knowledge_cutoff=knowledge_cutoff,
+            forecast_available_at=forecast_available_at,
+        )]
+
+    def materialize(
+        self,
+        *,
+        selections: list[dict[str, object]],
+        knowledge_cutoff: datetime,
+        forecast_available_at: datetime,
+    ) -> list[dict[str, Any]]:
+        """Return the same exact persisted row that produced its content hash."""
         cutoff = self._aware(knowledge_cutoff, "knowledge_cutoff")
         forecast_at = self._aware(forecast_available_at, "forecast_available_at")
         if forecast_at < cutoff:
@@ -35,7 +48,7 @@ class PersistedMarketForecastInputService:
         if not isinstance(selections, list) or not 1 <= len(selections) <= 200:
             raise ValueError("Se requieren entre 1 y 200 observaciones de mercado persistidas.")
 
-        inputs: list[dict[str, str]] = []
+        inputs: list[dict[str, Any]] = []
         seen_refs: set[str] = set()
         for selection in selections:
             if not isinstance(selection, dict):
@@ -75,15 +88,14 @@ class PersistedMarketForecastInputService:
             content_hash = hashlib.sha256(
                 json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
             ).hexdigest()
-            inputs.append(
-                {
-                    "source": provider,
-                    "sourceRef": source_ref,
-                    "availableAt": retrieved_at.isoformat(),
-                    "contentHash": content_hash,
-                }
-            )
-        return sorted(inputs, key=lambda item: item["sourceRef"])
+            evidence = {
+                "source": provider,
+                "sourceRef": source_ref,
+                "availableAt": retrieved_at.isoformat(),
+                "contentHash": content_hash,
+            }
+            inputs.append({"evidence": evidence, "content": row})
+        return sorted(inputs, key=lambda item: item["evidence"]["sourceRef"])
 
     def verify_specification(self, artifact: dict[str, Any]) -> None:
         inputs = artifact.get("inputEvidence")

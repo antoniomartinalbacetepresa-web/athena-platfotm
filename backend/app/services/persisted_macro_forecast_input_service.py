@@ -28,6 +28,16 @@ class PersistedMacroForecastInputService:
         self, *, observation_keys: list[str], knowledge_cutoff: datetime,
         forecast_available_at: datetime,
     ) -> list[dict[str, str]]:
+        return [item["evidence"] for item in self.materialize(
+            observation_keys=observation_keys, knowledge_cutoff=knowledge_cutoff,
+            forecast_available_at=forecast_available_at,
+        )]
+
+    def materialize(
+        self, *, observation_keys: list[str], knowledge_cutoff: datetime,
+        forecast_available_at: datetime,
+    ) -> list[dict[str, Any]]:
+        """Return the exact content used to hash each validated persisted input."""
         cutoff = self._aware(knowledge_cutoff, "knowledge_cutoff")
         forecast_at = self._aware(forecast_available_at, "forecast_available_at")
         if forecast_at < cutoff:
@@ -53,12 +63,13 @@ class PersistedMacroForecastInputService:
                 content, sort_keys=True, separators=(",", ":"),
                 ensure_ascii=False, allow_nan=False,
             ).encode("utf-8")).hexdigest()
-            inputs.append({
+            evidence = {
                 "source": artifact["sourceProvider"],
                 "sourceRef": self.PREFIX + key,
                 "availableAt": max(published_at, persisted_at).isoformat(),
                 "contentHash": content_hash,
-            })
+            }
+            inputs.append({"evidence": evidence, "content": content})
         return inputs
 
     def verify_specification(self, artifact: dict[str, Any]) -> None:

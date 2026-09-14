@@ -1,5 +1,28 @@
 # Forecast-error OOS evidence gates
 
+## Materialized execution inputs
+
+`PersistedForecastInputManifestService.materialize_specification` validates v3,
+resolves only the supported macro/market namespaces, and returns a detached
+snapshot with `specificationHash`, `inputManifestHash` and exact input content.
+Macro content is the validated observation artifact plus normalized persistence
+timestamp; market content is the exact persisted row. These are the same objects
+used to calculate each evidence `contentHash`, loaded once per selection rather
+than verified and then independently reread. Mixed families retain canonical
+`sourceRef` ordering and the 200-input bound.
+
+The reconstructed evidence must exactly match the supplied manifest. Missing,
+changed, late or unsupported inputs fail closed; caller modifications to the
+returned snapshot do not modify persistence or the original manifest. Family
+`resolve` methods retain their existing evidence-only contracts and reuse these
+materializers, avoiding a parallel data path or database.
+
+This is an internal payload adapter for a future trusted executor, not a public
+endpoint, new predictive model, model run or production forecast. It does not
+establish source quality, atomic cross-repository snapshots, external timestamp
+attestation or predictive skill. Model execution/artifact availability and
+prospective longitudinal evidence remain separate open gates.
+
 ## Receipt seal chain and retry semantics
 
 Receipt validation independently requires a timezone-aware physical specification
