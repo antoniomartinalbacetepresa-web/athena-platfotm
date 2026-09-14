@@ -1,5 +1,15 @@
 # Forecast-error OOS evidence gates
 
+## Manual prospective operations
+
+From `backend`, use `PYTHONPATH=. python scripts/prospective_cohort.py` with
+`register --cohort-id ID --specification-hash HASH` (repeat the hash option for
+each member), `show --cohort-id ID`, or `coverage --cohort-id ID` with optional
+repeated `--evaluated-specification-hash HASH`. These operations reuse the ledger
+and `ATHENA_DATABASE_PATH`. Registration revalidates observed v3 forecasts and
+their ex-ante seals. Coverage remains reference accounting and explicitly does
+not verify outcomes. No runner, policy approval, promotion or trading is invoked.
+
 ## Observed v3 errors replay their outcomes
 
 Replay requires both physical outcome persistence and outcome `asOf` to be no
