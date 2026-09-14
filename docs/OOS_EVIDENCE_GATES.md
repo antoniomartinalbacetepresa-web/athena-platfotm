@@ -1,5 +1,13 @@
 # Forecast-error OOS evidence gates
 
+## Policy approval precedes the evaluation start
+
+Longitudinal measurement reports the earliest measured `periodStart` as
+`firstEvaluationPeriodStart`. Governed sufficiency requires policy approval
+strictly before that start, not merely before the first outcome matures. Missing
+start metadata cannot substitute an end timestamp and fails closed. This changes
+no quantitative thresholds and grants no production or trading authority.
+
 ## Governed HTTP evaluation requires prospective selection
 
 `POST /forecast-error-oos-governed` requires both an outcome `cohortHash` and

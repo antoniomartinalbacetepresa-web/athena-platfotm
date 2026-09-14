@@ -203,6 +203,7 @@ class RecommendationResearchForecastErrorOosService:
             "unresolvedIssuerErrorCount": 0,
             "distinctResolvedIssuerCount": 0,
             "maximumErrorsPerResolvedIssuer": 0,
+            "firstEvaluationPeriodStart": None,
             "firstEvaluationPeriodEnd": None,
             "lastEvaluationPeriodEnd": None,
             "distinctEvaluationPeriodCount": 0,
@@ -242,6 +243,7 @@ class RecommendationResearchForecastErrorOosService:
     def _longitudinal_summary(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not rows:
             return {
+                "firstEvaluationPeriodStart": None,
                 "firstEvaluationPeriodEnd": None,
                 "lastEvaluationPeriodEnd": None,
                 "distinctEvaluationPeriodCount": 0,
@@ -258,6 +260,9 @@ class RecommendationResearchForecastErrorOosService:
         last = period_ends[-1]
         span_days = (last - first).total_seconds() / 86400.0
         return {
+            "firstEvaluationPeriodStart": min(
+                self._aware_iso(item.get("periodStart"), "error.periodStart") for item in rows
+            ).isoformat(),
             "firstEvaluationPeriodEnd": first.isoformat(),
             "lastEvaluationPeriodEnd": last.isoformat(),
             "distinctEvaluationPeriodCount": len(period_ends),

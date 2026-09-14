@@ -31,6 +31,7 @@ def _measurement(*, first_period_end: datetime | None = None) -> dict:
         "measurementCoverage": 1.0,
         "distinctResolvedIssuerCount": 24,
         "distinctEvaluationPeriodCount": 8,
+        "firstEvaluationPeriodStart": (first - timedelta(hours=1)).isoformat(),
         "firstEvaluationPeriodEnd": first.isoformat(),
         "lastEvaluationPeriodEnd": last.isoformat(),
         "evaluationSpanDays": 210.0,

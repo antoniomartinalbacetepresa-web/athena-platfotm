@@ -109,6 +109,7 @@ def test_forecast_error_oos_distinguishes_snapshot_from_longitudinal_observation
     )
 
     assert longitudinal["distinctEvaluationPeriodCount"] == 2
+    assert longitudinal["firstEvaluationPeriodStart"] == first["periodStart"]
     assert longitudinal["evaluationSpanDays"] == 59.0
     assert longitudinal["longitudinalEvidenceStatus"] == "multiple_evaluation_periods_observed"
     assert longitudinal["firstEvaluationPeriodEnd"] < longitudinal["lastEvaluationPeriodEnd"]

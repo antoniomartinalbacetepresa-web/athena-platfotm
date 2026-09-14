@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import pytest
 
 from app.services.longitudinal_oos_sufficiency_policy_service import (
     LongitudinalOosSufficiencyPolicyService,
@@ -52,6 +53,7 @@ def _measurement() -> dict[str, object]:
         "eligibleOutcomeCount": 12,
         "forecastErrorCount": 12,
         "distinctResolvedIssuerCount": 5,
+        "firstEvaluationPeriodStart": "2026-01-01T12:00:00+00:00",
         "firstEvaluationPeriodEnd": "2026-01-02T00:00:00+00:00",
         "lastEvaluationPeriodEnd": "2026-02-11T00:00:00+00:00",
         "horizons": {
@@ -59,6 +61,33 @@ def _measurement() -> dict[str, object]:
             "2592000": {"forecastErrorCount": 6},
         },
     }
+
+
+@pytest.mark.parametrize("start", [None, "2025-12-31T00:00:00+00:00", "2026-01-01T00:00:00+00:00"])
+def test_approval_before_end_is_not_precommitment_without_an_earlier_period_start(start):
+    policy = _policy()
+    measurement = _measurement()
+    measurement["firstEvaluationPeriodStart"] = start
+    result = LongitudinalOosSufficiencyPolicyService().evaluate(
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        measurement=measurement, policy_record=policy,
+        approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+    )
+    assert result["policyApproved"] is True
+    assert result["temporalPrecommitmentVerified"] is False
+    assert result["acceptanceEvidenceVerified"] is False
+
+
+def test_period_start_without_timezone_cannot_prove_precommitment():
+    policy = _policy()
+    measurement = _measurement()
+    measurement["firstEvaluationPeriodStart"] = "2026-01-01T12:00:00"
+    with pytest.raises(ValueError, match="timezone"):
+        LongitudinalOosSufficiencyPolicyService().evaluate(
+            as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
+            measurement=measurement, policy_record=policy,
+            approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+        )
 
 
 def test_no_policy_or_approval_cannot_claim_sufficiency() -> None:
