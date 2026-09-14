@@ -95,6 +95,10 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       return;
     }
 
+    if (_syncController.sessionRejected) {
+      await AuthSession.instance.clearAfterRemoteInvalidation();
+    }
+
     if (!mounted || _syncController.message == null) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(_syncController.message!)),
