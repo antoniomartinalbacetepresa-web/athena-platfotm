@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
+import '../../../auth/services/athena_auth_account_closure.dart';
 
 class AccountClosurePanel extends StatefulWidget {
   const AccountClosurePanel({
@@ -50,12 +51,19 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
       await widget.onClose(_passwordController.text);
       if (!mounted) return;
       widget.onClosed();
+    } on AccountClosureRejectedException {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error =
+            'La contraseña actual no es correcta. La cuenta sigue abierta y la sesión se conserva.';
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _busy = false;
         _error =
-            'No se pudo cerrar la cuenta. Comprueba la contraseña actual y vuelve a intentarlo.';
+            'No se pudo confirmar el cierre de la cuenta. Vuelve a intentarlo cuando el servicio esté disponible.';
       });
     }
   }
