@@ -62,10 +62,10 @@ class AuthService:
         if self._password_hash.verify(normalized_password, stored_hash):
             raise ValueError("La nueva contraseña debe ser diferente de la actual.")
         password_hash = self._password_hash.hash(normalized_password)
-        if not self._repository.update_password_hash(user_id=int(user_id), password_hash=password_hash):
-            return False
-        self._security_repository.revoke_all_sessions(user_id=int(user_id))
-        return True
+        return self._repository.update_password_hash_and_rotate_sessions(
+            user_id=int(user_id),
+            password_hash=password_hash,
+        )
 
     def close_account(self, *, user_id: int, current_password: str) -> bool:
         """Close an account after re-authentication, minimizing retained identity PII.
