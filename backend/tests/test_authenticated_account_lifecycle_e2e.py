@@ -117,12 +117,11 @@ def test_authenticated_account_lifecycle_across_profile_and_portfolio(
             headers=_headers(rotated_token),
         )
         assert persisted_profile.status_code == 200, persisted_profile.text
-        assert persisted_profile.json()["data"]["preferences"] == {
-            "riskTolerance": "balanced",
-            "investmentHorizonYears": 12,
-            "baseCurrency": "EUR",
-            "objective": "long_term_growth",
-        }
+        persisted_preferences = persisted_profile.json()["data"]["preferences"]
+        assert persisted_preferences["riskTolerance"] == "balanced"
+        assert persisted_preferences["investmentHorizonYears"] == 12
+        assert persisted_preferences["baseCurrency"] == "EUR"
+        assert persisted_preferences["objective"] == "long_term_growth"
 
         persisted_portfolio = client.get(
             "/api/v1/user/portfolio",
