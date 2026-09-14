@@ -107,11 +107,18 @@ class AuthService:
         self._security_repository.clear_login_attempts(key=rate_key)
 
     def create_access_token(self, *, user_id: int, email: str) -> str:
+        """Create an opaque-enough bearer credential without duplicating identity PII.
+
+        JWT payloads are signed, not encrypted. Authorization only needs the stable
+        account id plus revocation/session claims, so the email is deliberately not
+        serialized into the token. ``email`` remains an input for caller compatibility
+        while older internal call sites are migrated; it must never enter the payload.
+        """
+        del email
         now = datetime.now(timezone.utc)
         session_version = self._security_repository.current_session_version(user_id=int(user_id))
         payload = {
             "sub": str(int(user_id)),
-            "email": str(email).strip().lower(),
             "jti": uuid.uuid4().hex,
             "sv": session_version,
             "iat": now,
