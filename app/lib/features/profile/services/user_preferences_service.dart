@@ -6,6 +6,15 @@ import '../../auth/services/auth_session.dart';
 import '../models/user_personalization.dart';
 import '../models/user_preferences.dart';
 
+class UserPreferencesSessionRejectedException implements Exception {
+  const UserPreferencesSessionRejectedException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class UserPreferencesService {
   static const String _defaultBackendUrl = String.fromEnvironment(
     'ATHENA_BACKEND_URL',
@@ -96,6 +105,9 @@ class UserPreferencesService {
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
       headers: _authenticatedHeaders(),
     );
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw UserPreferencesSessionRejectedException(_errorMessage(response));
+    }
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
@@ -113,6 +125,9 @@ class UserPreferencesService {
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw UserPreferencesSessionRejectedException(_errorMessage(response));
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(response));
     }
