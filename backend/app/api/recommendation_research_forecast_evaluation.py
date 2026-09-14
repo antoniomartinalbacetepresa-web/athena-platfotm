@@ -183,7 +183,12 @@ def _verify_persisted_macro_inputs(artifact: dict[str, object]) -> None:
 def _verify_model_execution_receipt_if_required(
     specification_record: dict[str, object],
 ) -> None:
-    """Fail closed for v3 while keeping legacy v1/v2 evaluation compatible."""
+    """Fail closed for v3 while keeping legacy v1/v2 evaluation compatible.
+
+    Receipt v1 is declarative metadata only: the public endpoint accepts a claimed
+    artifact hash and execution timestamp but does not load model bytes or observe
+    runner output. It therefore cannot qualify a v3 forecast for OOS evidence.
+    """
     artifact = specification_record.get("artifact")
     if not isinstance(artifact, dict):
         raise ValueError("Evaluation specification persistida carece de artifact válido.")
@@ -192,10 +197,18 @@ def _verify_model_execution_receipt_if_required(
     specification_hash = specification_record.get("specification_hash")
     if not isinstance(specification_hash, str):
         raise ValueError("Evaluation specification v3 perdió specification_hash persistido.")
-    model_execution_receipt_repository.get_by_specification_hash(
+    receipt_record = model_execution_receipt_repository.get_by_specification_hash(
         specification_hash=specification_hash,
         specification_record=specification_record,
     )
+    receipt = receipt_record.get("artifact")
+    if not isinstance(receipt, dict):
+        raise ValueError("Model execution receipt persistido carece de artifact válido.")
+    if receipt.get("artifactVersion") != "research-model-execution-receipt-v2":
+        raise ValueError(
+            "El model execution receipt es declarativo y no demuestra bytes de modelo ni output observado; "
+            "no puede calificar como evidencia OOS v3."
+        )
 
 
 def _persist_evaluation_specification(
@@ -260,7 +273,7 @@ def post_model_execution_receipt(
     specification_hash: str,
     request: ModelExecutionReceiptRequest,
 ) -> dict[str, object]:
-    """Bind a v3 forecast to one exact, PIT-ordered model execution."""
+    """Persist declarative v1 execution metadata; it is not sufficient for OOS v3."""
     executed_at = _aware_utc(request.executedAt, "executedAt")
     try:
         specification_record = specification_repository.get_by_hash(

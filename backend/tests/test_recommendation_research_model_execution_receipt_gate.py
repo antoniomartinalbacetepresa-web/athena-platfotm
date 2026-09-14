@@ -6,8 +6,16 @@ from app.api import recommendation_research_forecast_evaluation as api
 
 
 class _ReceiptRepositorySpy:
-    def __init__(self, *, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        artifact_version: str = "research-model-execution-receipt-v2",
+        artifact: object | None = None,
+    ) -> None:
         self.error = error
+        self.artifact_version = artifact_version
+        self.artifact = artifact
         self.calls: list[tuple[str, dict[str, object]]] = []
 
     def get_by_specification_hash(
@@ -19,7 +27,10 @@ class _ReceiptRepositorySpy:
         self.calls.append((specification_hash, specification_record))
         if self.error is not None:
             raise self.error
-        return {"receipt_hash": "a" * 64, "artifact": {}}
+        artifact = self.artifact
+        if artifact is None:
+            artifact = {"artifactVersion": self.artifact_version}
+        return {"receipt_hash": "a" * 64, "artifact": artifact}
 
 
 def _record(version: str) -> dict[str, object]:
@@ -29,7 +40,7 @@ def _record(version: str) -> dict[str, object]:
     }
 
 
-def test_v3_gate_requires_persisted_execution_receipt(monkeypatch):
+def test_v3_gate_requires_verified_v2_execution_receipt(monkeypatch):
     repository = _ReceiptRepositorySpy()
     monkeypatch.setattr(api, "model_execution_receipt_repository", repository)
     record = _record("research-evaluation-specification-v3")
@@ -39,6 +50,18 @@ def test_v3_gate_requires_persisted_execution_receipt(monkeypatch):
     assert repository.calls == [("b" * 64, record)]
 
 
+def test_v3_gate_rejects_declarative_v1_receipt(monkeypatch):
+    repository = _ReceiptRepositorySpy(
+        artifact_version="research-model-execution-receipt-v1"
+    )
+    monkeypatch.setattr(api, "model_execution_receipt_repository", repository)
+
+    with pytest.raises(ValueError, match="declarativo"):
+        api._verify_model_execution_receipt_if_required(
+            _record("research-evaluation-specification-v3")
+        )
+
+
 def test_v3_gate_fails_closed_when_receipt_is_missing(monkeypatch):
     repository = _ReceiptRepositorySpy(
         error=ValueError("La evaluation specification no tiene model execution receipt persistido.")
@@ -46,6 +69,16 @@ def test_v3_gate_fails_closed_when_receipt_is_missing(monkeypatch):
     monkeypatch.setattr(api, "model_execution_receipt_repository", repository)
 
     with pytest.raises(ValueError, match="no tiene model execution receipt"):
+        api._verify_model_execution_receipt_if_required(
+            _record("research-evaluation-specification-v3")
+        )
+
+
+def test_v3_gate_rejects_malformed_receipt_record(monkeypatch):
+    repository = _ReceiptRepositorySpy(artifact=[])
+    monkeypatch.setattr(api, "model_execution_receipt_repository", repository)
+
+    with pytest.raises(ValueError, match="carece de artifact válido"):
         api._verify_model_execution_receipt_if_required(
             _record("research-evaluation-specification-v3")
         )
