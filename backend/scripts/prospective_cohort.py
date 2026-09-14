@@ -39,15 +39,16 @@ def run(args: argparse.Namespace, *, service=None) -> dict:
     raise ValueError("Operación de cohorte desconocida.")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         result = run(args)
+        serialized = json.dumps(result, sort_keys=True, ensure_ascii=False, allow_nan=False)
     except Exception:
         # Do not leak storage details or partially validated evidence.
         parser.exit(1, "No se pudo verificar la operación prospectiva; no se concede autoridad productiva.\n")
-    print(json.dumps(result, sort_keys=True, ensure_ascii=False, allow_nan=False))
+    print(serialized)
     return 0
 
 
