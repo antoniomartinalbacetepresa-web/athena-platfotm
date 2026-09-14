@@ -15,11 +15,13 @@ class ProfilePersonalizationShell extends StatelessWidget {
     super.key,
     this.service,
     this.session,
+    this.accountLifecycleAuthService,
     this.child,
   });
 
   final UserPreferencesService? service;
   final AuthSession? session;
+  final AthenaAuthService? accountLifecycleAuthService;
   final Widget? child;
 
   @override
@@ -65,7 +67,8 @@ class ProfilePersonalizationShell extends StatelessWidget {
     AuthSession activeSession,
   ) async {
     if (!activeSession.isAuthenticated) return;
-    final authService = AthenaAuthService();
+    final ownsAuthService = accountLifecycleAuthService == null;
+    final authService = accountLifecycleAuthService ?? AthenaAuthService();
     final lifecycle = AccountLifecycleService(
       authService: authService,
       session: activeSession,
@@ -104,7 +107,7 @@ class ProfilePersonalizationShell extends StatelessWidget {
         ),
       );
     } finally {
-      authService.dispose();
+      if (ownsAuthService) authService.dispose();
     }
   }
 
