@@ -1,13 +1,29 @@
 import 'dart:convert';
 
+import 'package:app/core/routing/app_routes.dart';
 import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/auth/services/auth_token_store.dart';
 import 'package:app/features/profile/presentation/pages/profile_personalization_shell.dart';
 import 'package:app/features/profile/services/user_preferences_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+class _MemoryTokenStore implements AuthTokenStore {
+  String? value;
+
+  @override
+  Future<void> deleteAccessToken() async => value = null;
+
+  @override
+  Future<String?> readAccessToken() async => value;
+
+  @override
+  Future<void> writeAccessToken(String token) async => value = token;
+}
 
 void main() {
   final session = AuthSession.instance;
@@ -130,5 +146,64 @@ void main() {
     expect(find.byKey(const Key('personalization-error')), findsOneWidget);
     expect(find.text('Guiado'), findsNothing);
     expect(find.textContaining('weight'), findsNothing);
+  });
+
+  testWidgets(
+      'account closure runs authenticated transport, clears persisted session and returns to welcome',
+      (tester) async {
+    final store = _MemoryTokenStore();
+    final lifecycleSession = AuthSession.forTesting(store);
+    await lifecycleSession.establishPersisted(
+      accessToken: 'owner.jwt',
+      account: account(),
+    );
+    late http.Request captured;
+    final authService = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response('', 204);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {
+          AppRoutes.welcome: (_) => const Scaffold(body: Text('WELCOME')),
+        },
+        home: ProfilePersonalizationShell(
+          session: lifecycleSession,
+          accountLifecycleAuthService: authService,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('open-account-lifecycle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('account-closure-panel')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('account-closure-password')),
+      'test-current-passphrase',
+    );
+    await tester.enterText(
+      find.byKey(const Key('account-closure-confirmation')),
+      'ELIMINAR',
+    );
+    await tester.tap(find.byKey(const Key('account-closure-submit')));
+    await tester.pumpAndSettle();
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/close-account');
+    expect(captured.headers['Authorization'], 'Bearer owner.jwt');
+    expect(
+      (jsonDecode(captured.body) as Map<String, dynamic>)['currentPassword'],
+      'test-current-passphrase',
+    );
+    expect(lifecycleSession.isAuthenticated, isFalse);
+    expect(lifecycleSession.accessToken, isNull);
+    expect(store.value, isNull);
+    expect(find.text('WELCOME'), findsOneWidget);
   });
 }
