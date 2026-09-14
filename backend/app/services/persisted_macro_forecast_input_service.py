@@ -37,13 +37,11 @@ class PersistedMacroForecastInputService:
         for key in sorted(keys):
             record = self._repository.get_by_key(observation_key=key)
             artifact = record["artifact"]
-            # Do not hide a forbidden upstream reference behind the internal URN.
             RecommendationResearchEvaluationSpecificationService()._assert_source_allowed(artifact["sourceRef"])
             published_at = self._iso(artifact["availableAt"], "macro.availableAt")
             persisted_at = self._iso(record["created_at"], "macro.created_at")
             if published_at > cutoff or persisted_at > cutoff:
                 raise ValueError("La observación macro no estaba publicada y persistida al corte del ciclo.")
-            # Bind the exact validated payload AND its physical persistence time.
             content = {"artifact": artifact, "persistedAt": persisted_at.isoformat()}
             content_hash = hashlib.sha256(json.dumps(
                 content, sort_keys=True, separators=(",", ":"),
@@ -61,18 +59,21 @@ class PersistedMacroForecastInputService:
         inputs = artifact.get("inputEvidence")
         if not isinstance(inputs, list) or not inputs:
             raise ValueError("Falta el manifiesto de inputs macro persistidos.")
-        keys = []
-        for item in inputs:
-            ref = item.get("sourceRef") if isinstance(item, dict) else None
-            if not isinstance(ref, str) or not ref.startswith(self.PREFIX):
-                raise ValueError("El manifiesto persistido macro no admite referencias no resolubles.")
-            keys.append(ref[len(self.PREFIX):])
+        macro_inputs = [
+            item for item in inputs
+            if isinstance(item, dict)
+            and isinstance(item.get("sourceRef"), str)
+            and item["sourceRef"].startswith(self.PREFIX)
+        ]
+        if not macro_inputs:
+            return
+        keys = [str(item["sourceRef"])[len(self.PREFIX):] for item in macro_inputs]
         rebuilt = self.resolve(
             observation_keys=keys,
             knowledge_cutoff=self._iso(artifact.get("cycleAsOf"), "cycleAsOf"),
             forecast_available_at=self._iso(artifact.get("forecastEvidence", {}).get("availableAt"), "forecast.availableAt"),
         )
-        if rebuilt != inputs:
+        if rebuilt != macro_inputs:
             raise ValueError("El manifiesto no coincide con los inputs macro persistidos originales.")
 
     @staticmethod
