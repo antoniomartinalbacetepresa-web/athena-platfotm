@@ -27,6 +27,12 @@ class UserPreferencesRequest(BaseModel):
         "balanced_growth",
         "long_term_growth",
     ]
+    # MASTER_PROJECT defines language as part of Profile. ATHENA TYCHE v1 is
+    # Spanish-only, so the persisted contract is explicit and fail-closed rather
+    # than accepting languages the UI cannot actually deliver yet. The default
+    # keeps existing authenticated clients backward compatible while ensuring
+    # every newly stored encrypted profile carries an explicit language value.
+    language: Literal["es"] = "es"
     experienceLevel: Literal["beginner", "intermediate", "advanced"] | None = None
     liquidityNeed: Literal["low", "medium", "high"] | None = None
     maxDrawdownTolerancePct: int | None = Field(default=None, ge=5, le=60)
@@ -100,6 +106,7 @@ def _policy() -> dict[str, Any]:
             "investmentHorizonYears",
             "baseCurrency",
             "objective",
+            "language",
             "experienceLevel",
             "liquidityNeed",
             "maxDrawdownTolerancePct",
