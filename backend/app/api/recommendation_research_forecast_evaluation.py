@@ -510,6 +510,14 @@ def _load_oos_evidence(error_hashes: object) -> tuple[list[dict], list[dict]]:
             if not isinstance(outcome_hash, str):
                 raise ValueError("Forecast error v3 perdió outcomeHash.")
             outcome = outcome_repository.get_by_hash(outcome_hash=outcome_hash)
+            error_created = _aware_utc(datetime.fromisoformat(record["created_at"]), "error.created_at")
+            outcome_created = _aware_utc(datetime.fromisoformat(outcome["created_at"]), "outcome.created_at")
+            outcome_payload = outcome.get("payload")
+            if not isinstance(outcome_payload, dict):
+                raise ValueError("Outcome persistido perdió payload.")
+            outcome_available = _aware_utc(datetime.fromisoformat(outcome_payload["asOf"]), "outcome.asOf")
+            if max(outcome_created, outcome_available) > error_created:
+                raise ValueError("El outcome no estaba disponible y persistido al medir el forecast error.")
             rebuilt = error_service.evaluate(specification_record=specification, outcome_record=outcome)
             if rebuilt != artifact:
                 raise ValueError("Forecast error v3 no coincide con su outcome persistido revalidado.")

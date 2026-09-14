@@ -238,11 +238,13 @@ def test_governed_oos_endpoint_fails_closed_for_unknown_cohort(monkeypatch) -> N
     assert cohorts.calls == ["9" * 64]
 
 
-@pytest.mark.parametrize("state", ["valid", "missing", "modified"])
+@pytest.mark.parametrize("state", ["valid", "missing", "modified", "late_persistence", "late_availability"])
 def test_v3_oos_replays_persisted_outcome_before_using_error(monkeypatch, state):
     install_fakes(monkeypatch)
     artifact = {"specificationHash": SPEC_A, "outcomeHash": "7" * 64}
-    monkeypatch.setattr(api_module.error_repository, "get_by_hash", lambda **kw: {"artifact": artifact})
+    monkeypatch.setattr(api_module.error_repository, "get_by_hash", lambda **kw: {
+        "artifact": artifact, "created_at": "2026-09-01T00:00:00+00:00",
+    })
     monkeypatch.setattr(api_module.specification_repository, "get_by_hash", lambda **kw: {
         "artifact": {"artifactVersion": "research-evaluation-specification-v3"},
     })
@@ -253,10 +255,12 @@ def test_v3_oos_replays_persisted_outcome_before_using_error(monkeypatch, state)
         calls.append(outcome_hash)
         if state == "missing":
             raise ValueError("outcome inexistente")
-        return {"outcome_hash": outcome_hash}
+        return {"outcome_hash": outcome_hash,
+                "created_at": "2026-09-02T00:00:00+00:00" if state == "late_persistence" else "2026-08-31T00:00:00+00:00",
+                "payload": {"asOf": "2026-09-02T00:00:00+00:00" if state == "late_availability" else "2026-08-31T00:00:00+00:00"}}
     monkeypatch.setattr(api_module.outcome_repository, "get_by_hash", outcome_lookup)
     monkeypatch.setattr(api_module.error_service, "evaluate", lambda **kw: (
-        artifact if state == "valid" else {**artifact, "realizedValue": 99.0}
+        {**artifact, "realizedValue": 99.0} if state == "modified" else artifact
     ))
     if state == "valid":
         errors, _ = api_module._load_oos_evidence([ERROR_A])

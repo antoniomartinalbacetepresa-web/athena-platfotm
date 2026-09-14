@@ -2,6 +2,10 @@
 
 ## Observed v3 errors replay their outcomes
 
+Replay requires both physical outcome persistence and outcome `asOf` to be no
+later than the original error's persistence timestamp. Matching numeric content
+does not authorize a late-ingested outcome to qualify retrospectively.
+
 The shared OOS evidence loader also reloads each v3 error's original persisted
 outcome and recomputes the complete error artifact against its specification.
 Missing outcomes and discrepancies fail before descriptive summary construction,
