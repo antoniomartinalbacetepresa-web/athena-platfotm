@@ -56,7 +56,7 @@ class PersistedForecastInputManifestService:
             raise ValueError("El manifiesto PIT contiene referencias duplicadas.")
         if len(set(hashes)) != len(hashes):
             raise ValueError("El manifiesto PIT contiene contenido duplicado.")
-        return sorted(inputs, key=lambda item: (item["availableAt"], item["source"], item["sourceRef"], item["contentHash"]))
+        return sorted(inputs, key=lambda item: item["sourceRef"])
 
     def verify_specification(self, artifact: dict[str, Any]) -> None:
         inputs = artifact.get("inputEvidence")
