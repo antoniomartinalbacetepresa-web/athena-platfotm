@@ -16,8 +16,13 @@ class PersistedMacroForecastInputService:
     PREFIX = "urn:athena:macro-pit:"
     MARKET_PREFIX = "urn:athena:market-pit:"
 
-    def __init__(self, repository: RecommendationMacroPitObservationRepository | None = None):
+    def __init__(
+        self,
+        repository: RecommendationMacroPitObservationRepository | None = None,
+        market_service: Any | None = None,
+    ):
         self._repository = repository or RecommendationMacroPitObservationRepository()
+        self._market_service = market_service
 
     def resolve(
         self, *, observation_keys: list[str], knowledge_cutoff: datetime,
@@ -83,8 +88,11 @@ class PersistedMacroForecastInputService:
             and item["sourceRef"].startswith(self.MARKET_PREFIX)
         ]
         if market_inputs:
-            from app.services.persisted_market_forecast_input_service import PersistedMarketForecastInputService
-            PersistedMarketForecastInputService().verify_specification(artifact)
+            market_service = self._market_service
+            if market_service is None:
+                from app.services.persisted_market_forecast_input_service import PersistedMarketForecastInputService
+                market_service = PersistedMarketForecastInputService()
+            market_service.verify_specification(artifact)
 
         if len(macro_inputs) + len(market_inputs) != len(inputs):
             raise ValueError("El manifiesto persistido contiene inputs no resolubles por ATHENA.")
