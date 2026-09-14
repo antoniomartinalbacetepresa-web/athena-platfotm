@@ -1,5 +1,31 @@
 # Forecast-error OOS evidence gates
 
+## Integrated observed forecast persistence
+
+`RecommendationResearchExecutedForecastStoreService.execute_and_persist` is an
+internal deployment workflow, not an HTTP receipt endpoint. It invokes the trusted
+executor, validates the observed result, then persists the v3 specification and
+receipt v2 in one SQLite transaction using the existing two tables. A receipt
+write failure rolls back the specification insert; partial pairs cannot become
+evaluation evidence. Clock/deadline checks occur under the write lock.
+
+Receipt v2 binds the full execution observation and exact loaded JSON model bytes
+(base64), while retaining disabled production/trading flags. Read validation
+reconstructs original PIT payloads and checks observation/model/output bindings.
+The public/declarative repository write path rejects v2; HTTP still only creates
+v1 metadata, which cannot qualify for OOS. Model artifacts must contain only model
+data, never credentials or secrets; deployment owns runner selection and pinning.
+
+The atomic write uses an independently materialized, hash-checked payload snapshot
+validated before acquiring the lock, avoiding legacy schema-initialization writes
+from nested reads. Snapshot contents must still match each manifest content hash.
+Read paths reload persistence rather than trusting that write-time snapshot.
+This is not WORM storage or external timestamp attestation. It does not claim an
+atomic cross-provider snapshot, predictive skill, sufficient longitudinal evidence
+or human approval. A compatible real model, prospective cohort operations and
+natural horizon maturity remain operational gates; synthetic E2E tests demonstrate
+the software flow only. Duplicate executions cannot replace existing receipts.
+
 Execution observations now have a reusable `validate_observation` read/persistence
 boundary. It verifies the observation hash, disabled authority flags and exact
 specification, reconstructed manifest/payloads, model-byte identity, output and

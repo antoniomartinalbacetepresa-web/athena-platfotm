@@ -9,6 +9,7 @@ from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from app.services.persisted_forecast_input_manifest_service import PersistedForecastInputManifestService
+from app.services.recommendation_research_evaluation_specification_service import RecommendationResearchEvaluationSpecificationService
 from app.services.recommendation_research_model_execution_receipt_service import (
     RecommendationResearchModelExecutionReceiptService,
 )
@@ -124,6 +125,7 @@ class RecommendationResearchModelExecutorService:
     def validate_observation(
         self, *, observation: dict[str, Any], specification: dict[str, Any],
         model_bytes: bytes,
+        materialized_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Revalidate bindings for trusted persistence; not an origin attestation."""
         if not isinstance(observation, dict) or observation.get("artifactVersion") != "research-model-execution-observation-v1":
@@ -139,7 +141,14 @@ class RecommendationResearchModelExecutorService:
                 raise ValueError("La observación intentó activar autoridad productiva.")
         if not isinstance(observation.get("executionId"), str) or not observation["executionId"].strip():
             raise ValueError("La observación perdió executionId.")
-        snapshot = self._manifest.materialize_specification(specification)
+        snapshot = materialized_snapshot if materialized_snapshot is not None else self._manifest.materialize_specification(specification)
+        RecommendationResearchEvaluationSpecificationService().validate_artifact(specification)
+        if snapshot.get("specificationHash") != specification["specificationHash"] or snapshot.get("inputManifestHash") != self._hash(specification["inputEvidence"]):
+            raise ValueError("El snapshot no corresponde al contrato de previsión.")
+        if [item["evidence"] for item in snapshot["inputs"]] != specification["inputEvidence"]:
+            raise ValueError("El snapshot no conserva el manifiesto de previsión.")
+        if any(self._hash(item["content"]) != item["evidence"]["contentHash"] for item in snapshot["inputs"]):
+            raise ValueError("El snapshot materializado contiene payloads modificados.")
         for field in ("specificationHash", "inputManifestHash"):
             if observation.get(field) != snapshot[field]:
                 raise ValueError("La observación no corresponde a la specification/manifiesto.")

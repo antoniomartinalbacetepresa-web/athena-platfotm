@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import nullcontext
 
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -54,11 +55,18 @@ class RecommendationResearchModelExecutionReceiptRepository:
         *,
         artifact: dict[str, Any],
         specification_record: dict[str, Any],
+        connection: Any = None,
+        allow_observed_receipt: bool = False,
+        materialized_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self.initialize()
+        if artifact.get("artifactVersion") == "research-model-execution-receipt-v2" and not allow_observed_receipt:
+            raise ValueError("Los recibos v2 solo se escriben desde el flujo interno ejecutado.")
+        if connection is None:
+            self.initialize()
         validated = self._service.validate_against_specification(
             artifact=artifact,
             specification_record=specification_record,
+            materialized_snapshot=materialized_snapshot,
         )
         receipt_hash = self._sha256(validated["receiptHash"], "receiptHash")
         specification_hash = self._sha256(
@@ -77,10 +85,11 @@ class RecommendationResearchModelExecutionReceiptRepository:
         period_start = self._aware_iso(specification["periodStart"], "periodStart")
         sealed_at = self._aware_iso(specification_record["created_at"], "specification.created_at")
 
-        with self._database.connect() as connection:
+        with (self._database.connect() if connection is None else nullcontext(connection)) as connection:
             # Serialize identity lookup and insert; sample physical time only after
             # obtaining the write lock, so lock waits cannot backdate a new seal.
-            connection.execute("BEGIN IMMEDIATE")
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT * FROM athena_research_model_execution_receipts WHERE specification_hash = ?",
                 (specification_hash,),
@@ -91,7 +100,7 @@ class RecommendationResearchModelExecutionReceiptRepository:
                     raise ValueError(
                         "La specification ya tiene un recibo de ejecución distinto; no puede reescribirse."
                     )
-                return self.validate_record(record, specification_record=specification_record)
+                return self.validate_record(record, specification_record=specification_record, materialized_snapshot=materialized_snapshot)
             created_at = self._aware_utc(self._now_provider(), "now_provider")
             if executed_at > created_at:
                 raise ValueError("La ejecución declarada aún no había ocurrido al persistir el recibo.")
@@ -130,7 +139,7 @@ class RecommendationResearchModelExecutionReceiptRepository:
                 "SELECT * FROM athena_research_model_execution_receipts WHERE receipt_hash = ?",
                 (receipt_hash,),
             ).fetchone()
-        return self.validate_record(self._row(row), specification_record=specification_record)
+        return self.validate_record(self._row(row), specification_record=specification_record, materialized_snapshot=materialized_snapshot)
 
     def get_by_hash(
         self,
@@ -171,6 +180,7 @@ class RecommendationResearchModelExecutionReceiptRepository:
         record: dict[str, Any],
         *,
         specification_record: dict[str, Any],
+        materialized_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         artifact = record.get("artifact")
         if not isinstance(artifact, dict):
@@ -178,6 +188,7 @@ class RecommendationResearchModelExecutionReceiptRepository:
         validated = self._service.validate_against_specification(
             artifact=artifact,
             specification_record=specification_record,
+            materialized_snapshot=materialized_snapshot,
         )
         expected = {
             "receipt_hash": validated["receiptHash"],

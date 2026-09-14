@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import nullcontext
 
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -52,8 +53,9 @@ class RecommendationResearchEvaluationSpecificationRepository:
                 """
             )
 
-    def append(self, *, artifact: dict[str, Any]) -> dict[str, Any]:
-        self.initialize()
+    def append(self, *, artifact: dict[str, Any], connection: Any = None) -> dict[str, Any]:
+        if connection is None:
+            self.initialize()
         validated = self._service.validate_artifact(artifact)
         specification_id = str(validated["specificationId"])
         specification_hash = self._sha256(validated["specificationHash"], "specificationHash")
@@ -67,7 +69,9 @@ class RecommendationResearchEvaluationSpecificationRepository:
             allow_nan=False,
         )
 
-        with self._database.connect() as connection:
+        with (self._database.connect() if connection is None else nullcontext(connection)) as connection:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
             existing_id = connection.execute(
                 "SELECT * FROM athena_research_evaluation_specifications WHERE specification_id = ?",
                 (specification_id,),

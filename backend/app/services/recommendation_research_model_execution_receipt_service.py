@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import base64
 import hashlib
 import json
 import math
@@ -31,10 +32,38 @@ class RecommendationResearchModelExecutionReceiptService:
     def __init__(
         self,
         specification_service: RecommendationResearchEvaluationSpecificationService | None = None,
+        model_executor: Any = None,
     ) -> None:
         self._specification_service = (
             specification_service or RecommendationResearchEvaluationSpecificationService()
         )
+        self._model_executor = model_executor
+
+    @staticmethod
+    def _v2_core(artifact: dict[str, Any]) -> dict[str, Any]:
+        keys = (
+            "artifactVersion", "specificationHash", "cycleHash", "executionId", "executedAt",
+            "model", "inputManifestHash", "output", "outputHash", "observation", "modelBytesBase64",
+        )
+        return {key: artifact.get(key) for key in keys}
+
+    def build_observed(
+        self, *, specification_record: dict[str, Any], observation: dict[str, Any], model_bytes: bytes,
+    ) -> dict[str, Any]:
+        receipt = self.build(
+            specification_record=specification_record,
+            execution_id=observation["executionId"], model_name=observation["model"]["name"],
+            model_version=observation["model"]["version"],
+            model_artifact_hash=observation["model"]["artifactHash"],
+            executed_at=self._aware_iso(observation["executedAt"], "executedAt"),
+        )
+        receipt.update(
+            artifactVersion="research-model-execution-receipt-v2",
+            observation=observation,
+            modelBytesBase64=base64.b64encode(model_bytes).decode("ascii"),
+        )
+        receipt["receiptHash"] = self._canonical_hash(self._v2_core(receipt))
+        return self.validate_against_specification(artifact=receipt, specification_record=specification_record)
 
     def build(
         self,
@@ -113,6 +142,20 @@ class RecommendationResearchModelExecutionReceiptService:
         }
 
     def validate_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(artifact, dict) and artifact.get("artifactVersion") == "research-model-execution-receipt-v2":
+            if artifact.get("receiptHash") != self._canonical_hash(self._v2_core(artifact)):
+                raise ValueError("El recibo v2 fue modificado después de persistirse.")
+            base = dict(artifact)
+            base["artifactVersion"] = self.ARTIFACT_VERSION
+            base.pop("observation", None)
+            base.pop("modelBytesBase64", None)
+            core_keys = (
+                "artifactVersion", "specificationHash", "cycleHash", "executionId", "executedAt",
+                "model", "inputManifestHash", "output", "outputHash",
+            )
+            base["receiptHash"] = self._canonical_hash({key: base.get(key) for key in core_keys})
+            self.validate_artifact(base)
+            return artifact
         if not isinstance(artifact, dict):
             raise ValueError("Model execution receipt debe ser un objeto.")
         if artifact.get("module") != "research_model_execution_receipt":
@@ -172,9 +215,29 @@ class RecommendationResearchModelExecutionReceiptService:
         *,
         artifact: dict[str, Any],
         specification_record: dict[str, Any],
+        materialized_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         receipt = self.validate_artifact(artifact)
         specification = self._validated_specification_record(specification_record)
+        if receipt["artifactVersion"] == "research-model-execution-receipt-v2":
+            encoded = receipt.get("modelBytesBase64")
+            if not isinstance(encoded, str) or len(encoded) > 13_333_336:
+                raise ValueError("Bytes de modelo v2 ausentes o sobredimensionados.")
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("Bytes de modelo v2 inválidos.") from exc
+            executor = self._model_executor
+            if executor is None:
+                from app.services.recommendation_research_model_executor_service import RecommendationResearchModelExecutorService
+                executor = RecommendationResearchModelExecutorService(runner=None)
+            observation = executor.validate_observation(
+                observation=receipt.get("observation"), specification=specification, model_bytes=raw,
+                materialized_snapshot=materialized_snapshot,
+            )
+            for field in ("specificationHash", "executionId", "executedAt", "model", "inputManifestHash", "output", "outputHash"):
+                if receipt[field] != observation[field]:
+                    raise ValueError("El recibo v2 no corresponde a su ejecución observada.")
         if receipt["specificationHash"] != specification["specificationHash"]:
             raise ValueError("El recibo no pertenece a la evaluation specification indicada.")
         if receipt["cycleHash"] != specification["cycleHash"]:
