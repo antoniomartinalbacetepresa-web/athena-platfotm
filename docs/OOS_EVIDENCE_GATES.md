@@ -1,5 +1,28 @@
 # Forecast-error OOS evidence gates
 
+## Receipt seal chain and retry semantics
+
+Receipt validation independently requires a timezone-aware physical specification
+seal with `forecast.availableAt <= specification.created_at <= periodStart`.
+Receipt storage/read validation additionally requires
+`specification.created_at <= receipt.created_at <= periodStart`, alongside the
+existing execution/input ordering. A valid hash alone cannot substitute for
+these physical metadata checks.
+
+Identical receipt retries reuse the original validated record and timestamp,
+including after maturity; different receipts cannot replace it. New receipts
+remain blocked after `periodStart`. Identity lookup and insert are serialized
+with a SQLite write transaction; the clock is sampled after acquiring the lock
+and only for new records, so lock waits cannot backdate a new seal.
+
+The current receipt still binds **declared** model identity, artifact hash,
+execution timestamp and output copied from the specification. It does not run
+the model, resolve executable artifact bytes or independently observe its output.
+Consequently it must not be counted as proof of actual model execution or
+longitudinal production evidence. The integrated trusted executor/input-payload
+adapter and compatible total-return model remain open gates; no production
+promotion or trading authority is granted by a receipt.
+
 ## Persisted summary reads replay their evidence
 
 GET `forecast-error-oos-summary/{summary_hash}` reloads the summary's exact

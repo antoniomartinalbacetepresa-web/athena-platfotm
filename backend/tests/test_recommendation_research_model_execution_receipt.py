@@ -28,6 +28,7 @@ def _specification_record():
     return {
         "specification_hash": artifact["specificationHash"],
         "artifact": artifact,
+        "created_at": SEALED.isoformat(),
     }
 
 
@@ -58,6 +59,117 @@ def test_receipt_binds_model_inputs_and_total_return_output():
         artifact=artifact,
         specification_record=record,
     )
+
+
+@pytest.mark.parametrize("seal", [
+    None,
+    "2026-01-01T00:00:00",
+    (SEALED - timedelta(days=365)).isoformat(),
+    (START + timedelta(microseconds=1)).isoformat(),
+])
+def test_receipt_rejects_missing_naive_early_or_late_specification_seal(seal):
+    record = _specification_record()
+    record["created_at"] = seal
+    with pytest.raises(ValueError):
+        _receipt(record=record)
+
+
+def test_receipt_revalidation_checks_specification_physical_seal():
+    record = _specification_record()
+    receipt = _receipt(record=record)
+    record["created_at"] = (START + timedelta(microseconds=1)).isoformat()
+    with pytest.raises(ValueError, match="sello físico"):
+        RecommendationResearchModelExecutionReceiptService().validate_against_specification(
+            artifact=receipt, specification_record=record,
+        )
+
+
+def test_identical_receipt_retry_after_maturity_preserves_original_record(tmp_path):
+    database = AthenaDatabase(tmp_path / "receipt-retry.db")
+    record = RecommendationResearchEvaluationSpecificationRepository(
+        database, now_provider=lambda: SEALED,
+    ).append(artifact=_build())
+    receipt = _receipt(record=record)
+    first = RecommendationResearchModelExecutionReceiptRepository(
+        database, now_provider=lambda: SEALED,
+    ).append(artifact=receipt, specification_record=record)
+
+    def must_not_resample_time():
+        pytest.fail("An identical retry must use its original physical seal.")
+
+    retry_repository = RecommendationResearchModelExecutionReceiptRepository(
+        database, now_provider=must_not_resample_time,
+    )
+    retry = retry_repository.append(artifact=receipt, specification_record=record)
+    assert retry == first
+    assert retry["created_at"] == SEALED.isoformat()
+    late_retry = RecommendationResearchModelExecutionReceiptRepository(
+        database, now_provider=lambda: START + timedelta(days=1),
+    ).append(artifact=receipt, specification_record=record)
+    assert late_retry == first
+
+
+def test_new_receipt_after_period_start_stays_blocked(tmp_path):
+    record = _specification_record()
+    repository = RecommendationResearchModelExecutionReceiptRepository(
+        AthenaDatabase(tmp_path / "receipt-late.db"),
+        now_provider=lambda: START + timedelta(microseconds=1),
+    )
+    with pytest.raises(ValueError, match="antes o al inicio"):
+        repository.append(artifact=_receipt(record=record), specification_record=record)
+
+
+def test_repository_rejects_receipt_persisted_before_specification_seal(tmp_path):
+    record = _specification_record()
+    repository = RecommendationResearchModelExecutionReceiptRepository(
+        AthenaDatabase(tmp_path / "receipt-before-spec.db"),
+        now_provider=lambda: SEALED - timedelta(microseconds=1),
+    )
+    with pytest.raises(ValueError, match="antes del sello"):
+        repository.append(artifact=_receipt(record=record), specification_record=record)
+
+
+def test_receipt_read_rejects_tampered_persistence_before_specification(tmp_path):
+    database = AthenaDatabase(tmp_path / "receipt-seal-tamper.db")
+    record = _specification_record()
+    repository = RecommendationResearchModelExecutionReceiptRepository(
+        database, now_provider=lambda: SEALED,
+    )
+    receipt = _receipt(record=record)
+    repository.append(artifact=receipt, specification_record=record)
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_research_model_execution_receipts SET created_at = ?",
+            ((SEALED - timedelta(microseconds=1)).isoformat(),),
+        )
+    with pytest.raises(ValueError, match="orden temporal"):
+        repository.get_by_hash(receipt_hash=receipt["receiptHash"], specification_record=record)
+
+
+def test_concurrent_identical_receipt_writes_are_idempotent(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    database = AthenaDatabase(tmp_path / "receipt-concurrent.db")
+    record = _specification_record()
+    receipt = _receipt(record=record)
+    repository = RecommendationResearchModelExecutionReceiptRepository(
+        database, now_provider=lambda: SEALED,
+    )
+    repository.initialize()
+    barrier = Barrier(2)
+
+    def write():
+        barrier.wait(timeout=5)
+        return repository.append(artifact=receipt, specification_record=record)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = list(executor.map(lambda _: write(), range(2)))
+    assert first == second
+    with database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM athena_research_model_execution_receipts"
+        ).fetchone()[0] == 1
 
 
 def test_receipt_rejects_execution_before_latest_input():

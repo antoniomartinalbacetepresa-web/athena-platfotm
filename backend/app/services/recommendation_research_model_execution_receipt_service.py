@@ -19,7 +19,8 @@ _FORBIDDEN_MODEL_MARKERS = ("financialmodelingprep", "financial modeling prep")
 class RecommendationResearchModelExecutionReceiptService:
     """Bind one PIT-safe v3 forecast to the exact model execution that produced it.
 
-    The receipt proves identity, temporal ordering and immutable output binding only.
+    The receipt binds declared identity, temporal ordering and immutable output.
+    It does not execute the model or prove that supplied artifact bytes exist.
     It deliberately makes no claim about model quality, predictive skill, production
     eligibility, weighting approval, or trading authority.
     """
@@ -211,6 +212,13 @@ class RecommendationResearchModelExecutionReceiptService:
         persisted_hash = self._sha256(record.get("specification_hash"), "record.specification_hash")
         if persisted_hash != specification.get("specificationHash"):
             raise ValueError("specification_record discrepa del specificationHash canónico.")
+        sealed_at = self._aware_iso(record.get("created_at"), "specification.created_at")
+        available_at = self._aware_iso(
+            specification["forecastEvidence"]["availableAt"], "forecastEvidence.availableAt"
+        )
+        period_start = self._aware_iso(specification["periodStart"], "periodStart")
+        if not available_at <= sealed_at <= period_start:
+            raise ValueError("La specification viola el orden temporal de su sello físico.")
         return specification
 
     def _assert_shadow(self, artifact: dict[str, Any]) -> None:

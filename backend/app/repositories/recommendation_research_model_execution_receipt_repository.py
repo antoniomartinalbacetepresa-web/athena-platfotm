@@ -72,16 +72,15 @@ class RecommendationResearchModelExecutionReceiptRepository:
             ensure_ascii=False,
             allow_nan=False,
         )
-        created_at = self._aware_utc(self._now_provider(), "now_provider")
         executed_at = self._aware_iso(validated["executedAt"], "executedAt")
         specification = specification_record["artifact"]
         period_start = self._aware_iso(specification["periodStart"], "periodStart")
-        if executed_at > created_at:
-            raise ValueError("La ejecución declarada aún no había ocurrido al persistir el recibo.")
-        if created_at > period_start:
-            raise ValueError("El recibo de ejecución debe sellarse antes o al inicio del periodo OOS.")
+        sealed_at = self._aware_iso(specification_record["created_at"], "specification.created_at")
 
         with self._database.connect() as connection:
+            # Serialize identity lookup and insert; sample physical time only after
+            # obtaining the write lock, so lock waits cannot backdate a new seal.
+            connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT * FROM athena_research_model_execution_receipts WHERE specification_hash = ?",
                 (specification_hash,),
@@ -93,6 +92,13 @@ class RecommendationResearchModelExecutionReceiptRepository:
                         "La specification ya tiene un recibo de ejecución distinto; no puede reescribirse."
                     )
                 return self.validate_record(record, specification_record=specification_record)
+            created_at = self._aware_utc(self._now_provider(), "now_provider")
+            if executed_at > created_at:
+                raise ValueError("La ejecución declarada aún no había ocurrido al persistir el recibo.")
+            if created_at < sealed_at:
+                raise ValueError("El recibo no puede persistirse antes del sello de la specification.")
+            if created_at > period_start:
+                raise ValueError("El recibo de ejecución debe sellarse antes o al inicio del periodo OOS.")
             if connection.execute(
                 "SELECT 1 FROM athena_research_model_execution_receipts WHERE execution_id = ?",
                 (execution_id,),
@@ -186,7 +192,8 @@ class RecommendationResearchModelExecutionReceiptRepository:
         created_at = self._aware_iso(record.get("created_at"), "created_at")
         executed_at = self._aware_iso(validated["executedAt"], "executedAt")
         period_start = self._aware_iso(specification_record["artifact"]["periodStart"], "periodStart")
-        if executed_at > created_at or created_at > period_start:
+        sealed_at = self._aware_iso(specification_record["created_at"], "specification.created_at")
+        if executed_at > created_at or not sealed_at <= created_at <= period_start:
             raise ValueError("El registro persistido viola el orden temporal del recibo.")
         return record
 
