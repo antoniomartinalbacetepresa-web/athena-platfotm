@@ -81,21 +81,25 @@ class MarketObservationCoverageReport:
             "observationCount": self.observation_count,
             "earliestObservedAt": self.earliest_observed_at,
             "latestObservedAt": self.latest_observed_at,
-            "bySource": {key: dict(value) for key, value in sorted(self.by_source.items())},
+            "bySource": {
+                key: dict(value) for key, value in sorted(self.by_source.items())
+            },
+            "productionCoverageClaimed": False,
             "warning": (
-                "historyDepthReady exige un mínimo operativo de 365 días dentro de un "
-                "tramo continuo de una misma fuente por instrumento y rechaza huecos "
-                "superiores al máximo permitido. currentHistoryDepthReady exige además "
-                "que ese tramo llegue hasta el corte PIT dentro del mismo máximo de hueco. "
-                "No permite fabricar profundidad combinando proveedores distintos ni "
-                "implica histórico completo desde el origen."
+                "historyDepthReady exige al 100% del universo elegible un mínimo operativo "
+                "de 365 días dentro de un tramo continuo de una misma fuente por instrumento "
+                "y rechaza huecos superiores al máximo permitido. currentHistoryDepthReady "
+                "exige además que ese tramo llegue hasta el corte PIT dentro del mismo máximo "
+                "de hueco. No permite fabricar profundidad combinando proveedores distintos, "
+                "no implica histórico completo desde el origen y no constituye evidencia de "
+                "cobertura productiva por sí solo."
             ),
         }
 
 
 class MarketObservationCoverageService:
     DEFAULT_MINIMUM_HISTORY_DAYS = 365
-    DEFAULT_MINIMUM_DEEP_HISTORY_COVERAGE = 0.30
+    DEFAULT_MINIMUM_DEEP_HISTORY_COVERAGE = 1.0
     DEFAULT_MAXIMUM_SOURCE_GAP_DAYS = 7
     _EXCLUDED_TYPES = ("etf", "fund")
 
@@ -261,19 +265,43 @@ class MarketObservationCoverageService:
             by_source[str(row["source_provider"])] = {
                 "observationCount": int(row["observation_count"]),
                 "coveredInstrumentCount": int(row["covered_instrument_count"]),
-                "earliestObservedAt": str(row["earliest_observed_at"]) if row["earliest_observed_at"] is not None else None,
-                "latestObservedAt": str(row["latest_observed_at"]) if row["latest_observed_at"] is not None else None,
+                "earliestObservedAt": (
+                    str(row["earliest_observed_at"])
+                    if row["earliest_observed_at"] is not None
+                    else None
+                ),
+                "latestObservedAt": (
+                    str(row["latest_observed_at"])
+                    if row["latest_observed_at"] is not None
+                    else None
+                ),
             }
 
         return MarketObservationCoverageReport(
             active_instrument_count=int(active_row["total"] if active_row else 0),
             history_eligible_instrument_count=int(eligible_row["total"] if eligible_row else 0),
-            covered_instrument_count=int(overall["covered_instrument_count"] if overall else 0),
-            deep_history_instrument_count=int(deep_row["total"] if deep_row and deep_row["total"] is not None else 0),
-            current_deep_history_instrument_count=int(deep_row["current_total"] if deep_row and deep_row["current_total"] is not None else 0),
+            covered_instrument_count=int(
+                overall["covered_instrument_count"] if overall else 0
+            ),
+            deep_history_instrument_count=int(
+                deep_row["total"] if deep_row and deep_row["total"] is not None else 0
+            ),
+            current_deep_history_instrument_count=int(
+                deep_row["current_total"]
+                if deep_row and deep_row["current_total"] is not None
+                else 0
+            ),
             observation_count=int(overall["observation_count"] if overall else 0),
-            earliest_observed_at=str(overall["earliest_observed_at"]) if overall and overall["earliest_observed_at"] is not None else None,
-            latest_observed_at=str(overall["latest_observed_at"]) if overall and overall["latest_observed_at"] is not None else None,
+            earliest_observed_at=(
+                str(overall["earliest_observed_at"])
+                if overall and overall["earliest_observed_at"] is not None
+                else None
+            ),
+            latest_observed_at=(
+                str(overall["latest_observed_at"])
+                if overall and overall["latest_observed_at"] is not None
+                else None
+            ),
             by_source=by_source,
             minimum_history_days=self._minimum_history_days,
             minimum_deep_history_coverage=self._minimum_deep_history_coverage,
