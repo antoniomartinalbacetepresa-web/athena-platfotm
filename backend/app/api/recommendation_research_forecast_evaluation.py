@@ -272,24 +272,7 @@ def post_forecast_error_oos_summary(
 
     as_of = _aware_utc(request.asOf, "asOf")
     try:
-        if len(set(request.errorHashes)) != len(request.errorHashes):
-            raise ValueError("errorHashes contiene duplicados.")
-        error_records = [
-            error_repository.get_by_hash(error_hash=error_hash)
-            for error_hash in request.errorHashes
-        ]
-        specification_records = []
-        for record in error_records:
-            artifact = record.get("artifact")
-            if not isinstance(artifact, dict):
-                raise ValueError("Forecast error persistido carece de artifact válido.")
-            specification_hash = artifact.get("specificationHash")
-            if not isinstance(specification_hash, str):
-                raise ValueError("Forecast error persistido perdió specificationHash.")
-            specification_records.append(
-                specification_repository.get_by_hash(specification_hash=specification_hash)
-            )
-            _verify_persisted_macro_inputs(specification_records[-1]["artifact"])
+        error_records, specification_records = _load_oos_evidence(request.errorHashes)
         artifact = oos_summary_service.build(
             summary_id=request.summaryId,
             as_of=as_of,
@@ -321,10 +304,43 @@ def post_forecast_error_oos_summary(
     }
 
 
+def _load_oos_evidence(error_hashes: object) -> tuple[list[dict], list[dict]]:
+    """Reload original evidence, including persisted macro/market input rows."""
+    if not isinstance(error_hashes, list) or not error_hashes or not all(
+        isinstance(value, str) for value in error_hashes
+    ):
+        raise ValueError("errorHashes requiere una cohorte persistida no vacía.")
+    if len(set(error_hashes)) != len(error_hashes):
+        raise ValueError("errorHashes contiene duplicados.")
+    errors = [error_repository.get_by_hash(error_hash=value) for value in error_hashes]
+    specifications = []
+    for record in errors:
+        artifact = record.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ValueError("Forecast error persistido carece de artifact válido.")
+        specification_hash = artifact.get("specificationHash")
+        if not isinstance(specification_hash, str):
+            raise ValueError("Forecast error persistido perdió specificationHash.")
+        specification = specification_repository.get_by_hash(specification_hash=specification_hash)
+        _verify_persisted_macro_inputs(specification["artifact"])
+        specifications.append(specification)
+    return errors, specifications
+
+
 @router.get("/forecast-error-oos-summary/{summary_hash}")
 def get_forecast_error_oos_summary(summary_hash: str) -> dict[str, object]:
     try:
         record = oos_summary_repository.get_by_hash(summary_hash=summary_hash)
+        artifact = record["artifact"]
+        errors, specifications = _load_oos_evidence(artifact.get("errorHashes"))
+        rebuilt = oos_summary_service.build(
+            summary_id=artifact["summaryId"],
+            as_of=_aware_utc(datetime.fromisoformat(artifact["asOf"]), "summary.asOf"),
+            error_records=errors,
+            specification_records=specifications,
+        )
+        if rebuilt != artifact:
+            raise ValueError("El resumen OOS no coincide con su evidencia persistida revalidada.")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:

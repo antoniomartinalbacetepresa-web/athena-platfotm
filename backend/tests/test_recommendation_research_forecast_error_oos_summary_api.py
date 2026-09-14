@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -114,13 +117,10 @@ class SummaryRepository:
             raise ValueError("summary inexistente")
         return {
             "summary_hash": SUMMARY,
-            "artifact": {
-                "module": "research_forecast_error_oos_summary",
-                "summaryHash": SUMMARY,
-                "advisoryStatus": "no_advice",
-                "productionEligible": False,
-                "isWeightingReady": False,
-            },
+            "artifact": SummaryService().build(
+                summary_id="athena-v1-30d",
+                as_of=datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+            ),
         }
 
 
@@ -225,7 +225,7 @@ def test_oos_summary_api_fails_closed_when_persisted_error_is_missing(monkeypatc
 
 
 def test_oos_summary_get_endpoint_returns_only_persisted_artifact(monkeypatch) -> None:
-    _, _, _, summaries = install_fakes(monkeypatch)
+    errors, specifications, service, summaries = install_fakes(monkeypatch)
 
     response = client.get(
         f"/api/v1/recommendations/professional-research/forecast-error-oos-summary/{SUMMARY}"
@@ -233,8 +233,131 @@ def test_oos_summary_get_endpoint_returns_only_persisted_artifact(monkeypatch) -
 
     assert response.status_code == 200
     assert summaries.get_calls == [SUMMARY]
+    assert errors.calls == [ERROR_A, ERROR_B]
+    assert specifications.calls == [SPEC_A, SPEC_B]
+    assert service.calls[0]["as_of"].isoformat() == request_body()["asOf"]
+    assert summaries.appended == []  # Revalidation must not rewrite the snapshot.
     data = response.json()["data"]
     assert data["summaryHash"] == SUMMARY
     assert data["advisoryStatus"] == "no_advice"
     assert data["productionEligible"] is False
     assert data["isWeightingReady"] is False
+
+
+@pytest.mark.parametrize("repository_name", ["error_repository", "specification_repository"])
+def test_oos_summary_read_rejects_missing_original_evidence(monkeypatch, repository_name):
+    _, _, service, summaries = install_fakes(monkeypatch)
+
+    class Missing:
+        def get_by_hash(self, **kwargs):
+            raise ValueError("evidencia original inexistente")
+
+    monkeypatch.setattr(api_module, repository_name, Missing())
+    response = client.get(f"{api_module.router.prefix}/forecast-error-oos-summary/{SUMMARY}")
+    assert response.status_code == 404
+    assert "original inexistente" in response.json()["detail"]
+    assert service.calls == []
+    assert summaries.appended == []
+
+
+@pytest.mark.parametrize("prefix", ["urn:athena:macro-pit:", "urn:athena:market-pit:"])
+def test_oos_summary_read_revalidates_persisted_inputs_before_rebuilding(monkeypatch, prefix):
+    _, _, service, _ = install_fakes(monkeypatch)
+
+    class Specifications:
+        def get_by_hash(self, **kwargs):
+            return {"artifact": {"inputEvidence": [{"sourceRef": prefix + "a" * 64}]}}
+
+    class ChangedInputs:
+        uses_persisted_macro_inputs = staticmethod(
+            api_module.PersistedMacroForecastInputService.uses_persisted_macro_inputs
+        )
+        def verify_specification(self, artifact):
+            raise ValueError("input original modificado")
+
+    monkeypatch.setattr(api_module, "specification_repository", Specifications())
+    monkeypatch.setattr(api_module, "persisted_macro_input_service", ChangedInputs())
+    response = client.get(f"{api_module.router.prefix}/forecast-error-oos-summary/{SUMMARY}")
+    assert response.status_code == 404
+    assert "input original modificado" in response.json()["detail"]
+    assert service.calls == []
+
+
+def test_oos_summary_read_rejects_rebuilt_snapshot_mismatch(monkeypatch):
+    _, _, service, _ = install_fakes(monkeypatch)
+    original = service.build
+
+    def changed(**kwargs):
+        artifact = original(**kwargs)
+        artifact["metrics"]["meanAbsoluteError"] = 0.5
+        return artifact
+
+    monkeypatch.setattr(service, "build", changed)
+    response = client.get(f"{api_module.router.prefix}/forecast-error-oos-summary/{SUMMARY}")
+    assert response.status_code == 404
+    assert "evidencia persistida revalidada" in response.json()["detail"]
+
+
+def test_oos_summary_read_surfaces_transient_storage_failure_without_snapshot_fallback(monkeypatch):
+    install_fakes(monkeypatch)
+
+    class Unavailable:
+        def get_by_hash(self, **kwargs):
+            raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(api_module, "error_repository", Unavailable())
+    response = client.get(f"{api_module.router.prefix}/forecast-error-oos-summary/{SUMMARY}")
+    assert response.status_code == 500
+    assert "storage unavailable" not in response.text
+
+
+@pytest.mark.parametrize("change", [None, "late_seal", "future_error"])
+def test_oos_summary_real_persistence_replays_temporal_evidence(monkeypatch, tmp_path, change):
+    """Synthetic records test replay; they are not longitudinal production evidence."""
+    from datetime import timedelta
+    from app.database.athena_database import AthenaDatabase
+    from app.repositories.recommendation_research_forecast_error_oos_summary_repository import (
+        RecommendationResearchForecastErrorOosSummaryRepository,
+    )
+    from app.services.recommendation_research_forecast_error_oos_summary_service import (
+        RecommendationResearchForecastErrorOosSummaryService,
+    )
+    from test_recommendation_research_forecast_error_oos_summary_service import AS_OF, dataset
+
+    errors, specifications = dataset()
+    service = RecommendationResearchForecastErrorOosSummaryService()
+    artifact = service.build(
+        summary_id="replay-regression", as_of=AS_OF,
+        error_records=errors, specification_records=specifications,
+    )
+    repository = RecommendationResearchForecastErrorOosSummaryRepository(
+        AthenaDatabase(tmp_path / "summary-replay.db")
+    )
+    repository.append(artifact=artifact)
+
+    class Errors:
+        def get_by_hash(self, *, error_hash):
+            return next(record for record in errors if record["error_hash"] == error_hash)
+
+    class Specifications:
+        def get_by_hash(self, *, specification_hash):
+            return next(record for record in specifications if record["specification_hash"] == specification_hash)
+
+    monkeypatch.setattr(api_module, "error_repository", Errors())
+    monkeypatch.setattr(api_module, "specification_repository", Specifications())
+    monkeypatch.setattr(api_module, "oos_summary_service", service)
+    monkeypatch.setattr(api_module, "oos_summary_repository", repository)
+    if change == "late_seal":
+        start = datetime.fromisoformat(specifications[0]["artifact"]["periodStart"])
+        specifications[0]["created_at"] = (start + timedelta(microseconds=1)).isoformat()
+    elif change == "future_error":
+        errors[0]["created_at"] = (AS_OF + timedelta(microseconds=1)).isoformat()
+
+    response = client.get(
+        f"{api_module.router.prefix}/forecast-error-oos-summary/{artifact['summaryHash']}"
+    )
+    assert response.status_code == (200 if change is None else 404), response.text
+    if change is None:
+        assert response.json()["data"] == artifact
+    # A failed replay does not mutate the append-only historical snapshot.
+    assert repository.get_by_hash(summary_hash=artifact["summaryHash"])["artifact"] == artifact

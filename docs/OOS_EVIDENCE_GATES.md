@@ -1,5 +1,24 @@
 # Forecast-error OOS evidence gates
 
+## Persisted summary reads replay their evidence
+
+GET `forecast-error-oos-summary/{summary_hash}` reloads the summary's exact
+`errorHashes`, their specifications and any resolvable persisted macro/market
+inputs. It rebuilds the descriptive summary at its original `asOf` and compares
+the entire artifact, not only its hash or metrics. Missing or altered sources,
+late specification seals, and errors unavailable at that original cutoff fail
+closed. Storage failures do not fall back to an unverified cached snapshot.
+Revalidation never rewrites the append-only summary or extends its PIT cutoff.
+
+This closes an API read-path integrity gap; it does not certify actual model
+execution, verify the entire outcome lineage, or create longitudinal evidence.
+The existing shadow ridge candidate predicts benchmark-relative **excess**
+returns, whereas evaluation specifications target **total** returns. Connecting
+that candidate requires an explicit compatible economic contract; relabeling
+its output as total return is not an acceptable execution receipt. Model artifact
+availability, exact executable input lineage and execution/output binding remain
+open engineering gates, with production promotion and trading still disabled.
+
 ## Persisted macro inputs bridge
 
 The separate POST route
