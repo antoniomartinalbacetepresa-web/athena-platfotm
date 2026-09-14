@@ -130,6 +130,84 @@ class UserPortfolioRepository:
             raise RuntimeError("La posición no pudo recuperarse tras persistirla.")
         return self._public_row(owner_id=owner_id, row=dict(row))
 
+    def reencrypt_all_average_purchase_prices_to_current_key(self) -> int:
+        """Re-encrypt every legacy cost-basis value with the current profile key.
+
+        Portfolio cost basis shares the versioned profile keyring, so historical
+        keys cannot be retired safely until both profile rows and encrypted
+        position prices have migrated. This operation is explicit, fail-closed
+        and transactional: one missing key, integrity failure or write conflict
+        rolls back the entire batch instead of leaving mixed key versions.
+        """
+        current_version, _ = self._load_keyring()
+        migrated = 0
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"""
+                SELECT id, owner_user_id, symbol, exchange,
+                       average_purchase_price_key_version,
+                       average_purchase_price_nonce_b64,
+                       average_purchase_price_ciphertext_b64
+                FROM {self._TABLE}
+                WHERE average_purchase_price_key_version IS NOT NULL
+                   OR average_purchase_price_nonce_b64 IS NOT NULL
+                   OR average_purchase_price_ciphertext_b64 IS NOT NULL
+                ORDER BY owner_user_id, id
+                """
+            ).fetchall()
+            for raw_row in rows:
+                row = dict(raw_row)
+                owner_id = self._owner_id(int(row["owner_user_id"]))
+                raw_version = row.get("average_purchase_price_key_version")
+                raw_nonce = row.get("average_purchase_price_nonce_b64")
+                raw_ciphertext = row.get("average_purchase_price_ciphertext_b64")
+                if raw_version is None or raw_nonce is None or raw_ciphertext is None:
+                    raise RuntimeError("El precio medio cifrado está incompleto.")
+                old_version = int(raw_version)
+                if old_version == current_version:
+                    continue
+
+                value = self._decrypt_average_purchase_price(owner_id=owner_id, row=row)
+                if value is None:
+                    raise RuntimeError("El precio medio cifrado legado no contiene valor.")
+                encrypted = self._encrypt_average_purchase_price(
+                    owner_id=owner_id,
+                    symbol=str(row["symbol"]),
+                    exchange=str(row["exchange"]),
+                    value=value,
+                )
+                if encrypted[0] != current_version or encrypted[1] is None or encrypted[2] is None:
+                    raise RuntimeError("La rotación de clave de cartera no produjo cifrado vigente.")
+
+                cursor = connection.execute(
+                    f"""
+                    UPDATE {self._TABLE}
+                    SET average_purchase_price_key_version = ?,
+                        average_purchase_price_nonce_b64 = ?,
+                        average_purchase_price_ciphertext_b64 = ?,
+                        updated_at = ?
+                    WHERE id = ? AND owner_user_id = ?
+                      AND average_purchase_price_key_version = ?
+                    """,
+                    (
+                        current_version,
+                        encrypted[1],
+                        encrypted[2],
+                        now,
+                        int(row["id"]),
+                        owner_id,
+                        old_version,
+                    ),
+                )
+                if int(cursor.rowcount or 0) != 1:
+                    raise RuntimeError(
+                        "La posición cambió durante la rotación de clave; se cancela toda la migración."
+                    )
+                migrated += 1
+        return migrated
+
     def delete_for_owner(self, *, owner_user_id: int, position_id: int) -> bool:
         owner_id = self._owner_id(owner_user_id)
         if isinstance(position_id, bool) or not isinstance(position_id, int) or position_id <= 0:
