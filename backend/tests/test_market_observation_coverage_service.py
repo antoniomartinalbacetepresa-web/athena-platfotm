@@ -77,7 +77,7 @@ def test_market_observation_coverage_is_zero_for_empty_history(tmp_path: Path) -
     assert report.by_source == {}
 
 
-def test_history_depth_requires_365_day_span_and_bounded_source_gaps(tmp_path: Path) -> None:
+def test_history_depth_requires_full_eligible_universe_by_default(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instruments = InstrumentRepository(database=database)
     first_id = _insert_instrument(instruments, "AAA")
@@ -101,12 +101,14 @@ def test_history_depth_requires_365_day_span_and_bounded_source_gaps(tmp_path: P
     report = MarketObservationCoverageService(database=database).get_report()
     assert report.minimum_history_days == 365
     assert report.maximum_source_gap_days == 7
-    assert report.minimum_deep_history_coverage == pytest.approx(0.30)
+    assert report.minimum_deep_history_coverage == 1.0
     assert report.deep_history_instrument_count == 2
     assert report.deep_history_coverage == pytest.approx(2 / 3)
-    assert report.history_depth_ready is True
-    assert report.to_api_dict()["sourceContinuityRequired"] is True
-    assert report.to_api_dict()["maximumSourceGapDays"] == 7
+    assert report.history_depth_ready is False
+    payload = report.to_api_dict()
+    assert payload["sourceContinuityRequired"] is True
+    assert payload["maximumSourceGapDays"] == 7
+    assert payload["productionCoverageClaimed"] is False
 
 
 def test_history_depth_rejects_sparse_same_source_span(tmp_path: Path) -> None:
@@ -148,9 +150,7 @@ def test_history_depth_accepts_valid_segment_after_older_source_gap(tmp_path: Pa
         source_provider="yahoo_finance",
         retrieved_at=segment_start + timedelta(days=366),
     )
-
     report = MarketObservationCoverageService(database=database).get_report()
-
     assert report.deep_history_instrument_count == 1
     assert report.deep_history_coverage == 1.0
     assert report.history_depth_ready is True
@@ -181,9 +181,7 @@ def test_history_depth_preserves_continuity_across_yahoo_alias_transition(tmp_pa
         source_provider="yahoo",
         retrieved_at=base + timedelta(days=366),
     )
-
     report = MarketObservationCoverageService(database=database).get_report()
-
     assert report.deep_history_instrument_count == 1
     assert report.deep_history_coverage == 1.0
     assert report.by_source["yahoo"]["observationCount"] == len(legacy) + len(canonical)
@@ -239,6 +237,12 @@ def test_etfs_and_funds_do_not_dilute_history_coverage_denominator(tmp_path: Pat
     assert report.instrument_coverage == 1.0
     assert report.deep_history_coverage == 1.0
     assert report.history_depth_ready is True
+
+
+def test_history_depth_can_be_stricter_but_not_invalid(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    with pytest.raises(ValueError, match="minimum_deep_history_coverage"):
+        MarketObservationCoverageService(database=database, minimum_deep_history_coverage=1.01)
 
 
 def test_history_depth_rejects_non_positive_gap_threshold(tmp_path: Path) -> None:
