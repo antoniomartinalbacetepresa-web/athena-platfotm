@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from typing import Any, Callable
 
 from app.database.athena_database import AthenaDatabase
@@ -8,6 +9,7 @@ from app.repositories.recommendation_research_evaluation_specification_repositor
 from app.repositories.recommendation_research_model_execution_receipt_repository import RecommendationResearchModelExecutionReceiptRepository
 from app.services.recommendation_research_model_execution_receipt_service import RecommendationResearchModelExecutionReceiptService
 from app.services.recommendation_research_model_executor_service import RecommendationResearchModelExecutorService
+from app.services.recommendation_research_evaluation_specification_service import RecommendationResearchEvaluationSpecificationService
 
 
 class RecommendationResearchExecutedForecastStoreService:
@@ -35,6 +37,34 @@ class RecommendationResearchExecutedForecastStoreService:
     ) -> dict[str, Any]:
         self.specifications.initialize()
         self.receipts.initialize()
+        RecommendationResearchEvaluationSpecificationService().validate_artifact(specification)
+        if not isinstance(model_bytes, bytes) or not 0 < len(model_bytes) <= 10_000_000:
+            raise ValueError("Se requieren bytes de modelo limitados a 10 MB.")
+        actual_hash = hashlib.sha256(model_bytes).hexdigest()
+        if actual_hash != pinned_artifact_hash:
+            raise ValueError("Los bytes cargados no coinciden con el artefacto fijado.")
+        with self._database.connect() as connection:
+            existing = connection.execute(
+                "SELECT specification_hash FROM athena_research_evaluation_specifications WHERE specification_hash = ?",
+                (specification["specificationHash"],),
+            ).fetchone()
+        if existing is not None:
+            record = self.specifications.get_by_hash(specification_hash=specification["specificationHash"])
+            if record["artifact"] != specification:
+                raise ValueError("El reintento no conserva la specification original exacta.")
+            persisted = self.receipts.get_by_specification_hash(
+                specification_hash=specification["specificationHash"], specification_record=record,
+            )
+            receipt = persisted["artifact"]
+            if receipt["artifactVersion"] != "research-model-execution-receipt-v2":
+                raise ValueError("No se puede reutilizar un recibo declarativo como ejecución observada.")
+            if receipt["model"]["artifactHash"] != actual_hash:
+                raise ValueError("El reintento cambió los bytes del modelo original.")
+            return {
+                "specification": record, "receipt": persisted, "reused": True,
+                "productionEligible": False, "productionLearningEligible": False,
+                "automaticTrading": False,
+            }
         observation = self._executor.execute(
             specification=specification, model_bytes=model_bytes,
             pinned_artifact_hash=pinned_artifact_hash,
@@ -61,6 +91,7 @@ class RecommendationResearchExecutedForecastStoreService:
         return {
             "specification": record,
             "receipt": persisted,
+            "reused": False,
             "productionEligible": False,
             "productionLearningEligible": False,
             "automaticTrading": False,

@@ -85,3 +85,45 @@ def test_prevalidated_snapshot_cannot_substitute_altered_payloads(context, tmp_p
             artifact=result["receipt"]["artifact"], specification_record=result["specification"],
             materialized_snapshot=snapshot,
         )
+
+
+def test_workflow_retry_after_maturity_reuses_execution_without_runner(context, tmp_path):
+    from datetime import timedelta
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    first = persist(store, specification, raw)
+    store._now = lambda: context[4] + timedelta(days=3)
+    retry = persist(store, specification, raw)
+    assert retry["reused"] is True
+    assert first["reused"] is False
+    assert retry["receipt"] == first["receipt"]
+    assert retry["specification"] == first["specification"]
+    assert len(runner.calls) == 1
+
+
+def test_workflow_retry_rejects_changed_model_bytes(context, tmp_path):
+    import json
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    persist(store, specification, raw)
+    changed = json.loads(raw)
+    changed["coefficient"] = 0.001
+    with pytest.raises(ValueError, match="bytes del modelo original"):
+        persist(store, specification, json.dumps(changed).encode())
+    assert len(runner.calls) == 1
+
+
+def test_workflow_retry_does_not_recreate_missing_receipt(context, tmp_path):
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    persist(store, specification, raw)
+    with context[0].connect() as connection:
+        connection.execute("DELETE FROM athena_research_model_execution_receipts")
+    with pytest.raises(ValueError, match="no tiene model execution receipt"):
+        persist(store, specification, raw)
+    assert len(runner.calls) == 1
+
+
+def test_workflow_retry_requires_correct_deployment_pin(context, tmp_path):
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    persist(store, specification, raw)
+    with pytest.raises(ValueError, match="artefacto fijado"):
+        store.execute_and_persist(specification=specification, model_bytes=raw, pinned_artifact_hash="a" * 64)
+    assert len(runner.calls) == 1

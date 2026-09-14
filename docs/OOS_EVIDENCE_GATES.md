@@ -1,5 +1,14 @@
 # Forecast-error OOS evidence gates
 
+Integrated workflow retries reload and validate an existing exact specification/
+receipt-v2 pair before invoking the runner. They require the same model bytes and
+deployment pin and preserve original execution identity and seal timestamps,
+including after maturity. Missing/altered receipts or inputs fail closed rather
+than triggering a new execution or retrospective repair. New executions retain
+the existing temporal gates and atomic pair write. Concurrent first executions
+are not serialized across inference; conflicting writes still cannot overwrite
+existing evidence. These retry semantics do not establish longitudinal skill.
+
 ## Integrated observed forecast persistence
 
 `RecommendationResearchExecutedForecastStoreService.execute_and_persist` is an
