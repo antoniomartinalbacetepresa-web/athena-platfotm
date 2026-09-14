@@ -74,6 +74,29 @@ def test_receipt_write_failure_rolls_back_specification(context, tmp_path, monke
         assert connection.execute("SELECT COUNT(*) FROM athena_research_model_execution_receipts").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("failure", ["inference", "receipt_storage"])
+def test_generation_failure_leaves_no_partial_forecast_evidence(context, tmp_path, monkeypatch, failure):
+    from copy import deepcopy
+    store, runner, template, raw = setup_store(context, tmp_path)
+    original = deepcopy(template)
+
+    def unavailable(**kwargs):
+        raise RuntimeError("simulated generation failure")
+
+    if failure == "inference":
+        monkeypatch.setattr(runner, "predict", unavailable)
+    else:
+        monkeypatch.setattr(store.receipts, "append", unavailable)
+    with pytest.raises(RuntimeError, match="generation failure"):
+        store.generate_and_persist(specification_template=template, model_bytes=raw,
+                                   pinned_artifact_hash=hashlib.sha256(raw).hexdigest())
+    assert template == original
+    with context[0].connect() as connection:
+        for table in ("athena_research_evaluation_specifications",
+                      "athena_research_model_execution_receipts"):
+            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+
+
 def test_public_repository_path_cannot_mint_observed_receipt(context, tmp_path):
     store, _, specification, raw = setup_store(context, tmp_path)
     result = persist(store, specification, raw)
