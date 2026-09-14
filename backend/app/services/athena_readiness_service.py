@@ -35,22 +35,36 @@ def _finite_number(value: Any) -> float | None:
 
 
 def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
-    """Require final-depth evidence, not the lower operational diagnostic threshold."""
+    """Require PIT-current full-universe depth, not a historical segment alone."""
 
     eligible = _finite_number(market_history.get("historyEligibleInstrumentCount"))
     deep = _finite_number(market_history.get("deepHistoryInstrumentCount"))
-    coverage = _finite_number(market_history.get("deepHistoryCoverage"))
+    deep_coverage = _finite_number(market_history.get("deepHistoryCoverage"))
+    current_deep = _finite_number(
+        market_history.get("currentDeepHistoryInstrumentCount")
+    )
+    current_coverage = _finite_number(
+        market_history.get("currentDeepHistoryCoverage")
+    )
     minimum_days = _finite_number(market_history.get("minimumHistoryDays"))
 
     return (
         market_history.get("historyDepthReady") is True
+        and market_history.get("currentHistoryDepthReady") is True
         and market_history.get("sourceContinuityRequired") is True
+        and market_history.get("pointInTimeCutoffApplied") is True
+        and isinstance(market_history.get("asOf"), str)
+        and bool(str(market_history.get("asOf")).strip())
         and eligible is not None
         and eligible > 0
         and deep is not None
         and deep >= eligible
-        and coverage is not None
-        and coverage >= _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
+        and deep_coverage is not None
+        and deep_coverage >= _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
+        and current_deep is not None
+        and current_deep >= eligible
+        and current_coverage is not None
+        and current_coverage >= _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
         and minimum_days is not None
         and minimum_days >= _FINAL_REQUIRED_HISTORY_DAYS
     )
@@ -139,14 +153,6 @@ def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
 def _final_forecast_error_longitudinal_sufficiency_passed(
     forecast_error: dict[str, Any],
 ) -> bool:
-    """Require an approved, precommitted longitudinal acceptance policy.
-
-    Multiple observed evaluation periods are necessary to call evidence longitudinal,
-    but they are deliberately not treated as statistically sufficient on their own.
-    The diagnostic service therefore fails closed until a separately governed policy
-    is precommitted, approved, and reports that the observed evidence satisfies it.
-    """
-
     distinct_periods = _finite_number(
         forecast_error.get("distinctEvaluationPeriodCount")
     )
@@ -179,13 +185,6 @@ def build_operational_readiness(
     corporate_actions: dict[str, Any],
     learning: dict[str, Any],
 ) -> dict[str, Any]:
-    """Aggregate only explicit, evidence-backed operational gates.
-
-    A 100% value here means every currently modelled operational evidence gate
-    is satisfied. It does not mean the whole product is feature-complete, safe
-    for production promotion, or authorized for automatic trading.
-    """
-
     research_outcome = learning.get("researchOutcomeOos")
     forecast_error = learning.get("researchForecastErrorOos")
     if not isinstance(research_outcome, dict):
@@ -194,54 +193,17 @@ def build_operational_readiness(
         forecast_error = {}
 
     gates = [
-        {
-            "id": "global_market_universe",
-            "passed": universe.get("isGlobalReady") is True,
-            "blocker": "global_market_universe_not_ready",
-        },
-        {
-            "id": "canonical_market_weighting",
-            "passed": weighting.get("ready") is True,
-            "blocker": "canonical_market_weighting_not_ready",
-        },
-        {
-            "id": "market_history_depth",
-            "passed": _final_market_history_depth_passed(market_history),
-            "blocker": "market_history_depth_insufficient",
-        },
-        {
-            "id": "corporate_actions_cross_provider_reconciliation",
-            "passed": _final_corporate_actions_passed(corporate_actions),
-            "blocker": "corporate_actions_independent_reconciliation_pending",
-        },
-        {
-            "id": "research_outcome_oos_evidence",
-            "passed": (
-                research_outcome.get("status")
-                == "research_outcome_oos_evidence_available"
-            ),
-            "blocker": "research_outcome_oos_evidence_pending",
-        },
-        {
-            "id": "forecast_error_oos_complete",
-            "passed": _final_forecast_error_oos_passed(forecast_error),
-            "blocker": "forecast_error_oos_measurement_incomplete",
-        },
-        {
-            "id": "forecast_error_oos_longitudinal_sufficiency",
-            "passed": _final_forecast_error_longitudinal_sufficiency_passed(
-                forecast_error
-            ),
-            "blocker": "forecast_error_oos_longitudinal_sufficiency_pending",
-        },
+        {"id": "global_market_universe", "passed": universe.get("isGlobalReady") is True, "blocker": "global_market_universe_not_ready"},
+        {"id": "canonical_market_weighting", "passed": weighting.get("ready") is True, "blocker": "canonical_market_weighting_not_ready"},
+        {"id": "market_history_depth", "passed": _final_market_history_depth_passed(market_history), "blocker": "market_history_depth_insufficient"},
+        {"id": "corporate_actions_cross_provider_reconciliation", "passed": _final_corporate_actions_passed(corporate_actions), "blocker": "corporate_actions_independent_reconciliation_pending"},
+        {"id": "research_outcome_oos_evidence", "passed": research_outcome.get("status") == "research_outcome_oos_evidence_available", "blocker": "research_outcome_oos_evidence_pending"},
+        {"id": "forecast_error_oos_complete", "passed": _final_forecast_error_oos_passed(forecast_error), "blocker": "forecast_error_oos_measurement_incomplete"},
+        {"id": "forecast_error_oos_longitudinal_sufficiency", "passed": _final_forecast_error_longitudinal_sufficiency_passed(forecast_error), "blocker": "forecast_error_oos_longitudinal_sufficiency_pending"},
     ]
 
     weighting_blockers = weighting.get("blockers")
-    inherited_weighting_blockers = (
-        [str(item) for item in weighting_blockers]
-        if isinstance(weighting_blockers, list)
-        else []
-    )
+    inherited_weighting_blockers = [str(item) for item in weighting_blockers] if isinstance(weighting_blockers, list) else []
     blockers = [str(gate["blocker"]) for gate in gates if gate["passed"] is not True]
     for blocker in inherited_weighting_blockers:
         if blocker not in blockers:
@@ -249,11 +211,7 @@ def build_operational_readiness(
 
     passed_gate_count = sum(1 for gate in gates if gate["passed"] is True)
     total_gate_count = len(gates)
-    completion_percent = (
-        round((passed_gate_count / total_gate_count) * 100.0, 1)
-        if total_gate_count
-        else 0.0
-    )
+    completion_percent = round((passed_gate_count / total_gate_count) * 100.0, 1) if total_gate_count else 0.0
 
     return {
         "scope": "operational_evidence_readiness_not_product_feature_completeness",
@@ -285,7 +243,7 @@ def build_readiness_report(
     universe = PersistedMarketUniverseService(database=effective_database).get_quality_report().to_api_dict()
     weighting = MarketWeightingReadinessService(database=effective_database).get_report(as_of=effective_as_of).to_api_dict()
     instrument_types = InstrumentTypeMarketCapService(database=effective_database).get_report().to_api_dict()
-    market_history = MarketObservationCoverageService(database=effective_database).get_report().to_api_dict()
+    market_history = MarketObservationCoverageService(database=effective_database).get_report(as_of=effective_as_of).to_api_dict()
     corporate_actions = CorporateActionCoverageService(database=effective_database).get_report(as_of=effective_as_of).to_api_dict()
     learning = RecommendationLearningStatusService(database=effective_database).get_status(as_of=effective_as_of)
     operational_readiness = build_operational_readiness(
