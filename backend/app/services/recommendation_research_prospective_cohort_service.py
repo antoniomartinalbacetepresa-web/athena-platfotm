@@ -76,6 +76,7 @@ class RecommendationResearchProspectiveCohortService:
             if not re.fullmatch(r"[0-9a-f]{64}", identity[2]):
                 raise ValueError("La cohorte requiere un SHA-256 de modelo válido.")
             models.add(identity)
+            record["observed_model_identity"] = dict(zip(("name", "version", "artifactHash"), identity))
             record["receipt_created_at"] = receipt["created_at"]
             records.append(record)
         methods = {r["artifact"]["forecastEvidence"]["method"] for r in records}
@@ -107,10 +108,11 @@ class RecommendationResearchProspectiveCohortService:
                    for r in records):
                 raise ValueError("La selección debe sellarse antes del inicio de todos los periodos.")
             artifact = {
-                "artifactVersion": "research-prospective-cohort-v1", "cohortId": cohort_id,
+                "artifactVersion": "research-prospective-cohort-v2", "cohortId": cohort_id,
                 "specificationHashes": refs, "sealedAt": sealed.isoformat(),
                 "method": records[0]["artifact"]["forecastEvidence"]["method"],
                 "horizonSeconds": records[0]["artifact"]["horizonSeconds"],
+                "modelIdentity": records[0]["observed_model_identity"],
                 "productionEligible": False, "productionLearningEligible": False,
                 "automaticTrading": False,
             }
@@ -130,7 +132,7 @@ class RecommendationResearchProspectiveCohortService:
         core = {k: v for k, v in artifact.items() if k != "cohortHash"}
         if (artifact.get("cohortHash") != self._hash(core) or artifact["cohortHash"] != row["cohort_hash"]
                 or artifact.get("cohortId") != row["cohort_id"] or artifact.get("sealedAt") != row["created_at"]
-                or artifact.get("artifactVersion") != "research-prospective-cohort-v1"):
+                or artifact.get("artifactVersion") not in ("research-prospective-cohort-v1", "research-prospective-cohort-v2")):
             raise ValueError("La cohorte preseleccionada fue modificada.")
         if any(artifact.get(flag) is not False for flag in
                ("productionEligible", "productionLearningEligible", "automaticTrading")):
@@ -139,6 +141,9 @@ class RecommendationResearchProspectiveCohortService:
         if refs != artifact["specificationHashes"]:
             raise ValueError("La selección perdió su orden canónico.")
         records = self._forecasts(refs)
+        if artifact["artifactVersion"] == "research-prospective-cohort-v2":
+            if artifact.get("modelIdentity") != records[0]["observed_model_identity"]:
+                raise ValueError("La cohorte perdió su identidad de modelo sellada.")
         sealed = self._time(artifact["sealedAt"])
         if any(not max(self._time(r["created_at"]), self._time(r["receipt_created_at"])) <= sealed <= self._time(r["artifact"]["periodStart"])
                for r in records):

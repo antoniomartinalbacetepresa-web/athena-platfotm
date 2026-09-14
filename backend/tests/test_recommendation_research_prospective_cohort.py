@@ -18,6 +18,8 @@ def setup_cohort(context, tmp_path):
 def test_cohort_denominator_preserves_missing_evaluations(context, tmp_path):
     service, ref, _ = setup_cohort(context, tmp_path)
     plan = service.register(cohort_id="prospective-test", specification_hashes=[ref])
+    assert plan["artifactVersion"] == "research-prospective-cohort-v2"
+    assert set(plan["modelIdentity"]) == {"name", "version", "artifactHash"}
     assert service.get(cohort_id="prospective-test") == plan
     coverage = service.coverage(cohort_id="prospective-test", evaluated_specification_hashes=[])
     assert coverage["selectedCount"] == 1
@@ -27,6 +29,32 @@ def test_cohort_denominator_preserves_missing_evaluations(context, tmp_path):
     assert complete["membershipComplete"] is True
     assert complete["outcomeEvidenceVerified"] is False
     assert complete["productionLearningEligible"] is False
+
+
+def test_cohort_detects_consistent_receipt_model_replacement(context, tmp_path, monkeypatch):
+    from copy import deepcopy
+    service, ref, _ = setup_cohort(context, tmp_path)
+    service.register(cohort_id="pinned", specification_hashes=[ref])
+    record = service._specifications.get_by_hash(specification_hash=ref)
+    receipt = service._receipts.get_by_specification_hash(specification_hash=ref, specification_record=record)
+    replacement = deepcopy(receipt)
+    replacement["artifact"]["model"]["artifactHash"] = "b" * 64
+    monkeypatch.setattr(service._receipts, "get_by_specification_hash", lambda **kwargs: deepcopy(replacement))
+    with pytest.raises(ValueError, match="identidad de modelo sellada"):
+        service.get(cohort_id="pinned")
+
+
+def test_legacy_cohort_remains_readable_without_fabricating_model_pin(context, tmp_path):
+    service, ref, _ = setup_cohort(context, tmp_path)
+    plan = service.register(cohort_id="legacy", specification_hashes=[ref])
+    core = {k: v for k, v in plan.items() if k not in ("cohortHash", "modelIdentity")}
+    core["artifactVersion"] = "research-prospective-cohort-v1"
+    legacy = dict(core, cohortHash=service._hash(core))
+    with service._database.connect() as connection:
+        connection.execute("UPDATE athena_research_prospective_cohorts SET artifact_json = ?, cohort_hash = ?",
+                           (json.dumps(legacy), legacy["cohortHash"]))
+    assert service.get(cohort_id="legacy") == legacy
+    assert "modelIdentity" not in service.register(cohort_id="legacy", specification_hashes=[ref])
 
 
 def test_read_only_cohort_resolves_observed_receipt_without_configuring_runner(context, tmp_path, monkeypatch):

@@ -12,7 +12,9 @@ class RecommendationResearchProspectiveCohortErrorBindingService:
         self._errors = RecommendationResearchForecastErrorService()
 
     def bind(self, *, cohort: dict[str, Any], error_records: Sequence[dict[str, Any]]) -> dict[str, Any]:
-        if not isinstance(cohort, dict) or cohort.get("artifactVersion") != "research-prospective-cohort-v1":
+        if not isinstance(cohort, dict) or cohort.get("artifactVersion") not in (
+            "research-prospective-cohort-v1", "research-prospective-cohort-v2"
+        ):
             raise ValueError("Se requiere una cohorte prospectiva preseleccionada.")
         if any(cohort.get(flag) is not False for flag in ("productionEligible", "productionLearningEligible", "automaticTrading")):
             raise ValueError("La cohorte intentó activar autoridad productiva.")

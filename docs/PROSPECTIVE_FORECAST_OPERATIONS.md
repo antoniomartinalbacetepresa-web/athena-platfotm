@@ -36,3 +36,9 @@ Registration and later reads reject mixed identities even if method labels match
 A model change requires a separate prospectively sealed cohort, not pooling older
 forecasts into a new apparent model history. Existing mixed cohorts fail closed;
 do not rewrite their immutable selection or label them as comparable evidence.
+
+New selections use `research-prospective-cohort-v2`. Their `modelIdentity` is
+included in the cohort hash and compared with observed receipts on every read.
+Legacy v1 selections remain readable and idempotent but are not retroactively
+upgraded or represented as having an ex-ante model pin. No migration may fabricate
+that missing historical commitment. Both versions remain research-only.
