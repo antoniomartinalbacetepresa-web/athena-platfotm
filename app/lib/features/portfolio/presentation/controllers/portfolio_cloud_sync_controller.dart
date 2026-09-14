@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../auth/services/athena_auth_service.dart';
 import '../../models/portfolio_position.dart';
 import '../../services/authenticated_portfolio_sync_service.dart';
 
-enum PortfolioCloudSyncStatus { idle, syncing, success, failure }
+enum PortfolioCloudSyncStatus { idle, syncing, success, failure, sessionRejected }
 
 class PortfolioCloudSyncController extends ChangeNotifier {
   PortfolioCloudSyncController({AuthenticatedPortfolioSyncService? service})
@@ -19,7 +20,10 @@ class PortfolioCloudSyncController extends ChangeNotifier {
   PortfolioCloudSyncStatus get status => _status;
   String? get message => _message;
   bool get isSyncing => _status == PortfolioCloudSyncStatus.syncing;
-  bool get hasError => _status == PortfolioCloudSyncStatus.failure;
+  bool get hasError =>
+      _status == PortfolioCloudSyncStatus.failure ||
+      _status == PortfolioCloudSyncStatus.sessionRejected;
+  bool get sessionRejected => _status == PortfolioCloudSyncStatus.sessionRejected;
 
   Future<void> sync(Iterable<PortfolioPosition> positions) async {
     if (isSyncing) return;
@@ -43,6 +47,10 @@ class PortfolioCloudSyncController extends ChangeNotifier {
           '${report.localPositionCount} posiciones declaradas actualizadas. '
           'ATHENA no ha enviado coste de compra, P/L ni fechas de coste y no '
           'ha eliminado posiciones remotas automáticamente.';
+    } on AuthSessionRejectedException {
+      _status = PortfolioCloudSyncStatus.sessionRejected;
+      _message =
+          'Tu sesión ATHENA ya no es válida. Inicia sesión de nuevo antes de sincronizar.';
     } catch (_) {
       _status = PortfolioCloudSyncStatus.failure;
       _message =
