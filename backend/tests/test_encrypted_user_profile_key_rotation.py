@@ -57,8 +57,20 @@ def test_new_writes_use_configured_current_key_version(monkeypatch, tmp_path) ->
         ).fetchone()
     assert row is not None
     assert int(row["key_version"]) == 2
-    assert "balanced" not in str(row["ciphertext_b64"])
-    assert "EUR" not in str(row["ciphertext_b64"])
+    ciphertext = str(row["ciphertext_b64"])
+    # Ciphertext is randomized Base64. Short plaintext tokens such as a
+    # three-letter currency can occur in it by chance, so they are not valid
+    # confidentiality sentinels. Use longer semantic values/field names and
+    # prove the encrypted row still round-trips through authenticated crypto.
+    assert "balanced" not in ciphertext
+    assert "riskProfile" not in ciphertext
+    assert "baseCurrency" not in ciphertext
+    restored = repository.get_for_owner(owner_id)
+    assert restored is not None
+    assert restored["preferences"] == {
+        "baseCurrency": "EUR",
+        "riskProfile": "balanced",
+    }
 
 
 def test_previous_version_remains_readable_and_can_be_migrated(monkeypatch, tmp_path) -> None:
