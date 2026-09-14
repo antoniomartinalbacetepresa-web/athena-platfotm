@@ -187,6 +187,9 @@ class LongitudinalOosPolicyRepository:
 
     def _policy_record(self, row: dict[str, Any]) -> dict[str, Any]:
         artifact = self._decode_and_verify(row)
+        if row.get("policy_id") != artifact.get("policyId") or row.get("version") != artifact.get("version"):
+            raise RuntimeError("La identidad persistida de política no coincide con su artefacto.")
+        self._validate_time_columns(row, artifact, "precommitted_at", "precommittedAt")
         fingerprint = self._sha(artifact.get("policyFingerprint"), "policyFingerprint")
         expected = LongitudinalOosSufficiencyPolicyService.fingerprint(
             policy_id=str(artifact.get("policyId", "")),
@@ -201,6 +204,7 @@ class LongitudinalOosPolicyRepository:
 
     def _approval_record(self, row: dict[str, Any], expected_fingerprint: str) -> dict[str, Any]:
         artifact = self._decode_and_verify(row)
+        self._validate_time_columns(row, artifact, "approved_at", "approvedAt")
         if artifact.get("status") != "approved":
             raise RuntimeError("Estado de aprobación longitudinal no soportado.")
         if artifact.get("humanReviewConfirmed") is not True:
@@ -212,6 +216,16 @@ class LongitudinalOosPolicyRepository:
         if self._sha(artifact.get("policyFingerprint"), "policyFingerprint") != expected_fingerprint:
             raise RuntimeError("La aprobación pertenece a otra política.")
         return {"artifact": artifact, "created_at": str(row["created_at"])}
+
+    def _validate_time_columns(self, row, artifact, column, field):
+        try:
+            declared = self._utc(datetime.fromisoformat(artifact[field]))
+            indexed = self._utc(datetime.fromisoformat(row[column]))
+            created = self._utc(datetime.fromisoformat(row["created_at"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Metadatos temporales de governance inválidos.") from exc
+        if indexed != declared or created < declared:
+            raise RuntimeError("Las fechas persistidas de governance no coinciden con su artefacto.")
 
     def _decode_and_verify(self, row: dict[str, Any]) -> dict[str, Any]:
         try:

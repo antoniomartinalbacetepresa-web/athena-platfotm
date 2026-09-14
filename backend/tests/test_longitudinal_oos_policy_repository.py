@@ -186,3 +186,34 @@ def test_detects_tampering_of_persisted_policy_artifact(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="alterado"):
         repository.get_latest_policy()
+
+
+@pytest.mark.parametrize("column, value", [
+    ("policy_id", "other-policy"), ("version", 99),
+    ("precommitted_at", "2000-01-01T00:00:00Z"),
+    ("created_at", "2000-01-01T00:00:00Z"),
+])
+def test_policy_index_metadata_cannot_diverge_from_sealed_artifact(tmp_path, column, value):
+    database = AthenaDatabase(tmp_path / "metadata.db")
+    repository = LongitudinalOosPolicyRepository(database=database)
+    repository.register_policy(policy_id="policy", version=1, criteria=CRITERIA,
+                               precommitted_by="test-operator", evidence_ref="synthetic-only")
+    with database.connect() as connection:
+        connection.execute(f"UPDATE athena_longitudinal_oos_policies SET {column} = ?", (value,))
+    with pytest.raises(RuntimeError):
+        repository.get_latest_policy()
+
+
+def test_approval_index_timestamp_must_match_sealed_document(tmp_path):
+    database = AthenaDatabase(tmp_path / "approval-metadata.db")
+    repository = LongitudinalOosPolicyRepository(database=database)
+    policy = repository.register_policy(policy_id="policy", version=1, criteria=CRITERIA,
+                                       precommitted_by="test-operator", evidence_ref="synthetic-only")
+    fingerprint = policy["artifact"]["policyFingerprint"]
+    repository.approve_policy(policy_fingerprint=fingerprint, approved_by="test-reviewer",
+                             evidence_ref="synthetic-only", human_review_confirmed=True)
+    with database.connect() as connection:
+        connection.execute("UPDATE athena_longitudinal_oos_policy_approvals SET approved_at = ?",
+                           ("2000-01-01T00:00:00Z",))
+    with pytest.raises(RuntimeError):
+        repository.get_latest_approval(policy_fingerprint=fingerprint)
