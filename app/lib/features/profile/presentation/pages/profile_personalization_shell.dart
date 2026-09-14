@@ -10,7 +10,7 @@ import '../widgets/account_closure_panel.dart';
 import '../widgets/user_personalization_panel.dart';
 import 'profile_page.dart';
 
-class ProfilePersonalizationShell extends StatelessWidget {
+class ProfilePersonalizationShell extends StatefulWidget {
   const ProfilePersonalizationShell({
     super.key,
     this.service,
@@ -25,11 +25,19 @@ class ProfilePersonalizationShell extends StatelessWidget {
   final Widget? child;
 
   @override
+  State<ProfilePersonalizationShell> createState() =>
+      _ProfilePersonalizationShellState();
+}
+
+class _ProfilePersonalizationShellState extends State<ProfilePersonalizationShell> {
+  AuthSession get _activeSession => widget.session ?? AuthSession.instance;
+
+  @override
   Widget build(BuildContext context) {
-    final activeSession = session ?? AuthSession.instance;
+    final activeSession = _activeSession;
     return Stack(
       children: [
-        child ?? const ProfilePage(),
+        widget.child ?? const ProfilePage(),
         if (activeSession.isAuthenticated)
           Positioned(
             right: 16,
@@ -67,8 +75,8 @@ class ProfilePersonalizationShell extends StatelessWidget {
     AuthSession activeSession,
   ) async {
     if (!activeSession.isAuthenticated) return;
-    final ownsAuthService = accountLifecycleAuthService == null;
-    final authService = accountLifecycleAuthService ?? AthenaAuthService();
+    final ownsAuthService = widget.accountLifecycleAuthService == null;
+    final authService = widget.accountLifecycleAuthService ?? AthenaAuthService();
     final lifecycle = AccountLifecycleService(
       authService: authService,
       session: activeSession,
@@ -116,14 +124,17 @@ class ProfilePersonalizationShell extends StatelessWidget {
     AuthSession activeSession,
   ) async {
     if (!activeSession.isAuthenticated) return;
-    await showModalBottomSheet<void>(
+    final sessionRejected = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       builder: (_) => ProfilePersonalizationSheet(
-        service: service,
+        service: widget.service,
         session: activeSession,
       ),
     );
+    if (sessionRejected == true && mounted) {
+      setState(() {});
+    }
   }
 }
 
@@ -145,17 +156,19 @@ class ProfilePersonalizationSheet extends StatefulWidget {
 class _ProfilePersonalizationSheetState
     extends State<ProfilePersonalizationSheet> {
   late final UserPreferencesService _service;
+  late final AuthSession _session;
   late final bool _ownsService;
   UserPersonalization? _personalization;
   bool _busy = true;
+  bool _sessionRejected = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _ownsService = widget.service == null;
-    _service = widget.service ??
-        UserPreferencesService(session: widget.session ?? AuthSession.instance);
+    _session = widget.session ?? AuthSession.instance;
+    _service = widget.service ?? UserPreferencesService(session: _session);
     _load();
   }
 
@@ -170,6 +183,7 @@ class _ProfilePersonalizationSheetState
       setState(() {
         _busy = true;
         _error = null;
+        _sessionRejected = false;
         _personalization = null;
       });
     }
@@ -177,6 +191,14 @@ class _ProfilePersonalizationSheetState
       final value = await _service.loadPersonalization();
       if (!mounted) return;
       setState(() => _personalization = value);
+    } on UserPreferencesSessionRejectedException {
+      await _session.clearAfterRemoteInvalidation();
+      if (!mounted) return;
+      setState(() {
+        _personalization = null;
+        _sessionRejected = true;
+        _error = null;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -200,12 +222,34 @@ class _ProfilePersonalizationSheetState
           16 + MediaQuery.viewInsetsOf(context).bottom,
         ),
         child: SingleChildScrollView(
-          child: UserPersonalizationPanel(
-            personalization: _personalization,
-            busy: _busy,
-            error: _error,
-            onReload: _load,
-          ),
+          child: _sessionRejected
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.lock_outline),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar la personalización protegida.',
+                        key: Key('personalization-session-rejected'),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.tonalIcon(
+                        key: const Key('personalization-session-rejected-close'),
+                        onPressed: () => Navigator.of(context).pop(true),
+                        icon: const Icon(Icons.close),
+                        label: const Text('Cerrar'),
+                      ),
+                    ],
+                  ),
+                )
+              : UserPersonalizationPanel(
+                  personalization: _personalization,
+                  busy: _busy,
+                  error: _error,
+                  onReload: _load,
+                ),
         ),
       ),
     );
