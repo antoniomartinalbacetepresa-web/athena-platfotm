@@ -16,6 +16,44 @@ class Ledger:
         return {**kwargs, "outcomeEvidenceVerified": False}
 
 
+@pytest.mark.parametrize("command", ["show", "coverage"])
+def test_cohort_pin_accepts_only_exact_persisted_selection(command):
+    class Pinned(Ledger):
+        def get(self, **kwargs):
+            return {"cohortHash": "a" * 64}
+
+        def coverage(self, **kwargs):
+            return {"cohortHash": "a" * 64, "outcomeEvidenceVerified": False}
+    args = build_parser().parse_args([command, "--cohort-id", "cohort",
+                                     "--expected-cohort-hash", "a" * 64])
+    assert run(args, service=Pinned())["cohortHash"] == "a" * 64
+    args.expected_cohort_hash = "b" * 64
+    with pytest.raises(ValueError):
+        run(args, service=Pinned())
+
+
+def test_invalid_pin_is_rejected_before_storage_read():
+    class Unreadable(Ledger):
+        def get(self, **kwargs):
+            pytest.fail("Invalid pin must not read storage")
+    args = build_parser().parse_args(["show", "--cohort-id", "cohort",
+                                     "--expected-cohort-hash", "invalid"])
+    with pytest.raises(ValueError):
+        run(args, service=Unreadable())
+
+
+def test_coverage_rechecks_pin_on_returned_result():
+    class Changed(Ledger):
+        def get(self, **kwargs):
+            return {"cohortHash": "a" * 64}
+        def coverage(self, **kwargs):
+            return {"cohortHash": "b" * 64}
+    args = build_parser().parse_args(["coverage", "--cohort-id", "cohort",
+                                     "--expected-cohort-hash", "a" * 64])
+    with pytest.raises(ValueError):
+        run(args, service=Changed())
+
+
 def test_register_forwards_all_selected_hashes_without_inventing_membership():
     args = build_parser().parse_args(["register", "--cohort-id", "cohort",
                                      "--specification-hash", "a" * 64,
