@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import uuid
@@ -13,6 +14,9 @@ from pwdlib import PasswordHash
 
 from app.repositories.auth_security_repository import AuthSecurityRepository
 from app.repositories.user_account_repository import UserAccountRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -70,10 +74,10 @@ class AuthService:
     def close_account(self, *, user_id: int, current_password: str) -> bool:
         """Close an account after re-authentication, minimizing retained identity PII.
 
-        A stable numeric id remains for referential/audit integrity, but the direct
-        email, display name and old credential hash are replaced before all
-        sessions are rotated. If session rotation later fails, inactive account
-        state still causes token validation to fail closed.
+        Once the account is inactive, bearer validation fails closed even if the
+        defense-in-depth session-version rotation cannot complete. A cleanup
+        failure must therefore be logged, but must not misreport a completed and
+        irreversible closure as unsuccessful to the caller.
         """
         account = self._repository.get_by_id(int(user_id))
         if account is None or int(account.get("is_active") or 0) != 1:
@@ -87,7 +91,12 @@ class AuthService:
             replacement_password_hash=replacement_hash,
         ):
             return False
-        self._security_repository.revoke_all_sessions(user_id=int(user_id))
+        try:
+            self._security_repository.revoke_all_sessions(user_id=int(user_id))
+        except Exception:
+            logger.exception(
+                "Account closed successfully, but session-version cleanup failed."
+            )
         return True
 
     def login_rate_key(self, *, email: str, client_id: str) -> str:
