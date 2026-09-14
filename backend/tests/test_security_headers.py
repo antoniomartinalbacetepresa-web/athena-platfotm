@@ -16,6 +16,11 @@ def _assert_common_security_headers(response) -> None:
         assert response.headers[name] == expected
 
 
+def _assert_sensitive_response_is_not_cacheable(response) -> None:
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+
+
 def test_http_health_has_defensive_headers_without_hsts() -> None:
     with TestClient(app, base_url="http://testserver") as client:
         response = client.get("/health")
@@ -23,6 +28,8 @@ def test_http_health_has_defensive_headers_without_hsts() -> None:
     assert response.status_code == 200
     _assert_common_security_headers(response)
     assert "strict-transport-security" not in response.headers
+    assert "cache-control" not in response.headers
+    assert "pragma" not in response.headers
 
 
 def test_https_responses_include_hsts_even_for_handled_errors() -> None:
@@ -32,6 +39,36 @@ def test_https_responses_include_hsts_even_for_handled_errors() -> None:
     assert response.status_code == 404
     _assert_common_security_headers(response)
     assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_sensitive_auth_responses_are_no_store_even_on_validation_errors() -> None:
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post("/api/v1/auth/token", data={})
+
+    assert response.status_code == 422
+    _assert_common_security_headers(response)
+    _assert_sensitive_response_is_not_cacheable(response)
+    assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_sensitive_user_responses_are_no_store_even_when_unauthorized() -> None:
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get("/api/v1/user/profile/preferences")
+
+    assert response.status_code == 401
+    _assert_common_security_headers(response)
+    _assert_sensitive_response_is_not_cacheable(response)
+    assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_similarly_named_public_path_is_not_misclassified_as_sensitive() -> None:
+    with TestClient(app, base_url="http://testserver") as client:
+        response = client.get("/api/v1/authors")
+
+    assert response.status_code == 404
+    _assert_common_security_headers(response)
+    assert "cache-control" not in response.headers
+    assert "pragma" not in response.headers
 
 
 def test_cors_preflight_keeps_security_headers() -> None:
