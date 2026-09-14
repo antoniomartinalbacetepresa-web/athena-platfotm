@@ -102,6 +102,22 @@ class UserAccountRepository:
             )
         return int(cursor.rowcount or 0) == 1
 
+    def deactivate(self, *, user_id: int) -> bool:
+        """Deactivate one account without deleting audit-relevant identity data."""
+        if int(user_id) <= 0:
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE {self._TABLE}
+                SET is_active = 0, updated_at = ?
+                WHERE id = ? AND is_active = 1
+                """,
+                (now, int(user_id)),
+            )
+        return int(cursor.rowcount or 0) == 1
+
     def _ensure_table(self) -> None:
         with self._database.connect() as connection:
             connection.executescript(

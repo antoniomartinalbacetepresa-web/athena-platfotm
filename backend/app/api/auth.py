@@ -35,6 +35,12 @@ class ChangePasswordRequest(BaseModel):
     newPassword: str = Field(min_length=12, max_length=256)
 
 
+class CloseAccountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    currentPassword: str = Field(min_length=1, max_length=256)
+
+
 class PasswordRecoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -264,4 +270,21 @@ def change_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not changed:
         raise _credentials_error()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/close-account", status_code=status.HTTP_204_NO_CONTENT)
+def close_account(
+    payload: CloseAccountRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> Response:
+    service = _service()
+    if not service.close_account(
+        user_id=int(account["id"]),
+        current_password=payload.currentPassword,
+    ):
+        raise _credentials_error()
+    # Recovery tokens need not be trusted after closure. Failure here is safe:
+    # reset() also rejects inactive accounts, while the identity is already closed.
+    _recovery_service().invalidate(user_id=int(account["id"]))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

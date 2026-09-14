@@ -66,6 +66,23 @@ class AuthService:
         self._security_repository.revoke_all_sessions(user_id=int(user_id))
         return True
 
+    def close_account(self, *, user_id: int, current_password: str) -> bool:
+        """Deactivate an account after re-authentication and revoke all sessions.
+
+        Deactivation happens before session-version rotation so a failure in the
+        latter still fails closed: account_from_token rejects inactive accounts.
+        """
+        account = self._repository.get_by_id(int(user_id))
+        if account is None or int(account.get("is_active") or 0) != 1:
+            return False
+        stored_hash = str(account.get("password_hash") or "")
+        if not stored_hash or not self._password_hash.verify(str(current_password or ""), stored_hash):
+            return False
+        if not self._repository.deactivate(user_id=int(user_id)):
+            return False
+        self._security_repository.revoke_all_sessions(user_id=int(user_id))
+        return True
+
     def login_rate_key(self, *, email: str, client_id: str) -> str:
         normalized_email = str(email or "").strip().lower()
         normalized_client = str(client_id or "unknown").strip().lower() or "unknown"
