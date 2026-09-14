@@ -118,6 +118,41 @@ class UserAccountRepository:
             )
         return int(cursor.rowcount or 0) == 1
 
+    def close_and_anonymize(
+        self,
+        *,
+        user_id: int,
+        replacement_password_hash: str,
+    ) -> bool:
+        """Deactivate and remove direct account PII while preserving the stable id.
+
+        The original email is released from the UNIQUE constraint so the person may
+        register again later. Historical rows that legitimately reference the
+        stable user id remain structurally valid, but the identity table no longer
+        retains the original email, display name or usable credential hash.
+        """
+        if int(user_id) <= 0:
+            return False
+        normalized_hash = self._required(
+            replacement_password_hash, "replacement_password_hash"
+        )
+        anonymized_email = f"closed-{int(user_id)}@account.invalid"
+        now = datetime.now(timezone.utc).isoformat()
+        with self._database.connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE {self._TABLE}
+                SET email = ?,
+                    password_hash = ?,
+                    display_name = NULL,
+                    is_active = 0,
+                    updated_at = ?
+                WHERE id = ? AND is_active = 1
+                """,
+                (anonymized_email, normalized_hash, now, int(user_id)),
+            )
+        return int(cursor.rowcount or 0) == 1
+
     def _ensure_table(self) -> None:
         with self._database.connect() as connection:
             connection.executescript(
