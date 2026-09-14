@@ -84,7 +84,7 @@ class LongitudinalOosPolicyRepository:
                     sealed,
                 ),
             )
-        return {"artifact": artifact}
+        return {"artifact": artifact, "created_at": self._iso(created)}
 
     def approve_policy(
         self,
@@ -136,7 +136,7 @@ class LongitudinalOosPolicyRepository:
                     sealed,
                 ),
             )
-        return {"artifact": artifact}
+        return {"artifact": artifact, "created_at": self._iso(created)}
 
     def get_latest_policy(self, *, as_of: datetime | None = None) -> dict[str, Any] | None:
         cutoff = self._utc(as_of or datetime.now(timezone.utc))
@@ -197,7 +197,7 @@ class LongitudinalOosPolicyRepository:
             raise RuntimeError("La política persistida no coincide con su fingerprint canónico.")
         if artifact.get("automaticApproval") is not False or artifact.get("automaticProductionPromotion") is not False:
             raise RuntimeError("La política persistida contiene automatización prohibida.")
-        return {"artifact": artifact}
+        return {"artifact": artifact, "created_at": str(row["created_at"])}
 
     def _approval_record(self, row: dict[str, Any], expected_fingerprint: str) -> dict[str, Any]:
         artifact = self._decode_and_verify(row)
@@ -211,7 +211,7 @@ class LongitudinalOosPolicyRepository:
             raise RuntimeError("La aprobación persistida contiene automatización prohibida.")
         if self._sha(artifact.get("policyFingerprint"), "policyFingerprint") != expected_fingerprint:
             raise RuntimeError("La aprobación pertenece a otra política.")
-        return {"artifact": artifact}
+        return {"artifact": artifact, "created_at": str(row["created_at"])}
 
     def _decode_and_verify(self, row: dict[str, Any]) -> dict[str, Any]:
         try:

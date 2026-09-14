@@ -95,6 +95,8 @@ class LongitudinalOosSufficiencyPolicyService:
         approved_at = self._iso(approval.get("approvedAt"), "approval.approvedAt")
         if approved_at > cutoff:
             raise ValueError("La aprobación longitudinal es posterior al as_of.")
+        policy_created = self._optional_iso(policy_record.get("created_at"), "policy.created_at")
+        approval_created = self._optional_iso(approval_record.get("created_at"), "approval.created_at")
 
         first_start = self._optional_iso(
             measurement.get("firstEvaluationPeriodStart"),
@@ -110,9 +112,11 @@ class LongitudinalOosSufficiencyPolicyService:
         )
         temporal_precommitment_verified = bool(
             first_start is not None
+            and policy_created is not None
+            and approval_created is not None
             and first_evaluation is not None
             and last_evaluation is not None
-            and approved_at < first_start < first_evaluation <= last_evaluation <= cutoff
+            and policy_created <= approved_at <= approval_created < first_start < first_evaluation <= last_evaluation <= cutoff
         )
 
         c = normalized["criteria"]

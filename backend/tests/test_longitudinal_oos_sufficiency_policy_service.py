@@ -24,6 +24,7 @@ def _policy(criteria: dict[str, object] | None = None) -> dict[str, object]:
         policy_id="test-policy", version=1, criteria=selected
     )
     return {
+        "created_at": "2025-12-31T00:00:00+00:00",
         "artifact": {
             "module": "longitudinal_oos_sufficiency_policy",
             "policyId": "test-policy",
@@ -36,6 +37,7 @@ def _policy(criteria: dict[str, object] | None = None) -> dict[str, object]:
 
 def _approval(fingerprint: str, *, approved_at: str = "2026-01-01T00:00:00+00:00") -> dict[str, object]:
     return {
+        "created_at": approved_at,
         "artifact": {
             "status": "approved",
             "policyFingerprint": fingerprint,
@@ -88,6 +90,24 @@ def test_period_start_without_timezone_cannot_prove_precommitment():
             measurement=measurement, policy_record=policy,
             approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
         )
+
+
+@pytest.mark.parametrize("record_name, timestamp", [
+    ("policy", None), ("approval", None),
+    ("policy", "2026-01-02T00:00:00+00:00"),
+    ("approval", "2026-01-02T00:00:00+00:00"),
+])
+def test_declared_approval_cannot_replace_physical_governance_precommitment(record_name, timestamp):
+    policy = _policy()
+    approval = _approval(str(policy["artifact"]["policyFingerprint"]))
+    (policy if record_name == "policy" else approval)["created_at"] = timestamp
+    result = LongitudinalOosSufficiencyPolicyService().evaluate(
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        policy_record=policy, approval_record=approval,
+    )
+    assert result["policyApproved"] is True
+    assert result["temporalPrecommitmentVerified"] is False
+    assert result["acceptanceEvidenceVerified"] is False
 
 
 def test_no_policy_or_approval_cannot_claim_sufficiency() -> None:

@@ -15,6 +15,11 @@ Legacy v1/v2 paths are unchanged; no evidence is repaired or rewritten.
 
 ## Policy approval precedes the evaluation start
 
+Policy and approval reads expose their physical `created_at` metadata. Temporal
+sufficiency requires policy persistence <= declared approval <= physical approval
+persistence < earliest evaluation start. Backdated declarations and absent
+physical metadata cannot establish ex-ante governance.
+
 Longitudinal measurement reports the earliest measured `periodStart` as
 `firstEvaluationPeriodStart`. Governed sufficiency requires policy approval
 strictly before that start, not merely before the first outcome matures. Missing
