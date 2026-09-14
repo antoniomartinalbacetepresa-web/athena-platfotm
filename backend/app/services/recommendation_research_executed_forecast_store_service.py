@@ -48,6 +48,13 @@ class RecommendationResearchExecutedForecastStoreService:
                 "SELECT specification_hash FROM athena_research_evaluation_specifications WHERE specification_hash = ?",
                 (specification["specificationHash"],),
             ).fetchone()
+            collision = connection.execute(
+                "SELECT specification_hash FROM athena_research_evaluation_specifications "
+                "WHERE specification_id = ? OR (cycle_hash = ? AND horizon_seconds = ?)",
+                (specification["specificationId"], specification["cycleHash"], specification["horizonSeconds"]),
+            ).fetchall()
+        if any(row[0] != specification["specificationHash"] for row in collision):
+            raise ValueError("Ya existe otra specification para esta identidad o ciclo/horizonte; no se ejecutará el modelo.")
         if existing is not None:
             record = self.specifications.get_by_hash(specification_hash=specification["specificationHash"])
             if record["artifact"] != specification:

@@ -127,3 +127,19 @@ def test_workflow_retry_requires_correct_deployment_pin(context, tmp_path):
     with pytest.raises(ValueError, match="artefacto fijado"):
         store.execute_and_persist(specification=specification, model_bytes=raw, pinned_artifact_hash="a" * 64)
     assert len(runner.calls) == 1
+
+
+def test_conflicting_cycle_horizon_is_rejected_before_inference(context, tmp_path):
+    from copy import deepcopy
+    from app.services.recommendation_research_evaluation_specification_service import RecommendationResearchEvaluationSpecificationService
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    first = persist(store, specification, raw)
+    changed = deepcopy(specification)
+    changed["specificationId"] = "another-prospective-forecast"
+    service = RecommendationResearchEvaluationSpecificationService()
+    keys = ("artifactVersion", "specificationId", "cycleHash", "instrumentId", "symbol", "cycleAsOf", "metric", "periodStart", "periodEnd", "horizonSeconds", "expectedValue", "forecastEvidence", "inputEvidence")
+    changed["specificationHash"] = service._canonical_hash({key: changed[key] for key in keys})
+    with pytest.raises(ValueError, match="ciclo/horizonte"):
+        persist(store, changed, raw)
+    assert len(runner.calls) == 1
+    assert persist(store, specification, raw)["receipt"] == first["receipt"]
