@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import current_account
 from app.repositories.encrypted_user_profile_repository import EncryptedUserProfileRepository
+from app.services.personalization_readiness_service import PersonalizationReadinessService
 from app.services.user_personalization_service import UserPersonalizationService
 
 
@@ -110,6 +111,28 @@ def _policy() -> dict[str, Any]:
     }
 
 
+def _stored_preferences(
+    repository: EncryptedUserProfileRepository,
+    owner_id: int,
+) -> dict[str, Any] | None:
+    try:
+        stored = repository.get_for_owner(owner_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="El perfil cifrado no supera la verificación de integridad.",
+        ) from exc
+    if stored is None:
+        return None
+    preferences = stored.get("preferences")
+    if not isinstance(preferences, dict):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="El perfil cifrado no contiene preferencias válidas.",
+        )
+    return preferences
+
+
 @router.get("/preferences")
 def get_preferences(
     account: Annotated[dict[str, Any], Depends(current_account)],
@@ -129,21 +152,29 @@ def get_preferences(
     }
 
 
+@router.get("/personalization/readiness")
+def get_personalization_readiness(
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, Any]:
+    """Return owner-scoped questionnaire completeness without sensitive values.
+
+    This endpoint is diagnostic only. It derives completeness from the encrypted
+    owner profile but never returns preference values and never grants authority
+    to recommendations, canonical weighting, learning promotion or trading.
+    """
+    repository = _repository()
+    preferences = _stored_preferences(repository, _owner_id(account))
+    return PersonalizationReadinessService().evaluate(preferences).to_api_dict()
+
+
 @router.get("/personalization")
 def get_personalization(
     account: Annotated[dict[str, Any], Depends(current_account)],
 ) -> dict[str, Any]:
     repository = _repository()
-    try:
-        stored = repository.get_for_owner(_owner_id(account))
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="El perfil cifrado no supera la verificación de integridad.",
-        ) from exc
-    if stored is None:
+    preferences = _stored_preferences(repository, _owner_id(account))
+    if preferences is None:
         return {"status": "not_configured", "data": None}
-    preferences = stored.get("preferences")
     try:
         projection = UserPersonalizationService().build(preferences)
     except (TypeError, ValueError) as exc:
