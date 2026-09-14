@@ -1,5 +1,31 @@
 # Forecast-error OOS evidence gates
 
+## Internal trusted-runner execution adapter
+
+`RecommendationResearchModelExecutorService` checks a deployment-pinned SHA-256
+against the exact model bytes passed to a deployment-selected runner. Its JSON
+data envelope must identify model name/version, `total_return` and the exact
+horizon. Executable deserialization/imports are not supported; duplicate JSON
+keys, nonfinite data and prohibited model identities are rejected. This adapter
+does not train a new model or reinterpret an excess-return model as total return.
+
+It materializes the existing v3 manifest, invokes the runner with those detached
+payloads and bytes, and reads start/completion times from the backend clock. All
+inputs must be available by start, completion cannot precede start or exceed
+forecast availability, and the runner cannot mutate the supplied snapshot.
+The observed finite total-return output must match the prospective specification.
+Its observation binds exact byte hash, input manifest/snapshot hashes, output
+hash, specification hash and a server-generated execution identity.
+
+The runner implementation and artifact pin remain a trusted deployment boundary,
+not HTTP request fields or independently attested facts. This component has no
+public endpoint, new database, specification writes or receipt-v2 minting. It is
+not sufficient to qualify OOS: model availability/precommitment and the integrated
+execution → specification persistence → receipt-v2 path remain open. The existing
+fail-closed gate is unchanged. Synthetic runner tests establish software behavior,
+not availability of a trained production model, predictive skill or longitudinal
+evidence. All production-learning/promotion/trading flags remain false.
+
 ## Materialized execution inputs
 
 `PersistedForecastInputManifestService.materialize_specification` validates v3,
