@@ -14,18 +14,21 @@ from app.services.market_observation_coverage_service import (
 )
 
 
-def _coverage(*, eligible=2, deep=2, minimum_days=365):
+def _coverage(*, eligible=2, deep=2, current_deep=None, minimum_days=365):
+    effective_current = deep if current_deep is None else current_deep
     return MarketObservationCoverageReport(
         active_instrument_count=eligible,
         history_eligible_instrument_count=eligible,
         covered_instrument_count=eligible,
         deep_history_instrument_count=deep,
+        current_deep_history_instrument_count=effective_current,
         observation_count=1000,
         earliest_observed_at="2025-01-01T00:00:00+00:00",
         latest_observed_at="2026-09-11T00:00:00+00:00",
         by_source={"yahoo": {"observationCount": 1000}},
         minimum_history_days=minimum_days,
         minimum_deep_history_coverage=0.30,
+        as_of="2026-09-11T00:00:00+00:00",
     )
 
 
@@ -49,7 +52,7 @@ def _reconciliation(status="agreed"):
     )
 
 
-def test_acceptance_requires_full_365_day_universe_and_secondary_agreement():
+def test_acceptance_requires_full_365_day_universe_current_to_pit_cutoff_and_secondary_agreement():
     report = HistoricalMarketAcceptanceService().evaluate(
         coverage=_coverage(),
         reconciliation_reports=[_reconciliation()],
@@ -61,6 +64,8 @@ def test_acceptance_requires_full_365_day_universe_and_secondary_agreement():
     api = report.to_api_dict()
     assert api["requiredHistoryDays"] == 365
     assert api["requiredDeepHistoryCoverage"] == 1.0
+    assert api["measuredCurrentDeepHistoryCoverage"] == 1.0
+    assert api["pointInTimeCutoffApplied"] is True
     assert api["automaticCanonicalization"] is False
     assert api["automaticPriceAdjustment"] is False
     assert api["productionAuthorization"] is False
@@ -68,13 +73,38 @@ def test_acceptance_requires_full_365_day_universe_and_secondary_agreement():
 
 def test_partial_universe_depth_fails_even_when_legacy_diagnostic_would_pass():
     report = HistoricalMarketAcceptanceService().evaluate(
-        coverage=_coverage(eligible=10, deep=3),
+        coverage=_coverage(eligible=10, deep=3, current_deep=3),
         reconciliation_reports=[_reconciliation()],
         independent_secondary_source_verified=True,
     )
     assert report.coverage.deep_history_coverage == 0.3
     assert report.depth_gate_passed is False
     assert report.history_acceptance_passed is False
+
+
+def test_stale_deep_history_fails_when_it_does_not_reach_pit_cutoff():
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(eligible=2, deep=2, current_deep=1),
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert report.coverage.deep_history_coverage == 1.0
+    assert report.coverage.current_deep_history_coverage == 0.5
+    assert report.depth_gate_passed is False
+    assert report.history_acceptance_passed is False
+
+
+def test_missing_pit_cutoff_fails_closed():
+    coverage = _coverage()
+    coverage = MarketObservationCoverageReport(
+        **{**coverage.__dict__, "as_of": None}
+    )
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=coverage,
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is False
 
 
 def test_secondary_source_must_be_explicitly_verified_not_inferred_from_fixture_names():
