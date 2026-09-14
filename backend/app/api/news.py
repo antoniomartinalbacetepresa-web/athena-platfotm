@@ -4,10 +4,12 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.google_news_service import GoogleNewsService
+from app.services.news_synthesis_service import NewsSynthesisService
 
 
 router = APIRouter(prefix="/api/v1/news", tags=["news"])
 _news_service = GoogleNewsService()
+_news_synthesis_service = NewsSynthesisService()
 
 
 @router.get("/feed")
@@ -44,4 +46,22 @@ def get_news_feed(
     if policy.get("automaticTrading") is not False:
         raise HTTPException(status_code=500, detail="Contrato de noticias inseguro.")
 
-    return result
+    try:
+        synthesis = _news_synthesis_service.synthesize(result.get("items", ())).to_api_dict()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="El feed de noticias no cumple el contrato de provenance para síntesis.",
+        ) from exc
+
+    synthesis_policy = synthesis.get("policy")
+    if not isinstance(synthesis_policy, dict):
+        raise HTTPException(status_code=500, detail="Contrato de síntesis inseguro.")
+    if synthesis_policy.get("automaticAthenaScoreImpact") is not False:
+        raise HTTPException(status_code=500, detail="Contrato de síntesis inseguro.")
+    if synthesis_policy.get("automaticRecommendationImpact") is not False:
+        raise HTTPException(status_code=500, detail="Contrato de síntesis inseguro.")
+    if synthesis_policy.get("automaticTrading") is not False:
+        raise HTTPException(status_code=500, detail="Contrato de síntesis inseguro.")
+
+    return {**result, "synthesis": synthesis}
