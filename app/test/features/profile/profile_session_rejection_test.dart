@@ -39,9 +39,9 @@ void main() {
         'presentation': {
           'detailLevel': 'guided',
           'explanationStyle': 'plain_language',
-          'riskEmphasis': 'balanced',
+          'riskEmphasis': 'standard',
           'horizonEmphasis': 'long_term',
-          'liquidityEmphasis': 'balanced',
+          'liquidityEmphasis': 'medium',
           'objectiveFocus': 'long_term_growth',
         },
         'policy': {
@@ -189,7 +189,7 @@ void main() {
     expect(session.accessToken, 'profile.jwt');
     expect(store.value, 'profile.jwt');
 
-    await tester.tap(find.byKey(const Key('personalization-reload')));
+    await tester.tap(find.text('REINTENTAR'));
     await tester.pumpAndSettle();
 
     expect(calls, 2);
