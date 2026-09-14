@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/routing/app_routes.dart';
+import '../../../auth/services/account_lifecycle_service.dart';
+import '../../../auth/services/athena_auth_service.dart';
 import '../../../auth/services/auth_session.dart';
 import '../../models/user_personalization.dart';
 import '../../services/user_preferences_service.dart';
+import '../widgets/account_closure_panel.dart';
 import '../widgets/user_personalization_panel.dart';
 import 'profile_page.dart';
 
@@ -29,17 +33,79 @@ class ProfilePersonalizationShell extends StatelessWidget {
             right: 16,
             bottom: 16,
             child: SafeArea(
-              child: FloatingActionButton.extended(
-                key: const Key('open-profile-personalization'),
-                heroTag: 'profile-personalization',
-                onPressed: () => _openPersonalization(context, activeSession),
-                icon: const Icon(Icons.auto_awesome_outlined),
-                label: const Text('PERSONALIZACIÓN'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  FloatingActionButton.extended(
+                    key: const Key('open-account-lifecycle'),
+                    heroTag: 'profile-account-lifecycle',
+                    onPressed: () => _openAccountClosure(context, activeSession),
+                    icon: const Icon(Icons.manage_accounts_outlined),
+                    label: const Text('CUENTA'),
+                  ),
+                  const SizedBox(height: 10),
+                  FloatingActionButton.extended(
+                    key: const Key('open-profile-personalization'),
+                    heroTag: 'profile-personalization',
+                    onPressed: () => _openPersonalization(context, activeSession),
+                    icon: const Icon(Icons.auto_awesome_outlined),
+                    label: const Text('PERSONALIZACIÓN'),
+                  ),
+                ],
               ),
             ),
           ),
       ],
     );
+  }
+
+  Future<void> _openAccountClosure(
+    BuildContext context,
+    AuthSession activeSession,
+  ) async {
+    if (!activeSession.isAuthenticated) return;
+    final authService = AthenaAuthService();
+    final lifecycle = AccountLifecycleService(
+      authService: authService,
+      session: activeSession,
+    );
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        isDismissible: false,
+        enableDrag: false,
+        builder: (sheetContext) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              16 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+            ),
+            child: SingleChildScrollView(
+              child: AccountClosurePanel(
+                onClose: (password) => lifecycle.closeCurrentAccount(
+                  currentPassword: password,
+                ),
+                onCancel: () => Navigator.of(sheetContext).pop(),
+                onClosed: () {
+                  if (!sheetContext.mounted || !context.mounted) return;
+                  Navigator.of(sheetContext).pop();
+                  Navigator.of(context).pushNamedAndRemoveUntil(
+                    AppRoutes.welcome,
+                    (route) => false,
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    } finally {
+      authService.dispose();
+    }
   }
 
   Future<void> _openPersonalization(
