@@ -206,4 +206,52 @@ void main() {
     expect(store.value, isNull);
     expect(find.text('WELCOME'), findsOneWidget);
   });
+
+  testWidgets(
+      'rejected account closure keeps session, durable token and destructive sheet open',
+      (tester) async {
+    final store = _MemoryTokenStore();
+    final lifecycleSession = AuthSession.forTesting(store);
+    await lifecycleSession.establishPersisted(
+      accessToken: 'owner.jwt',
+      account: account(),
+    );
+    final authService = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async => http.Response('{}', 401)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {
+          AppRoutes.welcome: (_) => const Scaffold(body: Text('WELCOME')),
+        },
+        home: ProfilePersonalizationShell(
+          session: lifecycleSession,
+          accountLifecycleAuthService: authService,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('open-account-lifecycle')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('account-closure-password')),
+      'wrong-test-passphrase',
+    );
+    await tester.enterText(
+      find.byKey(const Key('account-closure-confirmation')),
+      'ELIMINAR',
+    );
+    await tester.tap(find.byKey(const Key('account-closure-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('account-closure-error')), findsOneWidget);
+    expect(find.byKey(const Key('account-closure-panel')), findsOneWidget);
+    expect(lifecycleSession.isAuthenticated, isTrue);
+    expect(lifecycleSession.accessToken, 'owner.jwt');
+    expect(store.value, 'owner.jwt');
+    expect(find.text('WELCOME'), findsNothing);
+  });
 }

@@ -11,10 +11,18 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _MemoryTokenStore implements AuthTokenStore {
+  _MemoryTokenStore({this.failDelete = false});
+
+  final bool failDelete;
   String? value;
 
   @override
-  Future<void> deleteAccessToken() async => value = null;
+  Future<void> deleteAccessToken() async {
+    if (failDelete) {
+      throw StateError('secure storage unavailable');
+    }
+    value = null;
+  }
 
   @override
   Future<String?> readAccessToken() async => value;
@@ -52,7 +60,9 @@ void main() {
     final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
     final lifecycle = AccountLifecycleService(authService: auth, session: session);
 
-    await lifecycle.closeCurrentAccount(currentPassword: 'test-current-passphrase');
+    final result = await lifecycle.closeCurrentAccount(
+      currentPassword: 'test-current-passphrase',
+    );
 
     expect(captured.method, 'POST');
     expect(captured.url.path, '/api/v1/auth/close-account');
@@ -62,9 +72,29 @@ void main() {
       (jsonDecode(captured.body) as Map<String, dynamic>)['currentPassword'],
       'test-current-passphrase',
     );
+    expect(result.localCredentialDeleted, isTrue);
     expect(session.isAuthenticated, isFalse);
     expect(session.accessToken, isNull);
     expect(store.value, isNull);
+  });
+
+  test('remote closure remains authoritative when secure-storage deletion fails', () async {
+    final client = MockClient((request) async => http.Response('', 204));
+    final store = _MemoryTokenStore(failDelete: true);
+    final session = AuthSession.forTesting(store);
+    store.value = 'test-access-token';
+    session.establish(accessToken: 'test-access-token', account: _account());
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.closeCurrentAccount(
+      currentPassword: 'test-current-passphrase',
+    );
+
+    expect(result.localCredentialDeleted, isFalse);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, 'test-access-token');
   });
 
   test('failed re-authentication keeps current session and durable token', () async {
