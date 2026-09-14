@@ -5,6 +5,9 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.services.athena_readiness_service import build_readiness_report
+from app.services.deployment_security_readiness_service import (
+    DeploymentSecurityReadinessService,
+)
 
 
 router = APIRouter(
@@ -22,3 +25,15 @@ def get_readiness() -> dict[str, Any]:
     """
 
     return build_readiness_report()
+
+
+@router.get("/security")
+def get_deployment_security_readiness() -> dict[str, Any]:
+    """Return non-secret deployment security configuration diagnostics.
+
+    The response reports only boolean properties and blocker identifiers. It
+    deliberately does not claim that production SMTP, off-site backups or
+    secret rotation have been operationally verified.
+    """
+
+    return DeploymentSecurityReadinessService().evaluate().to_api_dict()
