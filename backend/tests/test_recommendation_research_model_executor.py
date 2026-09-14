@@ -147,3 +147,31 @@ def test_executor_rejects_fmp_model_identity(context, tmp_path):
     with pytest.raises(ValueError, match="FMP"):
         execute(executor, spec, json.dumps(model).encode())
     assert runner.calls == []
+
+
+@pytest.mark.parametrize("field", ["expectedValue", "forecastEvidence", "inputEvidence"])
+def test_executor_rejects_original_specification_mutation_during_runner(context, tmp_path, field):
+    executor, _, spec, raw = setup_executor(context, tmp_path)
+
+    class ChangingContractRunner:
+        def predict(self, **kwargs):
+            if field == "expectedValue":
+                spec[field] = 0.99
+            elif field == "forecastEvidence":
+                spec[field]["availableAt"] = "2099-01-01T00:00:00+00:00"
+            else:
+                spec[field][0]["contentHash"] = "f" * 64
+            return {"metric": "total_return", "expectedValue": 0.99}
+
+    executor._runner = ChangingContractRunner()
+    with pytest.raises(ValueError, match="specification cambió"):
+        execute(executor, spec, raw)
+
+
+def test_executor_rejects_integer_output_overflow_cleanly(context, tmp_path):
+    class OverflowRunner:
+        def predict(self, **kwargs):
+            return {"metric": "total_return", "expectedValue": 10 ** 1000}
+    executor, _, spec, raw = setup_executor(context, tmp_path, runner=OverflowRunner())
+    with pytest.raises(ValueError, match="numérico finito"):
+        execute(executor, spec, raw)

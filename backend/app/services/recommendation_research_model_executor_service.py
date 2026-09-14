@@ -39,6 +39,11 @@ class RecommendationResearchModelExecutorService:
         self, *, specification: dict[str, Any], model_bytes: bytes,
         pinned_artifact_hash: str,
     ) -> dict[str, Any]:
+        original_specification = specification
+        specification_digest = self._hash(specification)
+        # A caller/runner closure may retain the original dictionary. Never
+        # compare observed output against a contract mutable during inference.
+        specification = json.loads(json.dumps(specification, allow_nan=False))
         # Treat model bytes as data only. Never load pickle, eval or import a
         # module selected by model metadata. Hash the very bytes passed to runner.
         if not isinstance(model_bytes, bytes) or not 0 < len(model_bytes) <= 10_000_000:
@@ -75,6 +80,8 @@ class RecommendationResearchModelExecutorService:
             raise ValueError("La ejecución no respeta la disponibilidad PIT/forecast.")
         output = self._runner.predict(model_bytes=model_bytes, inputs=inputs)
         completed_at = self._time(self._now())
+        if self._hash(original_specification) != specification_digest:
+            raise ValueError("La specification cambió durante la ejecución del runner.")
         if not started_at <= completed_at <= available_at:
             raise ValueError("El runner terminó tarde o el reloj retrocedió.")
         if self._hash(inputs) != input_snapshot_hash:
@@ -82,7 +89,13 @@ class RecommendationResearchModelExecutorService:
         if not isinstance(output, dict) or set(output) != {"metric", "expectedValue"} or output.get("metric") != "total_return":
             raise ValueError("El output observado requiere total_return y expectedValue.")
         value = output["expectedValue"]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("El output observado debe ser numérico finito.")
+        try:
+            value = float(value)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError("El output observado debe ser numérico finito.") from exc
+        if not math.isfinite(value):
             raise ValueError("El output observado debe ser numérico finito.")
         if value != specification["expectedValue"]:
             raise ValueError("El output observado no coincide con la previsión prospectiva.")

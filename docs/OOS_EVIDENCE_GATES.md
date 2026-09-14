@@ -1,5 +1,12 @@
 # Forecast-error OOS evidence gates
 
+The executor freezes an independent copy of the entire prospective specification
+before inference and rejects changes to the original contract during the runner
+call. Output binding cannot be switched by editing the expected value, input
+manifest or availability timestamp through a retained reference. Oversized integer
+outputs are rejected as nonfinite numeric outputs rather than leaking overflow
+exceptions. These checks do not open the v2 persistence or OOS gates.
+
 ## Internal trusted-runner execution adapter
 
 `RecommendationResearchModelExecutorService` checks a deployment-pinned SHA-256
