@@ -16,6 +16,7 @@ class PersistedMarketForecastInputService:
     """Resolve exact persisted market rows into re-verifiable v3 input evidence."""
 
     PREFIX = "urn:athena:market-pit:"
+    FORBIDDEN_PROVIDER_ALIASES = {"fmp", "financialmodelingprep", "financial modeling prep"}
 
     def __init__(self, repository: MarketObservationRepository | None = None) -> None:
         self._repository = repository or MarketObservationRepository()
@@ -41,6 +42,8 @@ class PersistedMarketForecastInputService:
                 raise ValueError("Cada selección de mercado debe ser un objeto.")
             instrument_id = self._positive_int(selection.get("instrumentId"), "instrumentId")
             provider = self._text(selection.get("sourceProvider"), "sourceProvider")
+            if provider.casefold() in self.FORBIDDEN_PROVIDER_ALIASES:
+                raise ValueError("Proveedor de mercado no permitido en ATHENA.")
             observed_at = self._iso(selection.get("observedAt"), "observedAt")
             RecommendationResearchEvaluationSpecificationService()._assert_source_allowed(provider)
             rows = self._repository.list_for_instrument(
