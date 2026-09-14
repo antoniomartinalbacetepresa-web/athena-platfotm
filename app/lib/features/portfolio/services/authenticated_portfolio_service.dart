@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../../auth/services/athena_auth_service.dart';
 import '../../auth/services/auth_session.dart';
 import '../models/authenticated_portfolio_history.dart';
 import '../models/authenticated_portfolio_position.dart';
@@ -139,6 +140,9 @@ class AuthenticatedPortfolioService {
       Uri.parse('$_baseUrl/api/v1/user/portfolio/positions/$positionId'),
       headers: _authenticatedHeaders(),
     );
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw AuthSessionRejectedException(response.statusCode);
+    }
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
@@ -156,6 +160,9 @@ class AuthenticatedPortfolioService {
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw AuthSessionRejectedException(response.statusCode);
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(response));
     }
