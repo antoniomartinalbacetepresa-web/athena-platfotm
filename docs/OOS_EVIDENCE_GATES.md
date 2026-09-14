@@ -389,3 +389,19 @@ stability assessment, and separately governed promotion remain necessary.
 `productionLearningEligible` and `productionSufficiencyClaimed` remain false.
 Synthetic regression cases exercise software behavior only, not operational
 readiness or predictive performance.
+# Concrete research runner
+
+`ResearchLinearTotalReturnRunner` implements data-only linear inference for the
+internal executor/store. Deployment must supply reviewed JSON bytes and their
+SHA-256 pin; there are no bundled coefficients or trained model claims. The
+artifact uses `runnerVersion=research-linear-total-return-v1`, model name/version,
+`metric=total_return`, horizonSeconds, intercept and explicit features. Each
+feature binds a materialized sourceRef, literal content-key path, offset, positive
+scale and coefficient. Inference is intercept + sum((value-offset)/scale * coefficient).
+Every materialized input must be bound; missing/duplicate/nonfinite features fail
+closed. No code, pickle, dynamic import, provider request or learning is executed.
+
+Compose this runner with the existing internal model executor and
+`generate_and_persist`; do not expose artifact selection through HTTP. This
+implementation is not a validated model: real calibrated artifacts, prospective
+cohorts, natural horizon maturity and governed OOS evidence remain required.
