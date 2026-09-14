@@ -22,6 +22,9 @@ from app.repositories.recommendation_research_model_execution_receipt_repository
 from app.repositories.recommendation_research_outcome_attribution_repository import (
     RecommendationResearchOutcomeAttributionRepository,
 )
+from app.repositories.recommendation_research_outcome_oos_cohort_repository import (
+    RecommendationResearchOutcomeOosCohortRepository,
+)
 from app.services.recommendation_research_evaluation_specification_service import (
     RecommendationResearchEvaluationSpecificationService,
 )
@@ -35,6 +38,7 @@ from app.services.recommendation_research_model_execution_receipt_service import
     RecommendationResearchModelExecutionReceiptService,
 )
 from app.services.persisted_macro_forecast_input_service import PersistedMacroForecastInputService
+from app.services.governed_forecast_error_oos_service import GovernedForecastErrorOosService
 
 
 router = APIRouter(
@@ -51,6 +55,8 @@ model_execution_receipt_repository = RecommendationResearchModelExecutionReceipt
 specification_service = RecommendationResearchEvaluationSpecificationService()
 error_service = RecommendationResearchForecastErrorService()
 oos_summary_service = RecommendationResearchForecastErrorOosSummaryService()
+oos_cohort_repository = RecommendationResearchOutcomeOosCohortRepository()
+governed_oos_service = GovernedForecastErrorOosService()
 model_execution_receipt_service = RecommendationResearchModelExecutionReceiptService()
 persisted_macro_input_service = PersistedMacroForecastInputService()
 
@@ -89,6 +95,12 @@ class ForecastErrorOosSummaryRequest(BaseModel):
     summaryId: str = Field(min_length=1, max_length=200)
     asOf: datetime
     errorHashes: list[str] = Field(min_length=1, max_length=5000)
+
+
+class GovernedForecastErrorOosRequest(ForecastErrorOosSummaryRequest):
+    """Require an immutable prospective cohort for governed OOS evaluation."""
+
+    cohortHash: str = Field(min_length=64, max_length=64)
 
 
 class PersistedMacroForecastRequest(ProspectiveEvaluationSpecificationRequest):
@@ -413,6 +425,46 @@ def post_forecast_error_oos_summary(
                 "semanticIntegrityVerified": True,
                 "summaryHash": persisted["summary_hash"],
                 "storageClaim": "tamper_evident_append_only_repository_not_worm_storage",
+            },
+        }
+    }
+
+
+@router.post("/forecast-error-oos-governed")
+def post_governed_forecast_error_oos(
+    request: GovernedForecastErrorOosRequest,
+) -> dict[str, object]:
+    """Evaluate OOS only through a persisted cohort and approved policy gate.
+
+    This endpoint is descriptive and never promotes a model. Unlike the legacy
+    summary route, it requires an explicit prospective cohort reference and
+    returns the durable policy decision alongside the measurement.
+    """
+    as_of = _aware_utc(request.asOf, "asOf")
+    try:
+        cohort_record = oos_cohort_repository.get_by_hash(cohort_hash=request.cohortHash)
+        error_records, _ = _load_oos_evidence(request.errorHashes)
+        result = governed_oos_service.evaluate(
+            as_of=as_of,
+            cohort_record=cohort_record,
+            error_records=error_records,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo evaluar OOS gobernado de forma verificable.",
+        ) from exc
+    return {
+        "data": {
+            **result,
+            "governance": {
+                "cohortHash": request.cohortHash,
+                "policyEvaluated": True,
+                "automaticProductionPromotion": False,
+                "automaticModelMutation": False,
+                "automaticTrading": False,
             },
         }
     }

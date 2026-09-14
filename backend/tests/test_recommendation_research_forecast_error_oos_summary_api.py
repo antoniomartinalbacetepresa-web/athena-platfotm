@@ -18,6 +18,7 @@ ERROR_B = "b" * 64
 SPEC_A = "c" * 64
 SPEC_B = "d" * 64
 SUMMARY = "e" * 64
+COHORT = "f" * 64
 
 
 class ErrorRepository:
@@ -124,6 +125,42 @@ class SummaryRepository:
         }
 
 
+class CohortRepository:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_by_hash(self, *, cohort_hash: str) -> dict[str, Any]:
+        self.calls.append(cohort_hash)
+        if cohort_hash != COHORT:
+            raise ValueError("cohort inexistente")
+        return {"cohort_hash": COHORT, "artifact": {"cohortHash": COHORT}}
+
+
+class GovernedService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def evaluate(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {
+            "module": "research_forecast_error_oos_diagnostic",
+            "longitudinalSufficiency": {
+                "status": "policy_not_precommitted",
+                "policyApproved": False,
+                "productionSufficiencyClaimed": False,
+            },
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "recommendationCandidateReady": False,
+            "isWeightingReady": False,
+            "policy": {
+                "automaticTrading": False,
+                "automaticProductionPromotion": False,
+                "automaticModelMutation": False,
+            },
+        }
+
+
 def request_body() -> dict[str, object]:
     return {
         "summaryId": "athena-v1-30d",
@@ -142,6 +179,44 @@ def install_fakes(monkeypatch):
     monkeypatch.setattr(api_module, "oos_summary_service", service)
     monkeypatch.setattr(api_module, "oos_summary_repository", summaries)
     return errors, specifications, service, summaries
+
+
+def test_governed_oos_endpoint_requires_cohort_and_evaluates_policy(monkeypatch) -> None:
+    errors, specifications, _, _ = install_fakes(monkeypatch)
+    cohorts = CohortRepository()
+    governed = GovernedService()
+    monkeypatch.setattr(api_module, "oos_cohort_repository", cohorts)
+    monkeypatch.setattr(api_module, "governed_oos_service", governed)
+
+    response = client.post(
+        "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
+        json={**request_body(), "cohortHash": COHORT},
+    )
+
+    assert response.status_code == 200
+    assert cohorts.calls == [COHORT]
+    assert errors.calls == [ERROR_A, ERROR_B]
+    assert specifications.calls == [SPEC_A, SPEC_B]
+    assert len(governed.calls) == 1
+    assert governed.calls[0]["cohort_record"]["cohort_hash"] == COHORT
+    data = response.json()["data"]
+    assert data["governance"]["policyEvaluated"] is True
+    assert data["governance"]["automaticTrading"] is False
+    assert data["productionLearningEligible"] is False
+
+
+def test_governed_oos_endpoint_fails_closed_for_unknown_cohort(monkeypatch) -> None:
+    install_fakes(monkeypatch)
+    cohorts = CohortRepository()
+    monkeypatch.setattr(api_module, "oos_cohort_repository", cohorts)
+
+    response = client.post(
+        "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
+        json={**request_body(), "cohortHash": "9" * 64},
+    )
+
+    assert response.status_code == 400
+    assert cohorts.calls == ["9" * 64]
 
 
 def test_oos_summary_api_uses_only_persisted_error_and_specification_records(monkeypatch) -> None:
@@ -361,3 +436,4 @@ def test_oos_summary_real_persistence_replays_temporal_evidence(monkeypatch, tmp
         assert response.json()["data"] == artifact
     # A failed replay does not mutate the append-only historical snapshot.
     assert repository.get_by_hash(summary_hash=artifact["summaryHash"])["artifact"] == artifact
+
