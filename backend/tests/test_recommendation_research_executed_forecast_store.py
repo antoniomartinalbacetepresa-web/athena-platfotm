@@ -42,6 +42,29 @@ def test_inference_generated_forecast_is_sealed_once(context, tmp_path):
     assert len(runner.calls) == 1
 
 
+@pytest.mark.parametrize("missing", [None, "specification", "receipt"])
+def test_recovery_never_invokes_inference_even_when_evidence_is_missing(context, tmp_path, monkeypatch, missing):
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    original = persist(store, specification, raw)
+    def forbidden(**kwargs):
+        pytest.fail("Read-only recovery must never invoke inference")
+    monkeypatch.setattr(runner, "predict", forbidden)
+    if missing:
+        table = "athena_research_evaluation_specifications" if missing == "specification" else "athena_research_model_execution_receipts"
+        with context[0].connect() as connection:
+            connection.execute(f"DELETE FROM {table}")
+        with pytest.raises(ValueError):
+            store.recover_persisted(specification_hash=specification["specificationHash"], model_bytes=raw,
+                                    pinned_artifact_hash=hashlib.sha256(raw).hexdigest())
+    else:
+        result = store.recover_persisted(specification_hash=specification["specificationHash"], model_bytes=raw,
+                                        pinned_artifact_hash=hashlib.sha256(raw).hexdigest())
+        assert result["reused"] is True
+        assert result["specification"] == original["specification"]
+        assert result["receipt"] == original["receipt"]
+    assert len(runner.calls) == 1
+
+
 def test_observed_execution_atomic_storage_and_gate(context, tmp_path, monkeypatch):
     store, runner, specification, raw = setup_store(context, tmp_path)
     result = persist(store, specification, raw)
@@ -57,6 +80,16 @@ def test_observed_execution_atomic_storage_and_gate(context, tmp_path, monkeypat
     assert stored_receipt == result["receipt"]
     monkeypatch.setattr(api, "model_execution_receipt_repository", store.receipts)
     api._verify_model_execution_receipt_if_required(stored_spec)
+
+
+def test_recovery_rejects_different_model_even_with_matching_new_pin(context, tmp_path):
+    store, runner, specification, raw = setup_store(context, tmp_path)
+    persist(store, specification, raw)
+    changed = raw + b" "
+    with pytest.raises(ValueError, match="bytes del modelo original"):
+        store.recover_persisted(specification_hash=specification["specificationHash"], model_bytes=changed,
+                                pinned_artifact_hash=hashlib.sha256(changed).hexdigest())
+    assert len(runner.calls) == 1
 
 
 def test_receipt_write_failure_rolls_back_specification(context, tmp_path, monkeypatch):

@@ -42,3 +42,19 @@ included in the cohort hash and compared with observed receipts on every read.
 Legacy v1 selections remain readable and idempotent but are not retroactively
 upgraded or represented as having an ex-ante model pin. No migration may fabricate
 that missing historical commitment. Both versions remain research-only.
+## Recover a persisted result without inference
+
+If output was lost, locate the final specification hash in the existing records:
+
+```sh
+PYTHONPATH=. python scripts/generate_research_forecast.py \
+  --recover-specification-hash FINAL_SPECIFICATION_SHA256 \
+  --model /path/to/original-model.json \
+  --artifact-sha256 ORIGINAL_REVIEWED_ARTIFACT_SHA256
+```
+
+Recovery is mutually exclusive with `--template`. It only reads and revalidates
+the original specification and observed receipt-v2 and requires the original
+model bytes/pin. It never invokes inference or appends forecast/receipt evidence,
+including when a record is missing. Missing evidence fails closed. This does not
+restore deleted evidence, reconstruct historical predictions or certify skill.

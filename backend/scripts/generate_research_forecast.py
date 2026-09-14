@@ -15,7 +15,9 @@ from app.services.research_linear_total_return_runner import ResearchLinearTotal
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Generación manual de research v3, sin promoción ni trading.")
-    parser.add_argument("--template", required=True, type=Path)
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--template", type=Path)
+    operation.add_argument("--recover-specification-hash", help="Recupera registros originales sin generar otra previsión.")
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--artifact-sha256", required=True)
     return parser
@@ -36,13 +38,20 @@ def run(args, *, store=None):
     raw = _read_limited(args.model, 10_000_000)
     if hashlib.sha256(raw).hexdigest() != pin:
         raise ValueError("El modelo no coincide con el pin")
-    template = json.loads(_read_limited(args.template, 1_000_000),
-                          object_pairs_hook=ResearchLinearTotalReturnRunner._unique)
+    recovery = getattr(args, "recover_specification_hash", None)
+    if recovery is not None and not re.fullmatch(r"[0-9a-f]{64}", recovery):
+        raise ValueError("Specification hash inválido")
+    template = None if recovery is not None else json.loads(
+        _read_limited(args.template, 1_000_000), object_pairs_hook=ResearchLinearTotalReturnRunner._unique)
     if store is None:
         store = RecommendationResearchExecutedForecastStoreService(
             database=AthenaDatabase(),
             executor=RecommendationResearchModelExecutorService(runner=ResearchLinearTotalReturnRunner()),
         )
+    if recovery is not None:
+        # Missing evidence fails closed. Never fall back to generate_and_persist.
+        return store.recover_persisted(specification_hash=recovery, model_bytes=raw,
+                                      pinned_artifact_hash=pin)
     return store.generate_and_persist(specification_template=template, model_bytes=raw,
                                      pinned_artifact_hash=pin)
 

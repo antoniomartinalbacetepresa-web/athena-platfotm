@@ -21,6 +21,39 @@ class Store:
         return kwargs
 
 
+def test_recovery_forwards_only_original_persisted_artifact(tmp_path):
+    args = arguments(tmp_path)
+    args.recover_specification_hash = "b" * 64
+    args.template = None
+    class Recovery(Store):
+        def generate_and_persist(self, **kwargs):
+            pytest.fail("Recovery must not generate a forecast")
+        def recover_persisted(self, **kwargs):
+            return kwargs
+
+    assert cli.run(args, store=Recovery())["specification_hash"] == "b" * 64
+
+
+def test_recovery_missing_specification_does_not_generate(tmp_path):
+    args = arguments(tmp_path)
+    args.recover_specification_hash = "b" * 64
+
+    class Recovery(Store):
+        def recover_persisted(self, **kwargs):
+            raise ValueError("Missing evidence")
+        def generate_and_persist(self, **kwargs):
+            pytest.fail("Missing evidence must not trigger generation")
+
+    with pytest.raises(ValueError, match="Missing evidence"):
+        cli.run(args, store=Recovery())
+
+
+def test_template_and_recovery_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--template", "template", "--recover-specification-hash", "a" * 64,
+                                      "--model", "model", "--artifact-sha256", "b" * 64])
+
+
 def test_forwards_exact_bytes_template_and_pin(tmp_path):
     args = arguments(tmp_path, template=b'{"specificationId":"test-only"}')
     result = cli.run(args, store=Store())

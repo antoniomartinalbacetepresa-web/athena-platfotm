@@ -78,6 +78,27 @@ class RecommendationResearchExecutedForecastStoreService:
         )
         return self._persist_observed(specification=specification, observation=observation, model_bytes=model_bytes)
 
+    def recover_persisted(
+        self, *, specification_hash: str, model_bytes: bytes, pinned_artifact_hash: str,
+    ) -> dict[str, Any]:
+        """Read/revalidate original evidence only; never invoke inference or append."""
+        if not isinstance(model_bytes, bytes) or not 0 < len(model_bytes) <= 10_000_000:
+            raise ValueError("Se requieren bytes de modelo limitados a 10 MB.")
+        actual_hash = hashlib.sha256(model_bytes).hexdigest()
+        if actual_hash != pinned_artifact_hash:
+            raise ValueError("Los bytes cargados no coinciden con el artefacto fijado.")
+        record = self.specifications.get_by_hash(specification_hash=specification_hash)
+        persisted = self.receipts.get_by_specification_hash(
+            specification_hash=specification_hash, specification_record=record)
+        receipt = persisted["artifact"]
+        if receipt["artifactVersion"] != "research-model-execution-receipt-v2":
+            raise ValueError("La recuperación requiere un recibo observado v2.")
+        if receipt["model"]["artifactHash"] != actual_hash:
+            raise ValueError("La recuperación cambió los bytes del modelo original.")
+        return {"specification": record, "receipt": persisted, "reused": True,
+                "productionEligible": False, "productionLearningEligible": False,
+                "automaticTrading": False}
+
     def generate_and_persist(
         self, *, specification_template: dict[str, Any], model_bytes: bytes, pinned_artifact_hash: str,
     ) -> dict[str, Any]:
