@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../auth/services/athena_auth_service.dart';
+import '../../../auth/services/auth_session.dart';
 import '../../models/authenticated_portfolio_history.dart';
 import '../../services/authenticated_portfolio_service.dart';
 
@@ -7,10 +9,12 @@ class AuthenticatedPortfolioHistoryPanel extends StatefulWidget {
   const AuthenticatedPortfolioHistoryPanel({
     super.key,
     this.service,
+    this.session,
     this.portfolioId = 'primary',
   });
 
   final AuthenticatedPortfolioService? service;
+  final AuthSession? session;
   final String portfolioId;
 
   @override
@@ -21,16 +25,19 @@ class AuthenticatedPortfolioHistoryPanel extends StatefulWidget {
 class _AuthenticatedPortfolioHistoryPanelState
     extends State<AuthenticatedPortfolioHistoryPanel> {
   late final AuthenticatedPortfolioService _service;
+  late final AuthSession _session;
   late final bool _ownsService;
   AuthenticatedPortfolioHistory? _history;
   Object? _error;
   bool _loading = true;
+  bool _sessionRejected = false;
 
   @override
   void initState() {
     super.initState();
     _ownsService = widget.service == null;
     _service = widget.service ?? AuthenticatedPortfolioService();
+    _session = widget.session ?? AuthSession.instance;
     _load();
   }
 
@@ -45,6 +52,7 @@ class _AuthenticatedPortfolioHistoryPanelState
       setState(() {
         _loading = true;
         _error = null;
+        _sessionRejected = false;
       });
     }
     try {
@@ -52,6 +60,18 @@ class _AuthenticatedPortfolioHistoryPanelState
       if (!mounted) return;
       setState(() {
         _history = history;
+        _loading = false;
+      });
+    } on AuthSessionRejectedException catch (error) {
+      // A 401/403 is authoritative evidence that the server no longer accepts
+      // the credential. Clear authenticated memory immediately; durable-token
+      // cleanup is best-effort and must not leave the UI presenting an active
+      // session if secure storage itself is unavailable.
+      await _session.clearAfterRemoteInvalidation();
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _sessionRejected = true;
         _loading = false;
       });
     } catch (error) {
@@ -104,6 +124,29 @@ class _AuthenticatedPortfolioHistoryPanelState
       return const Center(
         child: CircularProgressIndicator(
           key: Key('portfolio-history-loading'),
+        ),
+      );
+    }
+    if (_sessionRejected) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline),
+            const SizedBox(height: 8),
+            const Text(
+              'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar el historial de la cuenta.',
+              key: Key('portfolio-history-session-rejected'),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              key: const Key('portfolio-history-session-rejected-close'),
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.close),
+              label: const Text('Cerrar'),
+            ),
+          ],
         ),
       );
     }
