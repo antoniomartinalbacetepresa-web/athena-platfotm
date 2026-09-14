@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import math
 import re
 from typing import Any, Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,7 @@ class NewsSynthesisItem:
     published_at: str
     retrieved_at: str
     source_provider: str
+    evidence_id: str
     importance_score: float
     importance: str
     estimated_impact: str
@@ -28,6 +31,7 @@ class NewsSynthesisItem:
             "publishedAt": self.published_at,
             "retrievedAt": self.retrieved_at,
             "sourceProvider": self.source_provider,
+            "evidenceId": self.evidence_id,
             "importanceScore": self.importance_score,
             "importance": self.importance,
             "estimatedImpact": self.estimated_impact,
@@ -48,6 +52,7 @@ class NewsSynthesisReport:
                 "automaticAthenaScoreImpact": False,
                 "automaticRecommendationImpact": False,
                 "automaticTrading": False,
+                "duplicateEvidenceAmplification": False,
             },
             "advisoryStatus": "no_advice",
             "productionEligible": False,
@@ -67,19 +72,42 @@ class NewsSynthesisService:
     _NEGATIVE = ("misses", "cuts guidance", "bankruptcy", "default", "fraud", "investigation", "recall", "lawsuit", "downgrade")
 
     def synthesize(self, items: Iterable[dict[str, Any]]) -> NewsSynthesisReport:
-        normalized = [self._normalize(item) for item in items]
+        normalized: list[NewsSynthesisItem] = []
+        seen_evidence: set[str] = set()
+        seen_urls: set[str] = set()
+        for raw in items:
+            item = self._normalize(raw)
+            if item.article_url in seen_urls or item.evidence_id in seen_evidence:
+                raise ValueError(
+                    "El feed contiene evidencia de noticia duplicada; no puede amplificar la síntesis."
+                )
+            seen_urls.add(item.article_url)
+            seen_evidence.add(item.evidence_id)
+            normalized.append(item)
         normalized.sort(key=lambda item: (-item.importance_score, item.published_at, item.title))
         return NewsSynthesisReport(items=tuple(normalized))
 
     def _normalize(self, item: dict[str, Any]) -> NewsSynthesisItem:
+        if not isinstance(item, dict):
+            raise ValueError("Cada noticia debe ser un objeto con provenance explícita")
         title = self._required_text(item.get("title"), "title")
         publisher = self._required_text(item.get("publisher"), "publisher")
-        article_url = self._required_text(item.get("articleUrl"), "articleUrl")
+        article_url = self._https_url(item.get("articleUrl"), "articleUrl")
         source_provider = self._required_text(item.get("sourceProvider"), "sourceProvider")
         published_at = self._timestamp(item.get("publishedAt"), "publishedAt")
         retrieved_at = self._timestamp(item.get("retrievedAt"), "retrievedAt")
         if published_at > retrieved_at:
             raise ValueError("publishedAt no puede ser posterior a retrievedAt")
+
+        evidence_id = hashlib.sha256(
+            "\n".join(
+                (
+                    source_provider.casefold(),
+                    article_url,
+                    published_at.isoformat(),
+                )
+            ).encode("utf-8")
+        ).hexdigest()
 
         lowered = re.sub(r"\s+", " ", title).strip().casefold()
         high_hits = tuple(term for term in self._HIGH if term in lowered)
@@ -111,6 +139,7 @@ class NewsSynthesisService:
             published_at=published_at.isoformat(),
             retrieved_at=retrieved_at.isoformat(),
             source_provider=source_provider,
+            evidence_id=evidence_id,
             importance_score=round(score, 4),
             importance=importance,
             estimated_impact=impact,
@@ -123,6 +152,29 @@ class NewsSynthesisService:
         if not text:
             raise ValueError(f"{field} es obligatorio")
         return text
+
+    @staticmethod
+    def _https_url(value: Any, field: str) -> str:
+        text = NewsSynthesisService._required_text(value, field)
+        try:
+            parsed = urlsplit(text)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError(f"{field} no es una URL válida") from exc
+        if parsed.scheme.casefold() != "https" or not parsed.hostname:
+            raise ValueError(f"{field} debe ser una URL HTTPS absoluta")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError(f"{field} no puede incluir credenciales")
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError(f"{field} contiene un puerto no válido")
+        host = parsed.hostname.casefold()
+        if "." not in host and host != "localhost":
+            raise ValueError(f"{field} debe incluir un host válido")
+        netloc = host
+        if parsed.port is not None:
+            netloc = f"{host}:{parsed.port}"
+        normalized = urlunsplit(("https", netloc, parsed.path or "/", parsed.query, ""))
+        return normalized
 
     @staticmethod
     def _timestamp(value: Any, field: str) -> datetime:
