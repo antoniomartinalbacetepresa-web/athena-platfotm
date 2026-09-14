@@ -448,6 +448,9 @@ def post_governed_forecast_error_oos(
     as_of = _aware_utc(request.asOf, "asOf")
     try:
         cohort_record = oos_cohort_repository.get_by_hash(cohort_hash=request.cohortHash)
+        cohort_seal = _aware_utc(datetime.fromisoformat(cohort_record["created_at"]), "cohort.created_at")
+        if cohort_seal > as_of:
+            raise ValueError("La cohorte de resultados se persistió después de asOf.")
         prospective = prospective_cohort_service.get(cohort_id=request.prospectiveCohortId)
         if datetime.fromisoformat(prospective["sealedAt"]) > as_of:
             raise ValueError("La preselección prospectiva es posterior a asOf.")

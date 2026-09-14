@@ -23,6 +23,11 @@ no quantitative thresholds and grants no production or trading authority.
 
 ## Governed HTTP evaluation requires prospective selection
 
+The physical outcome-cohort seal must also be timezone-aware and at or before
+the requested `asOf`. A retrospective cohort persisted later cannot qualify
+just because its embedded observation cutoff is historical. Equal instants with
+different UTC offsets are compared as datetimes, not text.
+
 `POST /forecast-error-oos-governed` requires both an outcome `cohortHash` and
 `prospectiveCohortId`. The outcome cohort alone is retrospective membership, not
 proof of ex-ante selection. The endpoint reloads the prospective ledger and its

@@ -133,7 +133,8 @@ class CohortRepository:
         self.calls.append(cohort_hash)
         if cohort_hash != COHORT:
             raise ValueError("cohort inexistente")
-        return {"cohort_hash": COHORT, "artifact": {"cohortHash": COHORT, "observationCount": 2}}
+        return {"cohort_hash": COHORT, "created_at": "2026-08-31T00:00:00+00:00",
+                "artifact": {"cohortHash": COHORT, "observationCount": 2}}
 
 
 class ProspectiveService:
@@ -277,6 +278,29 @@ def test_governed_oos_requires_explicit_prospective_selection():
         json={**request_body(), "cohortHash": COHORT},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("seal, expected_status", [
+    ("2026-09-02T00:00:00+00:00", 400),
+    ("2026-09-01T00:00:00", 500),
+    ("2026-09-01T02:00:00+02:00", 200),
+])
+def test_governed_oos_checks_physical_cohort_seal_at_cutoff(monkeypatch, seal, expected_status):
+    install_fakes(monkeypatch)
+    install_prospective_fakes(monkeypatch)
+    cohorts = CohortRepository()
+    record = cohorts.get_by_hash(cohort_hash=COHORT)
+    record["created_at"] = seal
+    monkeypatch.setattr(cohorts, "get_by_hash", lambda **kw: record)
+    monkeypatch.setattr(api_module, "oos_cohort_repository", cohorts)
+    governed = GovernedService()
+    monkeypatch.setattr(api_module, "governed_oos_service", governed)
+    response = client.post(
+        "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
+        json={**request_body(), "cohortHash": COHORT, "prospectiveCohortId": "preselected"},
+    )
+    assert response.status_code == expected_status
+    assert len(governed.calls) == (1 if expected_status == 200 else 0)
 
 
 @pytest.mark.parametrize("failure", ["missing", "partial", "denominator", "future"])
