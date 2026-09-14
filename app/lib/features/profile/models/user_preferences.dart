@@ -4,11 +4,15 @@ class UserPreferences {
     required this.investmentHorizonYears,
     required this.baseCurrency,
     required this.objective,
+    this.language = defaultLanguage,
     this.experienceLevel,
     this.liquidityNeed,
     this.maxDrawdownTolerancePct,
     this.availableCapital,
   });
+
+  static const defaultLanguage = 'es';
+  static const supportedLanguages = <String>{defaultLanguage};
 
   static const riskTolerances = <String>{
     'conservative',
@@ -42,6 +46,7 @@ class UserPreferences {
   final int investmentHorizonYears;
   final String baseCurrency;
   final String objective;
+  final String language;
   final String? experienceLevel;
   final String? liquidityNeed;
   final int? maxDrawdownTolerancePct;
@@ -52,6 +57,7 @@ class UserPreferences {
     final horizon = json['investmentHorizonYears'];
     final currency = json['baseCurrency'];
     final objective = json['objective'];
+    final language = json['language'] ?? defaultLanguage;
     final experience = json['experienceLevel'];
     final liquidity = json['liquidityNeed'];
     final drawdown = json['maxDrawdownTolerancePct'];
@@ -68,6 +74,9 @@ class UserPreferences {
     }
     if (objective is! String || !objectives.contains(objective)) {
       throw const FormatException('objective no válido.');
+    }
+    if (language is! String || !supportedLanguages.contains(language.trim())) {
+      throw const FormatException('language no válido.');
     }
     if (experience != null &&
         (experience is! String || !experienceLevels.contains(experience))) {
@@ -93,6 +102,7 @@ class UserPreferences {
       investmentHorizonYears: horizon,
       baseCurrency: currency.trim().toUpperCase(),
       objective: objective,
+      language: language.trim(),
       experienceLevel: experience as String?,
       liquidityNeed: liquidity as String?,
       maxDrawdownTolerancePct: drawdown as int?,
@@ -104,6 +114,7 @@ class UserPreferences {
     final risk = riskTolerance.trim();
     final currency = baseCurrency.trim().toUpperCase();
     final targetObjective = objective.trim();
+    final targetLanguage = language.trim();
     final experience = experienceLevel?.trim();
     final liquidity = liquidityNeed?.trim();
     final drawdown = maxDrawdownTolerancePct;
@@ -119,6 +130,9 @@ class UserPreferences {
     }
     if (!objectives.contains(targetObjective)) {
       throw ArgumentError.value(objective, 'objective');
+    }
+    if (!supportedLanguages.contains(targetLanguage)) {
+      throw ArgumentError.value(language, 'language');
     }
     if (experience != null &&
         experience.isNotEmpty &&
@@ -142,6 +156,7 @@ class UserPreferences {
       'investmentHorizonYears': investmentHorizonYears,
       'baseCurrency': currency,
       'objective': targetObjective,
+      'language': targetLanguage,
       if (experience != null && experience.isNotEmpty)
         'experienceLevel': experience,
       if (liquidity != null && liquidity.isNotEmpty)
