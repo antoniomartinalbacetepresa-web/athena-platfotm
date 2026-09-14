@@ -58,6 +58,7 @@ class RecommendationResearchProspectiveCohortService:
 
     def _forecasts(self, refs: list[str]) -> list[dict[str, Any]]:
         records = []
+        models = set()
         for ref in refs:
             record = self._specifications.get_by_hash(specification_hash=ref)
             if record["artifact"]["artifactVersion"] != "research-evaluation-specification-v3":
@@ -66,12 +67,23 @@ class RecommendationResearchProspectiveCohortService:
                 specification_hash=ref, specification_record=record)
             if receipt["artifact"]["artifactVersion"] != "research-model-execution-receipt-v2":
                 raise ValueError("La preselección no acepta recibos declarativos.")
+            model = receipt["artifact"].get("model")
+            if not isinstance(model, dict):
+                raise ValueError("La cohorte requiere identidad de modelo explícita.")
+            identity = tuple(model.get(field) for field in ("name", "version", "artifactHash"))
+            if any(not isinstance(value, str) or not value.strip() for value in identity):
+                raise ValueError("La cohorte requiere identidad de modelo explícita.")
+            if not re.fullmatch(r"[0-9a-f]{64}", identity[2]):
+                raise ValueError("La cohorte requiere un SHA-256 de modelo válido.")
+            models.add(identity)
             record["receipt_created_at"] = receipt["created_at"]
             records.append(record)
         methods = {r["artifact"]["forecastEvidence"]["method"] for r in records}
         horizons = {r["artifact"]["horizonSeconds"] for r in records}
         if len(methods) != 1 or len(horizons) != 1:
             raise ValueError("La cohorte requiere un único método y horizonte.")
+        if len(models) != 1:
+            raise ValueError("La cohorte requiere un único nombre, versión y artefacto de modelo.")
         return records
 
     def register(self, *, cohort_id: str, specification_hashes: list[str]) -> dict[str, Any]:

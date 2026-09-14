@@ -83,3 +83,29 @@ def test_cohort_detects_tampering_and_missing_receipt(context, tmp_path):
         connection.execute("DELETE FROM athena_research_model_execution_receipts")
     with pytest.raises(ValueError, match="no tiene model execution receipt"):
         service.get(cohort_id="prospective-test")
+
+
+@pytest.mark.parametrize("changed_field", ["name", "version", "artifactHash", None])
+def test_cohort_binds_one_model_identity_across_selected_forecasts(context, tmp_path, changed_field):
+    from copy import deepcopy
+    service, ref, _ = setup_cohort(context, tmp_path)
+    original = service._specifications.get_by_hash(specification_hash=ref)
+    receipt = service._receipts.get_by_specification_hash(specification_hash=ref, specification_record=original)
+
+    class Specifications:
+        def get_by_hash(self, **kwargs):
+            return deepcopy(original)
+
+    class Receipts:
+        def get_by_specification_hash(self, **kwargs):
+            result = deepcopy(receipt)
+            if kwargs["specification_hash"] == "b" * 64 and changed_field:
+                result["artifact"]["model"][changed_field] = "b" * 64 if changed_field == "artifactHash" else "changed"
+            return result
+
+    service._specifications, service._receipts = Specifications(), Receipts()
+    if changed_field is None:
+        assert len(service._forecasts(["a" * 64, "b" * 64])) == 2
+    else:
+        with pytest.raises(ValueError, match="artefacto de modelo"):
+            service._forecasts(["a" * 64, "b" * 64])

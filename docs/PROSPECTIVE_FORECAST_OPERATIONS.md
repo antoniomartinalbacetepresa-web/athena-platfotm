@@ -29,3 +29,10 @@ a cohort, evaluate outcomes, approve policy, train a model or promote learning.
 Real source coverage, artifact calibration, naturally mature prospective cohorts
 and governed longitudinal evidence remain operational gates. Synthetic tests do
 not satisfy them. Never reinterpret excess-return artifacts as total return.
+
+Each prospective cohort must use one method, horizon and exact model identity
+(name, version and artifact SHA-256), as resolved from its observed receipts.
+Registration and later reads reject mixed identities even if method labels match.
+A model change requires a separate prospectively sealed cohort, not pooling older
+forecasts into a new apparent model history. Existing mixed cohorts fail closed;
+do not rewrite their immutable selection or label them as comparable evidence.
