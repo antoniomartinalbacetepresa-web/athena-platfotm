@@ -133,7 +133,24 @@ class CohortRepository:
         self.calls.append(cohort_hash)
         if cohort_hash != COHORT:
             raise ValueError("cohort inexistente")
-        return {"cohort_hash": COHORT, "artifact": {"cohortHash": COHORT}}
+        return {"cohort_hash": COHORT, "artifact": {"cohortHash": COHORT, "observationCount": 2}}
+
+
+class ProspectiveService:
+    def get(self, *, cohort_id: str) -> dict[str, Any]:
+        if cohort_id != "preselected":
+            raise ValueError("No existe la cohorte preseleccionada.")
+        return {"cohortHash": "1" * 64, "sealedAt": "2026-07-31T00:00:00+00:00"}
+
+
+class BindingService:
+    def bind(self, *, cohort, error_records):
+        return {"membershipComplete": True, "selectedCount": 2}
+
+
+def install_prospective_fakes(monkeypatch):
+    monkeypatch.setattr(api_module, "prospective_cohort_service", ProspectiveService())
+    monkeypatch.setattr(api_module, "prospective_error_binding_service", BindingService())
 
 
 class GovernedService:
@@ -183,6 +200,7 @@ def install_fakes(monkeypatch):
 
 def test_governed_oos_endpoint_requires_cohort_and_evaluates_policy(monkeypatch) -> None:
     errors, specifications, _, _ = install_fakes(monkeypatch)
+    install_prospective_fakes(monkeypatch)
     cohorts = CohortRepository()
     governed = GovernedService()
     monkeypatch.setattr(api_module, "oos_cohort_repository", cohorts)
@@ -190,7 +208,7 @@ def test_governed_oos_endpoint_requires_cohort_and_evaluates_policy(monkeypatch)
 
     response = client.post(
         "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
-        json={**request_body(), "cohortHash": COHORT},
+        json={**request_body(), "cohortHash": COHORT, "prospectiveCohortId": "preselected"},
     )
 
     assert response.status_code == 200
@@ -201,6 +219,7 @@ def test_governed_oos_endpoint_requires_cohort_and_evaluates_policy(monkeypatch)
     assert governed.calls[0]["cohort_record"]["cohort_hash"] == COHORT
     data = response.json()["data"]
     assert data["governance"]["policyEvaluated"] is True
+    assert data["governance"]["prospectiveCohortHash"] == "1" * 64
     assert data["governance"]["automaticTrading"] is False
     assert data["productionLearningEligible"] is False
 
@@ -212,11 +231,43 @@ def test_governed_oos_endpoint_fails_closed_for_unknown_cohort(monkeypatch) -> N
 
     response = client.post(
         "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
-        json={**request_body(), "cohortHash": "9" * 64},
+        json={**request_body(), "cohortHash": "9" * 64, "prospectiveCohortId": "preselected"},
     )
 
     assert response.status_code == 400
     assert cohorts.calls == ["9" * 64]
+
+
+def test_governed_oos_requires_explicit_prospective_selection():
+    response = client.post(
+        "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
+        json={**request_body(), "cohortHash": COHORT},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("failure", ["missing", "partial", "denominator", "future"])
+def test_governed_oos_cannot_evaluate_policy_without_complete_ex_ante_selection(monkeypatch, failure):
+    install_fakes(monkeypatch)
+    install_prospective_fakes(monkeypatch)
+    monkeypatch.setattr(api_module, "oos_cohort_repository", CohortRepository())
+    governed = GovernedService()
+    monkeypatch.setattr(api_module, "governed_oos_service", governed)
+    cohort_id = "unknown" if failure == "missing" else "preselected"
+    if failure in {"partial", "denominator"}:
+        monkeypatch.setattr(api_module.prospective_error_binding_service, "bind", lambda **kw: {
+            "membershipComplete": failure != "partial", "selectedCount": 3,
+        })
+    if failure == "future":
+        monkeypatch.setattr(api_module.prospective_cohort_service, "get", lambda **kw: {
+            "cohortHash": "1" * 64, "sealedAt": "2026-09-02T00:00:00+00:00",
+        })
+    response = client.post(
+        "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
+        json={**request_body(), "cohortHash": COHORT, "prospectiveCohortId": cohort_id},
+    )
+    assert response.status_code == 400
+    assert governed.calls == []
 
 
 def test_oos_summary_api_uses_only_persisted_error_and_specification_records(monkeypatch) -> None:
@@ -436,4 +487,3 @@ def test_oos_summary_real_persistence_replays_temporal_evidence(monkeypatch, tmp
         assert response.json()["data"] == artifact
     # A failed replay does not mutate the append-only historical snapshot.
     assert repository.get_by_hash(summary_hash=artifact["summaryHash"])["artifact"] == artifact
-

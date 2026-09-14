@@ -1,5 +1,17 @@
 # Forecast-error OOS evidence gates
 
+## Governed HTTP evaluation requires prospective selection
+
+`POST /forecast-error-oos-governed` requires both an outcome `cohortHash` and
+`prospectiveCohortId`. The outcome cohort alone is retrospective membership, not
+proof of ex-ante selection. The endpoint reloads the prospective ledger and its
+observed specifications/receipt-v2 chain without running a model, checks its seal
+against `asOf`, and binds all submitted measured errors to the frozen selection.
+Foreign/duplicate forecasts, missing errors, or an outcome denominator different
+from the preselected denominator fail before policy evaluation. The policy is
+still human-governed and PIT-read; this route neither persists a new summary nor
+promotes a model. Synthetic tests are not longitudinal production evidence.
+
 ## Prospective cohort preselection ledger
 
 `RecommendationResearchProspectiveCohortService.register` internally freezes a

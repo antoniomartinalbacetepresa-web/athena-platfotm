@@ -39,6 +39,8 @@ from app.services.recommendation_research_model_execution_receipt_service import
 )
 from app.services.persisted_macro_forecast_input_service import PersistedMacroForecastInputService
 from app.services.governed_forecast_error_oos_service import GovernedForecastErrorOosService
+from app.services.recommendation_research_prospective_cohort_service import RecommendationResearchProspectiveCohortService
+from app.services.recommendation_research_prospective_cohort_error_binding_service import RecommendationResearchProspectiveCohortErrorBindingService
 
 
 router = APIRouter(
@@ -57,6 +59,8 @@ error_service = RecommendationResearchForecastErrorService()
 oos_summary_service = RecommendationResearchForecastErrorOosSummaryService()
 oos_cohort_repository = RecommendationResearchOutcomeOosCohortRepository()
 governed_oos_service = GovernedForecastErrorOosService()
+prospective_cohort_service = RecommendationResearchProspectiveCohortService()
+prospective_error_binding_service = RecommendationResearchProspectiveCohortErrorBindingService()
 model_execution_receipt_service = RecommendationResearchModelExecutionReceiptService()
 persisted_macro_input_service = PersistedMacroForecastInputService()
 
@@ -101,6 +105,7 @@ class GovernedForecastErrorOosRequest(ForecastErrorOosSummaryRequest):
     """Require an immutable prospective cohort for governed OOS evaluation."""
 
     cohortHash: str = Field(min_length=64, max_length=64)
+    prospectiveCohortId: str = Field(min_length=1, max_length=200)
 
 
 class PersistedMacroForecastRequest(ProspectiveEvaluationSpecificationRequest):
@@ -443,7 +448,15 @@ def post_governed_forecast_error_oos(
     as_of = _aware_utc(request.asOf, "asOf")
     try:
         cohort_record = oos_cohort_repository.get_by_hash(cohort_hash=request.cohortHash)
+        prospective = prospective_cohort_service.get(cohort_id=request.prospectiveCohortId)
+        if datetime.fromisoformat(prospective["sealedAt"]) > as_of:
+            raise ValueError("La preselección prospectiva es posterior a asOf.")
         error_records, _ = _load_oos_evidence(request.errorHashes)
+        binding = prospective_error_binding_service.bind(cohort=prospective, error_records=error_records)
+        if not binding["membershipComplete"]:
+            raise ValueError("La evaluación gobernada requiere todos los forecasts preseleccionados; faltan errores medidos.")
+        if cohort_record["artifact"].get("observationCount") != binding["selectedCount"]:
+            raise ValueError("La cohorte de outcomes no conserva el denominador prospectivo completo.")
         result = governed_oos_service.evaluate(
             as_of=as_of,
             cohort_record=cohort_record,
@@ -461,6 +474,8 @@ def post_governed_forecast_error_oos(
             **result,
             "governance": {
                 "cohortHash": request.cohortHash,
+                "prospectiveCohortHash": prospective["cohortHash"],
+                "prospectiveCoverage": binding,
                 "policyEvaluated": True,
                 "automaticProductionPromotion": False,
                 "automaticModelMutation": False,

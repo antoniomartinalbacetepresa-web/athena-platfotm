@@ -7,6 +7,9 @@ import re
 from typing import Any, Callable
 
 from app.services.recommendation_research_executed_forecast_store_service import RecommendationResearchExecutedForecastStoreService
+from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_research_evaluation_specification_repository import RecommendationResearchEvaluationSpecificationRepository
+from app.repositories.recommendation_research_model_execution_receipt_repository import RecommendationResearchModelExecutionReceiptRepository
 
 
 class RecommendationResearchProspectiveCohortService:
@@ -16,9 +19,12 @@ class RecommendationResearchProspectiveCohortService:
     missing evaluations; it never infers approval or predictive skill.
     """
 
-    def __init__(self, *, store: RecommendationResearchExecutedForecastStoreService,
+    def __init__(self, *, store: RecommendationResearchExecutedForecastStoreService | None = None,
                  now_provider: Callable[[], datetime] | None = None) -> None:
         self._store = store
+        self._database = store._database if store is not None else AthenaDatabase()
+        self._specifications = store.specifications if store is not None else RecommendationResearchEvaluationSpecificationRepository(self._database)
+        self._receipts = store.receipts if store is not None else RecommendationResearchModelExecutionReceiptRepository(self._database)
         self._now = now_provider or (lambda: datetime.now(timezone.utc))
 
     @staticmethod
@@ -44,7 +50,7 @@ class RecommendationResearchProspectiveCohortService:
         return sorted(values)
 
     def _initialize(self) -> None:
-        with self._store._database.connect() as connection:
+        with self._database.connect() as connection:
             connection.execute("""CREATE TABLE IF NOT EXISTS athena_research_prospective_cohorts (
                 cohort_id TEXT PRIMARY KEY, cohort_hash TEXT NOT NULL UNIQUE,
                 artifact_json TEXT NOT NULL, created_at TEXT NOT NULL
@@ -53,10 +59,10 @@ class RecommendationResearchProspectiveCohortService:
     def _forecasts(self, refs: list[str]) -> list[dict[str, Any]]:
         records = []
         for ref in refs:
-            record = self._store.specifications.get_by_hash(specification_hash=ref)
+            record = self._specifications.get_by_hash(specification_hash=ref)
             if record["artifact"]["artifactVersion"] != "research-evaluation-specification-v3":
                 raise ValueError("La preselección requiere forecasts v3 observados.")
-            receipt = self._store.receipts.get_by_specification_hash(
+            receipt = self._receipts.get_by_specification_hash(
                 specification_hash=ref, specification_record=record)
             if receipt["artifact"]["artifactVersion"] != "research-model-execution-receipt-v2":
                 raise ValueError("La preselección no acepta recibos declarativos.")
@@ -73,7 +79,7 @@ class RecommendationResearchProspectiveCohortService:
             raise ValueError("cohort_id obligatorio.")
         refs = self._refs(specification_hashes)
         self._initialize()
-        with self._store._database.connect() as connection:
+        with self._database.connect() as connection:
             existing = connection.execute("SELECT 1 FROM athena_research_prospective_cohorts WHERE cohort_id = ?",
                                           (cohort_id,)).fetchone()
         if existing:
@@ -82,7 +88,7 @@ class RecommendationResearchProspectiveCohortService:
                 raise ValueError("No se puede cambiar la selección precomprometida.")
             return original
         records = self._forecasts(refs)  # Revalidation precedes the SQLite write lock.
-        with self._store._database.connect() as connection:
+        with self._database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             sealed = self._time(self._now())
             if any(not max(self._time(r["created_at"]), self._time(r["receipt_created_at"])) <= sealed <= self._time(r["artifact"]["periodStart"])
@@ -103,7 +109,7 @@ class RecommendationResearchProspectiveCohortService:
 
     def get(self, *, cohort_id: str) -> dict[str, Any]:
         self._initialize()
-        with self._store._database.connect() as connection:
+        with self._database.connect() as connection:
             row = connection.execute("SELECT * FROM athena_research_prospective_cohorts WHERE cohort_id = ?",
                                      (cohort_id,)).fetchone()
         if row is None:

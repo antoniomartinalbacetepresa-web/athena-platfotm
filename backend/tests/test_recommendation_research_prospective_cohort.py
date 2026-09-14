@@ -29,6 +29,20 @@ def test_cohort_denominator_preserves_missing_evaluations(context, tmp_path):
     assert complete["productionLearningEligible"] is False
 
 
+def test_read_only_cohort_resolves_observed_receipt_without_configuring_runner(context, tmp_path, monkeypatch):
+    import app.services.recommendation_research_prospective_cohort_service as module
+    import app.services.persisted_market_forecast_input_service as market_module
+
+    service, ref, runner = setup_cohort(context, tmp_path)
+    plan = service.register(cohort_id="prospective-test", specification_hashes=[ref])
+    monkeypatch.setattr(module, "AthenaDatabase", lambda: service._database)
+    monkeypatch.setenv("ATHENA_DATABASE_PATH", str(service._database.database_path))
+    monkeypatch.setattr(market_module, "MarketObservationRepository", lambda: service._store._executor._manifest._market._repository)
+    reader = RecommendationResearchProspectiveCohortService()
+    assert reader.get(cohort_id="prospective-test") == plan
+    assert len(runner.calls) == 1
+
+
 def test_cohort_retry_after_maturity_preserves_original_seal(context, tmp_path):
     service, ref, runner = setup_cohort(context, tmp_path)
     plan = service.register(cohort_id="prospective-test", specification_hashes=[ref])
