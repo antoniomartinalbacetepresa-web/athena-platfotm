@@ -115,7 +115,8 @@ void main() {
     expect(find.byKey(const Key('portfolio-history-list')), findsNothing);
   });
 
-  testWidgets('shows safe error state and supports retry', (tester) async {
+  testWidgets('transient history failure preserves session and supports retry',
+      (tester) async {
     var attempts = 0;
     final service = AuthenticatedPortfolioService(
       baseUrl: 'http://athena.local',
@@ -148,11 +149,39 @@ void main() {
 
     expect(find.byKey(const Key('portfolio-history-error')), findsOneWidget);
     expect(find.textContaining('No se pudo leer el historial de cartera.'), findsNothing);
+    expect(find.byKey(const Key('portfolio-history-session-rejected')), findsNothing);
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'signed.jwt.token');
 
     await tester.tap(find.byKey(const Key('portfolio-history-retry')));
     await tester.pumpAndSettle();
 
     expect(attempts, 2);
     expect(find.byKey(const Key('portfolio-history-empty')), findsOneWidget);
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'signed.jwt.token');
+  });
+
+  testWidgets('401 history rejection clears session and does not offer retry',
+      (tester) async {
+    final service = serviceFor(
+      http.Response(
+        '{"detail":"La sesión ya no es válida."}',
+        401,
+      ),
+    );
+
+    await tester.pumpWidget(harness(service));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('portfolio-history-session-rejected')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('portfolio-history-retry')), findsNothing);
+    expect(find.byKey(const Key('portfolio-history-error')), findsNothing);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(session.account, isNull);
   });
 }
