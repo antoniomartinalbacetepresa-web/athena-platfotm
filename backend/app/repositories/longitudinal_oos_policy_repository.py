@@ -108,6 +108,17 @@ class LongitudinalOosPolicyRepository:
         policy = self.get_policy_by_fingerprint(policy_fingerprint=fingerprint, as_of=when)
         if policy is None:
             raise ValueError("No existe una política precomprometida visible al approved_at.")
+        policy_artifact = policy.get("artifact")
+        if not isinstance(policy_artifact, dict):
+            raise RuntimeError("La política longitudinal persistida perdió artifact.")
+        precommitted_by = self._required_text(
+            policy_artifact.get("precommittedBy"), "policy.precommittedBy"
+        )
+        if approved_by.casefold() == precommitted_by.casefold():
+            raise ValueError(
+                "La aprobación humana longitudinal requiere separación de funciones: "
+                "precomprometedor y aprobador deben ser distintos."
+            )
         artifact = {
             "status": "approved",
             "policyFingerprint": fingerprint,
@@ -116,6 +127,7 @@ class LongitudinalOosPolicyRepository:
             "approvedAt": self._iso(when),
             "humanReviewConfirmed": True,
             "approvalMode": "offline_human_operator",
+            "separationOfDutiesVerified": True,
             "automaticApproval": False,
             "automaticProductionPromotion": False,
         }
@@ -211,6 +223,8 @@ class LongitudinalOosPolicyRepository:
             raise RuntimeError("Falta revisión humana verificable.")
         if artifact.get("approvalMode") != "offline_human_operator":
             raise RuntimeError("Modo de aprobación longitudinal no soportado.")
+        if artifact.get("separationOfDutiesVerified") is not True:
+            raise RuntimeError("Falta separación de funciones verificable en la aprobación longitudinal.")
         if artifact.get("automaticApproval") is not False or artifact.get("automaticProductionPromotion") is not False:
             raise RuntimeError("La aprobación persistida contiene automatización prohibida.")
         if self._sha(artifact.get("policyFingerprint"), "policyFingerprint") != expected_fingerprint:
