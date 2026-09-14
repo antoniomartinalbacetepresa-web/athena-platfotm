@@ -27,6 +27,10 @@ class HistoricalMarketAcceptanceReport:
             and self.coverage.minimum_history_days >= self.required_history_days
             and self.coverage.deep_history_coverage
             >= self.required_deep_history_coverage
+            and self.coverage.current_deep_history_coverage
+            >= self.required_deep_history_coverage
+            and self.coverage.current_history_depth_ready
+            and self.coverage.as_of is not None
         )
 
     @property
@@ -61,6 +65,9 @@ class HistoricalMarketAcceptanceReport:
             "requiredHistoryDays": self.required_history_days,
             "requiredDeepHistoryCoverage": self.required_deep_history_coverage,
             "measuredDeepHistoryCoverage": self.coverage.deep_history_coverage,
+            "measuredCurrentDeepHistoryCoverage": self.coverage.current_deep_history_coverage,
+            "pointInTimeCutoffApplied": self.coverage.as_of is not None,
+            "asOf": self.coverage.as_of,
             "independentSecondarySourceVerified": self.independent_secondary_source_verified,
             "reconciliationReportCount": len(self.reconciliation_reports),
             "agreedCorporateActionEventCount": self.agreed_event_count,
@@ -68,9 +75,10 @@ class HistoricalMarketAcceptanceReport:
             "automaticPriceAdjustment": False,
             "productionAuthorization": False,
             "warning": (
-                "Este gate exige profundidad histórica medida sobre el universo elegible "
-                "y evidencia explícita de una fuente secundaria independiente. Pasarlo no "
-                "autoriza producción, canonicalización automática ni ajustes automáticos."
+                "Este gate exige profundidad histórica medida sobre el universo elegible, "
+                "continuidad de la fuente hasta el corte PIT y evidencia explícita de una "
+                "fuente secundaria independiente. Pasarlo no autoriza producción, "
+                "canonicalización automática ni ajustes automáticos."
             ),
         }
 
