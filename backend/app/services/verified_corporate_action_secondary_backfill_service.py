@@ -22,6 +22,41 @@ class CorporateActionHistoryProvider(Protocol):
     ) -> list[dict[str, object]]: ...
 
 
+class _ExpectedSecondaryProvider:
+    """Fail closed if a secondary-backfill observation comes from another family."""
+
+    EXPECTED_SOURCE_PROVIDER = "alpha_vantage"
+
+    def __init__(self, delegate: CorporateActionHistoryProvider) -> None:
+        self._delegate = delegate
+
+    def get_history(
+        self,
+        symbol: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, object]]:
+        rows = self._delegate.get_history(
+            symbol,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        verified: list[dict[str, object]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise RuntimeError(
+                    "La fuente secundaria devolvió una observación no estructurada."
+                )
+            source = str(row.get("sourceProvider") or "").strip().lower()
+            if source != self.EXPECTED_SOURCE_PROVIDER:
+                raise RuntimeError(
+                    "La observación del backfill secundario no pertenece a la familia "
+                    f"esperada {self.EXPECTED_SOURCE_PROVIDER}."
+                )
+            verified.append(dict(row))
+        return verified
+
+
 Clock = Callable[[], datetime]
 ProgressCallback = Callable[[dict[str, Any]], None]
 
@@ -100,6 +135,8 @@ class VerifiedCorporateActionSecondaryBackfillReport:
             "failures": [dict(item) for item in self.failures],
             "policy": {
                 "minimumIndependentProviderFamilies": 2,
+                "expectedSecondaryProviderFamily": _ExpectedSecondaryProvider.EXPECTED_SOURCE_PROVIDER,
+                "providerFamilyEnforced": True,
                 "automaticCanonicalization": False,
                 "productionIndependenceClaimed": False,
                 "automaticReadinessPromotion": False,
@@ -181,7 +218,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
         unchanged = 0
         failures: list[dict[str, str]] = []
         ingestion = CorporateActionIngestionService(
-            market_provider=self._history_provider,
+            market_provider=_ExpectedSecondaryProvider(self._history_provider),
             repository=self._repository,
         )
 
