@@ -147,3 +147,89 @@ def test_closed_account_cannot_be_recovered(monkeypatch, tmp_path: Path) -> None
     from app.services.password_recovery_service import PasswordRecoveryService
 
     assert PasswordRecoveryService().request(email="close@example.com") is None
+
+
+def test_account_closure_e2e_revokes_profile_and_portfolio_access_without_leaking_state_to_reregistered_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Exercise the public authenticated surfaces across the full closure boundary."""
+    token = _register_and_login(monkeypatch, tmp_path)
+    old_owner_id = _account_id(token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    profile_write = client.put(
+        "/api/v1/user/profile/preferences",
+        headers=headers,
+        json={
+            "riskTolerance": "balanced",
+            "investmentHorizonYears": 12,
+            "baseCurrency": "EUR",
+            "objective": "long_term_growth",
+            "experienceLevel": "intermediate",
+            "liquidityNeed": "low",
+            "maxDrawdownTolerancePct": 25,
+            "availableCapital": 50000.0,
+        },
+    )
+    assert profile_write.status_code == 200, profile_write.text
+    assert profile_write.json()["data"]["preferences"]["baseCurrency"] == "EUR"
+
+    portfolio_write = client.put(
+        "/api/v1/user/portfolio/positions",
+        headers=headers,
+        json={
+            "symbol": "AAPL",
+            "exchange": "NASDAQ",
+            "quantity": 4.0,
+            "averagePurchasePrice": 190.5,
+        },
+    )
+    assert portfolio_write.status_code == 200, portfolio_write.text
+    assert portfolio_write.json()["data"]["symbol"] == "AAPL"
+
+    assert client.get("/api/v1/user/profile/preferences", headers=headers).status_code == 200
+    assert client.get("/api/v1/user/portfolio", headers=headers).status_code == 200
+
+    closed = client.post(
+        "/api/v1/auth/close-account",
+        headers=headers,
+        json={"currentPassword": _PASSWORD},
+    )
+    assert closed.status_code == 204, closed.text
+
+    # The exact token that previously accessed both owner-scoped surfaces becomes unusable.
+    for path in (
+        "/api/v1/auth/me",
+        "/api/v1/user/profile/preferences",
+        "/api/v1/user/profile/personalization",
+        "/api/v1/user/portfolio",
+    ):
+        denied = client.get(path, headers=headers)
+        assert denied.status_code == 401, (path, denied.text)
+
+    # Reusing the released email creates a distinct account, not a path back into
+    # the closed owner's mutable profile/portfolio state.
+    registered_again = client.post(
+        "/api/v1/auth/register",
+        json={"email": "close@example.com", "password": _PASSWORD},
+    )
+    assert registered_again.status_code == 201, registered_again.text
+    relogin = client.post(
+        "/api/v1/auth/token",
+        data={"username": "close@example.com", "password": _PASSWORD},
+    )
+    assert relogin.status_code == 200, relogin.text
+    new_token = str(relogin.json()["access_token"])
+    new_headers = {"Authorization": f"Bearer {new_token}"}
+    new_owner_id = _account_id(new_token)
+    assert new_owner_id != old_owner_id
+
+    new_profile = client.get("/api/v1/user/profile/preferences", headers=new_headers)
+    assert new_profile.status_code == 200, new_profile.text
+    assert new_profile.json()["status"] == "not_configured"
+    assert new_profile.json()["data"] is None
+
+    new_portfolio = client.get("/api/v1/user/portfolio", headers=new_headers)
+    assert new_portfolio.status_code == 200, new_portfolio.text
+    assert new_portfolio.json()["data"]["positionCount"] == 0
+    assert new_portfolio.json()["data"]["positions"] == []
