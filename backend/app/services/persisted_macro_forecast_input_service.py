@@ -11,9 +11,10 @@ from app.services.recommendation_research_evaluation_specification_service impor
 
 
 class PersistedMacroForecastInputService:
-    """Resolve existing macro records, not caller-declared hashes or timestamps."""
+    """Resolve macro PIT records and verify all supported persisted v3 input families."""
 
     PREFIX = "urn:athena:macro-pit:"
+    MARKET_PREFIX = "urn:athena:market-pit:"
 
     def __init__(self, repository: RecommendationMacroPitObservationRepository | None = None):
         self._repository = repository or RecommendationMacroPitObservationRepository()
@@ -58,29 +59,44 @@ class PersistedMacroForecastInputService:
     def verify_specification(self, artifact: dict[str, Any]) -> None:
         inputs = artifact.get("inputEvidence")
         if not isinstance(inputs, list) or not inputs:
-            raise ValueError("Falta el manifiesto de inputs macro persistidos.")
+            raise ValueError("Falta el manifiesto de inputs PIT persistidos.")
         macro_inputs = [
             item for item in inputs
             if isinstance(item, dict)
             and isinstance(item.get("sourceRef"), str)
             and item["sourceRef"].startswith(self.PREFIX)
         ]
-        if not macro_inputs:
-            return
-        keys = [str(item["sourceRef"])[len(self.PREFIX):] for item in macro_inputs]
-        rebuilt = self.resolve(
-            observation_keys=keys,
-            knowledge_cutoff=self._iso(artifact.get("cycleAsOf"), "cycleAsOf"),
-            forecast_available_at=self._iso(artifact.get("forecastEvidence", {}).get("availableAt"), "forecast.availableAt"),
-        )
-        if rebuilt != macro_inputs:
-            raise ValueError("El manifiesto no coincide con los inputs macro persistidos originales.")
+        if macro_inputs:
+            keys = [str(item["sourceRef"])[len(self.PREFIX):] for item in macro_inputs]
+            rebuilt = self.resolve(
+                observation_keys=keys,
+                knowledge_cutoff=self._iso(artifact.get("cycleAsOf"), "cycleAsOf"),
+                forecast_available_at=self._iso(artifact.get("forecastEvidence", {}).get("availableAt"), "forecast.availableAt"),
+            )
+            if rebuilt != macro_inputs:
+                raise ValueError("El manifiesto no coincide con los inputs macro persistidos originales.")
+
+        market_inputs = [
+            item for item in inputs
+            if isinstance(item, dict)
+            and isinstance(item.get("sourceRef"), str)
+            and item["sourceRef"].startswith(self.MARKET_PREFIX)
+        ]
+        if market_inputs:
+            from app.services.persisted_market_forecast_input_service import PersistedMarketForecastInputService
+            PersistedMarketForecastInputService().verify_specification(artifact)
+
+        if len(macro_inputs) + len(market_inputs) != len(inputs):
+            raise ValueError("El manifiesto persistido contiene inputs no resolubles por ATHENA.")
 
     @staticmethod
     def uses_persisted_macro_inputs(artifact: dict[str, Any]) -> bool:
         return any(
             isinstance(item, dict) and isinstance(item.get("sourceRef"), str)
-            and item["sourceRef"].startswith(PersistedMacroForecastInputService.PREFIX)
+            and (
+                item["sourceRef"].startswith(PersistedMacroForecastInputService.PREFIX)
+                or item["sourceRef"].startswith(PersistedMacroForecastInputService.MARKET_PREFIX)
+            )
             for item in artifact.get("inputEvidence", [])
         )
 
