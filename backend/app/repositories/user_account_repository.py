@@ -19,6 +19,8 @@ class UserAccountRepository:
     """
 
     _TABLE = "athena_user_accounts"
+    _PROFILE_TABLE = "athena_user_profile_preferences"
+    _PORTFOLIO_TABLE = "athena_user_portfolio_positions"
 
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -124,12 +126,13 @@ class UserAccountRepository:
         user_id: int,
         replacement_password_hash: str,
     ) -> bool:
-        """Deactivate and remove direct account PII while preserving the stable id.
+        """Close one account and purge mutable owner-scoped personal state atomically.
 
-        The original email is released from the UNIQUE constraint so the person may
-        register again later. Historical rows that legitimately reference the
-        stable user id remain structurally valid, but the identity table no longer
-        retains the original email, display name or usable credential hash.
+        Direct identity PII is removed while the stable numeric id is retained for
+        referential/audit integrity. If profile or current-position tables exist,
+        their owner rows are deleted in the same transaction. Append-only evidence
+        stores are intentionally not rewritten here because doing so would destroy
+        their integrity chain; their retention is a separate governed contract.
         """
         if int(user_id) <= 0:
             return False
@@ -139,6 +142,22 @@ class UserAccountRepository:
         anonymized_email = f"closed-{int(user_id)}@account.invalid"
         now = datetime.now(timezone.utc).isoformat()
         with self._database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                f"SELECT is_active FROM {self._TABLE} WHERE id = ? LIMIT 1",
+                (int(user_id),),
+            ).fetchone()
+            if active is None or int(active["is_active"] or 0) != 1:
+                connection.rollback()
+                return False
+
+            for table_name in (self._PROFILE_TABLE, self._PORTFOLIO_TABLE):
+                if self._table_exists(connection, table_name):
+                    connection.execute(
+                        f"DELETE FROM {table_name} WHERE owner_user_id = ?",
+                        (int(user_id),),
+                    )
+
             cursor = connection.execute(
                 f"""
                 UPDATE {self._TABLE}
@@ -151,7 +170,19 @@ class UserAccountRepository:
                 """,
                 (anonymized_email, normalized_hash, now, int(user_id)),
             )
-        return int(cursor.rowcount or 0) == 1
+            if int(cursor.rowcount or 0) != 1:
+                connection.rollback()
+                return False
+            connection.commit()
+        return True
+
+    @staticmethod
+    def _table_exists(connection: Any, table_name: str) -> bool:
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        return row is not None
 
     def _ensure_table(self) -> None:
         with self._database.connect() as connection:
