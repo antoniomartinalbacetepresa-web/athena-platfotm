@@ -1,5 +1,25 @@
 # Forecast-error OOS evidence gates
 
+## Prospective cohort preselection ledger
+
+`RecommendationResearchProspectiveCohortService.register` internally freezes a
+nonempty, unique, canonically ordered set of existing observed v3 specification
+hashes. It revalidates specifications, exact inputs and receipt-v2 records, and
+requires one method/horizon. The physical selection seal must follow both forecast
+and receipt persistence and precede every selected period start. The ledger stores
+only selection references, not another forecast or outcome database. Existing
+cohort identities cannot change their membership; identical retries retain the
+original seal even after maturity. Reads revalidate the full referenced chain.
+
+`coverage` reports a fixed denominator and all missing specification hashes and
+rejects foreign/duplicate evaluation references. This is membership accounting,
+not proof that supplied references have measured outcomes: it explicitly returns
+`outcomeEvidenceVerified=false` and no production/learning/trading authority.
+The descriptive OOS APIs do not yet require this ledger. Wiring actual error
+records and prospective cohort coverage into governed sufficiency is still open.
+Selection policy approval, a real compatible model, natural horizon maturity and
+real longitudinal skill evidence remain independent operational gates.
+
 ## Inference-derived prospective forecasts
 
 The internal `generate_and_persist` workflow now calls the trusted executor's
