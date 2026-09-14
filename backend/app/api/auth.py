@@ -284,7 +284,13 @@ def close_account(
         current_password=payload.currentPassword,
     ):
         raise _credentials_error()
-    # Recovery tokens need not be trusted after closure. Failure here is safe:
-    # reset() also rejects inactive accounts, while the identity is already closed.
-    _recovery_service().invalidate(user_id=int(account["id"]))
+    # The account is already inactive and all bearer validation fails closed.
+    # Recovery-token cleanup is defense in depth and must not turn a completed,
+    # irreversible account closure into a misleading HTTP 500 for the client.
+    try:
+        _recovery_service().invalidate(user_id=int(account["id"]))
+    except Exception:
+        logger.exception(
+            "Account closed successfully, but recovery-token cleanup failed."
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
