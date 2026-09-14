@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import math
 from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
@@ -59,6 +60,7 @@ class _ExpectedSecondaryProvider:
 
 Clock = Callable[[], datetime]
 ProgressCallback = Callable[[dict[str, Any]], None]
+EventKey = tuple[int, str, str]
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ class VerifiedCorporateActionSecondaryBackfillReport:
     incomplete_before: int
     incomplete_after: int
     selected_events_still_incomplete: int
+    selected_events_conflicting: int
     agreed_before: int
     agreed_after: int
     conflicts_before: int
@@ -97,7 +100,7 @@ class VerifiedCorporateActionSecondaryBackfillReport:
             return "no_reconciliation_work"
         if self.selected_events_still_incomplete:
             return "targeted_events_still_incomplete"
-        if self.conflicts_after > self.conflicts_before:
+        if self.selected_events_conflicting:
             return "targeted_secondary_conflict_detected"
         return "targeted_secondary_family_observed"
 
@@ -123,6 +126,7 @@ class VerifiedCorporateActionSecondaryBackfillReport:
                 "incompleteAfter": self.incomplete_after,
                 "netIncompleteReduced": self.net_incomplete_reduced,
                 "selectedEventsStillIncomplete": self.selected_events_still_incomplete,
+                "selectedEventsConflicting": self.selected_events_conflicting,
                 "agreedBefore": self.agreed_before,
                 "agreedAfter": self.agreed_after,
                 "conflictsBefore": self.conflicts_before,
@@ -137,6 +141,7 @@ class VerifiedCorporateActionSecondaryBackfillReport:
                 "minimumIndependentProviderFamilies": 2,
                 "expectedSecondaryProviderFamily": _ExpectedSecondaryProvider.EXPECTED_SOURCE_PROVIDER,
                 "providerFamilyEnforced": True,
+                "eventLevelConflictVerification": True,
                 "automaticCanonicalization": False,
                 "productionIndependenceClaimed": False,
                 "automaticReadinessPromotion": False,
@@ -154,6 +159,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
     """Backfill only unresolved PIT corporate-action work, then re-measure it."""
 
     _LOOKBACK_MARGIN_DAYS = 7
+    _NUMERIC_TOLERANCE = 1e-9
 
     def __init__(
         self,
@@ -198,7 +204,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
             for item in before_worklist.items
             if item.suggested_provider == "alpha_vantage"
         )
-        selected_event_keys = {
+        selected_event_keys: set[EventKey] = {
             (item.instrument_id, item.action_type, item.effective_at)
             for item in selected_items
         }
@@ -272,6 +278,10 @@ class VerifiedCorporateActionSecondaryBackfillService:
             for item in after_worklist.items
         }
         selected_remaining = len(selected_event_keys & remaining_keys)
+        selected_conflicting = self._count_selected_conflicts(
+            selected_event_keys,
+            knowledge_cutoff=verification_cutoff,
+        )
 
         return VerifiedCorporateActionSecondaryBackfillReport(
             as_of=cutoff,
@@ -288,6 +298,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
             incomplete_before=before_coverage.incomplete_event_count,
             incomplete_after=after_coverage.incomplete_event_count,
             selected_events_still_incomplete=selected_remaining,
+            selected_events_conflicting=selected_conflicting,
             agreed_before=before_coverage.agreed_event_count,
             agreed_after=after_coverage.agreed_event_count,
             conflicts_before=before_coverage.conflict_event_count,
@@ -296,6 +307,93 @@ class VerifiedCorporateActionSecondaryBackfillService:
             effective_from_date=effective_from,
             effective_to_date=effective_to,
         )
+
+    def _count_selected_conflicts(
+        self,
+        selected_event_keys: set[EventKey],
+        *,
+        knowledge_cutoff: datetime,
+    ) -> int:
+        if not selected_event_keys:
+            return 0
+        families = CorporateActionCoverageService.DEFAULT_PROVIDER_FAMILIES
+        conflicts = 0
+        by_instrument: dict[int, set[tuple[str, str]]] = {}
+        for instrument_id, action_type, effective_at in selected_event_keys:
+            by_instrument.setdefault(instrument_id, set()).add((action_type, effective_at))
+
+        for instrument_id, target_events in by_instrument.items():
+            actions = self._repository.list_for_instrument(
+                instrument_id,
+                knowledge_cutoff=knowledge_cutoff,
+            )
+            latest_by_event_provider: dict[
+                tuple[str, str], dict[str, dict[str, Any]]
+            ] = {}
+            for raw in actions:
+                row = dict(raw)
+                event_key = (
+                    str(row.get("action_type") or "").strip().lower(),
+                    str(row.get("effective_at") or "").strip(),
+                )
+                if event_key not in target_events:
+                    continue
+                provider = str(row.get("source_provider") or "").strip()
+                family = families.get(provider)
+                if family is None:
+                    continue
+                by_provider = latest_by_event_provider.setdefault(event_key, {})
+                previous = by_provider.get(provider)
+                if previous is None or str(row["retrieved_at"]) > str(previous["retrieved_at"]):
+                    by_provider[provider] = row
+
+            for latest_by_provider in latest_by_event_provider.values():
+                latest_by_family: dict[str, dict[str, Any]] = {}
+                for provider, row in latest_by_provider.items():
+                    family = families.get(provider)
+                    if family is None:
+                        continue
+                    previous = latest_by_family.get(family)
+                    if previous is None or str(row["retrieved_at"]) > str(previous["retrieved_at"]):
+                        latest_by_family[family] = row
+                if len(latest_by_family) < 2:
+                    continue
+                values = [self._public_value(row) for row in latest_by_family.values()]
+                reference = values[0]
+                if any(not self._values_equal(reference, candidate) for candidate in values[1:]):
+                    conflicts += 1
+        return conflicts
+
+    def _public_value(self, row: dict[str, Any]) -> dict[str, Any]:
+        action_type = str(row["action_type"]).lower()
+        if action_type == "dividend":
+            return {
+                "cashAmount": float(row["cash_amount"]),
+                "currency": (
+                    str(row["currency"]).strip().upper()
+                    if row.get("currency") is not None
+                    else None
+                ),
+            }
+        return {"splitRatio": float(row["split_ratio"])}
+
+    def _values_equal(self, left: dict[str, Any], right: dict[str, Any]) -> bool:
+        if left.keys() != right.keys():
+            return False
+        for key in left:
+            left_value = left[key]
+            right_value = right[key]
+            if isinstance(left_value, float) and isinstance(right_value, float):
+                if not math.isclose(
+                    left_value,
+                    right_value,
+                    rel_tol=self._NUMERIC_TOLERANCE,
+                    abs_tol=self._NUMERIC_TOLERANCE,
+                ):
+                    return False
+            elif left_value != right_value:
+                return False
+        return True
 
     def _resolve_window(
         self,
