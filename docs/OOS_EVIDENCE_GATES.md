@@ -1,5 +1,14 @@
 # Forecast-error OOS evidence gates
 
+## Observed v3 errors replay their outcomes
+
+The shared OOS evidence loader also reloads each v3 error's original persisted
+outcome and recomputes the complete error artifact against its specification.
+Missing outcomes and discrepancies fail before descriptive summary construction,
+summary reads or governed sufficiency. This is content/identity reconciliation,
+not certification of the underlying market outcome's entire provider lineage.
+Legacy v1/v2 paths are unchanged; no evidence is repaired or rewritten.
+
 ## Policy approval precedes the evaluation start
 
 Longitudinal measurement reports the earliest measured `periodStart` as

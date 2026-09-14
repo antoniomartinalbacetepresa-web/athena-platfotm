@@ -505,6 +505,14 @@ def _load_oos_evidence(error_hashes: object) -> tuple[list[dict], list[dict]]:
         specification = specification_repository.get_by_hash(specification_hash=specification_hash)
         _verify_persisted_macro_inputs(specification["artifact"])
         _verify_model_execution_receipt_if_required(specification)
+        if specification["artifact"].get("artifactVersion") == "research-evaluation-specification-v3":
+            outcome_hash = artifact.get("outcomeHash")
+            if not isinstance(outcome_hash, str):
+                raise ValueError("Forecast error v3 perdió outcomeHash.")
+            outcome = outcome_repository.get_by_hash(outcome_hash=outcome_hash)
+            rebuilt = error_service.evaluate(specification_record=specification, outcome_record=outcome)
+            if rebuilt != artifact:
+                raise ValueError("Forecast error v3 no coincide con su outcome persistido revalidado.")
         specifications.append(specification)
     return errors, specifications
 

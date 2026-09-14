@@ -238,6 +238,35 @@ def test_governed_oos_endpoint_fails_closed_for_unknown_cohort(monkeypatch) -> N
     assert cohorts.calls == ["9" * 64]
 
 
+@pytest.mark.parametrize("state", ["valid", "missing", "modified"])
+def test_v3_oos_replays_persisted_outcome_before_using_error(monkeypatch, state):
+    install_fakes(monkeypatch)
+    artifact = {"specificationHash": SPEC_A, "outcomeHash": "7" * 64}
+    monkeypatch.setattr(api_module.error_repository, "get_by_hash", lambda **kw: {"artifact": artifact})
+    monkeypatch.setattr(api_module.specification_repository, "get_by_hash", lambda **kw: {
+        "artifact": {"artifactVersion": "research-evaluation-specification-v3"},
+    })
+    # Isolate outcome replay; receipt/input validity has separate regressions.
+    monkeypatch.setattr(api_module, "_verify_model_execution_receipt_if_required", lambda record: None)
+    calls = []
+    def outcome_lookup(*, outcome_hash):
+        calls.append(outcome_hash)
+        if state == "missing":
+            raise ValueError("outcome inexistente")
+        return {"outcome_hash": outcome_hash}
+    monkeypatch.setattr(api_module.outcome_repository, "get_by_hash", outcome_lookup)
+    monkeypatch.setattr(api_module.error_service, "evaluate", lambda **kw: (
+        artifact if state == "valid" else {**artifact, "realizedValue": 99.0}
+    ))
+    if state == "valid":
+        errors, _ = api_module._load_oos_evidence([ERROR_A])
+        assert errors[0]["artifact"] == artifact
+    else:
+        with pytest.raises(ValueError):
+            api_module._load_oos_evidence([ERROR_A])
+    assert calls == ["7" * 64]
+
+
 def test_governed_oos_requires_explicit_prospective_selection():
     response = client.post(
         "/api/v1/recommendations/professional-research/forecast-error-oos-governed",
