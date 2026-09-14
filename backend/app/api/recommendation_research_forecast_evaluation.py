@@ -28,6 +28,7 @@ from app.services.recommendation_research_forecast_error_oos_summary_service imp
 from app.services.recommendation_research_forecast_error_service import (
     RecommendationResearchForecastErrorService,
 )
+from app.services.persisted_macro_forecast_input_service import PersistedMacroForecastInputService
 
 
 router = APIRouter(
@@ -43,6 +44,7 @@ oos_summary_repository = RecommendationResearchForecastErrorOosSummaryRepository
 specification_service = RecommendationResearchEvaluationSpecificationService()
 error_service = RecommendationResearchForecastErrorService()
 oos_summary_service = RecommendationResearchForecastErrorOosSummaryService()
+persisted_macro_input_service = PersistedMacroForecastInputService()
 
 
 class EvaluationSpecificationRequest(BaseModel):
@@ -79,6 +81,10 @@ class ForecastErrorOosSummaryRequest(BaseModel):
     summaryId: str = Field(min_length=1, max_length=200)
     asOf: datetime
     errorHashes: list[str] = Field(min_length=1, max_length=5000)
+
+
+class PersistedMacroForecastRequest(ProspectiveEvaluationSpecificationRequest):
+    macroObservationKeys: list[str] = Field(min_length=1, max_length=200)
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -130,6 +136,34 @@ def post_pit_safe_prospective_evaluation_specification(
     )
 
 
+@router.post("/research-cycle/{cycle_hash}/persisted-macro-evaluation-specification")
+def post_persisted_macro_evaluation_specification(
+    cycle_hash: str, request: PersistedMacroForecastRequest,
+) -> dict[str, object]:
+    """Construct v3 inputs from verified existing macro PIT records."""
+    period_start = _aware_utc(request.periodStart, "periodStart")
+    available_at = _aware_utc(request.availableAt, "availableAt")
+    try:
+        cycle = cycle_repository.get_by_hash(cycle_hash=cycle_hash)["package"]["cycle"]
+        cutoff = datetime.fromisoformat(cycle["asOf"])
+        inputs = persisted_macro_input_service.resolve(
+            observation_keys=request.macroObservationKeys,
+            knowledge_cutoff=cutoff, forecast_available_at=available_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudieron verificar inputs macro persistidos.") from exc
+    return _persist_evaluation_specification(
+        cycle_hash, request, period_start=period_start, input_evidence=inputs,
+    )
+
+
+def _verify_persisted_macro_inputs(artifact: dict[str, object]) -> None:
+    if persisted_macro_input_service.uses_persisted_macro_inputs(artifact):
+        persisted_macro_input_service.verify_specification(artifact)
+
+
 def _persist_evaluation_specification(
     cycle_hash: str,
     request: EvaluationSpecificationRequest,
@@ -152,6 +186,7 @@ def _persist_evaluation_specification(
             period_start=period_start,
             input_evidence=input_evidence,
         )
+        _verify_persisted_macro_inputs(artifact)
         persisted = specification_repository.append(artifact=artifact)
     except HTTPException:
         raise
@@ -178,6 +213,7 @@ def _persist_evaluation_specification(
 def get_evaluation_specification(specification_hash: str) -> dict[str, object]:
     try:
         record = specification_repository.get_by_hash(specification_hash=specification_hash)
+        _verify_persisted_macro_inputs(record["artifact"])
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -193,6 +229,7 @@ def post_forecast_error(request: ForecastErrorRequest) -> dict[str, object]:
             specification_hash=request.specificationHash
         )
         outcome_record = outcome_repository.get_by_hash(outcome_hash=request.outcomeHash)
+        _verify_persisted_macro_inputs(specification_record["artifact"])
         artifact = error_service.evaluate(
             specification_record=specification_record,
             outcome_record=outcome_record,
@@ -252,6 +289,7 @@ def post_forecast_error_oos_summary(
             specification_records.append(
                 specification_repository.get_by_hash(specification_hash=specification_hash)
             )
+            _verify_persisted_macro_inputs(specification_records[-1]["artifact"])
         artifact = oos_summary_service.build(
             summary_id=request.summaryId,
             as_of=as_of,

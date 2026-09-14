@@ -1,5 +1,36 @@
 # Forecast-error OOS evidence gates
 
+## Persisted macro inputs bridge
+
+The separate POST route
+`/api/v1/recommendations/professional-research/research-cycle/{cycle_hash}/persisted-macro-evaluation-specification`
+accepts forecast fields and `macroObservationKeys` instead of trusting a supplied
+input manifest. It reuses `RecommendationMacroPitObservationRepository` and the
+existing v3 specification store. No new forecast or macro database is introduced.
+
+Each selected record is hash-validated by the macro repository. Both publication
+availability and physical persistence must precede or equal the frozen cycle
+cutoff, which in turn must precede or equal forecast availability. The manifest
+uses `urn:athena:macro-pit:{observationKey}` references and a SHA-256 over the exact
+artifact plus its normalized persistence timestamp; effective input availability
+is the later of publication and persistence. Selection is bounded at 200 unique
+keys and ordered canonically. Historical data ingested later cannot retroactively
+qualify for an earlier cycle merely because its publication date is older.
+
+The API reverifies these resolvable references before specification persistence,
+on specification reads, before forecast-error calculation, and before summary
+construction. Missing records, changed payloads, changed persistence metadata,
+or a manifest differing from reconstructed content fail closed. A manifest using
+this namespace must consist entirely of supported macro references; mixed or
+unresolvable namespaces do not gain partial verification.
+
+Other v3 manifests remain declared research inputs, not automatically certified
+persisted data. This bridge only covers the existing supported macro providers;
+market, filings, news, model-input lineage, prospective cohort preselection,
+actual model execution, longitudinal evidence, and governed promotion remain
+separate work. It does not claim external timestamp attestation, source quality,
+predictive skill, or production eligibility.
+
 These checks extend the existing descriptive OOS pipeline. They do not approve
 models, select thresholds, establish predictive skill, or enable trading.
 
