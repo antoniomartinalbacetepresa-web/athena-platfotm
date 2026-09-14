@@ -112,11 +112,65 @@ class RecommendationResearchModelExecutorService:
             "output": observed_output,
             "outputHash": self._hash(observed_output),
         }
-        return {
+        observation = {
             **core, "observationHash": self._hash(core),
             "productionEligible": False, "productionLearningEligible": False,
             "automaticProductionPromotion": False, "automaticTrading": False,
         }
+        return self.validate_observation(
+            observation=observation, specification=specification, model_bytes=model_bytes,
+        )
+
+    def validate_observation(
+        self, *, observation: dict[str, Any], specification: dict[str, Any],
+        model_bytes: bytes,
+    ) -> dict[str, Any]:
+        """Revalidate bindings for trusted persistence; not an origin attestation."""
+        if not isinstance(observation, dict) or observation.get("artifactVersion") != "research-model-execution-observation-v1":
+            raise ValueError("Observación de ejecución incompatible.")
+        core_keys = (
+            "artifactVersion", "executionId", "specificationHash", "inputManifestHash",
+            "inputSnapshotHash", "model", "startedAt", "executedAt", "output", "outputHash",
+        )
+        if observation.get("observationHash") != self._hash({key: observation.get(key) for key in core_keys}):
+            raise ValueError("La observación fue modificada después de ejecutar el modelo.")
+        for flag in ("productionEligible", "productionLearningEligible", "automaticProductionPromotion", "automaticTrading"):
+            if observation.get(flag) is not False:
+                raise ValueError("La observación intentó activar autoridad productiva.")
+        if not isinstance(observation.get("executionId"), str) or not observation["executionId"].strip():
+            raise ValueError("La observación perdió executionId.")
+        snapshot = self._manifest.materialize_specification(specification)
+        for field in ("specificationHash", "inputManifestHash"):
+            if observation.get(field) != snapshot[field]:
+                raise ValueError("La observación no corresponde a la specification/manifiesto.")
+        if observation.get("inputSnapshotHash") != self._hash(snapshot["inputs"]):
+            raise ValueError("La observación no corresponde a los payloads PIT originales.")
+        if not isinstance(model_bytes, bytes) or not 0 < len(model_bytes) <= 10_000_000:
+            raise ValueError("Faltan bytes del modelo observado.")
+        try:
+            model = json.loads(model_bytes, object_pairs_hook=self._unique_object)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError("Bytes de modelo JSON inválidos.") from exc
+        if not isinstance(model, dict) or model.get("metric") != "total_return" or model.get("horizonSeconds") != specification["horizonSeconds"]:
+            raise ValueError("El contrato del modelo observado no coincide con la previsión.")
+        self._hash(model)
+        if isinstance(model["horizonSeconds"], bool) or not isinstance(model["horizonSeconds"], int):
+            raise ValueError("El horizonte del modelo observado debe ser entero.")
+        for field in ("name", "version"):
+            if not isinstance(model.get(field), str) or not model[field].strip():
+                raise ValueError("El modelo observado perdió su identidad.")
+            RecommendationResearchModelExecutionReceiptService()._assert_model_allowed(model[field])
+        expected_model = {"name": model.get("name"), "version": model.get("version"), "artifactHash": hashlib.sha256(model_bytes).hexdigest()}
+        if observation.get("model") != expected_model:
+            raise ValueError("La observación no corresponde a los bytes del modelo.")
+        expected_output = {"metric": "total_return", "expectedValue": float(specification["expectedValue"])}
+        if observation.get("output") != expected_output or observation.get("outputHash") != self._hash(expected_output) or observation.get("outputHash") != self._hash(observation.get("output")):
+            raise ValueError("La observación no corresponde al output de la previsión.")
+        start, end = self._time(observation.get("startedAt")), self._time(observation.get("executedAt"))
+        latest = max(self._time(item["evidence"]["availableAt"]) for item in snapshot["inputs"])
+        if not latest <= start <= end <= self._time(specification["forecastEvidence"]["availableAt"]):
+            raise ValueError("La observación viola el orden temporal PIT.")
+        return json.loads(json.dumps(observation, allow_nan=False))
 
     @staticmethod
     def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -175,3 +175,30 @@ def test_executor_rejects_integer_output_overflow_cleanly(context, tmp_path):
     executor, _, spec, raw = setup_executor(context, tmp_path, runner=OverflowRunner())
     with pytest.raises(ValueError, match="numérico finito"):
         execute(executor, spec, raw)
+
+
+@pytest.mark.parametrize("field", ["specificationHash", "inputSnapshotHash", "model", "executedAt"])
+def test_observation_revalidation_rejects_rehashed_semantic_changes(context, tmp_path, field):
+    executor, _, spec, raw = setup_executor(context, tmp_path)
+    observation = execute(executor, spec, raw)
+    if field == "model":
+        observation[field]["artifactHash"] = "a" * 64
+    elif field == "executedAt":
+        observation[field] = "2099-01-01T00:00:00+00:00"
+    else:
+        observation[field] = "b" * 64
+    core_keys = (
+        "artifactVersion", "executionId", "specificationHash", "inputManifestHash",
+        "inputSnapshotHash", "model", "startedAt", "executedAt", "output", "outputHash",
+    )
+    observation["observationHash"] = canonical_hash({key: observation[key] for key in core_keys})
+    with pytest.raises(ValueError):
+        executor.validate_observation(observation=observation, specification=spec, model_bytes=raw)
+
+
+def test_observation_revalidation_returns_detached_record(context, tmp_path):
+    executor, _, spec, raw = setup_executor(context, tmp_path)
+    observation = execute(executor, spec, raw)
+    validated = executor.validate_observation(observation=observation, specification=spec, model_bytes=raw)
+    validated["model"]["name"] = "changed-copy"
+    assert observation["model"]["name"] == "synthetic-runner-model"

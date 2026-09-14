@@ -1,5 +1,14 @@
 # Forecast-error OOS evidence gates
 
+Execution observations now have a reusable `validate_observation` read/persistence
+boundary. It verifies the observation hash, disabled authority flags and exact
+specification, reconstructed manifest/payloads, model-byte identity, output and
+temporal bindings. Rehashing altered metadata cannot bypass these semantic
+checks. Execution uses this validator before returning, and validated records
+are detached copies. This is integrity verification for trusted storage, not
+proof of observation origin: the integrated receipt-v2 writer remains required
+and OOS eligibility is unchanged.
+
 The executor freezes an independent copy of the entire prospective specification
 before inference and rejects changes to the original contract during the runner
 call. Output binding cannot be switched by editing the expected value, input
