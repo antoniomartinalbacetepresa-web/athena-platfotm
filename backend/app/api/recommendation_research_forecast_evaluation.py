@@ -180,6 +180,24 @@ def _verify_persisted_macro_inputs(artifact: dict[str, object]) -> None:
         persisted_macro_input_service.verify_specification(artifact)
 
 
+def _verify_model_execution_receipt_if_required(
+    specification_record: dict[str, object],
+) -> None:
+    """Fail closed for v3 while keeping legacy v1/v2 evaluation compatible."""
+    artifact = specification_record.get("artifact")
+    if not isinstance(artifact, dict):
+        raise ValueError("Evaluation specification persistida carece de artifact válido.")
+    if artifact.get("artifactVersion") != "research-evaluation-specification-v3":
+        return
+    specification_hash = specification_record.get("specification_hash")
+    if not isinstance(specification_hash, str):
+        raise ValueError("Evaluation specification v3 perdió specification_hash persistido.")
+    model_execution_receipt_repository.get_by_specification_hash(
+        specification_hash=specification_hash,
+        specification_record=specification_record,
+    )
+
+
 def _persist_evaluation_specification(
     cycle_hash: str,
     request: EvaluationSpecificationRequest,
@@ -312,6 +330,7 @@ def post_forecast_error(request: ForecastErrorRequest) -> dict[str, object]:
         )
         outcome_record = outcome_repository.get_by_hash(outcome_hash=request.outcomeHash)
         _verify_persisted_macro_inputs(specification_record["artifact"])
+        _verify_model_execution_receipt_if_required(specification_record)
         artifact = error_service.evaluate(
             specification_record=specification_record,
             outcome_record=outcome_record,
@@ -405,6 +424,7 @@ def _load_oos_evidence(error_hashes: object) -> tuple[list[dict], list[dict]]:
             raise ValueError("Forecast error persistido perdió specificationHash.")
         specification = specification_repository.get_by_hash(specification_hash=specification_hash)
         _verify_persisted_macro_inputs(specification["artifact"])
+        _verify_model_execution_receipt_if_required(specification)
         specifications.append(specification)
     return errors, specifications
 
