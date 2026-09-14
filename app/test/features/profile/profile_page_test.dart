@@ -1,11 +1,30 @@
 import 'package:app/core/routing/app_router.dart';
 import 'package:app/core/routing/app_routes.dart';
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/athena_auth_service.dart';
+import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/profile/models/user_preferences.dart';
 import 'package:app/features/profile/presentation/pages/profile_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
+  final session = AuthSession.instance;
+
+  setUp(session.clear);
+  tearDown(session.clear);
+
+  AuthAccount account() => AuthAccount(
+        id: 17,
+        email: 'profile-owner@example.com',
+        displayName: 'Profile Owner',
+        isActive: true,
+        createdAt: DateTime.utc(2026, 9, 1),
+        updatedAt: DateTime.utc(2026, 9, 1),
+      );
+
   testWidgets('profile route renders protected guest state without a session',
       (tester) async {
     await tester.pumpWidget(
@@ -21,6 +40,59 @@ void main() {
     expect(find.text('Perfil protegido'), findsOneWidget);
     expect(find.text('INICIAR SESIÓN'), findsOneWidget);
     expect(find.text('Preferencias protegidas'), findsNothing);
+  });
+
+  testWidgets('transient me failure preserves authenticated session',
+      (tester) async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((_) async => http.Response('{}', 503)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ProfilePage(authService: auth)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'profile.jwt');
+    expect(session.account?.email, 'profile-owner@example.com');
+    expect(find.text('Identidad autenticada'), findsOneWidget);
+    expect(
+      find.byKey(const Key('profile-session-validation-error')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('problema temporal'), findsOneWidget);
+    expect(find.text('Perfil protegido'), findsNothing);
+
+    auth.dispose();
+  });
+
+  testWidgets('backend rejection clears invalid authenticated session',
+      (tester) async {
+    session.establish(accessToken: 'stale.jwt', account: account());
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((_) async => http.Response('{}', 401)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ProfilePage(authService: auth)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(session.account, isNull);
+    expect(find.text('Perfil protegido'), findsOneWidget);
+    expect(find.textContaining('ha caducado'), findsOneWidget);
+    expect(
+      find.byKey(const Key('profile-session-validation-error')),
+      findsNothing,
+    );
+
+    auth.dispose();
   });
 
   testWidgets('preferences form validates and emits only the protected model',
