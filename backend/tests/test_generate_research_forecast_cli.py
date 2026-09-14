@@ -13,7 +13,7 @@ def arguments(tmp_path, template=b'{}', model=b'{"test":"data"}'):
     template_path.write_bytes(template)
     return cli.build_parser().parse_args([
         "--model", str(model_path), "--template", str(template_path),
-        "--artifact-sha256", hashlib.sha256(model).hexdigest()])
+        "--artifact-sha256", hashlib.sha256(model).hexdigest(), "--plan-id", "test-only"])
 
 
 class Store:
@@ -56,7 +56,7 @@ def test_template_and_recovery_are_mutually_exclusive():
 
 def test_forwards_exact_bytes_template_and_pin(tmp_path):
     args = arguments(tmp_path, template=b'{"specificationId":"test-only"}')
-    result = cli.run(args, store=Store())
+    result = cli.run(args, store=Store(), plan_service=Plan(args))
     assert result["model_bytes"] == args.model.read_bytes()
     assert result["pinned_artifact_hash"] == args.artifact_sha256
     assert result["specification_template"] == {"specificationId": "test-only"}
@@ -94,3 +94,36 @@ def test_main_failure_has_no_partial_json_or_internal_details(monkeypatch, capsy
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "private-internal-detail" not in captured.err
+
+
+class Plan:
+    def __init__(self, args):
+        self.args = args
+    def get(self, **kwargs):
+        return {"sealedAt": "2020-01-01T00:00:00+00:00",
+                "modelArtifactHash": self.args.artifact_sha256,
+                "templates": [json.loads(self.args.template.read_bytes())]}
+
+
+@pytest.mark.parametrize("failure", ["missing_id", "model", "template", "future_seal"])
+def test_generation_requires_available_exact_precommitted_selection(tmp_path, failure):
+    args = arguments(tmp_path)
+    plan = Plan(args).get()
+    if failure == "missing_id":
+        args.plan_id = None
+    elif failure == "model":
+        plan["modelArtifactHash"] = "b" * 64
+    elif failure == "template":
+        plan["templates"] = [{"different": True}]
+    else:
+        plan["sealedAt"] = "2999-01-01T00:00:00+00:00"
+
+    class Plans:
+        def get(self, **kwargs):
+            return plan
+    class Forbidden(Store):
+        def generate_and_persist(self, **kwargs):
+            pytest.fail("Invalid plan must not invoke inference")
+
+    with pytest.raises(ValueError):
+        cli.run(args, store=Forbidden(), plan_service=Plans())
