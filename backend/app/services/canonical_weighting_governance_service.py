@@ -53,7 +53,9 @@ class CanonicalWeightingGovernanceService:
 
     The quantitative engine may create immutable proposals, but only an explicit
     human approval call can make one eligible for consumption. Creating, reading,
-    or refreshing diagnostics never approves a proposal.
+    or refreshing diagnostics never approves a proposal. An approval remains
+    consumable only while the current canonical evidence fingerprint exactly
+    matches the evidence the human reviewed.
     """
 
     _REGIONS = ("america", "europe", "asia")
@@ -70,31 +72,7 @@ class CanonicalWeightingGovernanceService:
 
     def create_proposal(self, *, created_by: str) -> CanonicalWeightingProposal:
         actor = self._required_text(created_by, "created_by")
-        report = CanonicalMarketCapService(database=self._database).get_report()
-        self._validate_weights(report.region_weights)
-        if report.canonical_market_cap_usd <= 0:
-            raise ValueError("No existe capitalización canónica suficiente para proponer pesos.")
-        if report.domicile_unresolved_issuer_count > 0:
-            raise ValueError(
-                "No se puede proponer weighting con emisores canónicos sin domicilio resuelto."
-            )
-        if report.median_fallback_market_cap_count > 0:
-            raise ValueError(
-                "No se puede proponer weighting mientras existan capitalizaciones por fallback de mediana."
-            )
-
-        snapshot = {
-            "method": "canonical_identity_complete_listing_market_cap",
-            "canonicalIssuerCount": report.canonical_issuer_count,
-            "canonicalMarketCapUsd": report.canonical_market_cap_usd,
-            "domicileResolvedIssuerCount": report.domicile_resolved_issuer_count,
-            "domicileUnresolvedIssuerCount": report.domicile_unresolved_issuer_count,
-            "domicileMarketCapCoverage": report.domicile_market_cap_coverage,
-            "canonicalListingMarketCapCount": report.canonical_listing_market_cap_count,
-            "medianFallbackMarketCapCount": report.median_fallback_market_cap_count,
-            "regionMarketCapUsd": dict(report.region_market_cap_usd),
-            "regionWeights": dict(report.region_weights),
-        }
+        snapshot, region_weights = self._current_evidence_snapshot()
         snapshot_json = self._canonical_json(snapshot)
         evidence_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
         created_at = self._aware_utc(self._clock(), "clock").isoformat()
@@ -114,7 +92,7 @@ class CanonicalWeightingGovernanceService:
                 (
                     created_at,
                     actor,
-                    self._canonical_json(report.region_weights),
+                    self._canonical_json(region_weights),
                     snapshot_json,
                     evidence_hash,
                 ),
@@ -141,6 +119,11 @@ class CanonicalWeightingGovernanceService:
                 "La aprobación humana requiere separación de funciones: proponente y aprobador deben ser distintos."
             )
         self._verify_integrity(proposal)
+        current_hash = self._current_evidence_hash()
+        if current_hash != proposal.evidence_sha256:
+            raise ValueError(
+                "La evidencia canónica cambió desde la propuesta; debe generarse y revisarse una nueva propuesta."
+            )
         approved_at = self._aware_utc(self._clock(), "clock").isoformat()
 
         with self._database.connect() as connection:
@@ -214,6 +197,25 @@ class CanonicalWeightingGovernanceService:
         self._verify_integrity(proposal)
         if not proposal.human_approved:
             raise RuntimeError("Una propuesta no aprobada atravesó el gate de weighting.")
+
+        try:
+            current_hash = self._current_evidence_hash()
+        except ValueError:
+            current_hash = None
+        if current_hash != proposal.evidence_sha256:
+            return {
+                "status": "blocked_stale_evidence_requires_human_approval",
+                "regionWeights": None,
+                "proposalId": proposal.proposal_id,
+                "approvedAt": proposal.approved_at,
+                "approvedBy": proposal.approved_by,
+                "humanApproved": True,
+                "evidenceFresh": False,
+                "approvalEvidenceSha256": proposal.evidence_sha256,
+                "currentEvidenceSha256": current_hash,
+                "automaticApproval": False,
+                "automaticTrading": False,
+            }
         return {
             "status": "human_approved",
             "regionWeights": dict(proposal.region_weights),
@@ -221,6 +223,9 @@ class CanonicalWeightingGovernanceService:
             "approvedAt": proposal.approved_at,
             "approvedBy": proposal.approved_by,
             "humanApproved": True,
+            "evidenceFresh": True,
+            "approvalEvidenceSha256": proposal.evidence_sha256,
+            "currentEvidenceSha256": current_hash,
             "automaticApproval": False,
             "automaticTrading": False,
         }
@@ -238,6 +243,39 @@ class CanonicalWeightingGovernanceService:
         proposal = self._from_row(dict(row))
         self._verify_integrity(proposal)
         return proposal
+
+    def _current_evidence_snapshot(self) -> tuple[dict[str, Any], dict[str, float]]:
+        report = CanonicalMarketCapService(database=self._database).get_report()
+        self._validate_weights(report.region_weights)
+        if report.canonical_market_cap_usd <= 0:
+            raise ValueError("No existe capitalización canónica suficiente para proponer pesos.")
+        if report.domicile_unresolved_issuer_count > 0:
+            raise ValueError(
+                "No se puede proponer weighting con emisores canónicos sin domicilio resuelto."
+            )
+        if report.median_fallback_market_cap_count > 0:
+            raise ValueError(
+                "No se puede proponer weighting mientras existan capitalizaciones por fallback de mediana."
+            )
+        snapshot = {
+            "method": "canonical_identity_complete_listing_market_cap",
+            "canonicalIssuerCount": report.canonical_issuer_count,
+            "canonicalMarketCapUsd": report.canonical_market_cap_usd,
+            "domicileResolvedIssuerCount": report.domicile_resolved_issuer_count,
+            "domicileUnresolvedIssuerCount": report.domicile_unresolved_issuer_count,
+            "domicileMarketCapCoverage": report.domicile_market_cap_coverage,
+            "canonicalListingMarketCapCount": report.canonical_listing_market_cap_count,
+            "medianFallbackMarketCapCount": report.median_fallback_market_cap_count,
+            "regionMarketCapUsd": dict(report.region_market_cap_usd),
+            "regionWeights": dict(report.region_weights),
+        }
+        return snapshot, dict(report.region_weights)
+
+    def _current_evidence_hash(self) -> str:
+        snapshot, _ = self._current_evidence_snapshot()
+        return hashlib.sha256(
+            self._canonical_json(snapshot).encode("utf-8")
+        ).hexdigest()
 
     def _initialize_schema(self) -> None:
         self._database.initialize()
