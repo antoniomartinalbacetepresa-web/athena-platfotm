@@ -54,6 +54,7 @@ def test_persists_policy_and_human_approval_bound_to_exact_fingerprint(tmp_path)
     )
     assert approval["artifact"]["humanReviewConfirmed"] is True
     assert approval["artifact"]["approvalMode"] == "offline_human_operator"
+    assert approval["artifact"]["separationOfDutiesVerified"] is True
     assert approval["artifact"]["automaticApproval"] is False
     assert repository.get_latest_policy() == policy
     assert repository.get_latest_approval(policy_fingerprint=fingerprint) == approval
@@ -76,6 +77,29 @@ def test_rejects_approval_without_explicit_human_confirmation(tmp_path) -> None:
             evidence_ref="review",
             human_review_confirmed=False,
         )
+
+
+def test_policy_precommitter_cannot_self_approve(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    policy = repository.register_policy(
+        policy_id="longitudinal-oos-v1",
+        version=1,
+        criteria=CRITERIA,
+        precommitted_by="Research-Governance",
+        evidence_ref="policy-review",
+    )
+
+    with pytest.raises(ValueError, match="separación de funciones"):
+        repository.approve_policy(
+            policy_fingerprint=policy["artifact"]["policyFingerprint"],
+            approved_by="research-governance",
+            evidence_ref="self-review-must-not-pass",
+            human_review_confirmed=True,
+        )
+
+    assert repository.get_latest_approval(
+        policy_fingerprint=policy["artifact"]["policyFingerprint"]
+    ) is None
 
 
 def test_approval_requires_policy_visible_at_approval_time(tmp_path) -> None:
