@@ -9,31 +9,40 @@ import '../../models/user_preferences.dart';
 import '../../services/user_preferences_service.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  const ProfilePage({
+    super.key,
+    this.authService,
+  });
+
+  final AthenaAuthService? authService;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final AthenaAuthService _authService = AthenaAuthService();
+  late final AthenaAuthService _authService;
+  late final bool _ownsAuthService;
   final UserPreferencesService _preferencesService = UserPreferencesService();
 
   bool _checking = false;
   bool _preferencesBusy = false;
   String? _error;
+  String? _sessionValidationError;
   String? _preferencesError;
   UserPreferences? _preferences;
 
   @override
   void initState() {
     super.initState();
+    _ownsAuthService = widget.authService == null;
+    _authService = widget.authService ?? AthenaAuthService();
     _refreshAuthenticatedAccount();
   }
 
   @override
   void dispose() {
-    _authService.dispose();
+    if (_ownsAuthService) _authService.dispose();
     _preferencesService.dispose();
     super.dispose();
   }
@@ -44,16 +53,24 @@ class _ProfilePageState extends State<ProfilePage> {
     setState(() {
       _checking = true;
       _error = null;
+      _sessionValidationError = null;
     });
     try {
       final account = await _authService.getMe(token);
       AuthSession.instance.establish(accessToken: token, account: account);
       await _loadPreferences();
-    } catch (_) {
+    } on AuthSessionRejectedException {
       AuthSession.instance.clear();
       _preferences = null;
       _preferencesError = null;
+      _sessionValidationError = null;
       _error = 'La sesión ha caducado o ya no es válida.';
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _sessionValidationError =
+            'No se pudo revalidar la sesión por un problema temporal. La sesión local se conserva sin asumir que ha sido revocada.';
+      });
     } finally {
       if (mounted) setState(() => _checking = false);
     }
@@ -162,6 +179,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 ? _GuestProfileState(error: _error)
                 : _AuthenticatedProfile(
                     account: account,
+                    sessionValidationError: _sessionValidationError,
                     preferences: _preferences,
                     preferencesBusy: _preferencesBusy,
                     preferencesError: _preferencesError,
@@ -238,6 +256,7 @@ class _GuestProfileState extends StatelessWidget {
 class _AuthenticatedProfile extends StatelessWidget {
   const _AuthenticatedProfile({
     required this.account,
+    required this.sessionValidationError,
     required this.preferences,
     required this.preferencesBusy,
     required this.preferencesError,
@@ -249,6 +268,7 @@ class _AuthenticatedProfile extends StatelessWidget {
   });
 
   final AuthAccount account;
+  final String? sessionValidationError;
   final UserPreferences? preferences;
   final bool preferencesBusy;
   final String? preferencesError;
@@ -263,6 +283,25 @@ class _AuthenticatedProfile extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
+        if (sessionValidationError != null) ...[
+          Container(
+            key: const Key('profile-session-validation-error'),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.orangeAccent),
+            ),
+            child: Text(
+              sessionValidationError!,
+              style: const TextStyle(
+                color: AthenaColors.textSecondary,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         _IdentityCard(account: account),
         const SizedBox(height: 16),
         ProfilePreferencesForm(
