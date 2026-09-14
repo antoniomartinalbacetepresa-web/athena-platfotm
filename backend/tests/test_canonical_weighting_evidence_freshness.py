@@ -69,7 +69,7 @@ def _seed_clean_canonical_universe(database: AthenaDatabase) -> None:
 def _change_us_market_cap(database: AthenaDatabase, market_cap: float) -> None:
     with database.connect() as connection:
         connection.execute(
-            "UPDATE instruments SET market_cap = ? WHERE symbol = 'US'",
+            "UPDATE instruments SET market_cap_usd = ? WHERE symbol = 'US'",
             (market_cap,),
         )
 
