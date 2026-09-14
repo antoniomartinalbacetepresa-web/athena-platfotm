@@ -16,6 +16,9 @@ from app.repositories.recommendation_research_forecast_error_oos_summary_reposit
 from app.repositories.recommendation_research_forecast_error_repository import (
     RecommendationResearchForecastErrorRepository,
 )
+from app.repositories.recommendation_research_model_execution_receipt_repository import (
+    RecommendationResearchModelExecutionReceiptRepository,
+)
 from app.repositories.recommendation_research_outcome_attribution_repository import (
     RecommendationResearchOutcomeAttributionRepository,
 )
@@ -27,6 +30,9 @@ from app.services.recommendation_research_forecast_error_oos_summary_service imp
 )
 from app.services.recommendation_research_forecast_error_service import (
     RecommendationResearchForecastErrorService,
+)
+from app.services.recommendation_research_model_execution_receipt_service import (
+    RecommendationResearchModelExecutionReceiptService,
 )
 from app.services.persisted_macro_forecast_input_service import PersistedMacroForecastInputService
 
@@ -41,9 +47,11 @@ specification_repository = RecommendationResearchEvaluationSpecificationReposito
 outcome_repository = RecommendationResearchOutcomeAttributionRepository()
 error_repository = RecommendationResearchForecastErrorRepository()
 oos_summary_repository = RecommendationResearchForecastErrorOosSummaryRepository()
+model_execution_receipt_repository = RecommendationResearchModelExecutionReceiptRepository()
 specification_service = RecommendationResearchEvaluationSpecificationService()
 error_service = RecommendationResearchForecastErrorService()
 oos_summary_service = RecommendationResearchForecastErrorOosSummaryService()
+model_execution_receipt_service = RecommendationResearchModelExecutionReceiptService()
 persisted_macro_input_service = PersistedMacroForecastInputService()
 
 
@@ -85,6 +93,14 @@ class ForecastErrorOosSummaryRequest(BaseModel):
 
 class PersistedMacroForecastRequest(ProspectiveEvaluationSpecificationRequest):
     macroObservationKeys: list[str] = Field(min_length=1, max_length=200)
+
+
+class ModelExecutionReceiptRequest(BaseModel):
+    executionId: str = Field(min_length=1, max_length=200)
+    modelName: str = Field(min_length=1, max_length=200)
+    modelVersion: str = Field(min_length=1, max_length=200)
+    modelArtifactHash: str = Field(min_length=64, max_length=64)
+    executedAt: datetime
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -218,6 +234,72 @@ def get_evaluation_specification(specification_hash: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo verificar evaluation specification.") from exc
+    return {"data": record["artifact"]}
+
+
+@router.post("/evaluation-specification/{specification_hash}/model-execution-receipt")
+def post_model_execution_receipt(
+    specification_hash: str,
+    request: ModelExecutionReceiptRequest,
+) -> dict[str, object]:
+    """Bind a v3 forecast to one exact, PIT-ordered model execution."""
+    executed_at = _aware_utc(request.executedAt, "executedAt")
+    try:
+        specification_record = specification_repository.get_by_hash(
+            specification_hash=specification_hash
+        )
+        _verify_persisted_macro_inputs(specification_record["artifact"])
+        artifact = model_execution_receipt_service.build(
+            specification_record=specification_record,
+            execution_id=request.executionId,
+            model_name=request.modelName,
+            model_version=request.modelVersion,
+            model_artifact_hash=request.modelArtifactHash,
+            executed_at=executed_at,
+        )
+        persisted = model_execution_receipt_repository.append(
+            artifact=artifact,
+            specification_record=specification_record,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo sellar model execution receipt verificable.",
+        ) from exc
+    return {
+        "data": {
+            **artifact,
+            "persistence": {
+                "appendOnly": True,
+                "tamperEvident": True,
+                "receiptHash": persisted["receipt_hash"],
+                "sealedAt": persisted["created_at"],
+                "storageClaim": "tamper_evident_append_only_repository_not_worm_storage",
+            },
+        }
+    }
+
+
+@router.get("/evaluation-specification/{specification_hash}/model-execution-receipt")
+def get_model_execution_receipt(specification_hash: str) -> dict[str, object]:
+    try:
+        specification_record = specification_repository.get_by_hash(
+            specification_hash=specification_hash
+        )
+        _verify_persisted_macro_inputs(specification_record["artifact"])
+        record = model_execution_receipt_repository.get_by_specification_hash(
+            specification_hash=specification_hash,
+            specification_record=specification_record,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar model execution receipt persistido.",
+        ) from exc
     return {"data": record["artifact"]}
 
 
