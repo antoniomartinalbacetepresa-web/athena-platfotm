@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.repositories.user_account_repository import UserAccountRepository
 
 
 client = TestClient(app)
@@ -209,3 +210,49 @@ def test_successful_login_resets_rate_limit_counter(monkeypatch, tmp_path: Path)
     assert successful.status_code == 200
 
     assert _login(password="WrongPassword-after-success-123!").status_code == 401
+
+
+def test_close_account_anonymizes_direct_identity_and_releases_email(monkeypatch, tmp_path: Path) -> None:
+    _configure(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "returning@example.com",
+            "password": _PASSWORD,
+            "displayName": "Private Name",
+        },
+    )
+    assert created.status_code == 201, created.text
+    original_id = int(created.json()["account"]["id"])
+    token = _login(email="returning@example.com").json()["access_token"]
+
+    closed = client.post(
+        "/api/v1/auth/close-account",
+        json={"currentPassword": _PASSWORD},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert closed.status_code == 204, closed.text
+
+    assert client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    ).status_code == 401
+    assert _login(email="returning@example.com").status_code == 401
+
+    repository = UserAccountRepository()
+    assert repository.get_by_email("returning@example.com") is None
+    closed_row = repository.get_by_id(original_id)
+    assert closed_row is not None
+    assert int(closed_row["is_active"]) == 0
+    assert closed_row["email"] == f"closed-{original_id}@account.invalid"
+    assert closed_row["display_name"] is None
+    assert "returning@example.com" not in str(closed_row)
+    assert "Private Name" not in str(closed_row)
+
+    returned = client.post(
+        "/api/v1/auth/register",
+        json={"email": "returning@example.com", "password": _PASSWORD},
+    )
+    assert returned.status_code == 201, returned.text
+    assert int(returned.json()["account"]["id"]) != original_id
+    assert _login(email="returning@example.com").status_code == 200
