@@ -110,7 +110,7 @@ void main() {
     },
   );
 
-  testWidgets('guest sync remains local and performs no network operation',
+  testWidgets('guest account controls are disabled and perform no local or network work',
       (tester) async {
     var networkCalled = false;
     var positionsRead = false;
@@ -142,17 +142,82 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const Key('portfolio-authenticated-sync')));
-    await tester.pumpAndSettle();
-
+    final syncButton = tester.widget<FloatingActionButton>(
+      find.byKey(const Key('portfolio-authenticated-sync')),
+    );
+    final historyButton = tester.widget<FloatingActionButton>(
+      find.byKey(const Key('portfolio-authenticated-history')),
+    );
+    expect(syncButton.onPressed, isNull);
+    expect(historyButton.onPressed, isNull);
+    expect(find.byKey(const Key('portfolio-authentication-required')), findsOneWidget);
     expect(networkCalled, isFalse);
     expect(positionsRead, isFalse);
-    expect(
-      find.text('Inicia sesión para sincronizar posiciones con tu cuenta ATHENA.'),
-      findsOneWidget,
-    );
 
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });
+
+  testWidgets(
+    'history 401 invalidates session and parent disables all account controls after close',
+    (tester) async {
+      session.establish(accessToken: 'expired.jwt', account: account());
+      var historyCalls = 0;
+      final historyService = AuthenticatedPortfolioService(
+        baseUrl: 'http://athena.local',
+        session: session,
+        client: MockClient((request) async {
+          historyCalls += 1;
+          expect(request.method, 'GET');
+          expect(request.url.path, '/api/v1/user/portfolio/history');
+          expect(request.headers['Authorization'], 'Bearer expired.jwt');
+          return http.Response('{"detail":"session rejected"}', 401);
+        }),
+      );
+      final controller = PortfolioCloudSyncController();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AuthenticatedPortfolioPage(
+              historyService: historyService,
+              syncController: controller,
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+      );
+
+      expect(session.isAuthenticated, isTrue);
+      await tester.tap(find.byKey(const Key('portfolio-authenticated-history')));
+      await tester.pumpAndSettle();
+
+      expect(historyCalls, 1);
+      expect(
+        find.byKey(const Key('portfolio-history-session-rejected')),
+        findsOneWidget,
+      );
+      expect(session.isAuthenticated, isFalse);
+      expect(session.accessToken, isNull);
+
+      await tester.tap(
+        find.byKey(const Key('portfolio-history-session-rejected-close')),
+      );
+      await tester.pumpAndSettle();
+
+      final syncButton = tester.widget<FloatingActionButton>(
+        find.byKey(const Key('portfolio-authenticated-sync')),
+      );
+      final historyButton = tester.widget<FloatingActionButton>(
+        find.byKey(const Key('portfolio-authenticated-history')),
+      );
+      expect(syncButton.onPressed, isNull);
+      expect(historyButton.onPressed, isNull);
+      expect(find.byKey(const Key('portfolio-authentication-required')), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+      historyService.dispose();
+    },
+  );
 }
