@@ -80,6 +80,33 @@ inputs were PIT-safe just because its output was sealed on time. Model-input
 provenance, cohort preselection, and longitudinal production evidence remain
 separate gates.
 
+## PIT-bound prospective contract v3
+
+The route
+`/api/v1/recommendations/professional-research/research-cycle/{cycle_hash}/pit-safe-prospective-evaluation-specification`
+extends the v2 prospective request with a non-empty `inputEvidence` manifest.
+Each entry binds `source`, `sourceRef`, a timezone-aware `availableAt`, and a
+SHA-256 `contentHash` into the immutable specification hash.
+
+V3 requires every input to have been available no later than the declared
+forecast output. The existing repository boundary independently requires the
+forecast output to have been available by the repository-controlled seal, and
+the seal to occur no later than `periodStart`. Together the accepted temporal
+chain is therefore `input.availableAt <= forecast.availableAt <= sealedAt <=
+periodStart`. Naive timestamps, duplicate content hashes, forbidden FMP sources,
+and post-hoc manifest changes fail closed.
+
+V3 uses the existing append-only specification repository and the same outcome,
+forecast-error and OOS verification path. It does not introduce a second
+forecast store, alter v1/v2 semantics, lower any OOS threshold, or authorize
+automatic promotion, model mutation, weighting, or trading.
+
+A content hash proves identity of the declared input bytes, not their quality,
+correctness, independence, completeness, or economic relevance. Accordingly,
+`inputQualityClaim` remains explicitly `forbidden`, and fixtures only validate
+software behavior. Real longitudinal production evidence and source-quality
+acceptance remain separate gates.
+
 ## Remaining boundaries
 
 The OOS service consumes records verified by the existing repository and
