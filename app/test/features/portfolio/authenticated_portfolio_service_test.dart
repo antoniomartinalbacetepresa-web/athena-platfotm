@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -167,5 +168,59 @@ void main() {
     expect(captured.method, 'DELETE');
     expect(captured.url.path, '/api/v1/user/portfolio/positions/11');
     expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+  });
+
+  test('all portfolio operations preserve authorization rejection semantics', () async {
+    session.establish(accessToken: 'revoked.jwt.token', account: account());
+
+    Future<void> expectRejected(Future<void> Function() operation) async {
+      await expectLater(
+        operation(),
+        throwsA(
+          isA<AuthSessionRejectedException>()
+              .having((error) => error.statusCode, 'statusCode', 401),
+        ),
+      );
+    }
+
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => http.Response(
+            '{"detail":"credential rejected"}',
+            401,
+          )),
+      session: session,
+    );
+
+    await expectRejected(() async {
+      await service.loadPositions();
+    });
+    await expectRejected(() async {
+      await service.loadHistory();
+    });
+    await expectRejected(() async {
+      await service.upsertPosition(symbol: 'AAPL', quantity: 1);
+    });
+    await expectRejected(() => service.deletePosition(11));
+  });
+
+  test('portfolio authorization rejection never leaks backend detail', () async {
+    session.establish(accessToken: 'revoked.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => http.Response(
+            '{"detail":"sensitive authorization diagnostic"}',
+            403,
+          )),
+      session: session,
+    );
+
+    try {
+      await service.loadPositions();
+      fail('Expected authorization rejection.');
+    } on AuthSessionRejectedException catch (error) {
+      expect(error.statusCode, 403);
+      expect(error.toString(), isNot(contains('sensitive authorization diagnostic')));
+    }
   });
 }
