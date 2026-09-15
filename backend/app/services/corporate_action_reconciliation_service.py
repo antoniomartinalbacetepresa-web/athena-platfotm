@@ -78,7 +78,9 @@ class CorporateActionReconciliationService:
 
     The service is intentionally diagnostic. It never writes a canonical event
     and never resolves disagreements automatically. Each provider is queried
-    through the PIT-aware repository at the requested knowledge cutoff.
+    through the PIT-aware repository at the requested knowledge cutoff. Rows
+    returned by that repository are independently revalidated here so a broken
+    adapter cannot leak future knowledge into reconciliation evidence.
     """
 
     _VALID_TYPES = {"dividend", "split"}
@@ -120,6 +122,7 @@ class CorporateActionReconciliationService:
                 knowledge_cutoff=knowledge_cutoff,
             )
             latest: dict[tuple[str, str], dict[str, Any]] = {}
+            latest_retrieved_at: dict[tuple[str, str], datetime] = {}
             for row in rows:
                 action_type = str(row.get("action_type", "")).strip().lower()
                 effective_at = str(row.get("effective_at", "")).strip()
@@ -133,10 +136,17 @@ class CorporateActionReconciliationService:
                         f"el proveedor reconciliado: esperado={provider!r}, "
                         f"persistido={persisted_provider!r}."
                     )
+                retrieved_dt = self._parse_aware_datetime(retrieved_at, field="retrieved_at")
+                if retrieved_dt > knowledge_cutoff:
+                    raise RuntimeError(
+                        "Corporate action persistida viola el knowledge cutoff PIT: "
+                        f"retrieved_at={retrieved_at!r}."
+                    )
                 key = (action_type, effective_at)
-                previous = latest.get(key)
-                if previous is None or retrieved_at > str(previous["retrieved_at"]):
+                previous_retrieved_dt = latest_retrieved_at.get(key)
+                if previous_retrieved_dt is None or retrieved_dt > previous_retrieved_dt:
                     latest[key] = dict(row)
+                    latest_retrieved_at[key] = retrieved_dt
                 all_keys.add(key)
             latest_by_provider[provider] = latest
 
@@ -187,6 +197,19 @@ class CorporateActionReconciliationService:
             seen.add(provider)
             normalized.append(provider)
         return tuple(normalized)
+
+    def _parse_aware_datetime(self, value: str, *, field: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Corporate action persistida con {field} inválido."
+            ) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise RuntimeError(
+                f"Corporate action persistida con {field} sin zona horaria."
+            )
+        return parsed
 
     def _public_value(self, row: dict[str, Any]) -> dict[str, Any]:
         action_type = str(row["action_type"]).lower()
