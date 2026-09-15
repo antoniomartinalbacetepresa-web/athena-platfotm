@@ -34,12 +34,14 @@ class UserPreferencesService {
   final http.Client _client;
   final bool _ownsClient;
   final AuthSession _session;
+  int? _lastRejectedStatusCode;
 
   Future<UserPreferences?> load() async {
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
       headers: _authenticatedHeaders(),
     );
+    await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') return null;
@@ -62,6 +64,7 @@ class UserPreferencesService {
       Uri.parse('$_baseUrl/api/v1/user/profile/personalization'),
       headers: _authenticatedHeaders(),
     );
+    await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -88,6 +91,7 @@ class UserPreferencesService {
       headers: _authenticatedHeaders(json: true),
       body: jsonEncode(preferences.toJson()),
     );
+    await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final data = payload['data'];
     if (data is! Map<String, dynamic>) {
@@ -105,9 +109,7 @@ class UserPreferencesService {
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
       headers: _authenticatedHeaders(),
     );
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw UserPreferencesSessionRejectedException(response.statusCode);
-    }
+    await _rejectInvalidSession(response);
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
@@ -116,6 +118,10 @@ class UserPreferencesService {
   Map<String, String> _authenticatedHeaders({bool json = false}) {
     final token = _session.accessToken?.trim();
     if (!_session.isAuthenticated || token == null || token.isEmpty) {
+      final rejectedStatus = _lastRejectedStatusCode;
+      if (rejectedStatus != null) {
+        throw UserPreferencesSessionRejectedException(rejectedStatus);
+      }
       throw StateError('Se requiere una sesión ATHENA autenticada.');
     }
     return {
@@ -124,10 +130,14 @@ class UserPreferencesService {
     };
   }
 
+  Future<void> _rejectInvalidSession(http.Response response) async {
+    if (response.statusCode != 401 && response.statusCode != 403) return;
+    _lastRejectedStatusCode = response.statusCode;
+    await _session.clearAfterRemoteInvalidation();
+    throw UserPreferencesSessionRejectedException(response.statusCode);
+  }
+
   Map<String, dynamic> _decodeObject(http.Response response) {
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw UserPreferencesSessionRejectedException(response.statusCode);
-    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(response));
     }
