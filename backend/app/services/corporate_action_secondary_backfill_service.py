@@ -6,19 +6,12 @@ from typing import Any, Callable, Protocol
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.repositories.instrument_repository import InstrumentRepository
-from app.services.alpha_vantage_corporate_action_service import (
-    AlphaVantageCorporateActionService,
-)
+from app.services.alpha_vantage_corporate_action_service import AlphaVantageCorporateActionService
 from app.services.corporate_action_ingestion_service import CorporateActionIngestionService
 
 
 class CorporateActionHistoryProvider(Protocol):
-    def get_history(
-        self,
-        symbol: str,
-        from_date: str | None = None,
-        to_date: str | None = None,
-    ) -> list[dict[str, object]]: ...
+    def get_history(self, symbol: str, from_date: str | None = None, to_date: str | None = None) -> list[dict[str, object]]: ...
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -47,13 +40,10 @@ class CorporateActionSecondaryBackfillReport:
             "skippedNonEquityCount": self.skipped_non_equity_count,
             "noActionCount": self.no_action_count,
             "failedCount": self.failed_count,
-            "actions": {
-                "received": self.actions_received,
-                "inserted": self.actions_inserted,
-                "unchanged": self.actions_unchanged,
-            },
+            "actions": {"received": self.actions_received, "inserted": self.actions_inserted, "unchanged": self.actions_unchanged},
             "failures": [dict(item) for item in self.failures],
             "canonicalization": "forbidden",
+            "sourceProvenanceRequired": "alpha_vantage",
             "productionIndependenceClaimed": False,
         }
 
@@ -62,32 +52,16 @@ class CorporateActionSecondaryBackfillService:
     """Persist secondary-source observations without canonicalizing conflicts."""
 
     _EXCLUDED_TYPES = frozenset({"etf", "fund"})
+    _EXPECTED_SOURCE_PROVIDER = "alpha_vantage"
 
-    def __init__(
-        self,
-        *,
-        database: AthenaDatabase | None = None,
-        history_provider: CorporateActionHistoryProvider | None = None,
-        progress_callback: ProgressCallback | None = None,
-    ) -> None:
+    def __init__(self, *, database: AthenaDatabase | None = None, history_provider: CorporateActionHistoryProvider | None = None, progress_callback: ProgressCallback | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._instruments = InstrumentRepository(database=self._database)
         self._repository = CorporateActionRepository(database=self._database)
-        self._history_provider = (
-            history_provider
-            if history_provider is not None
-            else AlphaVantageCorporateActionService()
-        )
+        self._history_provider = history_provider if history_provider is not None else AlphaVantageCorporateActionService()
         self._progress_callback = progress_callback
 
-    def run(
-        self,
-        *,
-        limit: int,
-        offset: int = 0,
-        from_date: str | None = None,
-        to_date: str | None = None,
-    ) -> CorporateActionSecondaryBackfillReport:
+    def run(self, *, limit: int, offset: int = 0, from_date: str | None = None, to_date: str | None = None) -> CorporateActionSecondaryBackfillReport:
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
         if offset < 0:
@@ -95,18 +69,8 @@ class CorporateActionSecondaryBackfillService:
 
         self._database.initialize()
         rows = self._instruments.list_active(limit=limit, offset=offset)
-        ingestion = CorporateActionIngestionService(
-            market_provider=self._history_provider,
-            repository=self._repository,
-        )
-
-        persisted = 0
-        skipped = 0
-        no_action = 0
-        failed = 0
-        received = 0
-        inserted = 0
-        unchanged = 0
+        ingestion = CorporateActionIngestionService(market_provider=self._history_provider, repository=self._repository)
+        persisted = skipped = no_action = failed = received = inserted = unchanged = 0
         failures: list[dict[str, str]] = []
 
         for index, row in enumerate(rows, start=1):
@@ -115,12 +79,10 @@ class CorporateActionSecondaryBackfillService:
             instrument_type = str(row.get("instrument_type") or "unknown").strip().lower()
             currency_raw = row.get("currency")
             currency = str(currency_raw).strip().upper() if currency_raw is not None else None
-
             if instrument_type in self._EXCLUDED_TYPES:
                 skipped += 1
                 self._emit(symbol, index, len(rows), "skipped_non_equity", 0)
                 continue
-
             try:
                 stats = ingestion.ingest_history(
                     instrument_id=instrument_id,
@@ -128,6 +90,7 @@ class CorporateActionSecondaryBackfillService:
                     from_date=from_date,
                     to_date=to_date,
                     dividend_currency=currency,
+                    expected_source_provider=self._EXPECTED_SOURCE_PROVIDER,
                 )
                 received += stats.actions_received
                 inserted += stats.inserted
@@ -144,35 +107,8 @@ class CorporateActionSecondaryBackfillService:
                 failures.append({"symbol": symbol, "error": str(exc)})
                 self._emit(symbol, index, len(rows), "failed", 0)
 
-        return CorporateActionSecondaryBackfillReport(
-            selected_count=len(rows),
-            processed_count=len(rows),
-            persisted_instrument_count=persisted,
-            skipped_non_equity_count=skipped,
-            no_action_count=no_action,
-            failed_count=failed,
-            actions_received=received,
-            actions_inserted=inserted,
-            actions_unchanged=unchanged,
-            failures=tuple(failures),
-        )
+        return CorporateActionSecondaryBackfillReport(len(rows), len(rows), persisted, skipped, no_action, failed, received, inserted, unchanged, tuple(failures))
 
-    def _emit(
-        self,
-        symbol: str,
-        index: int,
-        total: int,
-        status: str,
-        actions: int,
-    ) -> None:
-        if self._progress_callback is None:
-            return
-        self._progress_callback(
-            {
-                "symbol": symbol,
-                "index": index,
-                "total": total,
-                "status": status,
-                "actions": actions,
-            }
-        )
+    def _emit(self, symbol: str, index: int, total: int, status: str, actions: int) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback({"symbol": symbol, "index": index, "total": total, "status": status, "actions": actions})
