@@ -36,7 +36,7 @@ def _record(database: AthenaDatabase, *, model_version: str) -> int:
 
 
 def test_performance_fails_closed_when_outcome_horizon_differs_from_frozen_recommendation(tmp_path) -> None:
-    database = AthenaDatabase(path=tmp_path / "athena.db")
+    database = AthenaDatabase(database_path=tmp_path / "athena.db")
     recommendation_id = _record(database, model_version="v1")
     with database.connect() as connection:
         connection.execute(
@@ -49,7 +49,7 @@ def test_performance_fails_closed_when_outcome_horizon_differs_from_frozen_recom
 
 
 def test_performance_horizon_integrity_is_scoped_to_requested_model_version(tmp_path) -> None:
-    database = AthenaDatabase(path=tmp_path / "athena.db")
+    database = AthenaDatabase(database_path=tmp_path / "athena.db")
     corrupted_id = _record(database, model_version="legacy")
     _record(database, model_version="current")
     with database.connect() as connection:
