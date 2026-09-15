@@ -242,6 +242,42 @@ def test_invalid_persisted_contract_fails_closed():
         )
 
 
+def test_provider_query_cannot_reconcile_row_with_mismatched_provenance():
+    repository = FakeRepository(
+        {
+            "yahoo_finance": [_dividend("yahoo_finance")],
+            "secondary": [_dividend("yahoo_finance")],
+        }
+    )
+    service = CorporateActionReconciliationService(repository=repository)
+
+    with pytest.raises(RuntimeError, match="provenance incompatible"):
+        service.reconcile(
+            instrument_id=13,
+            source_providers=["yahoo_finance", "secondary"],
+            knowledge_cutoff=CUTOFF,
+        )
+
+
+def test_missing_persisted_provider_cannot_count_as_secondary_evidence():
+    row = _split("secondary")
+    row["source_provider"] = None
+    repository = FakeRepository(
+        {
+            "yahoo_finance": [_split("yahoo_finance")],
+            "secondary": [row],
+        }
+    )
+    service = CorporateActionReconciliationService(repository=repository)
+
+    with pytest.raises(RuntimeError, match="provenance incompatible"):
+        service.reconcile(
+            instrument_id=14,
+            source_providers=["yahoo_finance", "secondary"],
+            knowledge_cutoff=CUTOFF,
+        )
+
+
 def test_numeric_tolerance_must_be_finite_and_non_negative():
     with pytest.raises(ValueError):
         CorporateActionReconciliationService(
