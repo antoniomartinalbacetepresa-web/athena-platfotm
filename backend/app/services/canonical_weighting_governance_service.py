@@ -54,18 +54,13 @@ class CanonicalWeightingGovernanceService:
     The quantitative engine may create immutable proposals, but only an explicit
     human approval call can make one eligible for consumption. Creating, reading,
     or refreshing diagnostics never approves a proposal. An approval remains
-    consumable only while the current canonical evidence fingerprint exactly
-    matches the evidence the human reviewed.
+    consumable only while it is the latest governance record and the current
+    canonical evidence fingerprint exactly matches the evidence the human reviewed.
     """
 
     _REGIONS = ("america", "europe", "asia")
 
-    def __init__(
-        self,
-        *,
-        database: AthenaDatabase | None = None,
-        clock: Clock | None = None,
-    ) -> None:
+    def __init__(self, *, database: AthenaDatabase | None = None, clock: Clock | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
         self._initialize_schema()
@@ -76,37 +71,18 @@ class CanonicalWeightingGovernanceService:
         snapshot_json = self._canonical_json(snapshot)
         evidence_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
         created_at = self._aware_utc(self._clock(), "clock").isoformat()
-
         with self._database.connect() as connection:
             cursor = connection.execute(
-                """
-                INSERT INTO canonical_weighting_proposals (
-                    status,
-                    created_at,
-                    created_by,
-                    region_weights_json,
-                    evidence_snapshot_json,
-                    evidence_sha256
-                ) VALUES ('pending_human_approval', ?, ?, ?, ?, ?)
-                """,
-                (
-                    created_at,
-                    actor,
-                    self._canonical_json(region_weights),
-                    snapshot_json,
-                    evidence_hash,
-                ),
+                """INSERT INTO canonical_weighting_proposals (
+                    status, created_at, created_by, region_weights_json,
+                    evidence_snapshot_json, evidence_sha256
+                ) VALUES ('pending_human_approval', ?, ?, ?, ?, ?)""",
+                (created_at, actor, self._canonical_json(region_weights), snapshot_json, evidence_hash),
             )
             proposal_id = int(cursor.lastrowid)
         return self.get_proposal(proposal_id)
 
-    def approve_proposal(
-        self,
-        proposal_id: int,
-        *,
-        approved_by: str,
-        approval_note: str,
-    ) -> CanonicalWeightingProposal:
+    def approve_proposal(self, proposal_id: int, *, approved_by: str, approval_note: str) -> CanonicalWeightingProposal:
         if proposal_id <= 0:
             raise ValueError("proposal_id debe ser positivo.")
         approver = self._required_text(approved_by, "approved_by")
@@ -115,40 +91,29 @@ class CanonicalWeightingGovernanceService:
         if proposal.status != "pending_human_approval":
             raise ValueError("Solo una propuesta pendiente puede recibir aprobación humana.")
         if approver.casefold() == proposal.created_by.casefold():
-            raise ValueError(
-                "La aprobación humana requiere separación de funciones: proponente y aprobador deben ser distintos."
-            )
+            raise ValueError("La aprobación humana requiere separación de funciones: proponente y aprobador deben ser distintos.")
         self._verify_integrity(proposal)
         current_hash = self._current_evidence_hash()
         if current_hash != proposal.evidence_sha256:
-            raise ValueError(
-                "La evidencia canónica cambió desde la propuesta; debe generarse y revisarse una nueva propuesta."
-            )
+            raise ValueError("La evidencia canónica cambió desde la propuesta; debe generarse y revisarse una nueva propuesta.")
         approved_at = self._aware_utc(self._clock(), "clock").isoformat()
-
         with self._database.connect() as connection:
+            latest = connection.execute(
+                "SELECT id FROM canonical_weighting_proposals ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if latest is None or int(latest["id"]) != proposal_id:
+                raise ValueError("La propuesta fue sustituida por una revisión posterior; solo la propuesta más reciente puede aprobarse.")
             cursor = connection.execute(
-                """
-                UPDATE canonical_weighting_proposals
-                SET status = 'approved',
-                    approved_at = ?,
-                    approved_by = ?,
-                    approval_note = ?
-                WHERE id = ? AND status = 'pending_human_approval'
-                """,
+                """UPDATE canonical_weighting_proposals
+                SET status = 'approved', approved_at = ?, approved_by = ?, approval_note = ?
+                WHERE id = ? AND status = 'pending_human_approval'""",
                 (approved_at, approver, note, proposal_id),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("La propuesta cambió antes de registrar la aprobación.")
         return self.get_proposal(proposal_id)
 
-    def reject_proposal(
-        self,
-        proposal_id: int,
-        *,
-        rejected_by: str,
-        rejection_note: str,
-    ) -> CanonicalWeightingProposal:
+    def reject_proposal(self, proposal_id: int, *, rejected_by: str, rejection_note: str) -> CanonicalWeightingProposal:
         if proposal_id <= 0:
             raise ValueError("proposal_id debe ser positivo.")
         actor = self._required_text(rejected_by, "rejected_by")
@@ -159,14 +124,9 @@ class CanonicalWeightingGovernanceService:
         decided_at = self._aware_utc(self._clock(), "clock").isoformat()
         with self._database.connect() as connection:
             cursor = connection.execute(
-                """
-                UPDATE canonical_weighting_proposals
-                SET status = 'rejected',
-                    approved_at = ?,
-                    approved_by = ?,
-                    approval_note = ?
-                WHERE id = ? AND status = 'pending_human_approval'
-                """,
+                """UPDATE canonical_weighting_proposals
+                SET status = 'rejected', approved_at = ?, approved_by = ?, approval_note = ?
+                WHERE id = ? AND status = 'pending_human_approval'""",
                 (decided_at, actor, note, proposal_id),
             )
             if cursor.rowcount != 1:
@@ -174,30 +134,18 @@ class CanonicalWeightingGovernanceService:
         return self.get_proposal(proposal_id)
 
     def get_approved_weights(self) -> dict[str, Any]:
+        # The latest governance record owns the gate. A newer pending or rejected
+        # proposal supersedes any older approval and cannot leak its weights.
         with self._database.connect() as connection:
             row = connection.execute(
-                """
-                SELECT id
-                FROM canonical_weighting_proposals
-                WHERE status = 'approved'
-                ORDER BY approved_at DESC, id DESC
-                LIMIT 1
-                """
+                "SELECT id FROM canonical_weighting_proposals ORDER BY id DESC LIMIT 1"
             ).fetchone()
         if row is None:
-            return {
-                "status": "blocked_pending_human_approval",
-                "regionWeights": None,
-                "proposalId": None,
-                "humanApproved": False,
-                "automaticApproval": False,
-                "automaticTrading": False,
-            }
+            return self._blocked_response(None, None)
         proposal = self.get_proposal(int(row["id"]))
-        self._verify_integrity(proposal)
         if not proposal.human_approved:
-            raise RuntimeError("Una propuesta no aprobada atravesó el gate de weighting.")
-
+            return self._blocked_response(proposal.proposal_id, proposal.status)
+        self._verify_integrity(proposal)
         try:
             current_hash = self._current_evidence_hash()
         except ValueError:
@@ -230,14 +178,24 @@ class CanonicalWeightingGovernanceService:
             "automaticTrading": False,
         }
 
+    def _blocked_response(self, proposal_id: int | None, proposal_status: str | None) -> dict[str, Any]:
+        response: dict[str, Any] = {
+            "status": "blocked_pending_human_approval",
+            "regionWeights": None,
+            "proposalId": proposal_id,
+            "humanApproved": False,
+            "automaticApproval": False,
+            "automaticTrading": False,
+        }
+        if proposal_status is not None:
+            response["proposalStatus"] = proposal_status
+        return response
+
     def get_proposal(self, proposal_id: int) -> CanonicalWeightingProposal:
         if proposal_id <= 0:
             raise ValueError("proposal_id debe ser positivo.")
         with self._database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM canonical_weighting_proposals WHERE id = ?",
-                (proposal_id,),
-            ).fetchone()
+            row = connection.execute("SELECT * FROM canonical_weighting_proposals WHERE id = ?", (proposal_id,)).fetchone()
         if row is None:
             raise LookupError("Propuesta de weighting no encontrada.")
         proposal = self._from_row(dict(row))
@@ -250,13 +208,9 @@ class CanonicalWeightingGovernanceService:
         if report.canonical_market_cap_usd <= 0:
             raise ValueError("No existe capitalización canónica suficiente para proponer pesos.")
         if report.domicile_unresolved_issuer_count > 0:
-            raise ValueError(
-                "No se puede proponer weighting con emisores canónicos sin domicilio resuelto."
-            )
+            raise ValueError("No se puede proponer weighting con emisores canónicos sin domicilio resuelto.")
         if report.median_fallback_market_cap_count > 0:
-            raise ValueError(
-                "No se puede proponer weighting mientras existan capitalizaciones por fallback de mediana."
-            )
+            raise ValueError("No se puede proponer weighting mientras existan capitalizaciones por fallback de mediana.")
         snapshot = {
             "method": "canonical_identity_complete_listing_market_cap",
             "canonicalIssuerCount": report.canonical_issuer_count,
@@ -273,19 +227,15 @@ class CanonicalWeightingGovernanceService:
 
     def _current_evidence_hash(self) -> str:
         snapshot, _ = self._current_evidence_snapshot()
-        return hashlib.sha256(
-            self._canonical_json(snapshot).encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(self._canonical_json(snapshot).encode("utf-8")).hexdigest()
 
     def _initialize_schema(self) -> None:
         self._database.initialize()
         with self._database.connect() as connection:
             connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS canonical_weighting_proposals (
+                """CREATE TABLE IF NOT EXISTS canonical_weighting_proposals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    status TEXT NOT NULL
-                        CHECK (status IN ('pending_human_approval', 'approved', 'rejected')),
+                    status TEXT NOT NULL CHECK (status IN ('pending_human_approval', 'approved', 'rejected')),
                     created_at TEXT NOT NULL,
                     created_by TEXT NOT NULL,
                     approved_at TEXT,
@@ -295,40 +245,30 @@ class CanonicalWeightingGovernanceService:
                     evidence_snapshot_json TEXT NOT NULL,
                     evidence_sha256 TEXT NOT NULL,
                     CHECK (
-                        (status = 'pending_human_approval'
-                            AND approved_at IS NULL AND approved_by IS NULL AND approval_note IS NULL)
+                        (status = 'pending_human_approval' AND approved_at IS NULL AND approved_by IS NULL AND approval_note IS NULL)
                         OR
-                        (status IN ('approved', 'rejected')
-                            AND approved_at IS NOT NULL AND approved_by IS NOT NULL AND approval_note IS NOT NULL)
+                        (status IN ('approved', 'rejected') AND approved_at IS NOT NULL AND approved_by IS NOT NULL AND approval_note IS NOT NULL)
                     )
                 );
                 CREATE INDEX IF NOT EXISTS idx_canonical_weighting_status_decision
-                ON canonical_weighting_proposals(status, approved_at, id);
-                """
+                ON canonical_weighting_proposals(status, approved_at, id);"""
             )
 
     def _from_row(self, row: dict[str, Any]) -> CanonicalWeightingProposal:
         return CanonicalWeightingProposal(
-            proposal_id=int(row["id"]),
-            status=str(row["status"]),
-            created_at=str(row["created_at"]),
+            proposal_id=int(row["id"]), status=str(row["status"]), created_at=str(row["created_at"]),
             created_by=str(row["created_by"]),
-            approved_at=(None if row["approved_at"] is None else str(row["approved_at"])),
-            approved_by=(None if row["approved_by"] is None else str(row["approved_by"])),
-            approval_note=(None if row["approval_note"] is None else str(row["approval_note"])),
-            region_weights={
-                str(key): float(value)
-                for key, value in json.loads(str(row["region_weights_json"])).items()
-            },
+            approved_at=None if row["approved_at"] is None else str(row["approved_at"]),
+            approved_by=None if row["approved_by"] is None else str(row["approved_by"]),
+            approval_note=None if row["approval_note"] is None else str(row["approval_note"]),
+            region_weights={str(key): float(value) for key, value in json.loads(str(row["region_weights_json"])).items()},
             evidence_snapshot=json.loads(str(row["evidence_snapshot_json"])),
             evidence_sha256=str(row["evidence_sha256"]),
         )
 
     def _verify_integrity(self, proposal: CanonicalWeightingProposal) -> None:
         self._validate_weights(proposal.region_weights)
-        snapshot_hash = hashlib.sha256(
-            self._canonical_json(proposal.evidence_snapshot).encode("utf-8")
-        ).hexdigest()
+        snapshot_hash = hashlib.sha256(self._canonical_json(proposal.evidence_snapshot).encode("utf-8")).hexdigest()
         if snapshot_hash != proposal.evidence_sha256:
             raise RuntimeError("La evidencia inmutable de la propuesta no supera SHA-256.")
         snapshot_weights = proposal.evidence_snapshot.get("regionWeights")
