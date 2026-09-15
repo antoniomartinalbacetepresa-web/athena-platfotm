@@ -104,6 +104,43 @@ void main() {
     expect(store.token, isNull);
     expect(session.isAuthenticated, isFalse);
   });
+
+  test(
+      'remote invalidation stays fail closed across restart when secure deletion fails',
+      () async {
+    final store = _FakeAuthTokenStore(token: 'server-revoked-token', failDeletes: true);
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'server-revoked-token', account: account());
+
+    final deleted = await session.clearAfterRemoteInvalidation();
+
+    expect(deleted, isFalse);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.token, 'server-revoked-token');
+
+    // Simulate a fresh process reading the stale credential that secure storage
+    // could not delete. It must be validated remotely before any authenticated
+    // state is exposed, and a server rejection must leave the new session closed.
+    final restarted = AuthSession.forTesting(store);
+    var validationCalls = 0;
+    final restored = await restarted.restore(
+      validateToken: (token) async {
+        validationCalls += 1;
+        expect(token, 'server-revoked-token');
+        throw const _RejectedSession();
+      },
+      shouldDiscardToken: (error) => error is _RejectedSession,
+    );
+
+    expect(validationCalls, 1);
+    expect(restored, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(restarted.isAuthenticated, isFalse);
+    expect(restarted.accessToken, isNull);
+    // Deletion is still unavailable, so the result cannot claim a clean rejected
+    // credential. Crucially, the retained token is never trusted locally.
+    expect(store.token, 'server-revoked-token');
+  });
 }
 
 class _RejectedSession implements Exception {
@@ -111,13 +148,19 @@ class _RejectedSession implements Exception {
 }
 
 class _FakeAuthTokenStore implements AuthTokenStore {
-  _FakeAuthTokenStore({this.token, this.failWrites = false});
+  _FakeAuthTokenStore({
+    this.token,
+    this.failWrites = false,
+    this.failDeletes = false,
+  });
 
   String? token;
   final bool failWrites;
+  final bool failDeletes;
 
   @override
   Future<void> deleteAccessToken() async {
+    if (failDeletes) throw StateError('secure storage unavailable');
     token = null;
   }
 
