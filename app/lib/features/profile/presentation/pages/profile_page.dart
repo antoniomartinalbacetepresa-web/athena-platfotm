@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../auth/models/auth_account.dart';
+import '../../../auth/services/account_lifecycle_service.dart';
 import '../../../auth/services/athena_auth_service.dart';
 import '../../../auth/services/auth_session.dart';
 import '../../models/user_preferences.dart';
@@ -60,7 +61,7 @@ class _ProfilePageState extends State<ProfilePage> {
       AuthSession.instance.establish(accessToken: token, account: account);
       await _loadPreferences();
     } on AuthSessionRejectedException {
-      AuthSession.instance.clear();
+      await AuthSession.instance.clearAfterRemoteInvalidation();
       _preferences = null;
       _preferencesError = null;
       _sessionValidationError = null;
@@ -143,16 +144,20 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _logout() async {
-    final token = AuthSession.instance.accessToken;
-    if (token != null) {
-      try {
-        await _authService.logout(token);
-      } catch (_) {
-        // Local session is still cleared. A failed remote revocation must not
-        // trap the user inside an invalid client session.
-      }
+    final lifecycle = AccountLifecycleService(
+      authService: _authService,
+      session: AuthSession.instance,
+    );
+    try {
+      await lifecycle.logoutCurrentSession();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _sessionValidationError =
+            'No se pudo confirmar el cierre de sesión en el servidor. La sesión se conserva hasta poder verificar la revocación.';
+      });
+      return;
     }
-    AuthSession.instance.clear();
     if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(
       context,
@@ -359,318 +364,252 @@ class ProfilePreferencesForm extends StatefulWidget {
 }
 
 class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
-  static const _unspecified = 'unspecified';
-
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _horizonController;
   late final TextEditingController _currencyController;
-  late final TextEditingController _availableCapitalController;
   late final TextEditingController _drawdownController;
+  late final TextEditingController _capitalController;
   late String _riskTolerance;
   late String _objective;
-  late String _experienceLevel;
-  late String _liquidityNeed;
+  late String? _experienceLevel;
+  late String? _liquidityNeed;
 
   @override
   void initState() {
     super.initState();
-    _horizonController = TextEditingController();
-    _currencyController = TextEditingController();
-    _availableCapitalController = TextEditingController();
-    _drawdownController = TextEditingController();
-    _apply(widget.preferences);
+    _sync(widget.preferences);
   }
 
   @override
   void didUpdateWidget(covariant ProfilePreferencesForm oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.preferences != widget.preferences) {
-      _apply(widget.preferences);
+      _sync(widget.preferences);
     }
   }
 
-  void _apply(UserPreferences? value) {
-    _riskTolerance = value?.riskTolerance ?? 'balanced';
-    _objective = value?.objective ?? 'balanced_growth';
-    _experienceLevel = value?.experienceLevel ?? _unspecified;
-    _liquidityNeed = value?.liquidityNeed ?? _unspecified;
-    _horizonController.text = (value?.investmentHorizonYears ?? 10).toString();
-    _currencyController.text = value?.baseCurrency ?? 'EUR';
-    _availableCapitalController.text = value?.availableCapital?.toString() ?? '';
-    _drawdownController.text = value?.maxDrawdownTolerancePct?.toString() ?? '';
+  void _sync(UserPreferences? preferences) {
+    final value = preferences ?? UserPreferences.defaults();
+    _riskTolerance = value.riskTolerance;
+    _objective = value.objective;
+    _experienceLevel = value.experienceLevel;
+    _liquidityNeed = value.liquidityNeed;
+    if (!(_horizonControllerOrNull?.hasListeners ?? false)) {
+      _horizonController = TextEditingController();
+      _currencyController = TextEditingController();
+      _drawdownController = TextEditingController();
+      _capitalController = TextEditingController();
+    }
+    _horizonController.text = value.investmentHorizonYears.toString();
+    _currencyController.text = value.baseCurrency;
+    _drawdownController.text = value.maxDrawdownTolerancePct?.toString() ?? '';
+    _capitalController.text = value.availableCapital?.toString() ?? '';
+  }
+
+  TextEditingController? get _horizonControllerOrNull {
+    try {
+      return _horizonController;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
   void dispose() {
     _horizonController.dispose();
     _currencyController.dispose();
-    _availableCapitalController.dispose();
     _drawdownController.dispose();
+    _capitalController.dispose();
     super.dispose();
-  }
-
-  String _normalizedCapitalText() =>
-      _availableCapitalController.text.trim().replaceAll(',', '.');
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    final drawdownText = _drawdownController.text.trim();
-    final capitalText = _normalizedCapitalText();
-    final preferences = UserPreferences(
-      riskTolerance: _riskTolerance,
-      investmentHorizonYears: int.parse(_horizonController.text.trim()),
-      baseCurrency: _currencyController.text.trim().toUpperCase(),
-      objective: _objective,
-      experienceLevel:
-          _experienceLevel == _unspecified ? null : _experienceLevel,
-      liquidityNeed: _liquidityNeed == _unspecified ? null : _liquidityNeed,
-      maxDrawdownTolerancePct:
-          drawdownText.isEmpty ? null : int.parse(drawdownText),
-      availableCapital: capitalText.isEmpty ? null : double.parse(capitalText),
-    );
-    await widget.onSave(preferences);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AthenaColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AthenaColors.border),
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.tune_rounded, color: AthenaColors.primary),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Preferencias protegidas',
-                    style: TextStyle(
-                      color: AthenaColors.text,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Preferencias protegidas',
+            style: TextStyle(
+              color: AthenaColors.text,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'Se guardan cifradas en el backend asociado a tu cuenta. ATHENA no mantiene una copia local de estos campos.',
-              style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Estas preferencias aportan contexto. No activan recomendaciones, ponderaciones ni operaciones automáticas.',
-              key: Key('personalization-safety-note'),
-              style: TextStyle(
-                color: AthenaColors.textSecondary,
-                fontSize: 11,
-                height: 1.35,
-              ),
-            ),
-            if (widget.error != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                widget.error!,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-              ),
-            ],
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: _riskTolerance,
-              decoration: const InputDecoration(labelText: 'Tolerancia al riesgo'),
-              items: const [
-                DropdownMenuItem(value: 'conservative', child: Text('Conservadora')),
-                DropdownMenuItem(value: 'balanced', child: Text('Equilibrada')),
-                DropdownMenuItem(value: 'growth', child: Text('Crecimiento')),
-                DropdownMenuItem(value: 'aggressive', child: Text('Agresiva')),
-              ],
-              onChanged: widget.busy
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => _riskTolerance = value);
-                    },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _objective,
-              decoration: const InputDecoration(labelText: 'Objetivo'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'capital_preservation',
-                  child: Text('Preservación de capital'),
-                ),
-                DropdownMenuItem(value: 'income', child: Text('Ingresos')),
-                DropdownMenuItem(
-                  value: 'balanced_growth',
-                  child: Text('Crecimiento equilibrado'),
-                ),
-                DropdownMenuItem(
-                  value: 'long_term_growth',
-                  child: Text('Crecimiento a largo plazo'),
-                ),
-              ],
-              onChanged: widget.busy
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => _objective = value);
-                    },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              key: const Key('experience-level-field'),
-              value: _experienceLevel,
-              decoration: const InputDecoration(labelText: 'Experiencia inversora'),
-              items: const [
-                DropdownMenuItem(value: _unspecified, child: Text('No indicada')),
-                DropdownMenuItem(value: 'beginner', child: Text('Principiante')),
-                DropdownMenuItem(value: 'intermediate', child: Text('Intermedia')),
-                DropdownMenuItem(value: 'advanced', child: Text('Avanzada')),
-              ],
-              onChanged: widget.busy
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => _experienceLevel = value);
-                    },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              key: const Key('liquidity-need-field'),
-              value: _liquidityNeed,
-              decoration: const InputDecoration(labelText: 'Necesidad de liquidez'),
-              items: const [
-                DropdownMenuItem(value: _unspecified, child: Text('No indicada')),
-                DropdownMenuItem(value: 'low', child: Text('Baja')),
-                DropdownMenuItem(value: 'medium', child: Text('Media')),
-                DropdownMenuItem(value: 'high', child: Text('Alta')),
-              ],
-              onChanged: widget.busy
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => _liquidityNeed = value);
-                    },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _horizonController,
-              enabled: !widget.busy,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Horizonte (años)'),
-              validator: (value) {
-                final years = int.tryParse(value?.trim() ?? '');
-                if (years == null || years < 1 || years > 60) {
-                  return 'Introduce un horizonte entre 1 y 60 años.';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _currencyController,
-              enabled: !widget.busy,
-              textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'Moneda base (ISO 4217)'),
-              validator: (value) {
-                final currency = value?.trim().toUpperCase() ?? '';
-                if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
-                  return 'Introduce un código de moneda de tres letras.';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              key: const Key('available-capital-field'),
-              controller: _availableCapitalController,
-              enabled: !widget.busy,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Capital disponible (moneda base)',
-                hintText: 'Opcional: 0–1.000.000.000.000',
-              ),
-              validator: (value) {
-                final text = value?.trim().replaceAll(',', '.') ?? '';
-                if (text.isEmpty) return null;
-                final capital = double.tryParse(text);
-                if (capital == null ||
-                    !capital.isFinite ||
-                    capital < 0 ||
-                    capital > UserPreferences.maxAvailableCapital) {
-                  return 'Introduce un capital entre 0 y 1.000.000.000.000, o déjalo vacío.';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              key: const Key('max-drawdown-field'),
-              controller: _drawdownController,
-              enabled: !widget.busy,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Drawdown máximo tolerable (%)',
-                hintText: 'Opcional: 5–60',
-              ),
-              validator: (value) {
-                final text = value?.trim() ?? '';
-                if (text.isEmpty) return null;
-                final drawdown = int.tryParse(text);
-                if (drawdown == null || drawdown < 5 || drawdown > 60) {
-                  return 'Introduce un drawdown entre 5% y 60%, o déjalo vacío.';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: widget.busy ? null : _submit,
-                  icon: widget.busy
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save_outlined),
-                  label: const Text('GUARDAR'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: widget.busy ? null : widget.onReload,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('RECARGAR'),
-                ),
-                if (widget.onDelete != null)
-                  TextButton.icon(
-                    onPressed: widget.busy ? null : widget.onDelete,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    label: const Text('ELIMINAR'),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Se sincronizan únicamente mediante la API autenticada y se almacenan cifradas en el backend.',
+            style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Estas preferencias adaptan la presentación; no autorizan operaciones ni modifican automáticamente el scoring o el weighting canónico.',
+            key: Key('personalization-safety-note'),
+            style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
+          ),
+          const SizedBox(height: 14),
+          if (widget.error != null) ...[
             Text(
-              widget.preferences == null
-                  ? 'Aún no hay preferencias guardadas.'
-                  : 'Preferencias cargadas desde almacenamiento cifrado.',
-              style: const TextStyle(
-                color: AthenaColors.primary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
+              widget.error!,
+              style: const TextStyle(color: Colors.orangeAccent),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (widget.busy) ...[
+            const LinearProgressIndicator(),
+            const SizedBox(height: 12),
+          ],
+          DropdownButtonFormField<String>(
+            initialValue: _riskTolerance,
+            decoration: const InputDecoration(labelText: 'Tolerancia al riesgo'),
+            items: const [
+              DropdownMenuItem(value: 'conservative', child: Text('Conservadora')),
+              DropdownMenuItem(value: 'balanced', child: Text('Equilibrada')),
+              DropdownMenuItem(value: 'growth', child: Text('Crecimiento')),
+            ],
+            onChanged: widget.busy ? null : (value) => setState(() => _riskTolerance = value!),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _horizonController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Horizonte (años)'),
+            validator: (value) {
+              final parsed = int.tryParse(value ?? '');
+              if (parsed == null || parsed < 1 || parsed > 60) {
+                return 'Introduce un horizonte entre 1 y 60 años.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _currencyController,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(labelText: 'Divisa base'),
+            validator: (value) {
+              final normalized = (value ?? '').trim().toUpperCase();
+              if (!RegExp(r'^[A-Z]{3}$').hasMatch(normalized)) {
+                return 'Usa un código ISO de tres letras, por ejemplo EUR.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _objective,
+            decoration: const InputDecoration(labelText: 'Objetivo'),
+            items: const [
+              DropdownMenuItem(value: 'capital_preservation', child: Text('Preservar capital')),
+              DropdownMenuItem(value: 'balanced_growth', child: Text('Crecimiento equilibrado')),
+              DropdownMenuItem(value: 'long_term_growth', child: Text('Crecimiento a largo plazo')),
+            ],
+            onChanged: widget.busy ? null : (value) => setState(() => _objective = value!),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String?>(
+            key: const Key('experience-level-field'),
+            initialValue: _experienceLevel,
+            decoration: const InputDecoration(labelText: 'Experiencia'),
+            items: const [
+              DropdownMenuItem(value: null, child: Text('Sin especificar')),
+              DropdownMenuItem(value: 'beginner', child: Text('Principiante')),
+              DropdownMenuItem(value: 'intermediate', child: Text('Intermedia')),
+              DropdownMenuItem(value: 'advanced', child: Text('Avanzada')),
+            ],
+            onChanged: widget.busy ? null : (value) => setState(() => _experienceLevel = value),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String?>(
+            key: const Key('liquidity-need-field'),
+            initialValue: _liquidityNeed,
+            decoration: const InputDecoration(labelText: 'Necesidad de liquidez'),
+            items: const [
+              DropdownMenuItem(value: null, child: Text('Sin especificar')),
+              DropdownMenuItem(value: 'low', child: Text('Baja')),
+              DropdownMenuItem(value: 'medium', child: Text('Media')),
+              DropdownMenuItem(value: 'high', child: Text('Alta')),
+            ],
+            onChanged: widget.busy ? null : (value) => setState(() => _liquidityNeed = value),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            key: const Key('max-drawdown-field'),
+            controller: _drawdownController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Drawdown máximo tolerado (%)'),
+            validator: (value) {
+              final raw = (value ?? '').trim().replaceAll(',', '.');
+              if (raw.isEmpty) return null;
+              final parsed = double.tryParse(raw);
+              if (parsed == null || parsed < 5 || parsed > 60) {
+                return 'Introduce un drawdown entre 5% y 60%, o déjalo vacío.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            key: const Key('available-capital-field'),
+            controller: _capitalController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Capital disponible'),
+            validator: (value) {
+              final raw = (value ?? '').trim().replaceAll(',', '.');
+              if (raw.isEmpty) return null;
+              final parsed = double.tryParse(raw);
+              if (parsed == null || parsed < 0 || parsed > 1000000000000) {
+                return 'Introduce un capital entre 0 y 1.000.000.000.000, o déjalo vacío.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 18),
+          ElevatedButton(
+            onPressed: widget.busy
+                ? null
+                : () async {
+                    if (!(_formKey.currentState?.validate() ?? false)) return;
+                    final drawdownRaw = _drawdownController.text.trim().replaceAll(',', '.');
+                    final capitalRaw = _capitalController.text.trim().replaceAll(',', '.');
+                    await widget.onSave(
+                      UserPreferences(
+                        riskTolerance: _riskTolerance,
+                        investmentHorizonYears: int.parse(_horizonController.text.trim()),
+                        baseCurrency: _currencyController.text.trim().toUpperCase(),
+                        objective: _objective,
+                        experienceLevel: _experienceLevel,
+                        liquidityNeed: _liquidityNeed,
+                        maxDrawdownTolerancePct:
+                            drawdownRaw.isEmpty ? null : double.parse(drawdownRaw),
+                        availableCapital: capitalRaw.isEmpty ? null : double.parse(capitalRaw),
+                      ),
+                    );
+                  },
+            child: const Text('GUARDAR'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: widget.busy ? null : widget.onReload,
+            child: const Text('RECARGAR'),
+          ),
+          if (widget.onDelete != null) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: widget.busy ? null : widget.onDelete,
+              child: const Text('ELIMINAR PREFERENCIAS'),
             ),
           ],
-        ),
+          if (widget.preferences != null) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Preferencias cargadas desde almacenamiento cifrado.',
+              style: TextStyle(color: AthenaColors.textSecondary, fontSize: 12),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -684,7 +623,7 @@ class _IdentityCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: AthenaColors.card,
         borderRadius: BorderRadius.circular(16),
@@ -696,102 +635,15 @@ class _IdentityCard extends StatelessWidget {
           const Text(
             'Identidad autenticada',
             style: TextStyle(
-              color: AthenaColors.primary,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.8,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            account.displayName ?? account.email,
-            style: const TextStyle(
               color: AthenaColors.text,
-              fontSize: 22,
+              fontSize: 18,
               fontWeight: FontWeight.bold,
             ),
           ),
-          if (account.displayName != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              account.email,
-              style: const TextStyle(color: AthenaColors.textSecondary),
-            ),
-          ],
-          const SizedBox(height: 12),
-          const Text(
-            'La identidad se revalida contra el backend. Las preferencias sensibles solo se leen y escriben mediante la sesión autenticada.',
-            style: TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 11,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProfileSection extends StatelessWidget {
-  const _ProfileSection({
-    required this.icon,
-    required this.title,
-    required this.description,
-    required this.status,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AthenaColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AthenaColors.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: AthenaColors.primary),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: AthenaColors.text,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  description,
-                  style: const TextStyle(
-                    color: AthenaColors.textSecondary,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  status,
-                  style: const TextStyle(
-                    color: AthenaColors.primary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          const SizedBox(height: 10),
+          Text(account.displayName ?? 'Sin nombre público', style: const TextStyle(color: AthenaColors.text)),
+          const SizedBox(height: 4),
+          Text(account.email, style: const TextStyle(color: AthenaColors.textSecondary)),
         ],
       ),
     );
