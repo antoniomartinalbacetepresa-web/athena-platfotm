@@ -43,7 +43,7 @@ class RecommendationCalibrationReport:
         return {
             "status": "proposal_only", "modelVersion": self.model_version, "horizonDays": self.horizon_days,
             "minimumSampleSize": self.minimum_sample_size, "learningRate": self.learning_rate, "maximumStep": self.maximum_step,
-            "longitudinalEvidence": {"distinctEvaluationDays": self.distinct_evaluation_days, "evaluationSpanDays": self.evaluation_span_days, "minimumDistinctEvaluationDays": self.minimum_distinct_evaluation_days, "minimumEvaluationSpanDays": self.minimum_evaluation_span_days, "ready": self.longitudinal_evidence_ready, "meaning": "Las propuestas de calibración requieren resultados OOS con timestamps válidos y timezone-aware observados en más de un día, tanto globalmente como dentro del bucket que se pretende ajustar; evidencia temporal inválida falla cerrado."},
+            "longitudinalEvidence": {"distinctEvaluationDays": self.distinct_evaluation_days, "evaluationSpanDays": self.evaluation_span_days, "minimumDistinctEvaluationDays": self.minimum_distinct_evaluation_days, "minimumEvaluationSpanDays": self.minimum_evaluation_span_days, "ready": self.longitudinal_evidence_ready, "meaning": "Las propuestas de calibración requieren resultados OOS con horizonte congelado coherente, timestamps válidos y timezone-aware observados en más de un día, tanto globalmente como dentro del bucket que se pretende ajustar; evidencia temporal o de horizonte inválida falla cerrado."},
             "proposals": [proposal.to_api_dict() for proposal in self.proposals], "autoApply": False,
             "warning": "Los ajustes son propuestas auditables. ATHENA no modifica pesos, umbrales ni modelos automáticamente a partir de este informe.",
         }
@@ -61,6 +61,7 @@ class RecommendationCalibrationService:
         self._minimum_distinct_evaluation_days = int(minimum_distinct_evaluation_days); self._minimum_evaluation_span_days = int(minimum_evaluation_span_days)
 
     def get_report(self, *, model_version: str | None = None, horizon_days: int | None = None) -> RecommendationCalibrationReport:
+        self._validate_outcome_horizon_integrity(model_version=model_version, horizon_days=horizon_days)
         performance = RecommendationPerformanceService(database=self._database).get_report(model_version=model_version, horizon_days=horizon_days)
         distinct_days, span_days = self._evaluation_time_coverage(model_version=model_version, horizon_days=horizon_days)
         proposals: list[RecommendationCalibrationProposal] = []
@@ -74,6 +75,25 @@ class RecommendationCalibrationService:
             gap = float(observed_accuracy) - float(average_conviction); proposed_delta = max(-self._maximum_step, min(self._maximum_step, gap * self._learning_rate))
             proposals.append(RecommendationCalibrationProposal(str(bucket["label"]), sample_count, float(average_conviction), float(observed_accuracy), gap, proposed_delta, "review_required"))
         return RecommendationCalibrationReport(model_version, horizon_days, self._minimum_sample_size, self._learning_rate, self._maximum_step, tuple(proposals), distinct_days, span_days, self._minimum_distinct_evaluation_days, self._minimum_evaluation_span_days)
+
+    def _validate_outcome_horizon_integrity(self, *, model_version: str | None, horizon_days: int | None) -> None:
+        clauses = ["o.horizon_days <> r.horizon_days"]
+        params: list[object] = []
+        if model_version is not None:
+            clauses.append("r.model_version = ?")
+            params.append(str(model_version).strip())
+        if horizon_days is not None:
+            clauses.append("o.horizon_days = ?")
+            params.append(int(horizon_days))
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT o.id, o.horizon_days AS outcome_horizon, r.horizon_days AS recommendation_horizon FROM athena_recommendation_outcomes o JOIN athena_recommendations r ON r.id = o.recommendation_id WHERE " + " AND ".join(clauses) + " ORDER BY o.id LIMIT 1",
+                tuple(params),
+            ).fetchone()
+        if row is not None:
+            raise RuntimeError(
+                f"Outcome {row['id']} usa horizonte {row['outcome_horizon']} pero la recomendación congeló {row['recommendation_horizon']}; la calibración OOS falla cerrado."
+            )
 
     def _evaluation_time_coverage(self, *, model_version: str | None, horizon_days: int | None, minimum_conviction: float | None = None, maximum_conviction_exclusive: float | None = None, directional_only: bool = False) -> tuple[int, int]:
         clauses: list[str] = []; params: list[object] = []
