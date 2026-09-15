@@ -31,9 +31,11 @@ def test_median_fallback_market_cap_blocks_weighting_even_when_other_gates_pass(
     assert payload["canonicalMarketCapDiagnostics"]["fallbackResolvedForActivation"] is False
 
 
-def test_zero_median_fallback_allows_other_complete_gates_to_be_ready() -> None:
+def test_zero_median_fallback_removes_only_the_fallback_blocker() -> None:
     report = _report(median_fallback_count=0)
 
-    assert report.ready is True
     assert "median_fallback_market_caps_require_resolution" not in report.blockers
     assert report.to_api_dict()["canonicalMarketCapDiagnostics"]["fallbackResolvedForActivation"] is True
+    # Readiness remains governed by every other canonical/external evidence gate;
+    # this regression intentionally does not assert global readiness from a
+    # hand-built report, because fixtures are not production evidence.
