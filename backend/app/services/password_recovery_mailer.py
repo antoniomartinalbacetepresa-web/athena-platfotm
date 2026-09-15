@@ -18,9 +18,9 @@ class PasswordRecoveryMailer:
 
     The channel is fail-closed: no development fallback prints or returns the
     recovery token. Recovery bearer tokens are credentials, so SMTP transport
-    must be upgraded with STARTTLS and certificate verification before any
-    message is sent. Production must explicitly configure SMTP and the public
-    recovery URL.
+    must be upgraded with STARTTLS, certificate verification and TLS 1.2 or
+    newer before any message is sent. Production must explicitly configure
+    SMTP and the public recovery URL.
     """
 
     def __init__(self) -> None:
@@ -60,9 +60,11 @@ class PasswordRecoveryMailer:
                 f"El enlace caduca a las {challenge.expires_at.isoformat()}.\n"
                 "Si no solicitaste este cambio, ignora este mensaje."
             )
+            tls_context = ssl.create_default_context()
+            tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
             with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
                 smtp.ehlo()
-                smtp.starttls(context=ssl.create_default_context())
+                smtp.starttls(context=tls_context)
                 smtp.ehlo()
                 if self._username:
                     smtp.login(self._username, self._password)
