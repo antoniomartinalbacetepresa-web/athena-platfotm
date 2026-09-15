@@ -3,10 +3,25 @@ import 'dart:convert';
 import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/market/models/market_quote.dart';
+import 'package:app/features/market/repositories/market_repository.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+class _MarketRepository implements MarketRepository {
+  _MarketRepository(this.quote);
+
+  final MarketQuote quote;
+  final requestedSymbols = <String>[];
+
+  @override
+  Future<MarketQuote> getQuote(String symbol) async {
+    requestedSymbols.add(symbol);
+    return quote;
+  }
+}
 
 void main() {
   final session = AuthSession.instance;
@@ -22,6 +37,39 @@ void main() {
         createdAt: DateTime.parse('2026-09-10T10:00:00Z'),
         updatedAt: DateTime.parse('2026-09-10T10:00:00Z'),
       );
+
+  MarketQuote quote({
+    String symbol = 'AAPL',
+    String? exchange = 'NASDAQ',
+    String? provider = 'yahoo_finance',
+    double price = 200,
+    DateTime? observedAt,
+    DateTime? retrievedAt,
+  }) {
+    final observed = observedAt ?? DateTime.parse('2026-09-15T16:00:00Z');
+    return MarketQuote(
+      symbol: symbol,
+      companyName: 'Apple Inc.',
+      currentPrice: price,
+      change: 1,
+      changePercentage: 0.5,
+      exchange: exchange,
+      currency: 'USD',
+      updatedAt: observed,
+      sourceProvider: provider,
+      retrievedAt: retrievedAt ?? observed.add(const Duration(seconds: 2)),
+    );
+  }
+
+  http.Response portfolioResponse({double? averagePurchasePrice = 160}) {
+    final costBasis = averagePurchasePrice == null
+        ? ''
+        : ',"averagePurchasePrice":$averagePurchasePrice';
+    return http.Response(
+      '{"data":{"positions":[{"id":3,"symbol":"AAPL","exchange":"NASDAQ","quantity":4.5$costBasis,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:01:00Z"}],"positionCount":1}}',
+      200,
+    );
+  }
 
   test('guest session is rejected before any network call', () async {
     var called = false;
@@ -68,9 +116,8 @@ void main() {
 
   test('legacy position without average purchase price remains compatible', () async {
     session.establish(accessToken: 'signed.jwt.token', account: account());
-    final client = MockClient((request) async => http.Response(
-          '{"data":{"positions":[{"id":3,"symbol":"AAPL","exchange":"NASDAQ","quantity":4.5,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:01:00Z"}],"positionCount":1}}',
-          200,
+    final client = MockClient((request) async => portfolioResponse(
+          averagePurchasePrice: null,
         ));
     final service = AuthenticatedPortfolioService(
       baseUrl: 'http://athena.local',
@@ -81,6 +128,101 @@ void main() {
     final positions = await service.loadPositions();
 
     expect(positions.single.averagePurchasePrice, isNull);
+  });
+
+  test('valued positions join authenticated holdings with market data in memory', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => portfolioResponse()),
+      session: session,
+    );
+    final market = _MarketRepository(quote());
+
+    final positions = await service.loadValuedPositions(marketRepository: market);
+
+    expect(market.requestedSymbols, ['AAPL']);
+    expect(positions, hasLength(1));
+    expect(positions.single.holding.id, 3);
+    expect(positions.single.currentValue, 900);
+    expect(positions.single.investedValue, 720);
+    expect(positions.single.profitLoss, 180);
+    expect(positions.single.profitLossPercentage, 25);
+    expect(positions.single.quote.sourceProvider, 'yahoo_finance');
+  });
+
+  test('valued positions do not fabricate cost basis when backend has none', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => portfolioResponse(
+            averagePurchasePrice: null,
+          )),
+      session: session,
+    );
+
+    final positions = await service.loadValuedPositions(
+      marketRepository: _MarketRepository(quote()),
+    );
+
+    expect(positions.single.currentValue, 900);
+    expect(positions.single.investedValue, isNull);
+    expect(positions.single.profitLoss, isNull);
+    expect(positions.single.profitLossPercentage, isNull);
+  });
+
+  test('valued positions fail closed on mismatched listing', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => portfolioResponse()),
+      session: session,
+    );
+
+    await expectLater(
+      service.loadValuedPositions(
+        marketRepository: _MarketRepository(quote(exchange: 'NYSE')),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('valued positions require complete market provenance', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => portfolioResponse()),
+      session: session,
+    );
+
+    await expectLater(
+      service.loadValuedPositions(
+        marketRepository: _MarketRepository(quote(provider: null)),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('valued positions reject retrieval timestamps before observation', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final observed = DateTime.parse('2026-09-15T16:00:00Z');
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => portfolioResponse()),
+      session: session,
+    );
+
+    await expectLater(
+      service.loadValuedPositions(
+        marketRepository: _MarketRepository(
+          quote(
+            observedAt: observed,
+            retrievedAt: observed.subtract(const Duration(seconds: 1)),
+          ),
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
   });
 
   test('upsert sends cost basis but never client owner or trading authority', () async {
