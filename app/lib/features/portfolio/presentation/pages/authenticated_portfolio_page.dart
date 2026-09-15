@@ -1,20 +1,29 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../auth/services/auth_session.dart';
+import '../../../market/di/market_dependencies.dart';
+import '../../models/authenticated_portfolio_view_position.dart';
 import '../../models/portfolio_position.dart';
 import '../../services/authenticated_portfolio_service.dart';
 import '../../services/portfolio_service.dart';
+import '../../widgets/add_position_dialog.dart';
+import '../controllers/authenticated_portfolio_controller.dart';
 import '../controllers/portfolio_cloud_sync_controller.dart';
 import '../widgets/authenticated_portfolio_history_panel.dart';
+import '../widgets/authenticated_portfolio_view.dart';
 import 'portfolio_page.dart';
 
 typedef PortfolioPositionsLoader = Future<List<PortfolioPosition>> Function();
 
 /// Product-level Portfolio entry point.
 ///
-/// The existing [PortfolioPage] remains the local evidence-rich portfolio UI.
-/// This wrapper adds explicit authenticated cloud sync and a read-only view over
-/// the owner-scoped append-only Event Ledger. Neither action enables trading.
+/// In production, authenticated accounts use the owner-scoped backend as the
+/// only authority for personal holdings. The legacy local portfolio remains
+/// available only to guests. The optional sync/loader/child injections are
+/// retained for regression coverage of the historical migration boundary and
+/// are never used by the production router.
 class AuthenticatedPortfolioPage extends StatefulWidget {
   const AuthenticatedPortfolioPage({
     super.key,
@@ -39,22 +48,51 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   late final PortfolioCloudSyncController _syncController;
   late final bool _ownsSyncController;
 
+  MarketDependencies? _marketDependencies;
+  AuthenticatedPortfolioService? _authenticatedService;
+  AuthenticatedPortfolioController? _authenticatedController;
+
+  bool get _usesLegacyInjectedBoundary =>
+      widget.positionsLoader != null || widget.syncController != null || widget.child != null;
+
   @override
   void initState() {
     super.initState();
     _ownsSyncController = widget.syncController == null;
     _syncController = widget.syncController ?? PortfolioCloudSyncController();
     _syncController.addListener(_onSyncChanged);
+
+    if (!_usesLegacyInjectedBoundary && AuthSession.instance.isAuthenticated) {
+      final market = MarketDependencies.create();
+      final service = AuthenticatedPortfolioService();
+      final controller = AuthenticatedPortfolioController(
+        portfolioService: service,
+        marketRepository: market.repository,
+      );
+      _marketDependencies = market;
+      _authenticatedService = service;
+      _authenticatedController = controller;
+      controller.addListener(_onAuthenticatedChanged);
+      unawaited(controller.load());
+    }
   }
 
   @override
   void dispose() {
+    _authenticatedController?.removeListener(_onAuthenticatedChanged);
+    _authenticatedController?.dispose();
+    _authenticatedService?.dispose();
+    _marketDependencies?.dispose();
     _syncController.removeListener(_onSyncChanged);
     if (_ownsSyncController) _syncController.dispose();
     super.dispose();
   }
 
   void _onSyncChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onAuthenticatedChanged() {
     if (mounted) setState(() {});
   }
 
@@ -110,20 +148,140 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       builder: (context) => FractionallySizedBox(
         heightFactor: 0.78,
         child: AuthenticatedPortfolioHistoryPanel(
-          service: widget.historyService,
+          service: widget.historyService ?? _authenticatedService,
         ),
       ),
     );
 
     if (!mounted) return;
-    // The history surface can discover that the server no longer accepts the
-    // credential. Rebuild the parent after the modal closes so authenticated
-    // controls cannot keep looking available after that authoritative reject.
     setState(() {});
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Future<void> _addAuthenticatedPosition() async {
+    final controller = _authenticatedController;
+    final market = _marketDependencies;
+    if (controller == null || market == null || controller.sessionRejected) return;
+
+    final result = await showDialog<AddPositionResult>(
+      context: context,
+      builder: (context) => AddPositionDialog(marketRepository: market.repository),
+    );
+    if (result == null) return;
+
+    final saved = await controller.upsert(
+      symbol: result.symbol,
+      exchange: result.exchange,
+      quantity: result.shares,
+      averagePurchasePrice: result.averagePrice,
+    );
+    if (!mounted || saved) return;
+    if (!controller.sessionRejected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(controller.error ?? 'No se pudo guardar la posición.')),
+      );
+    }
+  }
+
+  Future<void> _removeAuthenticatedPosition(
+    AuthenticatedPortfolioViewPosition position,
+  ) async {
+    final controller = _authenticatedController;
+    if (controller == null || controller.sessionRejected) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Eliminar posición'),
+        content: Text(
+          '¿Quieres eliminar ${position.companyName} (${position.symbol}) de tu cuenta ATHENA?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final removed = await controller.remove(position);
+    if (!mounted || removed) return;
+    if (!controller.sessionRejected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(controller.error ?? 'No se pudo eliminar la posición.')),
+      );
+    }
+  }
+
+  Widget _buildAuthoritativeAuthenticatedPortfolio() {
+    final controller = _authenticatedController;
+    if (controller == null) {
+      return const PortfolioPage();
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Volver',
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'MI CARTERA',
+                              style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              'Posiciones personales protegidas por tu cuenta ATHENA',
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('portfolio-authenticated-history'),
+                        tooltip: 'Historial de cuenta',
+                        onPressed: controller.sessionRejected
+                            ? null
+                            : _openAuthenticatedHistory,
+                        icon: const Icon(Icons.history),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  AuthenticatedPortfolioView(
+                    controller: controller,
+                    onRetry: controller.load,
+                    onAdd: _addAuthenticatedPosition,
+                    onRemove: _removeAuthenticatedPosition,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegacyMigrationBoundary() {
     final isAuthenticated = AuthSession.instance.isAuthenticated;
     return Stack(
       children: [
@@ -186,5 +344,16 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
         ),
       ],
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_usesLegacyInjectedBoundary) return _buildLegacyMigrationBoundary();
+    if (AuthSession.instance.isAuthenticated) {
+      return _buildAuthoritativeAuthenticatedPortfolio();
+    }
+    // Guest mode is intentionally local. It contains no account-owned server
+    // state and cannot be silently promoted into an authenticated portfolio.
+    return const PortfolioPage();
   }
 }
