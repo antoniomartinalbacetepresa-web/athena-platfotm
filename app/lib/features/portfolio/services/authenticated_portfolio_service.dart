@@ -27,12 +27,14 @@ class AuthenticatedPortfolioService {
   final http.Client _client;
   final bool _ownsClient;
   final AuthSession _session;
+  int? _lastRejectedStatusCode;
 
   Future<List<AuthenticatedPortfolioPosition>> loadPositions() async {
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/user/portfolio'),
       headers: _authenticatedHeaders(),
     );
+    await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final data = payload['data'];
     if (data is! Map<String, dynamic>) {
@@ -77,6 +79,7 @@ class AuthenticatedPortfolioService {
       },
     );
     final response = await _client.get(uri, headers: _authenticatedHeaders());
+    await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final data = payload['data'];
     if (data is! Map<String, dynamic>) {
@@ -124,6 +127,7 @@ class AuthenticatedPortfolioService {
       headers: _authenticatedHeaders(json: true),
       body: jsonEncode(body),
     );
+    await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final data = payload['data'];
     if (data is! Map<String, dynamic>) {
@@ -140,9 +144,7 @@ class AuthenticatedPortfolioService {
       Uri.parse('$_baseUrl/api/v1/user/portfolio/positions/$positionId'),
       headers: _authenticatedHeaders(),
     );
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw AuthSessionRejectedException(response.statusCode);
-    }
+    await _rejectInvalidSession(response);
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
@@ -151,6 +153,10 @@ class AuthenticatedPortfolioService {
   Map<String, String> _authenticatedHeaders({bool json = false}) {
     final token = _session.accessToken?.trim();
     if (!_session.isAuthenticated || token == null || token.isEmpty) {
+      final rejectedStatus = _lastRejectedStatusCode;
+      if (rejectedStatus != null) {
+        throw AuthSessionRejectedException(rejectedStatus);
+      }
       throw StateError('Se requiere una sesión ATHENA autenticada.');
     }
     return {
@@ -159,10 +165,14 @@ class AuthenticatedPortfolioService {
     };
   }
 
+  Future<void> _rejectInvalidSession(http.Response response) async {
+    if (response.statusCode != 401 && response.statusCode != 403) return;
+    _lastRejectedStatusCode = response.statusCode;
+    await _session.clearAfterRemoteInvalidation();
+    throw AuthSessionRejectedException(response.statusCode);
+  }
+
   Map<String, dynamic> _decodeObject(http.Response response) {
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw AuthSessionRejectedException(response.statusCode);
-    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(response));
     }
