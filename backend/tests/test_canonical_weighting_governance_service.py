@@ -89,10 +89,11 @@ def test_proposal_is_pending_and_cannot_be_consumed_without_human_approval(
     assert blocked == {
         "status": "blocked_pending_human_approval",
         "regionWeights": None,
-        "proposalId": None,
+        "proposalId": proposal.proposal_id,
         "humanApproved": False,
         "automaticApproval": False,
         "automaticTrading": False,
+        "proposalStatus": "pending_human_approval",
     }
 
 
