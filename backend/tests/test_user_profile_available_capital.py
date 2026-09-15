@@ -90,11 +90,23 @@ def test_available_capital_is_owner_scoped_and_encrypted(monkeypatch, tmp_path) 
         row = connection.execute(
             "SELECT nonce_b64, ciphertext_b64 FROM athena_user_profile_preferences"
         ).fetchone()
+        columns = {
+            str(info[1])
+            for info in connection.execute(
+                "PRAGMA table_info(athena_user_profile_preferences)"
+            ).fetchall()
+        }
     assert row is not None
-    serialized = " ".join(str(value) for value in row)
-    assert "availableCapital" not in serialized
-    assert "balanced_growth" not in serialized
-    assert "EUR" not in serialized
+    nonce_b64, ciphertext_b64 = (str(value) for value in row)
+    assert base64.urlsafe_b64decode(nonce_b64.encode("ascii"))
+    assert base64.urlsafe_b64decode(ciphertext_b64.encode("ascii"))
+    assert ciphertext_b64 not in {"125000.75", "balanced_growth", "EUR"}
+    assert {
+        "availableCapital",
+        "baseCurrency",
+        "objective",
+        "riskTolerance",
+    }.isdisjoint(columns)
 
 
 def test_available_capital_is_optional_for_backward_compatibility(monkeypatch, tmp_path) -> None:
