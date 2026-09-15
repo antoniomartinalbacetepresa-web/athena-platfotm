@@ -17,7 +17,9 @@ class PasswordRecoveryMailer:
     """SMTP delivery for password-recovery links.
 
     The channel is fail-closed: no development fallback prints or returns the
-    recovery token. Production must explicitly configure SMTP and the public
+    recovery token. Recovery bearer tokens are credentials, so SMTP transport
+    must be upgraded with STARTTLS and certificate verification before any
+    message is sent. Production must explicitly configure SMTP and the public
     recovery URL.
     """
 
@@ -39,6 +41,10 @@ class PasswordRecoveryMailer:
             raise RuntimeError("ATHENA_RECOVERY_PUBLIC_URL debe usar HTTPS.")
         if self._port <= 0 or self._port > 65535:
             raise RuntimeError("ATHENA_RECOVERY_SMTP_PORT no es válido.")
+        if not self._use_starttls:
+            raise RuntimeError(
+                "ATHENA_RECOVERY_SMTP_STARTTLS no puede desactivarse para tokens de recuperación."
+            )
 
     def send(self, challenge: PasswordRecoveryChallenge) -> None:
         try:
@@ -56,9 +62,8 @@ class PasswordRecoveryMailer:
             )
             with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
                 smtp.ehlo()
-                if self._use_starttls:
-                    smtp.starttls(context=ssl.create_default_context())
-                    smtp.ehlo()
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
                 if self._username:
                     smtp.login(self._username, self._password)
                 smtp.send_message(message)
