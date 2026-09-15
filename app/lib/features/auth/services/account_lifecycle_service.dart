@@ -8,6 +8,12 @@ class AccountClosureResult {
   final bool localCredentialDeleted;
 }
 
+class SessionLogoutResult {
+  const SessionLogoutResult({required this.localCredentialDeleted});
+
+  final bool localCredentialDeleted;
+}
+
 class AccountLifecycleService {
   AccountLifecycleService({
     required AthenaAuthService authService,
@@ -17,6 +23,35 @@ class AccountLifecycleService {
 
   final AthenaAuthService _authService;
   final AuthSession _session;
+
+  Future<SessionLogoutResult> logoutCurrentSession() async {
+    return _logout(allSessions: false);
+  }
+
+  Future<SessionLogoutResult> logoutAllSessions() async {
+    return _logout(allSessions: true);
+  }
+
+  Future<SessionLogoutResult> _logout({required bool allSessions}) async {
+    final token = _session.accessToken;
+    if (token == null || !_session.isAuthenticated) {
+      throw StateError('No existe una sesión autenticada para cerrar.');
+    }
+
+    if (allSessions) {
+      await _authService.logoutAll(token);
+    } else {
+      await _authService.logout(token);
+    }
+
+    // A successful remote revocation is authoritative. Clear in-memory auth
+    // before attempting secure-storage cleanup so a local storage failure can
+    // never leave the client authenticated with a server-revoked credential.
+    final localCredentialDeleted = await _session.clearAfterRemoteInvalidation();
+    return SessionLogoutResult(
+      localCredentialDeleted: localCredentialDeleted,
+    );
+  }
 
   Future<AccountClosureResult> closeCurrentAccount({
     required String currentPassword,
