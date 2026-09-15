@@ -3,6 +3,9 @@ from datetime import date, datetime
 from fastapi import APIRouter, HTTPException, Query
 
 from app.repositories.fx_rate_repository import FxRateRepository
+from app.services.canonical_weighting_governance_service import (
+    CanonicalWeightingGovernanceService,
+)
 from app.services.fx_quote_service import FxQuoteService
 from app.services.market_weighting_readiness_service import (
     MarketWeightingReadinessService,
@@ -26,6 +29,7 @@ fx_quote_service = FxQuoteService(
 )
 market_universe_service = PersistedMarketUniverseService()
 market_weighting_readiness_service = MarketWeightingReadinessService()
+canonical_weighting_governance_service = CanonicalWeightingGovernanceService()
 
 
 @router.get("/quote")
@@ -208,3 +212,24 @@ def get_universe_weighting_readiness() -> dict[str, object]:
     return {
         "data": report.to_api_dict(),
     }
+
+
+@router.get("/universe/active-regional-weights")
+def get_active_regional_weights() -> dict[str, object]:
+    """Return regional weights only through the human-approval governance gate.
+
+    Diagnostic market-cap weights are deliberately not treated as active.  The
+    governance service returns no weights unless the latest approved proposal
+    has explicit human approval, intact evidence and an evidence snapshot that
+    still matches the current canonical market state.
+    """
+
+    try:
+        payload = canonical_weighting_governance_service.get_approved_weights()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar la gobernanza de los pesos regionales.",
+        ) from exc
+
+    return {"data": payload}
