@@ -195,6 +195,8 @@ void main() {
     await expectRejected(() async {
       await service.loadPositions();
     });
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
     await expectRejected(() async {
       await service.loadHistory();
     });
@@ -221,6 +223,8 @@ void main() {
     } on AuthSessionRejectedException catch (error) {
       expect(error.statusCode, 403);
       expect(error.toString(), isNot(contains('sensitive authorization diagnostic')));
+      expect(session.isAuthenticated, isFalse);
+      expect(session.accessToken, isNull);
     }
   });
 }
