@@ -68,8 +68,9 @@ class RecommendationCalibrationReport:
                 "ready": self.longitudinal_evidence_ready,
                 "meaning": (
                     "Las propuestas de calibración requieren resultados OOS observados "
-                    "en más de un día; una carga masiva de fixtures o resultados del "
-                    "mismo instante no demuestra aprendizaje longitudinal."
+                    "en más de un día, tanto globalmente como dentro del bucket que se "
+                    "pretende ajustar; una carga masiva del mismo instante no demuestra "
+                    "aprendizaje longitudinal."
                 ),
             },
             "proposals": [proposal.to_api_dict() for proposal in self.proposals],
@@ -126,10 +127,6 @@ class RecommendationCalibrationService:
             model_version=model_version,
             horizon_days=horizon_days,
         )
-        longitudinal_ready = (
-            distinct_days >= self._minimum_distinct_evaluation_days
-            and span_days >= self._minimum_evaluation_span_days
-        )
 
         proposals: list[RecommendationCalibrationProposal] = []
         for bucket in performance.conviction_buckets:
@@ -163,7 +160,18 @@ class RecommendationCalibrationService:
                 )
                 continue
 
-            if not longitudinal_ready:
+            bucket_distinct_days, bucket_span_days = self._evaluation_time_coverage(
+                model_version=model_version,
+                horizon_days=horizon_days,
+                minimum_conviction=float(bucket["minConviction"]),
+                maximum_conviction_exclusive=float(bucket["maxConvictionExclusive"]),
+                directional_only=True,
+            )
+            bucket_longitudinal_ready = (
+                bucket_distinct_days >= self._minimum_distinct_evaluation_days
+                and bucket_span_days >= self._minimum_evaluation_span_days
+            )
+            if not bucket_longitudinal_ready:
                 proposals.append(
                     RecommendationCalibrationProposal(
                         label=str(bucket["label"]),
@@ -213,6 +221,9 @@ class RecommendationCalibrationService:
         *,
         model_version: str | None,
         horizon_days: int | None,
+        minimum_conviction: float | None = None,
+        maximum_conviction_exclusive: float | None = None,
+        directional_only: bool = False,
     ) -> tuple[int, int]:
         clauses: list[str] = []
         params: list[object] = []
@@ -222,6 +233,18 @@ class RecommendationCalibrationService:
         if horizon_days is not None:
             clauses.append("o.horizon_days = ?")
             params.append(int(horizon_days))
+        if minimum_conviction is not None:
+            clauses.append("r.conviction >= ?")
+            params.append(float(minimum_conviction))
+        if maximum_conviction_exclusive is not None:
+            if maximum_conviction_exclusive >= 1.0:
+                clauses.append("r.conviction <= ?")
+                params.append(1.0)
+            else:
+                clauses.append("r.conviction < ?")
+                params.append(float(maximum_conviction_exclusive))
+        if directional_only:
+            clauses.append("r.action IN ('buy', 'reduce', 'sell')")
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         with self._database.connect() as connection:
             rows = connection.execute(
