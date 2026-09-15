@@ -28,13 +28,7 @@ class CorporateActionIngestionStats:
 
 
 class CorporateActionIngestionService:
-    """Persists corporate actions from provider history without erasing PIT provenance.
-
-    Providers such as Yahoo expose old dividends and splits retrospectively. Each
-    retrieval is therefore persisted using the exact provider/retrieved-at pair
-    present in the historical response. Re-fetching the same immutable observation
-    is idempotent, while a later retrieval remains a separate PIT observation.
-    """
+    """Persists corporate actions from provider history without erasing PIT provenance."""
 
     def __init__(
         self,
@@ -43,15 +37,9 @@ class CorporateActionIngestionService:
         action_service: CorporateActionService | None = None,
         repository: CorporateActionRepository | None = None,
     ) -> None:
-        self._market_provider = (
-            market_provider if market_provider is not None else YahooMarketService()
-        )
-        self._action_service = (
-            action_service if action_service is not None else CorporateActionService()
-        )
-        self._repository = (
-            repository if repository is not None else CorporateActionRepository()
-        )
+        self._market_provider = market_provider if market_provider is not None else YahooMarketService()
+        self._action_service = action_service if action_service is not None else CorporateActionService()
+        self._repository = repository if repository is not None else CorporateActionRepository()
 
     def ingest_history(
         self,
@@ -61,12 +49,18 @@ class CorporateActionIngestionService:
         from_date: str | None = None,
         to_date: str | None = None,
         dividend_currency: str | None = None,
+        expected_source_provider: str | None = None,
     ) -> CorporateActionIngestionStats:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
 
         normalized_symbol = self._required_text(symbol, "symbol").upper()
         normalized_currency = self._normalize_currency(dividend_currency)
+        normalized_expected_provider = (
+            self._required_text(expected_source_provider, "expected_source_provider").lower()
+            if expected_source_provider is not None
+            else None
+        )
 
         history = self._market_provider.get_history(
             normalized_symbol,
@@ -74,28 +68,22 @@ class CorporateActionIngestionService:
             to_date=to_date,
         )
         if not history:
-            return CorporateActionIngestionStats(
-                history_observations=0,
-                actions_received=0,
-                inserted=0,
-                unchanged=0,
-                retrieval_batches=0,
-            )
+            return CorporateActionIngestionStats(0, 0, 0, 0, 0)
 
         actions = self._action_service.extract_from_history(history)
         if not actions:
-            return CorporateActionIngestionStats(
-                history_observations=len(history),
-                actions_received=0,
-                inserted=0,
-                unchanged=0,
-                retrieval_batches=0,
-            )
+            return CorporateActionIngestionStats(len(history), 0, 0, 0, 0)
 
         for action in actions:
             if action.symbol != normalized_symbol:
+                raise ValueError("El proveedor devolvió corporate actions de un símbolo distinto.")
+            if (
+                normalized_expected_provider is not None
+                and action.source_provider.strip().lower() != normalized_expected_provider
+            ):
                 raise ValueError(
-                    "El proveedor devolvió corporate actions de un símbolo distinto."
+                    "Corporate action provenance mismatch: "
+                    f"expected {normalized_expected_provider}, got {action.source_provider}."
                 )
 
         batches: dict[tuple[str, datetime], list[CorporateAction]] = {}
@@ -107,14 +95,10 @@ class CorporateActionIngestionService:
         inserted = 0
         unchanged = 0
         for (provider, retrieved_at), batch in sorted(
-            batches.items(),
-            key=lambda item: (item[0][1], item[0][0]),
+            batches.items(), key=lambda item: (item[0][1], item[0][0])
         ):
             payload = [
-                self._to_repository_payload(
-                    action,
-                    dividend_currency=normalized_currency,
-                )
+                self._to_repository_payload(action, dividend_currency=normalized_currency)
                 for action in batch
             ]
             stats = self._repository.save_many(
@@ -135,10 +119,7 @@ class CorporateActionIngestionService:
         )
 
     def _to_repository_payload(
-        self,
-        action: CorporateAction,
-        *,
-        dividend_currency: str | None,
+        self, action: CorporateAction, *, dividend_currency: str | None
     ) -> dict[str, object | None]:
         if action.action_type == "dividend":
             return {
