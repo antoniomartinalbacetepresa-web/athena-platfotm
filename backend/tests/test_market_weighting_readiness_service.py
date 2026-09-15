@@ -23,8 +23,8 @@ def _report(
     external_validation_passed: bool = True,
     ambiguous_listing_count: int = 0,
     no_domestic_listing_count: int = 0,
-    canonical_listing_cap_count: int = 4500,
-    median_fallback_cap_count: int = 500,
+    canonical_listing_cap_count: int = 5000,
+    median_fallback_cap_count: int = 0,
 ) -> MarketWeightingReadinessReport:
     return MarketWeightingReadinessReport(
         identity_market_cap_coverage=identity_coverage,
@@ -64,9 +64,10 @@ def test_weighting_readiness_requires_all_evidence() -> None:
     assert api["method"] == "canonical_domestic_listing_else_median_with_domicile"
     assert api["identityEvidenceFingerprint"] == _IDENTITY_FINGERPRINT
     assert api["canonicalMarketCapDiagnostics"] == {
-        "canonicalListingCount": 4500,
-        "medianFallbackCount": 500,
+        "canonicalListingCount": 5000,
+        "medianFallbackCount": 0,
         "fallbackIsDiagnosticOnly": True,
+        "fallbackResolvedForActivation": True,
     }
     assert api["canonicalListingValidation"]["domesticListingCoverageComplete"] is True
     assert api["externalValidation"]["validationFingerprint"] == _VALIDATION_FINGERPRINT
@@ -141,6 +142,7 @@ def test_weighting_readiness_reports_each_structural_blocker() -> None:
         issuer_count=500,
         regions={"america": 60.0, "europe": 40.0, "asia": 0.0},
         external_validation_passed=False,
+        median_fallback_cap_count=1,
     )
 
     assert report.ready is False
@@ -149,6 +151,7 @@ def test_weighting_readiness_reports_each_structural_blocker() -> None:
         "insufficient_issuer_domicile_market_cap_coverage",
         "insufficient_canonical_issuer_count",
         "required_regions_not_represented",
+        "median_fallback_market_caps_require_resolution",
         "external_market_cap_validation_required",
     )
 
