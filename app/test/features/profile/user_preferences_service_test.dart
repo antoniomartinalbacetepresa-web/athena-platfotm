@@ -161,4 +161,42 @@ void main() {
     expect(captured.url.path, '/api/v1/user/profile/preferences');
     expect(captured.headers['Authorization'], 'Bearer profile.jwt');
   });
+
+  test('profile authorization rejection preserves status without backend detail', () async {
+    session.establish(accessToken: 'revoked.profile.jwt', account: account());
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => http.Response(
+            '{"detail":"sensitive authorization diagnostic"}',
+            403,
+          )),
+      session: session,
+    );
+
+    Future<void> expectRejected(Future<void> Function() operation) async {
+      try {
+        await operation();
+        fail('Expected profile authorization rejection.');
+      } on UserPreferencesSessionRejectedException catch (error) {
+        expect(error.statusCode, 403);
+        expect(error.toString(), isNot(contains('sensitive authorization diagnostic')));
+      }
+    }
+
+    await expectRejected(() async {
+      await service.load();
+    });
+    await expectRejected(() async {
+      await service.loadPersonalization();
+    });
+    await expectRejected(() async {
+      await service.save(const UserPreferences(
+        riskTolerance: 'balanced',
+        investmentHorizonYears: 15,
+        baseCurrency: 'EUR',
+        objective: 'long_term_growth',
+      ));
+    });
+    await expectRejected(service.delete);
+  });
 }
