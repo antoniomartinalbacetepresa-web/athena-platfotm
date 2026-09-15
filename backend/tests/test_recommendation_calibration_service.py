@@ -18,6 +18,7 @@ def _seed_directional(
     conviction: float,
     success: bool,
     index: int,
+    evaluation_day_offset: int = 0,
 ) -> None:
     history = RecommendationHistoryRepository(database=database)
     generated = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc) + timedelta(
@@ -38,7 +39,9 @@ def _seed_directional(
     history.record_outcome(
         recommendation_id=recommendation_id,
         horizon_days=30,
-        evaluated_at=generated + timedelta(days=30),
+        evaluated_at=(
+            generated + timedelta(days=30 + evaluation_day_offset)
+        ),
         entry_price=100.0,
         exit_price=110.0 if success else 90.0,
         source_provider="test",
@@ -72,7 +75,7 @@ def test_calibration_requires_minimum_sample_before_proposing_change(
     assert report.to_api_dict()["autoApply"] is False
 
 
-def test_calibration_proposal_is_bounded_and_review_only(tmp_path: Path) -> None:
+def test_same_day_batch_cannot_propose_calibration_change(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "athena.db")
     for index in range(20):
         _seed_directional(
@@ -93,11 +96,46 @@ def test_calibration_proposal_is_bounded_and_review_only(tmp_path: Path) -> None
         proposal for proposal in report.proposals if proposal.label == "very_high"
     )
     assert very_high.sample_count == 20
+    assert very_high.status == "insufficient_longitudinal_evidence"
+    assert very_high.calibration_gap is None
+    assert very_high.proposed_delta is None
+    assert report.distinct_evaluation_days == 1
+    assert report.evaluation_span_days == 0
+    assert report.longitudinal_evidence_ready is False
+
+
+def test_calibration_proposal_is_bounded_and_review_only_with_longitudinal_evidence(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    for index in range(20):
+        _seed_directional(
+            database,
+            conviction=0.9,
+            success=index < 10,
+            index=index,
+            evaluation_day_offset=index // 10,
+        )
+
+    report = RecommendationCalibrationService(
+        database=database,
+        minimum_sample_size=20,
+        learning_rate=0.5,
+        maximum_step=0.05,
+    ).get_report(model_version="v1", horizon_days=30)
+
+    very_high = next(
+        proposal for proposal in report.proposals if proposal.label == "very_high"
+    )
+    assert very_high.sample_count == 20
     assert very_high.observed_accuracy == pytest.approx(0.5)
     assert very_high.average_conviction == pytest.approx(0.9)
     assert very_high.calibration_gap == pytest.approx(-0.4)
     assert very_high.proposed_delta == pytest.approx(-0.05)
     assert very_high.status == "review_required"
+    assert report.distinct_evaluation_days == 2
+    assert report.evaluation_span_days == 1
+    assert report.longitudinal_evidence_ready is True
 
 
 def test_calibration_can_propose_small_positive_adjustment(tmp_path: Path) -> None:
@@ -108,6 +146,7 @@ def test_calibration_can_propose_small_positive_adjustment(tmp_path: Path) -> No
             conviction=0.6,
             success=index < 8,
             index=index,
+            evaluation_day_offset=index // 5,
         )
 
     report = RecommendationCalibrationService(
@@ -133,3 +172,13 @@ def test_calibration_configuration_is_guarded(tmp_path: Path) -> None:
         RecommendationCalibrationService(database=database, learning_rate=1.5)
     with pytest.raises(ValueError, match="maximum_step"):
         RecommendationCalibrationService(database=database, maximum_step=0.5)
+    with pytest.raises(ValueError, match="minimum_distinct_evaluation_days"):
+        RecommendationCalibrationService(
+            database=database,
+            minimum_distinct_evaluation_days=1,
+        )
+    with pytest.raises(ValueError, match="minimum_evaluation_span_days"):
+        RecommendationCalibrationService(
+            database=database,
+            minimum_evaluation_span_days=0,
+        )
