@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../../../auth/services/auth_session.dart';
 import '../../../market/di/market_dependencies.dart';
+import '../../../profile/services/user_preferences_service.dart';
 import '../../models/authenticated_portfolio_view_position.dart';
 import '../../models/portfolio_position.dart';
 import '../../services/authenticated_portfolio_service.dart';
 import '../../services/portfolio_service.dart';
 import '../../widgets/add_position_dialog.dart';
+import '../controllers/authenticated_portfolio_capital_controller.dart';
 import '../controllers/authenticated_portfolio_controller.dart';
 import '../controllers/portfolio_cloud_sync_controller.dart';
+import '../widgets/authenticated_portfolio_capital_view.dart';
 import '../widgets/authenticated_portfolio_history_panel.dart';
 import '../widgets/authenticated_portfolio_view.dart';
 import 'portfolio_page.dart';
@@ -20,7 +23,8 @@ typedef PortfolioPositionsLoader = Future<List<PortfolioPosition>> Function();
 /// Product-level Portfolio entry point.
 ///
 /// In production, authenticated accounts use the owner-scoped backend as the
-/// only authority for personal holdings. The legacy local portfolio remains
+/// only authority for personal holdings and encrypted Profile preferences as
+/// the only authority for available capital. The legacy local portfolio remains
 /// available only to guests. The optional sync/loader/child injections are
 /// retained for regression coverage of the historical migration boundary and
 /// are never used by the production router.
@@ -51,6 +55,8 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   MarketDependencies? _marketDependencies;
   AuthenticatedPortfolioService? _authenticatedService;
   AuthenticatedPortfolioController? _authenticatedController;
+  UserPreferencesService? _preferencesService;
+  AuthenticatedPortfolioCapitalController? _capitalController;
 
   bool get _usesLegacyInjectedBoundary =>
       widget.positionsLoader != null || widget.syncController != null || widget.child != null;
@@ -69,16 +75,27 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
         portfolioService: service,
         marketRepository: market.repository,
       );
+      final preferencesService = UserPreferencesService();
+      final capitalController = AuthenticatedPortfolioCapitalController(
+        preferencesService: preferencesService,
+      );
       _marketDependencies = market;
       _authenticatedService = service;
       _authenticatedController = controller;
+      _preferencesService = preferencesService;
+      _capitalController = capitalController;
       controller.addListener(_onAuthenticatedChanged);
+      capitalController.addListener(_onAuthenticatedChanged);
       unawaited(controller.load());
+      unawaited(capitalController.load());
     }
   }
 
   @override
   void dispose() {
+    _capitalController?.removeListener(_onAuthenticatedChanged);
+    _capitalController?.dispose();
+    _preferencesService?.dispose();
     _authenticatedController?.removeListener(_onAuthenticatedChanged);
     _authenticatedController?.dispose();
     _authenticatedService?.dispose();
@@ -219,8 +236,15 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   Widget _buildAuthoritativeAuthenticatedPortfolio() {
     final controller = _authenticatedController;
-    if (controller == null) {
-      return const PortfolioPage();
+    final capitalController = _capitalController;
+    if (controller == null || capitalController == null) {
+      return const Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Text('No se pudo inicializar la cartera autenticada.'),
+          ),
+        ),
+      );
     }
 
     return Scaffold(
@@ -266,6 +290,11 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
                     ],
                   ),
                   const SizedBox(height: 20),
+                  AuthenticatedPortfolioCapitalView(
+                    controller: capitalController,
+                    onRetry: capitalController.load,
+                  ),
+                  const SizedBox(height: 12),
                   AuthenticatedPortfolioView(
                     controller: controller,
                     onRetry: controller.load,
