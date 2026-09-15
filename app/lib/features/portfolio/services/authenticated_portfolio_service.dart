@@ -4,8 +4,38 @@ import 'package:http/http.dart' as http;
 
 import '../../auth/services/athena_auth_service.dart';
 import '../../auth/services/auth_session.dart';
+import '../../market/models/market_quote.dart';
+import '../../market/repositories/market_repository.dart';
 import '../models/authenticated_portfolio_history.dart';
 import '../models/authenticated_portfolio_position.dart';
+
+class AuthenticatedPortfolioValuedPosition {
+  const AuthenticatedPortfolioValuedPosition({
+    required this.holding,
+    required this.quote,
+  });
+
+  final AuthenticatedPortfolioPosition holding;
+  final MarketQuote quote;
+
+  double get currentValue => holding.quantity * quote.currentPrice;
+
+  double? get investedValue => holding.averagePurchasePrice == null
+      ? null
+      : holding.quantity * holding.averagePurchasePrice!;
+
+  double? get profitLoss {
+    final invested = investedValue;
+    return invested == null ? null : currentValue - invested;
+  }
+
+  double? get profitLossPercentage {
+    final invested = investedValue;
+    final pnl = profitLoss;
+    if (invested == null || pnl == null || invested <= 0) return null;
+    return (pnl / invested) * 100;
+  }
+}
 
 class AuthenticatedPortfolioService {
   static const String _defaultBackendUrl = String.fromEnvironment(
@@ -52,6 +82,66 @@ class AuthenticatedPortfolioService {
           return AuthenticatedPortfolioPosition.fromJson(item);
         })
         .toList(growable: false);
+  }
+
+  /// Loads owner-scoped holdings from the authenticated backend and joins them
+  /// with current market observations in memory. Personal quantity/cost basis
+  /// remains authoritative on the server; quotes are derived market data and
+  /// are deliberately not written to a second local portfolio store.
+  Future<List<AuthenticatedPortfolioValuedPosition>> loadValuedPositions({
+    required MarketRepository marketRepository,
+  }) async {
+    final holdings = await loadPositions();
+    final valued = <AuthenticatedPortfolioValuedPosition>[];
+
+    for (final holding in holdings) {
+      final quote = await marketRepository.getQuote(holding.symbol);
+      _validateMarketQuote(holding: holding, quote: quote);
+      valued.add(
+        AuthenticatedPortfolioValuedPosition(holding: holding, quote: quote),
+      );
+    }
+
+    return List.unmodifiable(valued);
+  }
+
+  void _validateMarketQuote({
+    required AuthenticatedPortfolioPosition holding,
+    required MarketQuote quote,
+  }) {
+    final expectedSymbol = holding.symbol.trim().toUpperCase();
+    final quoteSymbol = quote.symbol.trim().toUpperCase();
+    if (expectedSymbol.isEmpty || quoteSymbol != expectedSymbol) {
+      throw StateError(
+        'La cotización no corresponde a la posición autenticada solicitada.',
+      );
+    }
+    if (!quote.currentPrice.isFinite || quote.currentPrice <= 0) {
+      throw StateError('Cotización actual inválida para la cartera autenticada.');
+    }
+    final provider = quote.sourceProvider?.trim();
+    final retrievedAt = quote.retrievedAt;
+    if (provider == null || provider.isEmpty || retrievedAt == null) {
+      throw StateError(
+        'La valoración autenticada requiere provenance de mercado completa.',
+      );
+    }
+    if (retrievedAt.isBefore(quote.updatedAt)) {
+      throw StateError(
+        'La recuperación de mercado no puede preceder a la observación.',
+      );
+    }
+    final holdingExchange = holding.exchange?.trim().toUpperCase();
+    final quoteExchange = quote.exchange?.trim().toUpperCase();
+    if (holdingExchange != null &&
+        holdingExchange.isNotEmpty &&
+        (quoteExchange == null ||
+            quoteExchange.isEmpty ||
+            quoteExchange != holdingExchange)) {
+      throw StateError(
+        'La cotización pertenece a un listing distinto de la posición autenticada.',
+      );
+    }
   }
 
   Future<AuthenticatedPortfolioHistory> loadHistory({
@@ -153,9 +243,9 @@ class AuthenticatedPortfolioService {
   Map<String, String> _authenticatedHeaders({bool json = false}) {
     final token = _session.accessToken?.trim();
     if (!_session.isAuthenticated || token == null || token.isEmpty) {
-      final rejectedStatus = _lastRejectedStatusCode;
-      if (rejectedStatus != null) {
-        throw AuthSessionRejectedException(rejectedStatus);
+      final rejectedStatusCode = _lastRejectedStatusCode;
+      if (rejectedStatusCode != null) {
+        throw AuthSessionRejectedException(rejectedStatusCode);
       }
       throw StateError('Se requiere una sesión ATHENA autenticada.');
     }
