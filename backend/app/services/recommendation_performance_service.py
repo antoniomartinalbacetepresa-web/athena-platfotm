@@ -96,10 +96,12 @@ class RecommendationPerformanceService:
             rows = connection.execute(
                 f"""
                 SELECT
+                    o.id AS outcome_id,
                     r.action,
                     r.conviction,
                     r.model_version,
                     r.benchmark_symbol,
+                    r.horizon_days AS recommendation_horizon_days,
                     o.horizon_days,
                     o.realized_return,
                     o.benchmark_return,
@@ -115,6 +117,11 @@ class RecommendationPerformanceService:
 
         observations = [dict(row) for row in rows]
         for row in observations:
+            if int(row["horizon_days"]) != int(row["recommendation_horizon_days"]):
+                raise RuntimeError(
+                    f"Outcome {row['outcome_id']} tiene horizon_days inconsistente con la recomendación congelada; "
+                    "el informe de performance falla cerrado."
+                )
             row["benchmark_provenanced"] = self._has_benchmark_provenance(row)
         realized = [float(row["realized_return"]) for row in observations]
         excess = [
