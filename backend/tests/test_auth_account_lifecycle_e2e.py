@@ -31,15 +31,30 @@ def _me(token: str):
     )
 
 
+def _logout(token: str):
+    return client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def _logout_all(token: str):
+    return client.post(
+        "/api/v1/auth/logout-all",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
 def test_full_account_lifecycle_revokes_stale_credentials_and_releases_identity(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     """Exercise the security-critical account lifecycle through the public API.
 
-    This intentionally crosses registration, concurrent sessions, password rotation,
-    stale-session rejection, account closure and clean re-registration so regressions
-    cannot leave old bearer credentials or a closed identity usable.
+    This intentionally crosses registration, individual/global logout, concurrent
+    sessions, password rotation, stale-session rejection, account closure and clean
+    re-registration so regressions cannot leave old bearer credentials or a closed
+    identity usable.
     """
     _configure(monkeypatch, tmp_path)
 
@@ -63,6 +78,37 @@ def test_full_account_lifecycle_revokes_stale_credentials_and_releases_identity(
     assert first_token != second_token
     assert _me(first_token).status_code == 200
     assert _me(second_token).status_code == 200
+
+    # Individual logout is scoped to exactly the presented bearer. A concurrent
+    # session must remain valid, proving that normal logout does not silently act
+    # like a global account revocation.
+    logged_out = _logout(first_token)
+    assert logged_out.status_code == 204, logged_out.text
+    assert _me(first_token).status_code == 401
+    assert _me(second_token).status_code == 200
+
+    replacement_login = _login(_INITIAL_PASSWORD)
+    assert replacement_login.status_code == 200, replacement_login.text
+    replacement_token = replacement_login.json()["access_token"]
+    assert _me(replacement_token).status_code == 200
+
+    # Global logout is the inverse boundary: every bearer issued under the current
+    # session version must become unusable immediately, including the caller.
+    logged_out_all = _logout_all(second_token)
+    assert logged_out_all.status_code == 204, logged_out_all.text
+    assert _me(second_token).status_code == 401
+    assert _me(replacement_token).status_code == 401
+    assert _me(first_token).status_code == 401
+
+    # Authentication remains possible after an explicit logout-all; obtain two new
+    # sessions so password rotation can prove its stronger all-session boundary too.
+    first_login = _login(_INITIAL_PASSWORD)
+    second_login = _login(_INITIAL_PASSWORD)
+    assert first_login.status_code == 200, first_login.text
+    assert second_login.status_code == 200, second_login.text
+    first_token = first_login.json()["access_token"]
+    second_token = second_login.json()["access_token"]
+    assert first_token != second_token
 
     changed = client.post(
         "/api/v1/auth/change-password",
@@ -122,3 +168,4 @@ def test_full_account_lifecycle_revokes_stale_credentials_and_releases_identity(
     assert _me(first_token).status_code == 401
     assert _me(second_token).status_code == 401
     assert _me(fresh_token).status_code == 401
+    assert _me(replacement_token).status_code == 401
