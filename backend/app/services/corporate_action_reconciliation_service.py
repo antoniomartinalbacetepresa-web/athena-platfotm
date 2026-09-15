@@ -124,8 +124,15 @@ class CorporateActionReconciliationService:
                 action_type = str(row.get("action_type", "")).strip().lower()
                 effective_at = str(row.get("effective_at", "")).strip()
                 retrieved_at = str(row.get("retrieved_at", "")).strip()
+                persisted_provider = str(row.get("source_provider", "")).strip()
                 if action_type not in self._VALID_TYPES or not effective_at or not retrieved_at:
                     raise RuntimeError("Corporate action persistida con contrato inválido.")
+                if persisted_provider != provider:
+                    raise RuntimeError(
+                        "Corporate action persistida con provenance incompatible con "
+                        f"el proveedor reconciliado: esperado={provider!r}, "
+                        f"persistido={persisted_provider!r}."
+                    )
                 key = (action_type, effective_at)
                 previous = latest.get(key)
                 if previous is None or retrieved_at > str(previous["retrieved_at"]):
