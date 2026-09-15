@@ -71,6 +71,10 @@ class CorporateActionCoverageService:
     as independent technical evidence. A registered adapter is necessary but not
     sufficient for readiness: the report remains blocked until observations from
     at least two families are actually persisted and agree event by event.
+
+    Repository PIT filtering is treated as defense in depth rather than trusted
+    evidence: every returned observation is revalidated against the requested
+    cutoff and snapshot ordering uses parsed instants, never timestamp text.
     """
 
     DEFAULT_PROVIDER_FAMILIES: Mapping[str, str] = {
@@ -134,6 +138,7 @@ class CorporateActionCoverageService:
             latest_by_event_provider: dict[
                 tuple[str, str], dict[str, dict[str, Any]]
             ] = {}
+            latest_retrieved_at: dict[tuple[tuple[str, str], str], datetime] = {}
             for row in actions:
                 provider = str(row.get("source_provider") or "").strip()
                 if not provider:
@@ -151,10 +156,20 @@ class CorporateActionCoverageService:
                 )
                 if key[0] not in {"dividend", "split"} or not key[1]:
                     raise RuntimeError("Corporate action persistida con contrato inválido.")
+                retrieved_at = self._parse_aware_datetime(
+                    row.get("retrieved_at"),
+                    field="retrieved_at",
+                )
+                if retrieved_at > cutoff:
+                    raise RuntimeError(
+                        "Corporate action persistida viola el knowledge cutoff PIT."
+                    )
                 latest_by_provider = latest_by_event_provider.setdefault(key, {})
-                previous = latest_by_provider.get(provider)
-                if previous is None or str(row["retrieved_at"]) > str(previous["retrieved_at"]):
+                snapshot_key = (key, provider)
+                previous_retrieved_at = latest_retrieved_at.get(snapshot_key)
+                if previous_retrieved_at is None or retrieved_at > previous_retrieved_at:
                     latest_by_provider[provider] = dict(row)
+                    latest_retrieved_at[snapshot_key] = retrieved_at
 
             for latest_by_provider in latest_by_event_provider.values():
                 classified_rows: list[tuple[str, dict[str, Any]]] = []
@@ -208,6 +223,20 @@ class CorporateActionCoverageService:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{field} debe incluir zona horaria.")
         return value.astimezone(timezone.utc)
+
+    def _parse_aware_datetime(self, value: Any, *, field: str) -> datetime:
+        text = str(value or "").strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Corporate action persistida con {field} inválido."
+            ) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise RuntimeError(
+                f"Corporate action persistida con {field} sin zona horaria."
+            )
+        return parsed.astimezone(timezone.utc)
 
     def _public_value(self, row: dict[str, Any]) -> dict[str, Any]:
         action_type = str(row["action_type"]).lower()
