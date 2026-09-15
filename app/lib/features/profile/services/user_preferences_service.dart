@@ -7,12 +7,12 @@ import '../models/user_personalization.dart';
 import '../models/user_preferences.dart';
 
 class UserPreferencesSessionRejectedException implements Exception {
-  const UserPreferencesSessionRejectedException(this.message);
+  const UserPreferencesSessionRejectedException(this.statusCode);
 
-  final String message;
+  final int statusCode;
 
   @override
-  String toString() => message;
+  String toString() => 'La sesión ATHENA ya no está autorizada.';
 }
 
 class UserPreferencesService {
@@ -106,7 +106,7 @@ class UserPreferencesService {
       headers: _authenticatedHeaders(),
     );
     if (response.statusCode == 401 || response.statusCode == 403) {
-      throw UserPreferencesSessionRejectedException(_errorMessage(response));
+      throw UserPreferencesSessionRejectedException(response.statusCode);
     }
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
@@ -126,7 +126,7 @@ class UserPreferencesService {
 
   Map<String, dynamic> _decodeObject(http.Response response) {
     if (response.statusCode == 401 || response.statusCode == 403) {
-      throw UserPreferencesSessionRejectedException(_errorMessage(response));
+      throw UserPreferencesSessionRejectedException(response.statusCode);
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(response));
