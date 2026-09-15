@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ssl
 from datetime import datetime, timezone
 
 import pytest
@@ -23,7 +24,7 @@ def test_recovery_mailer_rejects_plaintext_smtp(monkeypatch) -> None:
         PasswordRecoveryMailer()
 
 
-def test_recovery_mailer_upgrades_tls_before_sending(monkeypatch) -> None:
+def test_recovery_mailer_upgrades_modern_tls_before_sending(monkeypatch) -> None:
     _configure(monkeypatch)
     events: list[str] = []
 
@@ -44,6 +45,9 @@ def test_recovery_mailer_upgrades_tls_before_sending(monkeypatch) -> None:
 
         def starttls(self, *, context) -> None:
             assert context is not None
+            assert context.verify_mode == ssl.CERT_REQUIRED
+            assert context.check_hostname is True
+            assert context.minimum_version >= ssl.TLSVersion.TLSv1_2
             events.append("starttls")
 
         def login(self, username: str, password: str) -> None:
