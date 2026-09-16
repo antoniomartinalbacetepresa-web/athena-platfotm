@@ -74,11 +74,13 @@ void main() {
   Widget app({
     required AuthenticatedPortfolioController controller,
     AuthenticatedPortfolioFxValuationController? fx,
+    String? verifiedBaseCurrency,
   }) => MaterialApp(
         home: Scaffold(
           body: AuthenticatedPortfolioView(
             controller: controller,
             fxValuationController: fx,
+            verifiedBaseCurrency: verifiedBaseCurrency,
             onRetry: () {},
             onAdd: () {},
             onRemove: (_) {},
@@ -99,6 +101,25 @@ void main() {
       find.textContaining('Valor total no disponible: las posiciones usan monedas distintas'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('verified Profile currency requires FX instead of substituting holdings currency', (tester) async {
+    final controller = await holdings([
+      valued(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100),
+    ]);
+
+    await tester.pumpWidget(
+      app(controller: controller, verifiedBaseCurrency: 'EUR'),
+    );
+
+    expect(find.text('Valor actual: 100.00 USD'), findsNothing);
+    expect(
+      find.text('Valor total no disponible: se requiere FX verificado para convertir USD a EUR.'),
+      findsOneWidget,
+    );
+    expect(find.text('Capital invertido: No disponible'), findsOneWidget);
+    expect(find.textContaining('AAA (AAA)'), findsOneWidget);
+    expect(find.textContaining('1.0 acciones · 100.00 USD'), findsOneWidget);
   });
 
   testWidgets('verified FX provenance reaches the authenticated Portfolio widget', (tester) async {
@@ -122,7 +143,9 @@ void main() {
     );
     await fx.load(positions: controller.positions, baseCurrency: 'EUR');
 
-    await tester.pumpWidget(app(controller: controller, fx: fx));
+    await tester.pumpWidget(
+      app(controller: controller, fx: fx, verifiedBaseCurrency: 'EUR'),
+    );
 
     expect(find.text('Valor actual: 140.00 EUR'), findsOneWidget);
     expect(find.textContaining('FX verificado: USD/EUR · verified-fx'), findsOneWidget);
@@ -154,7 +177,9 @@ void main() {
       ),
     );
     await fx.load(positions: controller.positions, baseCurrency: 'EUR');
-    await tester.pumpWidget(app(controller: controller, fx: fx));
+    await tester.pumpWidget(
+      app(controller: controller, fx: fx, verifiedBaseCurrency: 'EUR'),
+    );
     expect(find.text('Valor actual: 90.00 EUR'), findsOneWidget);
 
     fail = true;
