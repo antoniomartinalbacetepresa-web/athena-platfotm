@@ -47,6 +47,7 @@ def test_verified_backfill_only_claims_criterion_after_persisted_current_365_day
     assert report.blockers_after == 0
     assert report.current_blockers_before == 1
     assert report.current_blockers_after == 0
+    assert report.eligible_instrument_count == 1
     assert report.net_blockers_resolved == 1
     assert report.net_current_blockers_resolved == 1
     assert report.history_ready is True
@@ -54,12 +55,39 @@ def test_verified_backfill_only_claims_criterion_after_persisted_current_365_day
 
     verification = report.to_api_dict()["verification"]
     assert verification["deepHistoryCriterionSatisfied"] is True
+    assert verification["eligibleInstrumentCount"] == 1
+    assert verification["nonEmptyEligibleUniverseRequired"] is True
     assert verification["currentDepthRequired"] is True
     assert verification["currentBlockersAfter"] == 0
     assert verification["minimumHistoryDays"] == 365
     assert verification["maximumSourceGapDays"] == 7
     assert verification["providerStitchingAllowed"] is False
     assert report.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
+
+
+def test_empty_eligible_universe_cannot_vacuously_satisfy_history_readiness(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    provider = FakeHistoryProvider({})
+
+    report = VerifiedMarketHistoryBackfillService(
+        database=database,
+        history_provider=provider,
+        today_provider=lambda: date(2026, 1, 2),
+    ).run(limit=10)
+
+    assert report.blockers_before == 0
+    assert report.blockers_after == 0
+    assert report.current_blockers_before == 0
+    assert report.current_blockers_after == 0
+    assert report.eligible_instrument_count == 0
+    assert report.history_ready is False
+    assert provider.calls == []
+    payload = report.to_api_dict()
+    assert payload["status"] == "history_criteria_still_blocked"
+    assert payload["verification"]["eligibleInstrumentCount"] == 0
+    assert payload["verification"]["nonEmptyEligibleUniverseRequired"] is True
+    assert payload["verification"]["deepHistoryCriterionSatisfied"] is False
+    assert payload["policy"]["productionEvidenceClaimed"] is False
 
 
 def test_deep_but_stale_persisted_history_cannot_claim_verified_readiness(tmp_path: Path) -> None:
