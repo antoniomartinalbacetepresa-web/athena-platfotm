@@ -112,6 +112,20 @@ def test_evidence_identity_is_deterministic_and_ignores_url_fragment() -> None:
     assert first["evidenceId"] == second["evidenceId"]
 
 
+def test_evidence_identity_binds_publisher_provenance() -> None:
+    service = NewsSynthesisService()
+    first = service.synthesize([_item()]).to_api_dict()["items"][0]
+    second = service.synthesize(
+        [_item(publisher="Independent Wire")]
+    ).to_api_dict()["items"][0]
+
+    assert first["articleUrl"] == second["articleUrl"]
+    assert first["sourceProvider"] == second["sourceProvider"]
+    assert first["publishedAt"] == second["publishedAt"]
+    assert first["publisher"] != second["publisher"]
+    assert first["evidenceId"] != second["evidenceId"]
+
+
 def test_synthesis_rejects_lookahead_timestamps() -> None:
     with pytest.raises(ValueError, match="publishedAt no puede ser posterior"):
         NewsSynthesisService().synthesize(
