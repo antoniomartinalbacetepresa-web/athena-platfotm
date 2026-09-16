@@ -4,21 +4,24 @@ import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_spacing.dart';
 import '../../models/authenticated_portfolio_view_position.dart';
 import '../controllers/authenticated_portfolio_controller.dart';
+import '../controllers/authenticated_portfolio_fx_valuation_controller.dart';
 
 /// Fail-closed presentation for an authenticated owner's holdings.
 ///
-/// This view consumes only [AuthenticatedPortfolioController]. It never adapts
+/// This view consumes only authenticated controllers. It never adapts
 /// authenticated holdings into the legacy locally-persisted Portfolio model.
 class AuthenticatedPortfolioView extends StatelessWidget {
   const AuthenticatedPortfolioView({
     super.key,
     required this.controller,
+    this.fxValuationController,
     required this.onRetry,
     required this.onAdd,
     required this.onRemove,
   });
 
   final AuthenticatedPortfolioController controller;
+  final AuthenticatedPortfolioFxValuationController? fxValuationController;
   final VoidCallback onRetry;
   final VoidCallback onAdd;
   final ValueChanged<AuthenticatedPortfolioViewPosition> onRemove;
@@ -71,7 +74,10 @@ class AuthenticatedPortfolioView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ComparableSummary(controller: controller),
+        _ComparableSummary(
+          controller: controller,
+          fxValuationController: fxValuationController,
+        ),
         const SizedBox(height: AthenaSpacing.lg),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -107,16 +113,38 @@ class AuthenticatedPortfolioView extends StatelessWidget {
 }
 
 class _ComparableSummary extends StatelessWidget {
-  const _ComparableSummary({required this.controller});
+  const _ComparableSummary({
+    required this.controller,
+    required this.fxValuationController,
+  });
 
   final AuthenticatedPortfolioController controller;
+  final AuthenticatedPortfolioFxValuationController? fxValuationController;
 
   @override
   Widget build(BuildContext context) {
+    final fxController = fxValuationController;
+    final valuation = fxController?.valuation;
     final currency = controller.directlyComparableCurrency;
     final current = controller.directlyComparableCurrentValue;
     final invested = controller.directlyComparableInvestedValue;
-    final comparable = currency != null && current != null;
+    final directlyComparable = currency != null && current != null;
+    final verifiedFx = fxController?.hasVerifiedValuation == true && valuation != null;
+
+    String currentText;
+    if (verifiedFx) {
+      currentText =
+          'Valor actual: ${valuation.currentValueInBaseCurrency.toStringAsFixed(2)} ${valuation.baseCurrency}';
+    } else if (fxController?.isLoading == true) {
+      currentText = 'Valor actual: verificando conversión FX…';
+    } else if (fxController?.error != null) {
+      currentText = 'Valor total no disponible: ${fxController!.error}';
+    } else if (directlyComparable) {
+      currentText = 'Valor actual: ${current.toStringAsFixed(2)} $currency';
+    } else {
+      currentText =
+          'Valor total no disponible: las posiciones usan monedas distintas o falta moneda base verificable.';
+    }
 
     return Container(
       padding: const EdgeInsets.all(AthenaSpacing.lg),
@@ -137,22 +165,24 @@ class _ComparableSummary extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AthenaSpacing.sm),
-          Text(
-            comparable
-                ? 'Valor actual: ${current.toStringAsFixed(2)} $currency'
-                : 'Valor total no disponible: las posiciones usan monedas distintas o falta moneda verificable.',
-            style: const TextStyle(color: AthenaColors.text),
-          ),
+          Text(currentText, style: const TextStyle(color: AthenaColors.text)),
           const SizedBox(height: 4),
           Text(
-            comparable && invested != null
+            directlyComparable && invested != null
                 ? 'Capital invertido declarado: ${invested.toStringAsFixed(2)} $currency'
                 : 'Capital invertido: No disponible',
             style: const TextStyle(color: AthenaColors.textSecondary),
           ),
+          if (verifiedFx && valuation.usesFx) ...[
+            const SizedBox(height: 4),
+            Text(
+              'FX verificado: ${valuation.fxEvidence.map((quote) => '${quote.baseCurrency}/${quote.quoteCurrency} · ${quote.sourceProvider}').join(' · ')}',
+              style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+            ),
+          ],
           const SizedBox(height: AthenaSpacing.sm),
           const Text(
-            'ATHENA no suma directamente monedas distintas ni fabrica costes de compra ausentes.',
+            'ATHENA no suma directamente monedas distintas ni fabrica costes de compra o P/L histórico con FX actual.',
             style: TextStyle(color: AthenaColors.textSecondary, fontSize: 12),
           ),
         ],
