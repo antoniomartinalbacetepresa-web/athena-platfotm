@@ -128,6 +128,34 @@ def test_explicit_distinct_human_approval_unlocks_exact_immutable_weights(
     assert active["automaticTrading"] is False
 
 
+def test_newer_pending_proposal_supersedes_older_human_approval(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    _seed_clean_canonical_universe(database)
+    clock = MutableClock(CREATED_AT)
+    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    first = service.create_proposal(created_by="quant-operator")
+
+    clock.value = APPROVED_AT
+    service.approve_proposal(
+        first.proposal_id,
+        approved_by="risk-officer",
+        approval_note="Primera revisión humana.",
+    )
+    assert service.get_approved_weights()["status"] == "human_approved"
+
+    newer = service.create_proposal(created_by="quant-operator")
+    blocked = service.get_approved_weights()
+
+    assert newer.proposal_id > first.proposal_id
+    assert blocked["status"] == "blocked_pending_human_approval"
+    assert blocked["proposalId"] == newer.proposal_id
+    assert blocked["proposalStatus"] == "pending_human_approval"
+    assert blocked["regionWeights"] is None
+    assert blocked["humanApproved"] is False
+    assert blocked["automaticApproval"] is False
+    assert blocked["automaticTrading"] is False
+
+
 def test_self_approval_and_empty_approval_reason_are_rejected(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
