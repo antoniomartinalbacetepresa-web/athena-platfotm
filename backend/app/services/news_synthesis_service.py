@@ -103,6 +103,7 @@ class NewsSynthesisService:
             "\n".join(
                 (
                     source_provider.casefold(),
+                    publisher.casefold(),
                     article_url,
                     published_at.isoformat(),
                 )
