@@ -10,6 +10,12 @@ from app.services.canonical_weighting_governance_service import (
 )
 
 
+_BLOCKED_CURRENT_STATUSES = {
+    "blocked_pending_human_approval",
+    "blocked_stale_evidence_requires_human_approval",
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -38,7 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "current",
-        help="Devuelve únicamente el último weighting con aprobación humana; falla cerrado si no existe.",
+        help=(
+            "Devuelve únicamente el último weighting con aprobación humana; "
+            "termina con código distinto de cero si el gate está bloqueado."
+        ),
     )
     return parser
 
@@ -68,10 +77,30 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     raise ValueError(f"Comando no soportado: {args.command}")
 
 
+def exit_code_for_result(command: str, result: dict[str, object]) -> int:
+    """Expose the governance gate to shell automation without bypassing humans.
+
+    A JSON payload saying that weighting is blocked must not be accompanied by a
+    successful process exit code: schedulers and release gates commonly consume
+    only the exit status. Non-`current` commands are actions/diagnostics rather
+    than readiness assertions and keep their normal success semantics.
+    """
+
+    if command != "current":
+        return 0
+    status = str(result.get("status") or "").strip()
+    if status == "human_approved":
+        return 0
+    if status in _BLOCKED_CURRENT_STATUSES:
+        return 2
+    return 3
+
+
 def main() -> int:
     args = build_parser().parse_args()
-    print(json.dumps(run(args), indent=2, ensure_ascii=False))
-    return 0
+    result = run(args)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return exit_code_for_result(args.command, result)
 
 
 if __name__ == "__main__":
