@@ -31,9 +31,13 @@ void main() {
         marketRetrievedAt: retrieved,
       );
 
-  FxQuote fx(double rate) => FxQuote(
-        baseCurrency: 'USD',
-        quoteCurrency: 'EUR',
+  FxQuote fx(
+    double rate, {
+    String baseCurrency = 'USD',
+    String quoteCurrency = 'EUR',
+  }) => FxQuote(
+        baseCurrency: baseCurrency,
+        quoteCurrency: quoteCurrency,
         rate: rate,
         status: 'ok',
         sourceProvider: 'verified-fx',
@@ -82,6 +86,31 @@ void main() {
       positions: [position(currency: 'USD', currentValue: 100)],
       baseCurrency: 'EUR',
     );
+
+    expect(controller.hasVerifiedValuation, isFalse);
+    expect(controller.valuation, isNull);
+    expect(controller.error, isNotNull);
+  });
+
+  test('Profile base-currency change cannot retain valuation in the old currency', () async {
+    final controller = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+          if (quoteCurrency == 'EUR') {
+            return fx(0.9, baseCurrency: baseCurrency, quoteCurrency: quoteCurrency);
+          }
+          throw StateError('GBP authority unavailable');
+        },
+      ),
+    );
+    final positions = [position(currency: 'USD', currentValue: 100)];
+
+    await controller.load(positions: positions, baseCurrency: 'EUR');
+    expect(controller.hasVerifiedValuation, isTrue);
+    expect(controller.valuation!.baseCurrency, 'EUR');
+    expect(controller.valuation!.currentValueInBaseCurrency, 90);
+
+    await controller.load(positions: positions, baseCurrency: 'GBP');
 
     expect(controller.hasVerifiedValuation, isFalse);
     expect(controller.valuation, isNull);
