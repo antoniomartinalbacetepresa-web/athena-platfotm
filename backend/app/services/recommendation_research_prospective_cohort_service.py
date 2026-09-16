@@ -49,6 +49,12 @@ class RecommendationResearchProspectiveCohortService:
             raise ValueError("La selección contiene duplicados.")
         return sorted(values)
 
+    @classmethod
+    def _strictly_ex_ante(cls, record: dict[str, Any], sealed: datetime) -> bool:
+        observed_at = max(cls._time(record["created_at"]), cls._time(record["receipt_created_at"]))
+        period_start = cls._time(record["artifact"]["periodStart"])
+        return observed_at <= sealed < period_start
+
     def _initialize(self) -> None:
         with self._database.connect() as connection:
             connection.execute("""CREATE TABLE IF NOT EXISTS athena_research_prospective_cohorts (
@@ -104,9 +110,8 @@ class RecommendationResearchProspectiveCohortService:
         with self._database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             sealed = self._time(self._now())
-            if any(not max(self._time(r["created_at"]), self._time(r["receipt_created_at"])) <= sealed <= self._time(r["artifact"]["periodStart"])
-                   for r in records):
-                raise ValueError("La selección debe sellarse antes del inicio de todos los periodos.")
+            if any(not self._strictly_ex_ante(r, sealed) for r in records):
+                raise ValueError("La selección debe sellarse estrictamente antes del inicio de todos los periodos.")
             artifact = {
                 "artifactVersion": "research-prospective-cohort-v2", "cohortId": cohort_id,
                 "specificationHashes": refs, "sealedAt": sealed.isoformat(),
@@ -145,9 +150,8 @@ class RecommendationResearchProspectiveCohortService:
             if artifact.get("modelIdentity") != records[0]["observed_model_identity"]:
                 raise ValueError("La cohorte perdió su identidad de modelo sellada.")
         sealed = self._time(artifact["sealedAt"])
-        if any(not max(self._time(r["created_at"]), self._time(r["receipt_created_at"])) <= sealed <= self._time(r["artifact"]["periodStart"])
-               for r in records):
-            raise ValueError("La cohorte no tiene selección ex ante válida.")
+        if any(not self._strictly_ex_ante(r, sealed) for r in records):
+            raise ValueError("La cohorte no tiene selección estrictamente ex ante válida.")
         if (artifact["method"] != records[0]["artifact"]["forecastEvidence"]["method"] or
                 artifact["horizonSeconds"] != records[0]["artifact"]["horizonSeconds"]):
             raise ValueError("La cohorte perdió su método/horizonte.")
