@@ -131,7 +131,7 @@ def test_evidence_identity_binds_publisher_provenance() -> None:
     assert first["explanationId"] != second["explanationId"]
 
 
-def test_explanation_identity_changes_when_explanation_changes() -> None:
+def test_explanation_identity_changes_when_interpretation_changes() -> None:
     service = NewsSynthesisService()
     positive = service.synthesize([_item()]).to_api_dict()["items"][0]
     negative = service.synthesize(
@@ -140,7 +140,9 @@ def test_explanation_identity_changes_when_explanation_changes() -> None:
 
     assert positive["evidenceId"] == negative["evidenceId"]
     assert positive["estimatedImpact"] != negative["estimatedImpact"]
-    assert positive["rationale"] != negative["rationale"]
+    # The high-signal rationale can legitimately stay identical while the
+    # directional interpretation changes. explanationId must bind the complete
+    # interpretation, not require every component to differ.
     assert positive["explanationId"] != negative["explanationId"]
 
 
