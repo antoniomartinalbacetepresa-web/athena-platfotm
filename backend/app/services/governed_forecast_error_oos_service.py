@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Any
 
 from app.repositories.longitudinal_oos_policy_repository import (
@@ -45,6 +46,7 @@ class GovernedForecastErrorOosService:
             cohort_record=cohort_record,
             error_records=error_records,
         )
+        self._validate_measurement_contract(measurement)
         policy_record = self._repository.get_latest_policy(as_of=as_of)
         approval_record = None
         if policy_record is not None:
@@ -80,3 +82,34 @@ class GovernedForecastErrorOosService:
             policy["automaticTrading"] = False
             result["policy"] = policy
         return result
+
+    @classmethod
+    def _validate_measurement_contract(cls, measurement: dict[str, Any]) -> None:
+        if not isinstance(measurement, dict):
+            raise RuntimeError("La medición OOS gobernada no es estructurada.")
+        span = measurement.get("evaluationSpanDays")
+        if isinstance(span, bool) or not isinstance(span, (int, float)) or not math.isfinite(float(span)) or float(span) < 0:
+            raise RuntimeError("La medición OOS contiene evaluationSpanDays inválido.")
+        for field in (
+            "distinctEvaluationPeriodCount",
+            "eligibleOutcomeCount",
+            "forecastErrorCount",
+            "distinctResolvedIssuerCount",
+        ):
+            cls._require_nonnegative_int(measurement.get(field), field)
+        horizons = measurement.get("horizons")
+        if not isinstance(horizons, dict):
+            raise RuntimeError("La medición OOS gobernada carece de horizons estructurados.")
+        for horizon, payload in horizons.items():
+            if not isinstance(horizon, str) or not horizon.strip() or not isinstance(payload, dict):
+                raise RuntimeError("La medición OOS contiene un horizonte inválido.")
+            cls._require_nonnegative_int(
+                payload.get("forecastErrorCount"),
+                f"horizons.{horizon}.forecastErrorCount",
+            )
+
+    @staticmethod
+    def _require_nonnegative_int(value: Any, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RuntimeError(f"La medición OOS contiene {field} inválido.")
+        return value
