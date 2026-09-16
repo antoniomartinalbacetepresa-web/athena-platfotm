@@ -54,6 +54,47 @@ def _persistence(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _provenance(record: dict[str, Any]) -> dict[str, Any]:
+    package = record.get("package")
+    synthesis = package.get("synthesis") if isinstance(package, dict) else None
+    assessments = synthesis.get("assessments") if isinstance(synthesis, dict) else None
+    if not isinstance(assessments, list) or not assessments:
+        raise ValueError("Investors synthesis canónica carece de assessments trazables.")
+    bindings: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for assessment in assessments:
+        if not isinstance(assessment, dict):
+            raise ValueError("Cada assessment Investors canónico debe ser un objeto.")
+        evidence_id = str(assessment.get("evidenceId") or "").strip()
+        fingerprint = str(assessment.get("assessmentFingerprint") or "").strip().lower()
+        source_ref = str(assessment.get("sourceRef") or "").strip()
+        if (
+            not evidence_id
+            or len(fingerprint) != 64
+            or any(ch not in "0123456789abcdef" for ch in fingerprint)
+            or not source_ref.startswith("https://")
+        ):
+            raise ValueError("La provenance Investors canónica está incompleta.")
+        if evidence_id in seen:
+            raise ValueError("La provenance Investors canónica contiene evidenceId duplicado.")
+        seen.add(evidence_id)
+        bindings.append({
+            "evidenceId": evidence_id,
+            "assessmentFingerprint": fingerprint,
+            "sourceRef": source_ref,
+        })
+    bindings.sort(key=lambda item: item["evidenceId"])
+    return {
+        "artifactHash": record["synthesis_hash"],
+        "artifactType": "canonical_investors_synthesis",
+        "assessmentBindings": bindings,
+        "userFacingTraceability": True,
+        "recommendationInfluence": False,
+        "automaticScoring": False,
+        "automaticTrading": False,
+    }
+
+
 @router.post("/research-cycle/{cycle_hash}/investors-synthesis")
 def post_investors_synthesis(cycle_hash: str, request: InvestorsSynthesisRequest) -> dict[str, Any]:
     try:
@@ -84,6 +125,7 @@ def post_investors_synthesis(cycle_hash: str, request: InvestorsSynthesisRequest
             radar_hash=str(cycle_record["radar_hash"]),
             synthesis_payload=payload,
         )
+        provenance = _provenance(record)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -94,6 +136,7 @@ def post_investors_synthesis(cycle_hash: str, request: InvestorsSynthesisRequest
             "cycleHash": cycle_record["cycle_hash"],
             "radarHash": cycle_record["radar_hash"],
             "synthesis": payload,
+            "provenance": provenance,
             "persistence": _persistence(record),
             "recommendationInfluence": False,
             "automaticScoring": False,
@@ -110,6 +153,7 @@ def get_investors_synthesis(cycle_hash: str) -> dict[str, Any]:
         record = synthesis_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
         if record["radar_hash"] != cycle_record["radar_hash"]:
             raise ValueError("Investors synthesis ya no coincide con el radarHash del ciclo.")
+        provenance = _provenance(record)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -120,6 +164,7 @@ def get_investors_synthesis(cycle_hash: str) -> dict[str, Any]:
             "cycleHash": cycle_record["cycle_hash"],
             "radarHash": cycle_record["radar_hash"],
             "synthesis": record["package"]["synthesis"],
+            "provenance": provenance,
             "persistence": _persistence(record),
             "recommendationInfluence": False,
             "automaticScoring": False,
