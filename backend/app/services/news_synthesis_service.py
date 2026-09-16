@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
+import json
 import math
 import re
 from typing import Any, Iterable
@@ -22,6 +23,7 @@ class NewsSynthesisItem:
     importance: str
     estimated_impact: str
     rationale: tuple[str, ...]
+    explanation_id: str
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +38,7 @@ class NewsSynthesisItem:
             "importance": self.importance,
             "estimatedImpact": self.estimated_impact,
             "rationale": list(self.rationale),
+            "explanationId": self.explanation_id,
         }
 
 
@@ -53,6 +56,7 @@ class NewsSynthesisReport:
                 "automaticRecommendationImpact": False,
                 "automaticTrading": False,
                 "duplicateEvidenceAmplification": False,
+                "explanationBoundToEvidence": True,
             },
             "advisoryStatus": "no_advice",
             "productionEligible": False,
@@ -116,6 +120,7 @@ class NewsSynthesisService:
         score = min(1.0, 0.25 + 0.35 * len(high_hits) + 0.15 * len(medium_hits))
         if not math.isfinite(score):
             raise ValueError("importanceScore debe ser finito")
+        importance_score = round(score, 4)
         importance = "high" if score >= 0.75 else "medium" if score >= 0.45 else "low"
 
         positive = tuple(term for term in self._POSITIVE if term in lowered)
@@ -132,6 +137,13 @@ class NewsSynthesisService:
         rationale = tuple(
             [*(f"high_signal:{term}" for term in high_hits), *(f"medium_signal:{term}" for term in medium_hits)]
         ) or ("no_material_keyword_signal",)
+        explanation_id = self._explanation_id(
+            evidence_id=evidence_id,
+            importance_score=importance_score,
+            importance=importance,
+            estimated_impact=impact,
+            rationale=rationale,
+        )
 
         return NewsSynthesisItem(
             title=title,
@@ -141,11 +153,32 @@ class NewsSynthesisService:
             retrieved_at=retrieved_at.isoformat(),
             source_provider=source_provider,
             evidence_id=evidence_id,
-            importance_score=round(score, 4),
+            importance_score=importance_score,
             importance=importance,
             estimated_impact=impact,
             rationale=rationale,
+            explanation_id=explanation_id,
         )
+
+    @staticmethod
+    def _explanation_id(
+        *,
+        evidence_id: str,
+        importance_score: float,
+        importance: str,
+        estimated_impact: str,
+        rationale: tuple[str, ...],
+    ) -> str:
+        payload = {
+            "evidenceId": evidence_id,
+            "estimatedImpact": estimated_impact,
+            "importance": importance,
+            "importanceScore": importance_score,
+            "rationale": list(rationale),
+            "synthesisMethod": "deterministic_keyword_v1",
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _required_text(value: Any, field: str) -> str:
