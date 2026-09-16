@@ -248,6 +248,9 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     if (controller == null || capitalController == null) {
       return const Scaffold(body: SafeArea(child: Center(child: Text('No se pudo inicializar la cartera autenticada.'))));
     }
+    final verifiedBaseCurrency = capitalController.hasVerifiedBaseCurrency
+        ? capitalController.currency
+        : null;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -278,6 +281,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
                   AuthenticatedPortfolioView(
                     controller: controller,
                     fxValuationController: _fxValuationController,
+                    verifiedBaseCurrency: verifiedBaseCurrency,
                     onRetry: controller.load,
                     onAdd: _addAuthenticatedPosition,
                     onRemove: _removeAuthenticatedPosition,
