@@ -23,6 +23,7 @@ class VerifiedMarketHistoryBackfillReport:
     blockers_after: int
     current_blockers_before: int
     current_blockers_after: int
+    eligible_instrument_count: int
 
     @property
     def net_blockers_resolved(self) -> int:
@@ -35,7 +36,8 @@ class VerifiedMarketHistoryBackfillReport:
     @property
     def history_ready(self) -> bool:
         return (
-            self.blockers_after == 0
+            self.eligible_instrument_count > 0
+            and self.blockers_after == 0
             and self.current_blockers_after == 0
             and self.backfill.failed_count == 0
         )
@@ -46,6 +48,8 @@ class VerifiedMarketHistoryBackfillReport:
             "status": "history_criteria_satisfied" if self.history_ready else "history_criteria_still_blocked",
             "backfill": backfill_payload,
             "verification": {
+                "eligibleInstrumentCount": self.eligible_instrument_count,
+                "nonEmptyEligibleUniverseRequired": True,
                 "blockersBefore": self.blockers_before,
                 "blockersAfter": self.blockers_after,
                 "netBlockersResolved": self.net_blockers_resolved,
@@ -65,10 +69,11 @@ class VerifiedMarketHistoryBackfillReport:
                 "humanReviewBypassed": False,
             },
             "warning": (
-                "La verificación posterior evalúa únicamente observaciones persistidas y exige "
-                "que el tramo continuo de 365 días alcance el corte actual dentro del máximo "
-                "de 7 días. Un resultado verde en pruebas o con fixtures no constituye evidencia "
-                "de cobertura operativa real del universo de producción."
+                "La verificación posterior evalúa únicamente observaciones persistidas, exige "
+                "un universo elegible no vacío y requiere que el tramo continuo de 365 días "
+                "alcance el corte actual dentro del máximo de 7 días. Un resultado verde en "
+                "pruebas o con fixtures no constituye evidencia de cobertura operativa real "
+                "del universo de producción."
             ),
         }
 
@@ -118,7 +123,14 @@ class VerifiedMarketHistoryBackfillService:
             blocking_only=True,
         )
         blockers_after = self._blocking_count()
-        current_blockers_after = self._current_blocking_count(verification_cutoff)
+        coverage_after = MarketObservationCoverageService(database=self._database).get_report(
+            as_of=verification_cutoff,
+        )
+        current_blockers_after = max(
+            0,
+            coverage_after.history_eligible_instrument_count
+            - coverage_after.current_deep_history_instrument_count,
+        )
 
         return VerifiedMarketHistoryBackfillReport(
             backfill=backfill,
@@ -126,6 +138,7 @@ class VerifiedMarketHistoryBackfillService:
             blockers_after=blockers_after,
             current_blockers_before=current_blockers_before,
             current_blockers_after=current_blockers_after,
+            eligible_instrument_count=coverage_after.history_eligible_instrument_count,
         )
 
     def _blocking_count(self) -> int:
