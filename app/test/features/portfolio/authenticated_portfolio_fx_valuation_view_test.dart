@@ -1,6 +1,7 @@
 import 'package:app/features/market/models/fx_quote.dart';
+import 'package:app/features/market/models/market_quote.dart';
 import 'package:app/features/market/repositories/market_repository.dart';
-import 'package:app/features/portfolio/models/authenticated_portfolio_view_position.dart';
+import 'package:app/features/portfolio/models/authenticated_portfolio_position.dart';
 import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_controller.dart';
 import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_fx_valuation_controller.dart';
 import 'package:app/features/portfolio/presentation/widgets/authenticated_portfolio_view.dart';
@@ -9,9 +10,15 @@ import 'package:app/features/portfolio/services/authenticated_portfolio_service.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class _UnusedPortfolioService implements AuthenticatedPortfolioService {
+class _ValuedPortfolioService extends AuthenticatedPortfolioService {
+  _ValuedPortfolioService(this.valued);
+
+  final List<AuthenticatedPortfolioValuedPosition> valued;
+
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  Future<List<AuthenticatedPortfolioValuedPosition>> loadValuedPositions({
+    required MarketRepository marketRepository,
+  }) async => List.unmodifiable(valued);
 }
 
 class _UnusedMarketRepository implements MarketRepository {
@@ -23,36 +30,44 @@ void main() {
   final observed = DateTime.parse('2026-09-16T00:00:00Z');
   final retrieved = DateTime.parse('2026-09-16T00:01:00Z');
 
-  AuthenticatedPortfolioViewPosition position({
+  AuthenticatedPortfolioValuedPosition valued({
     required int id,
     required String symbol,
     required String currency,
     required double currentValue,
-  }) => AuthenticatedPortfolioViewPosition(
-        serverPositionId: id,
-        symbol: symbol,
-        companyName: symbol,
-        exchange: 'NASDAQ',
-        quantity: 1,
-        currency: currency,
-        currentPrice: currentValue,
-        averagePurchasePrice: null,
-        currentValue: currentValue,
-        investedValue: null,
-        profitLoss: null,
-        profitLossPercentage: null,
-        marketSourceProvider: 'verified-market',
-        marketObservedAt: observed,
-        marketRetrievedAt: retrieved,
+  }) => AuthenticatedPortfolioValuedPosition(
+        holding: AuthenticatedPortfolioPosition(
+          id: id,
+          symbol: symbol,
+          exchange: 'NASDAQ',
+          quantity: 1,
+          createdAt: observed,
+          updatedAt: observed,
+        ),
+        quote: MarketQuote(
+          symbol: symbol,
+          companyName: symbol,
+          currentPrice: currentValue,
+          change: 0,
+          changePercentage: 0,
+          currency: currency,
+          exchange: 'NASDAQ',
+          updatedAt: observed,
+          sourceProvider: 'verified-market',
+          retrievedAt: retrieved,
+        ),
       );
 
-  AuthenticatedPortfolioController holdings(List<AuthenticatedPortfolioViewPosition> positions) {
+  Future<AuthenticatedPortfolioController> holdings(
+    List<AuthenticatedPortfolioValuedPosition> positions,
+  ) async {
     final controller = AuthenticatedPortfolioController(
-      portfolioService: _UnusedPortfolioService(),
+      portfolioService: _ValuedPortfolioService(positions),
       marketRepository: _UnusedMarketRepository(),
     );
-    final field = controller.positions;
-    expect(field, isEmpty);
+    await controller.load();
+    expect(controller.error, isNull);
+    expect(controller.sessionRejected, isFalse);
     return controller;
   }
 
@@ -72,18 +87,25 @@ void main() {
       );
 
   testWidgets('mixed currencies never display an unverified summed total', (tester) async {
-    final controller = holdings(const []);
-    // The controller deliberately has no public test-only setter. Exercise the
-    // presentation contract through a small subclass-free load boundary in a
-    // separate controller test; here an empty authoritative state must also
-    // avoid manufacturing a monetary total.
+    final controller = await holdings([
+      valued(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100),
+      valued(id: 2, symbol: 'BBB', currency: 'EUR', currentValue: 50),
+    ]);
+
     await tester.pumpWidget(app(controller: controller));
 
-    expect(find.textContaining('Valor actual:'), findsNothing);
-    expect(find.textContaining('Cartera vacía'), findsOneWidget);
+    expect(find.textContaining('150.00'), findsNothing);
+    expect(
+      find.textContaining('Valor total no disponible: las posiciones usan monedas distintas'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('verified FX provenance is shown and current FX never manufactures historical P/L', (tester) async {
+  testWidgets('verified FX provenance reaches the authenticated Portfolio widget', (tester) async {
+    final controller = await holdings([
+      valued(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100),
+      valued(id: 2, symbol: 'BBB', currency: 'EUR', currentValue: 50),
+    ]);
     final fx = AuthenticatedPortfolioFxValuationController(
       valuationService: AuthenticatedPortfolioFxValuationService(
         loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async => FxQuote(
@@ -98,23 +120,21 @@ void main() {
         ),
       ),
     );
-    await fx.load(
-      positions: [
-        position(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100),
-        position(id: 2, symbol: 'BBB', currency: 'EUR', currentValue: 50),
-      ],
-      baseCurrency: 'EUR',
-    );
+    await fx.load(positions: controller.positions, baseCurrency: 'EUR');
 
-    expect(fx.hasVerifiedValuation, isTrue);
-    expect(fx.valuation!.currentValueInBaseCurrency, 140);
-    expect(fx.valuation!.fxEvidence.single.sourceProvider, 'verified-fx');
-    expect(fx.valuation!.usesFx, isTrue);
+    await tester.pumpWidget(app(controller: controller, fx: fx));
+
+    expect(find.text('Valor actual: 140.00 EUR'), findsOneWidget);
+    expect(find.textContaining('FX verificado: USD/EUR · verified-fx'), findsOneWidget);
+    expect(find.text('Capital invertido: No disponible'), findsOneWidget);
     expect(fx.valuation!.latestFxObservedAt, observed);
     expect(fx.valuation!.latestFxRetrievedAt, retrieved);
   });
 
-  testWidgets('failed FX reload clears a previously verified monetary result', (tester) async {
+  testWidgets('failed FX reload removes the previously rendered monetary result', (tester) async {
+    final controller = await holdings([
+      valued(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100),
+    ]);
     var fail = false;
     final fx = AuthenticatedPortfolioFxValuationController(
       valuationService: AuthenticatedPortfolioFxValuationService(
@@ -133,15 +153,16 @@ void main() {
         },
       ),
     );
-    final positions = [position(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100)];
-    await fx.load(positions: positions, baseCurrency: 'EUR');
-    expect(fx.hasVerifiedValuation, isTrue);
+    await fx.load(positions: controller.positions, baseCurrency: 'EUR');
+    await tester.pumpWidget(app(controller: controller, fx: fx));
+    expect(find.text('Valor actual: 90.00 EUR'), findsOneWidget);
 
     fail = true;
-    await fx.load(positions: positions, baseCurrency: 'EUR');
+    await fx.load(positions: controller.positions, baseCurrency: 'EUR');
+    await tester.pump();
 
-    expect(fx.hasVerifiedValuation, isFalse);
+    expect(find.text('Valor actual: 90.00 EUR'), findsNothing);
+    expect(find.textContaining('Valor total no disponible:'), findsOneWidget);
     expect(fx.valuation, isNull);
-    expect(fx.error, isNotNull);
   });
 }
