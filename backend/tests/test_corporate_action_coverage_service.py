@@ -46,6 +46,24 @@ def _save_dividend(database, *, provider: str, amount: float) -> None:
     )
 
 
+def test_empty_event_set_cannot_satisfy_cross_provider_reconciliation(tmp_path) -> None:
+    database = _database(tmp_path)
+
+    report = CorporateActionCoverageService(database=database).get_report(as_of=AS_OF)
+
+    assert report.eligible_instrument_count == 1
+    assert report.action_bearing_instrument_count == 0
+    assert report.event_count == 0
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 0
+    assert report.incomplete_event_count == 0
+    assert report.agreement_coverage == 0.0
+    assert report.cross_provider_reconciliation_ready is False
+    payload = report.to_api_dict()
+    assert payload["crossProviderReconciliationReady"] is False
+    assert payload["productionIndependenceClaimed"] is False
+
+
 def test_production_mapping_does_not_trust_arbitrary_secondary_label(tmp_path) -> None:
     database = _database(tmp_path)
     _save_dividend(database, provider="yahoo", amount=0.25)
