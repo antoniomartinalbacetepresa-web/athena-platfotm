@@ -86,6 +86,16 @@ def test_late_preselection_is_rejected(context, tmp_path):
         service.register(cohort_id="late", specification_hashes=[ref])
 
 
+def test_preselection_at_period_start_is_rejected(context, tmp_path):
+    service, ref, _ = setup_cohort(context, tmp_path)
+    record = service._specifications.get_by_hash(specification_hash=ref)
+    period_start = service._time(record["artifact"]["periodStart"])
+    service._now = lambda: period_start
+
+    with pytest.raises(ValueError, match="estrictamente antes"):
+        service.register(cohort_id="boundary", specification_hashes=[ref])
+
+
 def test_preselection_rejects_duplicates_and_replacement(context, tmp_path):
     service, ref, _ = setup_cohort(context, tmp_path)
     with pytest.raises(ValueError, match="duplicados"):
