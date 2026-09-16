@@ -155,6 +155,45 @@ def _base_input_fingerprint(
     )
 
 
+def _news_provenance_binding(news_record: dict[str, Any] | None) -> dict[str, Any] | None:
+    if news_record is None:
+        return None
+    package = news_record.get("package")
+    synthesis = package.get("synthesis") if isinstance(package, dict) else None
+    assessments = synthesis.get("assessments") if isinstance(synthesis, dict) else None
+    if not isinstance(assessments, list) or not assessments:
+        raise ValueError("La síntesis News canónica carece de assessments trazables.")
+    bindings: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for assessment in assessments:
+        if not isinstance(assessment, dict):
+            raise ValueError("Cada assessment News canónico debe ser un objeto.")
+        evidence_id = str(assessment.get("evidenceId") or "").strip()
+        fingerprint = str(assessment.get("assessmentFingerprint") or "").strip().lower()
+        source_ref = str(assessment.get("sourceRef") or "").strip()
+        if not evidence_id or len(fingerprint) != 64 or not source_ref.startswith("https://"):
+            raise ValueError("La provenance News canónica está incompleta.")
+        if evidence_id in seen:
+            raise ValueError("La provenance News canónica contiene evidenceId duplicado.")
+        seen.add(evidence_id)
+        bindings.append(
+            {
+                "evidenceId": evidence_id,
+                "assessmentFingerprint": fingerprint,
+                "sourceRef": source_ref,
+            }
+        )
+    bindings.sort(key=lambda item: item["evidenceId"])
+    return {
+        "artifactHash": news_record["synthesis_hash"],
+        "artifactType": "canonical_news_synthesis",
+        "assessmentBindings": bindings,
+        "userFacingTraceability": True,
+        "recommendationInfluence": False,
+        "automaticTrading": False,
+    }
+
+
 def _input_contract(
     cycle_record: dict[str, Any],
     news_record: dict[str, Any] | None,
@@ -170,11 +209,13 @@ def _input_contract(
             "investorsSynthesisHash": investors_hash,
         }
     )
+    news_binding = _news_provenance_binding(news_record)
     return {
         "cycleHash": cycle_record["cycle_hash"],
         "radarHash": cycle_record["radar_hash"],
         **({"newsSynthesisHash": news_hash} if news_hash is not None else {}),
         **({"investorsSynthesisHash": investors_hash} if investors_hash is not None else {}),
+        **({"newsProvenance": news_binding} if news_binding is not None else {}),
         "inputAsOf": contract["inputAsOf"].isoformat(),
         "evidenceIds": list(contract["evidenceIds"]),
         "coveredCategories": list(contract["coveredCategories"]),
@@ -264,6 +305,10 @@ def post_athena_synthesis(cycle_hash: str, request: AthenaSynthesisRequest) -> d
         "data": {
             "artifactBindingVerified": True,
             "synthesis": payload,
+            "provenance": {
+                **({"news": input_contract["newsProvenance"]} if "newsProvenance" in input_contract else {}),
+                "inputFingerprint": supplied,
+            },
             "persistence": {
                 "appendOnly": True,
                 "packageIntegrityVerified": True,
@@ -282,7 +327,7 @@ def post_athena_synthesis(cycle_hash: str, request: AthenaSynthesisRequest) -> d
 @router.get("/research-cycle/{cycle_hash}/athena-synthesis")
 def get_athena_synthesis(cycle_hash: str) -> dict[str, Any]:
     try:
-        cycle_record, news_record, investors_record, _ = _dependencies(cycle_hash)
+        cycle_record, news_record, investors_record, contract = _dependencies(cycle_hash)
         record = athena_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
         if record["radar_hash"] != cycle_record["radar_hash"]:
             raise ValueError("ATHENA synthesis no coincide con el Radar actual del ciclo.")
@@ -294,6 +339,9 @@ def get_athena_synthesis(cycle_hash: str) -> dict[str, Any]:
         if stored_synthesis.get("investorsSynthesisHash") != expected_investors_hash:
             if not (expected_investors_hash is None and "investorsSynthesisHash" not in stored_synthesis):
                 raise ValueError("ATHENA synthesis no coincide con Investors synthesis canónica.")
+        input_contract = _input_contract(cycle_record, news_record, investors_record, contract)
+        if stored_synthesis.get("inputFingerprint") != input_contract["inputFingerprint"]:
+            raise ValueError("ATHENA synthesis persistida no coincide con el input canónico actual.")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -302,6 +350,10 @@ def get_athena_synthesis(cycle_hash: str) -> dict[str, Any]:
         "data": {
             "artifactBindingVerified": True,
             "synthesis": record["package"]["synthesis"],
+            "provenance": {
+                **({"news": input_contract["newsProvenance"]} if "newsProvenance" in input_contract else {}),
+                "inputFingerprint": input_contract["inputFingerprint"],
+            },
             "persistence": {
                 "appendOnly": True,
                 "packageIntegrityVerified": True,
