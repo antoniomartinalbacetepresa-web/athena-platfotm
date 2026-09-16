@@ -156,6 +156,48 @@ def test_newer_pending_proposal_supersedes_older_human_approval(tmp_path: Path) 
     assert blocked["automaticTrading"] is False
 
 
+def test_approved_weights_fail_closed_after_canonical_evidence_changes(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    _seed_clean_canonical_universe(database)
+    clock = MutableClock(CREATED_AT)
+    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    proposal = service.create_proposal(created_by="quant-operator")
+
+    clock.value = APPROVED_AT
+    service.approve_proposal(
+        proposal.proposal_id,
+        approved_by="risk-officer",
+        approval_note="Evidencia canónica revisada.",
+    )
+    assert service.get_approved_weights()["status"] == "human_approved"
+
+    instruments = InstrumentRepository(database=database)
+    instruments.upsert(
+        {
+            "symbol": "US",
+            "companyName": "US",
+            "country": "United States",
+            "regionKey": "america",
+            "exchangeShortName": "US",
+            "currency": "USD",
+            "instrumentType": "EQUITY",
+            "marketCap": 700.0,
+            "isPrimaryListing": True,
+        }
+    )
+
+    blocked = service.get_approved_weights()
+    assert blocked["status"] == "blocked_stale_evidence_requires_human_approval"
+    assert blocked["proposalId"] == proposal.proposal_id
+    assert blocked["regionWeights"] is None
+    assert blocked["humanApproved"] is True
+    assert blocked["evidenceFresh"] is False
+    assert blocked["approvalEvidenceSha256"] == proposal.evidence_sha256
+    assert blocked["currentEvidenceSha256"] != proposal.evidence_sha256
+    assert blocked["automaticApproval"] is False
+    assert blocked["automaticTrading"] is False
+
+
 def test_self_approval_and_empty_approval_reason_are_rejected(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
