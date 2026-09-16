@@ -145,7 +145,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       final currency = profile.currency;
       if (holdings.sessionRejected || profile.sessionRejected ||
           holdings.error != null || profile.error != null ||
-          holdings.positions.isEmpty || currency == null) {
+          holdings.positions.isEmpty || !profile.hasVerifiedBaseCurrency || currency == null) {
         fx.clear();
         return;
       }
