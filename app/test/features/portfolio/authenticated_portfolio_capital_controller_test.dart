@@ -70,9 +70,48 @@ void main() {
     await controller.load();
 
     expect(controller.hasVerifiedCapital, isTrue);
+    expect(controller.hasVerifiedBaseCurrency, isTrue);
     expect(controller.availableCapital, 12500);
     expect(controller.currency, 'EUR');
     expect(controller.error, isNull);
+    expect(controller.sessionRejected, isFalse);
+  });
+
+  test('verified Profile base currency remains available when capital is unset', () async {
+    final service = UserPreferencesService(
+      client: MockClient((request) async => configured(capital: null, currency: 'usd')),
+      session: session(),
+    );
+    final controller = AuthenticatedPortfolioCapitalController(
+      preferencesService: service,
+    );
+
+    await controller.load();
+
+    expect(controller.hasVerifiedCapital, isFalse);
+    expect(controller.availableCapital, isNull);
+    expect(controller.hasVerifiedBaseCurrency, isTrue);
+    expect(controller.currency, 'USD');
+    expect(controller.error, isNull);
+    expect(controller.sessionRejected, isFalse);
+  });
+
+  test('invalid Profile base currency fails closed even when capital is unset', () async {
+    final service = UserPreferencesService(
+      client: MockClient((request) async => configured(capital: null, currency: 'US')),
+      session: session(),
+    );
+    final controller = AuthenticatedPortfolioCapitalController(
+      preferencesService: service,
+    );
+
+    await controller.load();
+
+    expect(controller.hasVerifiedCapital, isFalse);
+    expect(controller.hasVerifiedBaseCurrency, isFalse);
+    expect(controller.availableCapital, isNull);
+    expect(controller.currency, isNull);
+    expect(controller.error, isNotNull);
     expect(controller.sessionRejected, isFalse);
   });
 
@@ -92,6 +131,7 @@ void main() {
     await controller.load();
 
     expect(controller.hasVerifiedCapital, isFalse);
+    expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
     expect(controller.currency, isNull);
     expect(controller.error, isNull);
@@ -114,10 +154,12 @@ void main() {
 
     await controller.load();
     expect(controller.hasVerifiedCapital, isTrue);
+    expect(controller.hasVerifiedBaseCurrency, isTrue);
 
     await controller.load();
 
     expect(controller.hasVerifiedCapital, isFalse);
+    expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
     expect(controller.currency, isNull);
     expect(controller.sessionRejected, isTrue);
@@ -125,7 +167,7 @@ void main() {
     expect(auth.isAuthenticated, isFalse);
   });
 
-  test('authoritative failure removes previously verified capital', () async {
+  test('authoritative failure removes previously verified capital and currency', () async {
     var calls = 0;
     final service = UserPreferencesService(
       client: MockClient((request) async {
@@ -141,10 +183,12 @@ void main() {
 
     await controller.load();
     expect(controller.hasVerifiedCapital, isTrue);
+    expect(controller.hasVerifiedBaseCurrency, isTrue);
 
     await controller.load();
 
     expect(controller.hasVerifiedCapital, isFalse);
+    expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
     expect(controller.currency, isNull);
     expect(controller.sessionRejected, isFalse);
