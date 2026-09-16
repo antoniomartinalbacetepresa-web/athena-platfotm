@@ -38,6 +38,7 @@ def test_synthesis_is_ranked_traced_and_never_changes_athena_automatically() -> 
         "automaticRecommendationImpact": False,
         "automaticTrading": False,
         "duplicateEvidenceAmplification": False,
+        "explanationBoundToEvidence": True,
     }
     assert report["items"][0]["importanceScore"] > report["items"][1]["importanceScore"]
     assert report["items"][0]["estimatedImpact"] == "potentially_positive"
@@ -47,6 +48,8 @@ def test_synthesis_is_ranked_traced_and_never_changes_athena_automatically() -> 
     assert report["items"][0]["retrievedAt"] == "2026-09-14T12:05:00+00:00"
     assert len(report["items"][0]["evidenceId"]) == 64
     assert set(report["items"][0]["evidenceId"]) <= set("0123456789abcdef")
+    assert len(report["items"][0]["explanationId"]) == 64
+    assert set(report["items"][0]["explanationId"]) <= set("0123456789abcdef")
 
 
 def test_synthesis_reports_mixed_and_unclear_impact_without_predictive_claim() -> None:
@@ -110,6 +113,7 @@ def test_evidence_identity_is_deterministic_and_ignores_url_fragment() -> None:
     ).to_api_dict()["items"][0]
     assert first["articleUrl"] == second["articleUrl"]
     assert first["evidenceId"] == second["evidenceId"]
+    assert first["explanationId"] == second["explanationId"]
 
 
 def test_evidence_identity_binds_publisher_provenance() -> None:
@@ -124,6 +128,20 @@ def test_evidence_identity_binds_publisher_provenance() -> None:
     assert first["publishedAt"] == second["publishedAt"]
     assert first["publisher"] != second["publisher"]
     assert first["evidenceId"] != second["evidenceId"]
+    assert first["explanationId"] != second["explanationId"]
+
+
+def test_explanation_identity_changes_when_explanation_changes() -> None:
+    service = NewsSynthesisService()
+    positive = service.synthesize([_item()]).to_api_dict()["items"][0]
+    negative = service.synthesize(
+        [_item(title="Company cuts guidance after earnings misses estimates")]
+    ).to_api_dict()["items"][0]
+
+    assert positive["evidenceId"] == negative["evidenceId"]
+    assert positive["estimatedImpact"] != negative["estimatedImpact"]
+    assert positive["rationale"] != negative["rationale"]
+    assert positive["explanationId"] != negative["explanationId"]
 
 
 def test_synthesis_rejects_lookahead_timestamps() -> None:
