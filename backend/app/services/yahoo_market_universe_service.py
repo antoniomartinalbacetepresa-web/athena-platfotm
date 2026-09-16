@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import math
 from typing import Any
 
 import yfinance as yf
@@ -263,12 +264,22 @@ class YahooMarketUniverseService:
             return None
 
         try:
-            return self._fx_service.convert_to_usd(
+            result = self._fx_service.convert_to_usd(
                 amount=market_cap_local,
                 currency=currency,
             )
         except Exception:
             return None
+
+        if isinstance(result, bool):
+            return None
+        try:
+            normalized = float(result)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(normalized) or normalized <= 0:
+            return None
+        return normalized
 
     def _get_fast_info_value(
         self,
@@ -301,7 +312,7 @@ class YahooMarketUniverseService:
         self,
         value: Any,
     ) -> float | None:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
 
         try:
@@ -309,7 +320,7 @@ class YahooMarketUniverseService:
         except (TypeError, ValueError):
             return None
 
-        if result != result:
+        if not math.isfinite(result):
             return None
 
         if result <= 0:

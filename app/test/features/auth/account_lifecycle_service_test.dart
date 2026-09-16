@@ -1,0 +1,208 @@
+import 'dart:convert';
+
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/account_lifecycle_service.dart';
+import 'package:app/features/auth/services/athena_auth_account_closure.dart';
+import 'package:app/features/auth/services/athena_auth_service.dart';
+import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/auth/services/auth_token_store.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+class _MemoryTokenStore implements AuthTokenStore {
+  _MemoryTokenStore({this.failDelete = false});
+
+  final bool failDelete;
+  String? value;
+
+  @override
+  Future<void> deleteAccessToken() async {
+    if (failDelete) {
+      throw StateError('secure storage unavailable');
+    }
+    value = null;
+  }
+
+  @override
+  Future<String?> readAccessToken() async => value;
+
+  @override
+  Future<void> writeAccessToken(String token) async => value = token;
+}
+
+AuthAccount _account() => AuthAccount(
+      id: 7,
+      email: 'user@example.com',
+      isActive: true,
+      createdAt: DateTime.utc(2026, 9, 1),
+      updatedAt: DateTime.utc(2026, 9, 1),
+    );
+
+Future<AuthSession> _authenticatedSession(_MemoryTokenStore store) async {
+  final session = AuthSession.forTesting(store);
+  await session.establishPersisted(
+    accessToken: 'test-access-token',
+    account: _account(),
+  );
+  return session;
+}
+
+void main() {
+  test('successful current-session logout revokes remotely and clears local token', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.logoutCurrentSession();
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/logout');
+    expect(captured.headers['Authorization'], 'Bearer test-access-token');
+    expect(result.localCredentialDeleted, isTrue);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, isNull);
+  });
+
+  test('successful all-session logout uses global revocation endpoint', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.logoutAllSessions();
+
+    expect(captured.url.path, '/api/v1/auth/logout-all');
+    expect(result.localCredentialDeleted, isTrue);
+    expect(session.isAuthenticated, isFalse);
+    expect(store.value, isNull);
+  });
+
+  test('remote logout remains authoritative when secure-storage deletion fails', () async {
+    final client = MockClient((request) async => http.Response('', 204));
+    final store = _MemoryTokenStore(failDelete: true)..value = 'test-access-token';
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'test-access-token', account: _account());
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.logoutCurrentSession();
+
+    expect(result.localCredentialDeleted, isFalse);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, 'test-access-token');
+  });
+
+  test('failed remote logout preserves authenticated session and durable token', () async {
+    final client = MockClient((request) async => http.Response('{}', 503));
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    await expectLater(lifecycle.logoutCurrentSession(), throwsException);
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'test-access-token');
+    expect(store.value, 'test-access-token');
+  });
+
+  test('successful account closure sends re-authentication and clears local token', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.closeCurrentAccount(
+      currentPassword: 'test-current-passphrase',
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/close-account');
+    expect(captured.headers['Authorization'], 'Bearer test-access-token');
+    expect(captured.headers['Content-Type'], 'application/json');
+    expect(
+      (jsonDecode(captured.body) as Map<String, dynamic>)['currentPassword'],
+      'test-current-passphrase',
+    );
+    expect(result.localCredentialDeleted, isTrue);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, isNull);
+  });
+
+  test('remote closure remains authoritative when secure-storage deletion fails', () async {
+    final client = MockClient((request) async => http.Response('', 204));
+    final store = _MemoryTokenStore(failDelete: true);
+    final session = AuthSession.forTesting(store);
+    store.value = 'test-access-token';
+    session.establish(accessToken: 'test-access-token', account: _account());
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.closeCurrentAccount(
+      currentPassword: 'test-current-passphrase',
+    );
+
+    expect(result.localCredentialDeleted, isFalse);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, 'test-access-token');
+  });
+
+  test('failed re-authentication keeps current session and durable token', () async {
+    final client = MockClient((request) async => http.Response('{}', 401));
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    await expectLater(
+      lifecycle.closeCurrentAccount(currentPassword: 'wrong-test-passphrase'),
+      throwsA(isA<AccountClosureRejectedException>()),
+    );
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'test-access-token');
+    expect(store.value, 'test-access-token');
+  });
+
+  test('closure validates password locally before any network call', () async {
+    var called = false;
+    final client = MockClient((request) async {
+      called = true;
+      return http.Response('', 204);
+    });
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    await expectLater(
+      lifecycle.closeCurrentAccount(currentPassword: ''),
+      throwsArgumentError,
+    );
+
+    expect(called, isFalse);
+    expect(session.isAuthenticated, isTrue);
+    expect(store.value, 'test-access-token');
+  });
+}

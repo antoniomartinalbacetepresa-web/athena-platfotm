@@ -1,99 +1,147 @@
-﻿import '../data/config/market_provider_settings.dart';
+import '../data/config/market_provider_settings.dart';
+import '../data/datasources/athena_backend_fx_data_source.dart';
+import '../data/datasources/athena_backend_market_universe_data_source.dart';
+import '../data/providers/athena_backend_market_data_provider.dart';
 import '../repositories/market_context_repository.dart';
 import '../repositories/market_context_repository_impl.dart';
 import '../repositories/market_repository.dart';
 import '../repositories/market_repository_impl.dart';
 import '../repositories/market_universe_repository.dart';
+import '../repositories/market_universe_repository_impl.dart';
 import '../repositories/mock_market_universe_repository.dart';
+import '../services/athena_backend_market_service.dart';
 import '../services/global_market_context_service.dart';
 import '../services/global_market_data_service.dart';
+import '../services/market_context_service.dart';
 import '../services/mock_market_context_service.dart';
 import '../services/mock_market_service.dart';
 import '../services/regional_market_context_service_impl.dart';
 import '../services/regional_market_weight_service.dart';
+import '../services/unavailable_market_context_service.dart';
 
 /// Dependencias principales de la funcionalidad de mercado.
 ///
-/// Esta configuración mantiene desacoplado el dominio de los proveedores
-/// externos.
-///
-/// Las fuentes externas se configuran mediante [MarketProviderSettings].
-/// Por defecto se utiliza configuración de desarrollo para mantener
-/// ATHENA TYCHE operativa sin claves API.
+/// Por defecto la aplicación utiliza el backend de ATHENA TYCHE. Los mocks
+/// sólo se utilizan cuando se solicita explícitamente la configuración de
+/// desarrollo.
 class MarketDependencies {
+  static const String _defaultBackendUrl = String.fromEnvironment(
+    'ATHENA_BACKEND_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
+
   final MarketRepository repository;
   final MarketContextRepository marketContextRepository;
   final MarketUniverseRepository marketUniverseRepository;
   final GlobalMarketDataService globalMarketDataService;
+
+  final AthenaBackendMarketDataProvider? backendMarketProvider;
+  final AthenaBackendMarketUniverseDataSource? backendUniverseDataSource;
+  final AthenaBackendFxDataSource? backendFxDataSource;
 
   const MarketDependencies({
     required this.repository,
     required this.marketContextRepository,
     required this.marketUniverseRepository,
     required this.globalMarketDataService,
+    this.backendMarketProvider,
+    this.backendUniverseDataSource,
+    this.backendFxDataSource,
   });
 
-  /// Construye las dependencias de mercado de ATHENA TYCHE.
-  ///
-  /// Cuando no se proporciona configuración se utiliza el modo desarrollo,
-  /// que emplea proveedores mock y no necesita conexión externa.
   factory MarketDependencies.create({
     MarketProviderSettings? settings,
   }) {
-    final effectiveSettings =
-        settings ?? const MarketProviderSettings.development();
+    final effectiveSettings = settings ??
+        MarketProviderSettings.athenaBackend(
+          baseUrl: _defaultBackendUrl,
+        );
 
-    final regionalMarketWeightService =
-        const RegionalMarketWeightService();
+    final regionalMarketWeightService = const RegionalMarketWeightService();
 
-    final marketRepository = MarketRepositoryImpl(
-      marketService: const MockMarketService(),
-    );
+    late final MarketRepository marketRepository;
+    late final MarketContextService marketContextService;
+    late final MarketUniverseRepository marketUniverseRepository;
+    AthenaBackendMarketDataProvider? backendMarketProvider;
+    AthenaBackendMarketUniverseDataSource? backendUniverseDataSource;
+    AthenaBackendFxDataSource? backendFxDataSource;
+
+    switch (effectiveSettings.market.providerId) {
+      case 'mock_market':
+        marketRepository = MarketRepositoryImpl(
+          marketService: const MockMarketService(),
+        );
+        marketContextService = const MockMarketContextService();
+        marketUniverseRepository = const MockMarketUniverseRepository();
+
+      case 'athena_backend':
+        final baseUrl = effectiveSettings.market.baseUrl?.trim();
+        if (baseUrl == null || baseUrl.isEmpty) {
+          throw StateError(
+            'ATHENA_BACKEND_URL no está configurada para el proveedor real.',
+          );
+        }
+
+        backendMarketProvider = AthenaBackendMarketDataProvider(
+          baseUrl: baseUrl,
+        );
+        backendUniverseDataSource = AthenaBackendMarketUniverseDataSource(
+          baseUrl: baseUrl,
+        );
+        backendFxDataSource = AthenaBackendFxDataSource(
+          baseUrl: baseUrl,
+        );
+
+        marketRepository = MarketRepositoryImpl(
+          marketService: AthenaBackendMarketService(
+            provider: backendMarketProvider,
+          ),
+        );
+        marketContextService = const UnavailableMarketContextService();
+        marketUniverseRepository = MarketUniverseRepositoryImpl(
+          dataSource: backendUniverseDataSource,
+        );
+
+      default:
+        throw UnsupportedError(
+          'Proveedor de mercado no soportado en Flutter: '
+          '${effectiveSettings.market.providerId}. '
+          'Los proveedores externos deben conectarse desde el backend.',
+        );
+    }
 
     final marketContextRepository = MarketContextRepositoryImpl(
-      marketContextService: const MockMarketContextService(),
+      marketContextService: marketContextService,
     );
 
-    const marketUniverseRepository =
-        MockMarketUniverseRepository();
-
-    final regionalMarketContextService =
-        RegionalMarketContextServiceImpl(
+    final regionalMarketContextService = RegionalMarketContextServiceImpl(
       marketRepository: marketRepository,
     );
 
-    const globalMarketContextService =
-        GlobalMarketContextService();
+    const globalMarketContextService = GlobalMarketContextService();
 
-    final globalMarketDataService =
-        GlobalMarketDataService(
-      regionalMarketContextService:
-          regionalMarketContextService,
-      globalMarketContextService:
-          globalMarketContextService,
-      marketUniverseRepository:
-          marketUniverseRepository,
-      regionalMarketWeightService:
-          regionalMarketWeightService,
+    final globalMarketDataService = GlobalMarketDataService(
+      regionalMarketContextService: regionalMarketContextService,
+      globalMarketContextService: globalMarketContextService,
+      marketUniverseRepository: marketUniverseRepository,
+      regionalMarketWeightService: regionalMarketWeightService,
+      marketUniverseStatusProvider: backendUniverseDataSource,
     );
-
-    // En esta fase la aplicación continúa utilizando los proveedores mock.
-    //
-    // La configuración externa se conserva para que la composición de
-    // dependencias pueda evolucionar posteriormente hacia proveedores
-    // reales sin modificar el dominio.
-    //
-    // No se utilizan claves API directamente desde esta capa.
-    final _ = effectiveSettings;
 
     return MarketDependencies(
       repository: marketRepository,
       marketContextRepository: marketContextRepository,
       marketUniverseRepository: marketUniverseRepository,
       globalMarketDataService: globalMarketDataService,
+      backendMarketProvider: backendMarketProvider,
+      backendUniverseDataSource: backendUniverseDataSource,
+      backendFxDataSource: backendFxDataSource,
     );
   }
 
-  /// No existen recursos externos que liberar en la configuración actual.
-  void dispose() {}
+  void dispose() {
+    backendMarketProvider?.dispose();
+    backendUniverseDataSource?.dispose();
+    backendFxDataSource?.dispose();
+  }
 }
