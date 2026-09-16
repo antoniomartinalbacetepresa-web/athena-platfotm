@@ -15,6 +15,7 @@ class AuthenticatedPortfolioView extends StatelessWidget {
     super.key,
     required this.controller,
     this.fxValuationController,
+    this.verifiedBaseCurrency,
     required this.onRetry,
     required this.onAdd,
     required this.onRemove,
@@ -22,6 +23,14 @@ class AuthenticatedPortfolioView extends StatelessWidget {
 
   final AuthenticatedPortfolioController controller;
   final AuthenticatedPortfolioFxValuationController? fxValuationController;
+
+  /// Authenticated Profile currency, already validated by the Profile boundary.
+  ///
+  /// When supplied, a directly-comparable holdings total is only a valid base
+  /// valuation if it is denominated in this currency. Otherwise verified FX is
+  /// required; the view must not silently substitute the holdings currency for
+  /// the user's configured base currency.
+  final String? verifiedBaseCurrency;
   final VoidCallback onRetry;
   final VoidCallback onAdd;
   final ValueChanged<AuthenticatedPortfolioViewPosition> onRemove;
@@ -77,6 +86,7 @@ class AuthenticatedPortfolioView extends StatelessWidget {
         _ComparableSummary(
           controller: controller,
           fxValuationController: fxValuationController,
+          verifiedBaseCurrency: verifiedBaseCurrency,
         ),
         const SizedBox(height: AthenaSpacing.lg),
         Row(
@@ -116,10 +126,12 @@ class _ComparableSummary extends StatelessWidget {
   const _ComparableSummary({
     required this.controller,
     required this.fxValuationController,
+    required this.verifiedBaseCurrency,
   });
 
   final AuthenticatedPortfolioController controller;
   final AuthenticatedPortfolioFxValuationController? fxValuationController;
+  final String? verifiedBaseCurrency;
 
   @override
   Widget build(BuildContext context) {
@@ -128,7 +140,10 @@ class _ComparableSummary extends StatelessWidget {
     final currency = controller.directlyComparableCurrency;
     final current = controller.directlyComparableCurrentValue;
     final invested = controller.directlyComparableInvestedValue;
+    final expectedBase = verifiedBaseCurrency?.trim().toUpperCase();
     final directlyComparable = currency != null && current != null;
+    final directMatchesBase = directlyComparable &&
+        (expectedBase == null || expectedBase.isEmpty || currency.toUpperCase() == expectedBase);
     final verifiedFx = fxController?.hasVerifiedValuation == true && valuation != null;
 
     String currentText;
@@ -139,12 +154,17 @@ class _ComparableSummary extends StatelessWidget {
       currentText = 'Valor actual: verificando conversión FX…';
     } else if (fxController?.error != null) {
       currentText = 'Valor total no disponible: ${fxController!.error}';
-    } else if (directlyComparable) {
+    } else if (directMatchesBase) {
       currentText = 'Valor actual: ${current.toStringAsFixed(2)} $currency';
+    } else if (directlyComparable && expectedBase != null && expectedBase.isNotEmpty) {
+      currentText =
+          'Valor total no disponible: se requiere FX verificado para convertir $currency a $expectedBase.';
     } else {
       currentText =
           'Valor total no disponible: las posiciones usan monedas distintas o falta moneda base verificable.';
     }
+
+    final investedComparableToBase = directMatchesBase && invested != null;
 
     return Container(
       padding: const EdgeInsets.all(AthenaSpacing.lg),
@@ -168,7 +188,7 @@ class _ComparableSummary extends StatelessWidget {
           Text(currentText, style: const TextStyle(color: AthenaColors.text)),
           const SizedBox(height: 4),
           Text(
-            directlyComparable && invested != null
+            investedComparableToBase
                 ? 'Capital invertido declarado: ${invested.toStringAsFixed(2)} $currency'
                 : 'Capital invertido: No disponible',
             style: const TextStyle(color: AthenaColors.textSecondary),
