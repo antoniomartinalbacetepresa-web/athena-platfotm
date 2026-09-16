@@ -7,11 +7,13 @@ import '../../../market/di/market_dependencies.dart';
 import '../../../profile/services/user_preferences_service.dart';
 import '../../models/authenticated_portfolio_view_position.dart';
 import '../../models/portfolio_position.dart';
+import '../../services/authenticated_portfolio_fx_valuation_service.dart';
 import '../../services/authenticated_portfolio_service.dart';
 import '../../services/portfolio_service.dart';
 import '../../widgets/add_position_dialog.dart';
 import '../controllers/authenticated_portfolio_capital_controller.dart';
 import '../controllers/authenticated_portfolio_controller.dart';
+import '../controllers/authenticated_portfolio_fx_valuation_controller.dart';
 import '../controllers/portfolio_cloud_sync_controller.dart';
 import '../widgets/authenticated_portfolio_capital_view.dart';
 import '../widgets/authenticated_portfolio_history_panel.dart';
@@ -20,14 +22,6 @@ import 'portfolio_page.dart';
 
 typedef PortfolioPositionsLoader = Future<List<PortfolioPosition>> Function();
 
-/// Product-level Portfolio entry point.
-///
-/// In production, authenticated accounts use the owner-scoped backend as the
-/// only authority for personal holdings and encrypted Profile preferences as
-/// the only authority for available capital. The legacy local portfolio remains
-/// available only to guests. The optional sync/loader/child injections are
-/// retained for regression coverage of the historical migration boundary and
-/// are never used by the production router.
 class AuthenticatedPortfolioPage extends StatefulWidget {
   const AuthenticatedPortfolioPage({
     super.key,
@@ -43,8 +37,7 @@ class AuthenticatedPortfolioPage extends StatefulWidget {
   final Widget? child;
 
   @override
-  State<AuthenticatedPortfolioPage> createState() =>
-      _AuthenticatedPortfolioPageState();
+  State<AuthenticatedPortfolioPage> createState() => _AuthenticatedPortfolioPageState();
 }
 
 class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage> {
@@ -57,6 +50,8 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   AuthenticatedPortfolioController? _authenticatedController;
   UserPreferencesService? _preferencesService;
   AuthenticatedPortfolioCapitalController? _capitalController;
+  AuthenticatedPortfolioFxValuationController? _fxValuationController;
+  bool _valuationRefreshScheduled = false;
 
   bool get _usesLegacyInjectedBoundary =>
       widget.positionsLoader != null || widget.syncController != null || widget.child != null;
@@ -79,13 +74,29 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       final capitalController = AuthenticatedPortfolioCapitalController(
         preferencesService: preferencesService,
       );
+      final fxDataSource = market.backendFxDataSource;
+      final fxController = fxDataSource == null
+          ? null
+          : AuthenticatedPortfolioFxValuationController(
+              valuationService: AuthenticatedPortfolioFxValuationService(
+                loadCurrentFxRate: ({
+                  required String baseCurrency,
+                  required String quoteCurrency,
+                }) => fxDataSource.getCurrentRate(
+                  baseCurrency: baseCurrency,
+                  quoteCurrency: quoteCurrency,
+                ),
+              ),
+            );
       _marketDependencies = market;
       _authenticatedService = service;
       _authenticatedController = controller;
       _preferencesService = preferencesService;
       _capitalController = capitalController;
+      _fxValuationController = fxController;
       controller.addListener(_onAuthenticatedChanged);
       capitalController.addListener(_onAuthenticatedChanged);
+      fxController?.addListener(_onFxChanged);
       unawaited(controller.load());
       unawaited(capitalController.load());
     }
@@ -93,6 +104,8 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   @override
   void dispose() {
+    _fxValuationController?.removeListener(_onFxChanged);
+    _fxValuationController?.dispose();
     _capitalController?.removeListener(_onAuthenticatedChanged);
     _capitalController?.dispose();
     _preferencesService?.dispose();
@@ -110,14 +123,39 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   }
 
   void _onAuthenticatedChanged() {
+    _scheduleVerifiedValuationRefresh();
     if (mounted) setState(() {});
+  }
+
+  void _onFxChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _scheduleVerifiedValuationRefresh() {
+    if (_valuationRefreshScheduled) return;
+    _valuationRefreshScheduled = true;
+    scheduleMicrotask(() {
+      _valuationRefreshScheduled = false;
+      if (!mounted) return;
+      final holdings = _authenticatedController;
+      final profile = _capitalController;
+      final fx = _fxValuationController;
+      if (holdings == null || profile == null || fx == null ||
+          holdings.isLoading || profile.isLoading) return;
+      final currency = profile.currency;
+      if (holdings.sessionRejected || profile.sessionRejected ||
+          holdings.error != null || profile.error != null ||
+          holdings.positions.isEmpty || currency == null) {
+        fx.clear();
+        return;
+      }
+      unawaited(fx.load(positions: holdings.positions, baseCurrency: currency));
+    });
   }
 
   Future<List<PortfolioPosition>> _loadDeclaredPositions() async {
     final injectedLoader = widget.positionsLoader;
-    if (injectedLoader != null) {
-      return List<PortfolioPosition>.unmodifiable(await injectedLoader());
-    }
+    if (injectedLoader != null) return List<PortfolioPosition>.unmodifiable(await injectedLoader());
     await _portfolioService.loadPortfolio();
     return List<PortfolioPosition>.unmodifiable(
       _portfolioService.portfolio?.positions ?? const <PortfolioPosition>[],
@@ -125,66 +163,47 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   }
 
   Future<void> _syncDeclaredPositions() async {
-    if (_syncController.isSyncing) return;
-    if (!AuthSession.instance.isAuthenticated) return;
-
+    if (_syncController.isSyncing || !AuthSession.instance.isAuthenticated) return;
     try {
-      final positions = await _loadDeclaredPositions();
-      await _syncController.sync(positions);
+      await _syncController.sync(await _loadDeclaredPositions());
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No se pudo leer la cartera local. No se ha enviado ningún dato.',
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No se pudo leer la cartera local. No se ha enviado ningún dato.'),
+      ));
       return;
     }
-
-    if (_syncController.sessionRejected) {
-      await AuthSession.instance.clearAfterRemoteInvalidation();
-    }
-
+    if (_syncController.sessionRejected) await AuthSession.instance.clearAfterRemoteInvalidation();
     if (!mounted) return;
     setState(() {});
-    if (_syncController.message == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_syncController.message!)),
-    );
+    if (_syncController.message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_syncController.message!)));
+    }
   }
 
   Future<void> _openAuthenticatedHistory() async {
     if (!AuthSession.instance.isAuthenticated) return;
-
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => FractionallySizedBox(
         heightFactor: 0.78,
-        child: AuthenticatedPortfolioHistoryPanel(
-          service: widget.historyService ?? _authenticatedService,
-        ),
+        child: AuthenticatedPortfolioHistoryPanel(service: widget.historyService ?? _authenticatedService),
       ),
     );
-
-    if (!mounted) return;
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _addAuthenticatedPosition() async {
     final controller = _authenticatedController;
     final market = _marketDependencies;
     if (controller == null || market == null || controller.sessionRejected) return;
-
     final result = await showDialog<AddPositionResult>(
       context: context,
       builder: (context) => AddPositionDialog(marketRepository: market.repository),
     );
     if (result == null) return;
-
     final saved = await controller.upsert(
       symbol: result.symbol,
       exchange: result.exchange,
@@ -199,28 +218,17 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     }
   }
 
-  Future<void> _removeAuthenticatedPosition(
-    AuthenticatedPortfolioViewPosition position,
-  ) async {
+  Future<void> _removeAuthenticatedPosition(AuthenticatedPortfolioViewPosition position) async {
     final controller = _authenticatedController;
     if (controller == null || controller.sessionRejected) return;
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Eliminar posición'),
-        content: Text(
-          '¿Quieres eliminar ${position.companyName} (${position.symbol}) de tu cuenta ATHENA?',
-        ),
+        content: Text('¿Quieres eliminar ${position.companyName} (${position.symbol}) de tu cuenta ATHENA?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Eliminar'),
-          ),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Eliminar')),
         ],
       ),
     );
@@ -238,15 +246,8 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     final controller = _authenticatedController;
     final capitalController = _capitalController;
     if (controller == null || capitalController == null) {
-      return const Scaffold(
-        body: SafeArea(
-          child: Center(
-            child: Text('No se pudo inicializar la cartera autenticada.'),
-          ),
-        ),
-      );
+      return const Scaffold(body: SafeArea(child: Center(child: Text('No se pudo inicializar la cartera autenticada.'))));
     }
-
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -257,46 +258,26 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Volver',
-                        onPressed: () => Navigator.of(context).maybePop(),
-                        icon: const Icon(Icons.arrow_back_rounded),
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'MI CARTERA',
-                              style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              'Posiciones personales protegidas por tu cuenta ATHENA',
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        key: const Key('portfolio-authenticated-history'),
-                        tooltip: 'Historial de cuenta',
-                        onPressed: controller.sessionRejected
-                            ? null
-                            : _openAuthenticatedHistory,
-                        icon: const Icon(Icons.history),
-                      ),
-                    ],
-                  ),
+                  Row(children: [
+                    IconButton(tooltip: 'Volver', onPressed: () => Navigator.of(context).maybePop(), icon: const Icon(Icons.arrow_back_rounded)),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('MI CARTERA', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
+                      Text('Posiciones personales protegidas por tu cuenta ATHENA'),
+                    ])),
+                    IconButton(
+                      key: const Key('portfolio-authenticated-history'),
+                      tooltip: 'Historial de cuenta',
+                      onPressed: controller.sessionRejected ? null : _openAuthenticatedHistory,
+                      icon: const Icon(Icons.history),
+                    ),
+                  ]),
                   const SizedBox(height: 20),
-                  AuthenticatedPortfolioCapitalView(
-                    controller: capitalController,
-                    onRetry: capitalController.load,
-                  ),
+                  AuthenticatedPortfolioCapitalView(controller: capitalController, onRetry: capitalController.load),
                   const SizedBox(height: 12),
                   AuthenticatedPortfolioView(
                     controller: controller,
+                    fxValuationController: _fxValuationController,
                     onRetry: controller.load,
                     onAdd: _addAuthenticatedPosition,
                     onRemove: _removeAuthenticatedPosition,
@@ -312,77 +293,45 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   Widget _buildLegacyMigrationBoundary() {
     final isAuthenticated = AuthSession.instance.isAuthenticated;
-    return Stack(
-      children: [
-        widget.child ?? const PortfolioPage(),
-        Positioned(
-          right: 20,
-          bottom: 20,
-          child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (!isAuthenticated) ...[
-                  const Card(
-                    key: Key('portfolio-authentication-required'),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      child: Text(
-                        'Inicia sesión para usar el historial y la sincronización de cuenta.',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                FloatingActionButton.small(
-                  key: const Key('portfolio-authenticated-history'),
-                  heroTag: 'portfolio-authenticated-history',
-                  tooltip: isAuthenticated
-                      ? 'Historial de cuenta'
-                      : 'Inicia sesión para consultar el historial',
-                  onPressed: isAuthenticated ? _openAuthenticatedHistory : null,
-                  child: const Icon(Icons.history),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton.extended(
-                  key: const Key('portfolio-authenticated-sync'),
-                  heroTag: 'portfolio-authenticated-sync',
-                  onPressed: !isAuthenticated || _syncController.isSyncing
-                      ? null
-                      : _syncDeclaredPositions,
-                  icon: _syncController.isSyncing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.cloud_upload_outlined),
-                  label: Text(
-                    !isAuthenticated
-                        ? 'Inicia sesión'
-                        : _syncController.isSyncing
-                            ? 'Sincronizando…'
-                            : 'Sincronizar cuenta',
-                  ),
-                ),
-              ],
-            ),
+    return Stack(children: [
+      widget.child ?? const PortfolioPage(),
+      Positioned(
+        right: 20,
+        bottom: 20,
+        child: SafeArea(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+          if (!isAuthenticated) ...[
+            const Card(key: Key('portfolio-authentication-required'), child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Text('Inicia sesión para usar el historial y la sincronización de cuenta.', textAlign: TextAlign.center),
+            )),
+            const SizedBox(height: 8),
+          ],
+          FloatingActionButton.small(
+            key: const Key('portfolio-authenticated-history'),
+            heroTag: 'portfolio-authenticated-history',
+            tooltip: isAuthenticated ? 'Historial de cuenta' : 'Inicia sesión para consultar el historial',
+            onPressed: isAuthenticated ? _openAuthenticatedHistory : null,
+            child: const Icon(Icons.history),
           ),
-        ),
-      ],
-    );
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            key: const Key('portfolio-authenticated-sync'),
+            heroTag: 'portfolio-authenticated-sync',
+            onPressed: !isAuthenticated || _syncController.isSyncing ? null : _syncDeclaredPositions,
+            icon: _syncController.isSyncing
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.cloud_upload_outlined),
+            label: Text(!isAuthenticated ? 'Inicia sesión' : _syncController.isSyncing ? 'Sincronizando…' : 'Sincronizar cuenta'),
+          ),
+        ])),
+      ),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
     if (_usesLegacyInjectedBoundary) return _buildLegacyMigrationBoundary();
-    if (AuthSession.instance.isAuthenticated) {
-      return _buildAuthoritativeAuthenticatedPortfolio();
-    }
-    // Guest mode is intentionally local. It contains no account-owned server
-    // state and cannot be silently promoted into an authenticated portfolio.
+    if (AuthSession.instance.isAuthenticated) return _buildAuthoritativeAuthenticatedPortfolio();
     return const PortfolioPage();
   }
 }
