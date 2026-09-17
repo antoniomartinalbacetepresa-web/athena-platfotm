@@ -29,7 +29,11 @@ def _record(*, radar_hash: str = _HASH_B):
 
 
 def test_latest_news_route_is_registered():
-    paths = {route.path for route in app.routes}
+    paths = {
+        route.path
+        for route in app.routes
+        if isinstance(getattr(route, "path", None), str)
+    }
     assert "/api/v1/recommendations/professional-research/news-synthesis/latest" in paths
 
 
