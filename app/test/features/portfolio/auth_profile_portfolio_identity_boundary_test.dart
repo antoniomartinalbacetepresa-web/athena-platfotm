@@ -133,4 +133,80 @@ void main() {
     expect(controller.sessionRejected, isTrue);
     expect(session.isAuthenticated, isFalse);
   });
+
+  test('restored durable session must be remotely validated before Portfolio reads Profile',
+      () async {
+    final store = _MemoryTokenStore()..token = 'restored-owner-token';
+    final session = AuthSession.forTesting(store);
+    final requests = <String>[];
+    final service = UserPreferencesService(
+      session: session,
+      client: MockClient((request) async {
+        requests.add(request.headers['Authorization'] ?? '');
+        return _configured(7300, 'EUR');
+      }),
+    );
+    final controller = AuthenticatedPortfolioCapitalController(
+      preferencesService: service,
+    );
+
+    await controller.load();
+    expect(requests, isEmpty);
+    expect(controller.availableCapital, isNull);
+    expect(controller.currency, isNull);
+
+    var validations = 0;
+    final restored = await session.restore(
+      validateToken: (token) async {
+        validations += 1;
+        expect(token, 'restored-owner-token');
+        return _account(7, 'restored-owner@example.com');
+      },
+      shouldDiscardToken: (_) => false,
+    );
+
+    expect(restored, AuthSessionRestoreResult.restored);
+    expect(validations, 1);
+    expect(session.isAuthenticated, isTrue);
+
+    await controller.load();
+    expect(requests, ['Bearer restored-owner-token']);
+    expect(controller.availableCapital, 7300);
+    expect(controller.currency, 'EUR');
+    expect(controller.hasVerifiedCapital, isTrue);
+    expect(controller.hasVerifiedBaseCurrency, isTrue);
+  });
+
+  test('rejected durable session never reaches Profile or leaks stale Portfolio state',
+      () async {
+    final store = _MemoryTokenStore()..token = 'revoked-owner-token';
+    final session = AuthSession.forTesting(store);
+    var profileCalls = 0;
+    final service = UserPreferencesService(
+      session: session,
+      client: MockClient((request) async {
+        profileCalls += 1;
+        return _configured(99999, 'USD');
+      }),
+    );
+    final controller = AuthenticatedPortfolioCapitalController(
+      preferencesService: service,
+    );
+
+    final restored = await session.restore(
+      validateToken: (_) async => throw StateError('revoked'),
+      shouldDiscardToken: (_) => true,
+    );
+
+    expect(restored, AuthSessionRestoreResult.rejected);
+    expect(store.token, isNull);
+    expect(session.isAuthenticated, isFalse);
+
+    await controller.load();
+    expect(profileCalls, 0);
+    expect(controller.availableCapital, isNull);
+    expect(controller.currency, isNull);
+    expect(controller.hasVerifiedCapital, isFalse);
+    expect(controller.hasVerifiedBaseCurrency, isFalse);
+  });
 }
