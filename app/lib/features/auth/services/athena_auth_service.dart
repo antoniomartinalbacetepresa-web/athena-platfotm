@@ -117,16 +117,7 @@ class AthenaAuthService {
     if (normalizedToken.length < 32 || normalizedToken.length > 512) {
       throw ArgumentError('Token de recuperación no válido.');
     }
-    if (newPassword.length < 12 || newPassword.length > 256) {
-      throw ArgumentError(
-        'La nueva contraseña debe tener entre 12 y 256 caracteres.',
-      );
-    }
-    if (newPassword.trim() != newPassword) {
-      throw ArgumentError(
-        'La nueva contraseña no puede empezar ni terminar con espacios.',
-      );
-    }
+    _validateNewPassword(newPassword);
     final response = await client.post(
       Uri.parse('$baseUrl/api/v1/auth/recovery/reset'),
       headers: const {'Content-Type': 'application/json'},
@@ -180,9 +171,7 @@ class AthenaAuthService {
     if (currentPassword.isEmpty) {
       throw ArgumentError('La contraseña actual es obligatoria.');
     }
-    if (newPassword.length < 12) {
-      throw ArgumentError('La nueva contraseña debe tener al menos 12 caracteres.');
-    }
+    _validateNewPassword(newPassword);
     final response = await client.post(
       Uri.parse('$baseUrl/api/v1/auth/change-password'),
       headers: {
@@ -196,6 +185,19 @@ class AthenaAuthService {
     );
     if (response.statusCode != 204) {
       throw Exception('No se pudo cambiar la contraseña (${response.statusCode}).');
+    }
+  }
+
+  void _validateNewPassword(String password) {
+    if (password.length < 12 || password.length > 256) {
+      throw ArgumentError(
+        'La nueva contraseña debe tener entre 12 y 256 caracteres.',
+      );
+    }
+    if (password.trim() != password) {
+      throw ArgumentError(
+        'La nueva contraseña no puede empezar ni terminar con espacios.',
+      );
     }
   }
 
