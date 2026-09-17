@@ -105,6 +105,55 @@ void main() {
     expect(account.isActive, isTrue);
   });
 
+  test('changePassword sends normalized bearer and exact password payload', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.changePassword(
+      token: ' signed.jwt.token ',
+      currentPassword: 'current-password',
+      newPassword: 'replacement-password',
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/change-password');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+    final payload = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(payload['currentPassword'], 'current-password');
+    expect(payload['newPassword'], 'replacement-password');
+  });
+
+  test('changePassword rejects oversized or edge-spaced password before network', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls += 1;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await expectLater(
+      service.changePassword(
+        token: 'signed.jwt.token',
+        currentPassword: 'current-password',
+        newPassword: '${'a' * 257}',
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      service.changePassword(
+        token: 'signed.jwt.token',
+        currentPassword: 'current-password',
+        newPassword: ' replacement-password ',
+      ),
+      throwsArgumentError,
+    );
+    expect(calls, 0);
+  });
+
   test('logout calls backend revocation endpoint with bearer token', () async {
     late http.Request captured;
     final client = MockClient((request) async {
