@@ -63,6 +63,63 @@ void main() {
     expect(session.isAuthenticated, isTrue);
   });
 
+  test('restore normalizes persisted token before remote validation', () async {
+    final store = _FakeAuthTokenStore(token: '  stored-token  ');
+    final session = AuthSession.forTesting(store);
+    var validatedToken = '';
+
+    final result = await session.restore(
+      validateToken: (token) async {
+        validatedToken = token;
+        return account();
+      },
+      shouldDiscardToken: (_) => false,
+    );
+
+    expect(result, AuthSessionRestoreResult.restored);
+    expect(validatedToken, 'stored-token');
+    expect(session.accessToken, 'stored-token');
+  });
+
+  test('blank persisted token is deleted without reaching remote validation', () async {
+    final store = _FakeAuthTokenStore(token: '   ');
+    final session = AuthSession.forTesting(store);
+    var validationCalls = 0;
+
+    final result = await session.restore(
+      validateToken: (_) async {
+        validationCalls += 1;
+        return account();
+      },
+      shouldDiscardToken: (_) => false,
+    );
+
+    expect(result, AuthSessionRestoreResult.rejected);
+    expect(validationCalls, 0);
+    expect(store.token, isNull);
+    expect(session.isAuthenticated, isFalse);
+  });
+
+  test('blank persisted token stays fail closed when secure deletion fails', () async {
+    final store = _FakeAuthTokenStore(token: '   ', failDeletes: true);
+    final session = AuthSession.forTesting(store);
+    var validationCalls = 0;
+
+    final result = await session.restore(
+      validateToken: (_) async {
+        validationCalls += 1;
+        return account();
+      },
+      shouldDiscardToken: (_) => false,
+    );
+
+    expect(result, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(validationCalls, 0);
+    expect(store.token, '   ');
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+  });
+
   test('server-rejected stored token is deleted and never restored', () async {
     final store = _FakeAuthTokenStore(token: 'revoked-token');
     final session = AuthSession.forTesting(store);
@@ -119,9 +176,6 @@ void main() {
     expect(session.accessToken, isNull);
     expect(store.token, 'server-revoked-token');
 
-    // Simulate a fresh process reading the stale credential that secure storage
-    // could not delete. It must be validated remotely before any authenticated
-    // state is exposed, and a server rejection must leave the new session closed.
     final restarted = AuthSession.forTesting(store);
     var validationCalls = 0;
     final restored = await restarted.restore(
@@ -137,8 +191,6 @@ void main() {
     expect(restored, AuthSessionRestoreResult.temporarilyUnavailable);
     expect(restarted.isAuthenticated, isFalse);
     expect(restarted.accessToken, isNull);
-    // Deletion is still unavailable, so the result cannot claim a clean rejected
-    // credential. Crucially, the retained token is never trusted locally.
     expect(store.token, 'server-revoked-token');
   });
 }
