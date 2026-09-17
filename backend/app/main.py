@@ -6,84 +6,37 @@ from app.api.macro import router as macro_router
 from app.api.market import router as market_router
 from app.api.news import router as news_router
 from app.api.portfolio import router as portfolio_router
-from app.api.portfolio_allocation_authority import (
-    router as portfolio_allocation_authority_router,
-)
-from app.api.portfolio_allocation_policy import (
-    router as portfolio_allocation_policy_router,
-)
+from app.api.portfolio_allocation_authority import router as portfolio_allocation_authority_router
+from app.api.portfolio_allocation_policy import router as portfolio_allocation_policy_router
 from app.api.readiness import router as readiness_router
 from app.api.recommendation_athena_radar import router as recommendation_athena_radar_router
-from app.api.recommendation_athena_synthesis import (
-    router as recommendation_athena_synthesis_router,
-)
+from app.api.recommendation_athena_synthesis import router as recommendation_athena_synthesis_router
+from app.api.recommendation_latest_athena_synthesis import router as recommendation_latest_athena_synthesis_router
 from app.api.recommendation_catalysts import router as recommendation_catalysts_router
 from app.api.recommendation_devils_advocate import router as recommendation_devils_advocate_router
-from app.api.recommendation_factor_risk_sealed_value import (
-    router as recommendation_factor_risk_sealed_value_router,
-)
-from app.api.recommendation_fundamental_factor_evidence import (
-    router as recommendation_fundamental_factor_evidence_router,
-)
-from app.api.recommendation_investment_journal import (
-    router as recommendation_investment_journal_router,
-)
-from app.api.recommendation_investors_synthesis import (
-    router as recommendation_investors_synthesis_router,
-)
-from app.api.recommendation_market_factor_exposure import (
-    router as recommendation_market_factor_exposure_router,
-)
-from app.api.recommendation_news_synthesis import (
-    router as recommendation_news_synthesis_router,
-)
-from app.api.recommendation_performance_attribution import (
-    router as recommendation_performance_attribution_router,
-)
-from app.api.recommendation_portfolio_event_ledger import (
-    router as recommendation_portfolio_event_ledger_router,
-)
-from app.api.recommendation_portfolio_nlv_snapshot import (
-    router as recommendation_portfolio_nlv_snapshot_router,
-)
-from app.api.recommendation_portfolio_performance_attribution import (
-    router as recommendation_portfolio_performance_attribution_router,
-)
-from app.api.recommendation_portfolio_state_reconstruction import (
-    router as recommendation_portfolio_state_reconstruction_router,
-)
-from app.api.recommendation_portfolio_time_weighted_return import (
-    router as recommendation_portfolio_time_weighted_return_router,
-)
+from app.api.recommendation_factor_risk_sealed_value import router as recommendation_factor_risk_sealed_value_router
+from app.api.recommendation_fundamental_factor_evidence import router as recommendation_fundamental_factor_evidence_router
+from app.api.recommendation_investment_journal import router as recommendation_investment_journal_router
+from app.api.recommendation_investors_synthesis import router as recommendation_investors_synthesis_router
+from app.api.recommendation_market_factor_exposure import router as recommendation_market_factor_exposure_router
+from app.api.recommendation_news_synthesis import router as recommendation_news_synthesis_router
+from app.api.recommendation_performance_attribution import router as recommendation_performance_attribution_router
+from app.api.recommendation_portfolio_event_ledger import router as recommendation_portfolio_event_ledger_router
+from app.api.recommendation_portfolio_nlv_snapshot import router as recommendation_portfolio_nlv_snapshot_router
+from app.api.recommendation_portfolio_performance_attribution import router as recommendation_portfolio_performance_attribution_router
+from app.api.recommendation_portfolio_state_reconstruction import router as recommendation_portfolio_state_reconstruction_router
+from app.api.recommendation_portfolio_time_weighted_return import router as recommendation_portfolio_time_weighted_return_router
 from app.api.recommendation_production import router as recommendation_production_router
-from app.api.recommendation_professional_research import (
-    router as recommendation_professional_research_router,
-)
-from app.api.recommendation_professional_research_cycle import (
-    router as recommendation_professional_research_cycle_router,
-)
-from app.api.recommendation_reconciled_portfolio_weights import (
-    router as recommendation_reconciled_portfolio_weights_router,
-)
+from app.api.recommendation_professional_research import router as recommendation_professional_research_router
+from app.api.recommendation_professional_research_cycle import router as recommendation_professional_research_cycle_router
+from app.api.recommendation_reconciled_portfolio_weights import router as recommendation_reconciled_portfolio_weights_router
 from app.api.recommendation_research import router as recommendation_research_router
-from app.api.recommendation_research_forecast_evaluation import (
-    router as recommendation_research_forecast_evaluation_router,
-)
-from app.api.recommendation_persisted_forecast_inputs import (
-    router as recommendation_persisted_forecast_inputs_router,
-)
-from app.api.recommendation_research_outcome_attribution import (
-    router as recommendation_research_outcome_attribution_router,
-)
-from app.api.recommendation_research_outcome_oos_cohort import (
-    router as recommendation_research_outcome_oos_cohort_router,
-)
-from app.api.recommendation_shadow_operations import (
-    router as recommendation_shadow_operations_router,
-)
-from app.api.recommendation_thesis_invalidation import (
-    router as recommendation_thesis_invalidation_router,
-)
+from app.api.recommendation_research_forecast_evaluation import router as recommendation_research_forecast_evaluation_router
+from app.api.recommendation_persisted_forecast_inputs import router as recommendation_persisted_forecast_inputs_router
+from app.api.recommendation_research_outcome_attribution import router as recommendation_research_outcome_attribution_router
+from app.api.recommendation_research_outcome_oos_cohort import router as recommendation_research_outcome_oos_cohort_router
+from app.api.recommendation_shadow_operations import router as recommendation_shadow_operations_router
+from app.api.recommendation_thesis_invalidation import router as recommendation_thesis_invalidation_router
 from app.api.recommendations import router as recommendations_router
 from app.api.sec import router as sec_router
 from app.api.sec_fundamental_pit import router as sec_fundamental_pit_router
@@ -166,6 +119,7 @@ app.include_router(recommendation_professional_research_cycle_router)
 app.include_router(recommendation_news_synthesis_router)
 app.include_router(recommendation_investors_synthesis_router)
 app.include_router(recommendation_athena_synthesis_router)
+app.include_router(recommendation_latest_athena_synthesis_router)
 app.include_router(recommendation_research_outcome_attribution_router)
 app.include_router(recommendation_research_outcome_oos_cohort_router)
 app.include_router(recommendation_research_forecast_evaluation_router)
