@@ -30,6 +30,32 @@ void main() {
     expect(result.automaticTrading, isFalse);
   });
 
+  test('loads latest canonical synthesis without inventing a cycle hash', () async {
+    Uri? requested;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async {
+        requested = request.url;
+        return http.Response(responseBody(), 200);
+      }),
+    );
+
+    final result = await source.getLatest();
+
+    expect(requested.toString(), 'https://athena.example/api/v1/recommendations/professional-research/athena-synthesis/latest');
+    expect(result.summary, 'Escenario explicado');
+    expect(result.isSafe, isTrue);
+  });
+
+  test('latest synthesis fails closed on backend error', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response('{"detail":"stale"}', 404)),
+    );
+
+    expect(() => source.getLatest(), throwsException);
+  });
+
   test('fails closed when synthesis fingerprint diverges from provenance', () async {
     final source = AthenaBackendSynthesisDataSource(
       baseUrl: 'https://athena.example',
