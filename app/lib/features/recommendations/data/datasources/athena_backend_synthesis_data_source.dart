@@ -45,6 +45,13 @@ class AthenaBackendSynthesisDataSource {
     http.Client? client,
   }) : client = client ?? http.Client();
 
+  Future<AthenaSynthesisView> getLatest() async {
+    final response = await client.get(Uri.parse(
+      '$baseUrl/api/v1/recommendations/professional-research/athena-synthesis/latest',
+    ));
+    return _decodeResponse(response);
+  }
+
   Future<AthenaSynthesisView> getForResearchCycle(String cycleHash) async {
     final hash = cycleHash.trim().toLowerCase();
     if (!_sha256(hash)) {
@@ -53,6 +60,10 @@ class AthenaBackendSynthesisDataSource {
     final response = await client.get(Uri.parse(
       '$baseUrl/api/v1/recommendations/professional-research/research-cycle/$hash/athena-synthesis',
     ));
+    return _decodeResponse(response);
+  }
+
+  AthenaSynthesisView _decodeResponse(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'El backend de ATHENA TYCHE respondió con código HTTP ${response.statusCode} al leer la síntesis ATHENA.',
