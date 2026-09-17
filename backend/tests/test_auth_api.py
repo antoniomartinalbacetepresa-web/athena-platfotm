@@ -187,6 +187,54 @@ def test_logout_all_is_isolated_to_authenticated_user(monkeypatch, tmp_path: Pat
     ).status_code == 200
 
 
+def test_change_password_invalidates_all_existing_sessions_and_old_password(monkeypatch, tmp_path: Path) -> None:
+    _register(monkeypatch, tmp_path)
+    first_token = _login().json()["access_token"]
+    second_token = _login().json()["access_token"]
+    new_password = "ReplacementHorseBatteryStaple!"
+
+    changed = client.post(
+        "/api/v1/auth/change-password",
+        json={"currentPassword": _PASSWORD, "newPassword": new_password},
+        headers={"Authorization": f"Bearer {first_token}"},
+    )
+    assert changed.status_code == 204, changed.text
+
+    for old_token in (first_token, second_token):
+        assert client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {old_token}"},
+        ).status_code == 401
+
+    assert _login(password=_PASSWORD).status_code == 401
+    fresh_login = _login(password=new_password)
+    assert fresh_login.status_code == 200, fresh_login.text
+    fresh_token = fresh_login.json()["access_token"]
+    assert client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {fresh_token}"},
+    ).status_code == 200
+
+
+def test_change_password_rejects_edge_spaces_without_rotating_sessions(monkeypatch, tmp_path: Path) -> None:
+    _register(monkeypatch, tmp_path)
+    token = _login().json()["access_token"]
+
+    rejected = client.post(
+        "/api/v1/auth/change-password",
+        json={"currentPassword": _PASSWORD, "newPassword": " ReplacementHorseBatteryStaple! "},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rejected.status_code == 400
+    assert "espacios" in rejected.json()["detail"]
+
+    assert client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    ).status_code == 200
+    assert _login(password=_PASSWORD).status_code == 200
+
+
 def test_login_rate_limit_blocks_repeated_failures(monkeypatch, tmp_path: Path) -> None:
     _register(monkeypatch, tmp_path)
 
