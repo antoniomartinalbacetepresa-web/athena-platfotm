@@ -53,16 +53,31 @@ class AuthSession {
   }) async {
     if (isAuthenticated) return AuthSessionRestoreResult.restored;
 
-    final String? token;
+    final String? storedToken;
     try {
-      token = await _tokenStore.readAccessToken();
+      storedToken = await _tokenStore.readAccessToken();
     } catch (_) {
       _clearMemory();
       return AuthSessionRestoreResult.temporarilyUnavailable;
     }
-    if (token == null) {
+    if (storedToken == null) {
       _clearMemory();
       return AuthSessionRestoreResult.noStoredToken;
+    }
+
+    // Secure storage is a persistence mechanism, not an authority boundary.
+    // Never send malformed/blank persisted credentials to the backend and never
+    // expose them as an authenticated in-memory session. Whitespace is
+    // normalized consistently with establishPersisted().
+    final token = storedToken.trim();
+    if (token.isEmpty) {
+      _clearMemory();
+      try {
+        await _tokenStore.deleteAccessToken();
+      } catch (_) {
+        return AuthSessionRestoreResult.temporarilyUnavailable;
+      }
+      return AuthSessionRestoreResult.rejected;
     }
 
     try {
