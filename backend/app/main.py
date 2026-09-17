@@ -12,6 +12,7 @@ from app.api.readiness import router as readiness_router
 from app.api.recommendation_athena_radar import router as recommendation_athena_radar_router
 from app.api.recommendation_athena_synthesis import router as recommendation_athena_synthesis_router
 from app.api.recommendation_latest_athena_synthesis import router as recommendation_latest_athena_synthesis_router
+from app.api.recommendation_latest_news_synthesis import router as recommendation_latest_news_synthesis_router
 from app.api.recommendation_catalysts import router as recommendation_catalysts_router
 from app.api.recommendation_devils_advocate import router as recommendation_devils_advocate_router
 from app.api.recommendation_factor_risk_sealed_value import router as recommendation_factor_risk_sealed_value_router
@@ -46,90 +47,21 @@ from app.api.user_profile import router as user_profile_router
 from app.security.http_headers import SecurityHeadersMiddleware
 from app.security.portfolio_owner_context import bind_portfolio_owner_context
 
-
-app = FastAPI(
-    title="ATHENA TYCHE Backend",
-    version="0.1.0",
-    description="Backend seguro y normalizado de ATHENA TYCHE.",
-)
-
-# Flutter Web se sirve durante desarrollo desde un puerto local variable.
-# Permitimos únicamente orígenes HTTP(S) locales; no abrimos CORS a cualquier
-# dominio. En producción se configurará el origen exacto del frontend.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="ATHENA TYCHE Backend", version="0.1.0", description="Backend seguro y normalizado de ATHENA TYCHE.")
+app.add_middleware(CORSMiddleware, allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$", allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
 app.add_middleware(SecurityHeadersMiddleware)
 
-app.include_router(auth_router)
-app.include_router(user_portfolio_router)
-app.include_router(user_profile_router)
-app.include_router(market_router)
-app.include_router(sec_router)
-app.include_router(sec_fundamental_pit_router)
-app.include_router(macro_router)
-app.include_router(news_router)
-app.include_router(sources_router)
-app.include_router(readiness_router)
-app.include_router(portfolio_router)
-app.include_router(portfolio_allocation_authority_router)
-app.include_router(portfolio_allocation_policy_router)
-app.include_router(recommendations_router)
-app.include_router(recommendation_production_router)
-app.include_router(recommendation_research_router)
-app.include_router(recommendation_professional_research_router)
-app.include_router(recommendation_thesis_invalidation_router)
-app.include_router(recommendation_catalysts_router)
-app.include_router(recommendation_factor_risk_sealed_value_router)
-app.include_router(recommendation_market_factor_exposure_router)
-app.include_router(recommendation_fundamental_factor_evidence_router)
-app.include_router(recommendation_performance_attribution_router)
-app.include_router(
-    recommendation_portfolio_performance_attribution_router,
-    dependencies=[Depends(bind_portfolio_owner_context)],
-)
-app.include_router(
-    recommendation_portfolio_time_weighted_return_router,
-    dependencies=[Depends(bind_portfolio_owner_context)],
-)
-app.include_router(
-    recommendation_portfolio_event_ledger_router,
-    dependencies=[Depends(bind_portfolio_owner_context)],
-)
-app.include_router(
-    recommendation_portfolio_nlv_snapshot_router,
-    dependencies=[Depends(bind_portfolio_owner_context)],
-)
-app.include_router(
-    recommendation_portfolio_state_reconstruction_router,
-    dependencies=[Depends(bind_portfolio_owner_context)],
-)
-app.include_router(
-    recommendation_reconciled_portfolio_weights_router,
-    dependencies=[Depends(bind_portfolio_owner_context)],
-)
-app.include_router(recommendation_investment_journal_router)
-app.include_router(recommendation_devils_advocate_router)
-app.include_router(recommendation_athena_radar_router)
-app.include_router(recommendation_professional_research_cycle_router)
-app.include_router(recommendation_news_synthesis_router)
-app.include_router(recommendation_investors_synthesis_router)
-app.include_router(recommendation_athena_synthesis_router)
-app.include_router(recommendation_latest_athena_synthesis_router)
-app.include_router(recommendation_research_outcome_attribution_router)
-app.include_router(recommendation_research_outcome_oos_cohort_router)
-app.include_router(recommendation_research_forecast_evaluation_router)
-app.include_router(recommendation_persisted_forecast_inputs_router)
-app.include_router(recommendation_shadow_operations_router)
-
+app.include_router(auth_router); app.include_router(user_portfolio_router); app.include_router(user_profile_router)
+app.include_router(market_router); app.include_router(sec_router); app.include_router(sec_fundamental_pit_router); app.include_router(macro_router); app.include_router(news_router); app.include_router(sources_router); app.include_router(readiness_router); app.include_router(portfolio_router)
+app.include_router(portfolio_allocation_authority_router); app.include_router(portfolio_allocation_policy_router); app.include_router(recommendations_router); app.include_router(recommendation_production_router); app.include_router(recommendation_research_router); app.include_router(recommendation_professional_research_router); app.include_router(recommendation_thesis_invalidation_router); app.include_router(recommendation_catalysts_router); app.include_router(recommendation_factor_risk_sealed_value_router); app.include_router(recommendation_market_factor_exposure_router); app.include_router(recommendation_fundamental_factor_evidence_router); app.include_router(recommendation_performance_attribution_router)
+app.include_router(recommendation_portfolio_performance_attribution_router, dependencies=[Depends(bind_portfolio_owner_context)])
+app.include_router(recommendation_portfolio_time_weighted_return_router, dependencies=[Depends(bind_portfolio_owner_context)])
+app.include_router(recommendation_portfolio_event_ledger_router, dependencies=[Depends(bind_portfolio_owner_context)])
+app.include_router(recommendation_portfolio_nlv_snapshot_router, dependencies=[Depends(bind_portfolio_owner_context)])
+app.include_router(recommendation_portfolio_state_reconstruction_router, dependencies=[Depends(bind_portfolio_owner_context)])
+app.include_router(recommendation_reconciled_portfolio_weights_router, dependencies=[Depends(bind_portfolio_owner_context)])
+app.include_router(recommendation_investment_journal_router); app.include_router(recommendation_devils_advocate_router); app.include_router(recommendation_athena_radar_router); app.include_router(recommendation_professional_research_cycle_router); app.include_router(recommendation_news_synthesis_router); app.include_router(recommendation_latest_news_synthesis_router); app.include_router(recommendation_investors_synthesis_router); app.include_router(recommendation_athena_synthesis_router); app.include_router(recommendation_latest_athena_synthesis_router); app.include_router(recommendation_research_outcome_attribution_router); app.include_router(recommendation_research_outcome_oos_cohort_router); app.include_router(recommendation_research_forecast_evaluation_router); app.include_router(recommendation_persisted_forecast_inputs_router); app.include_router(recommendation_shadow_operations_router)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "service": "athena-tyche-backend",
-    }
+    return {"status": "ok", "service": "athena-tyche-backend"}
