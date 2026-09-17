@@ -162,6 +162,20 @@ void main() {
     expect(session.isAuthenticated, isFalse);
   });
 
+  test('clearPersisted revokes memory authority even when secure deletion fails',
+      () async {
+    final store = _FakeAuthTokenStore(token: 'token-123', failDeletes: true);
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'token-123', account: account());
+
+    await expectLater(session.clearPersisted(), throwsStateError);
+
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(session.account, isNull);
+    expect(store.token, 'token-123');
+  });
+
   test(
       'remote invalidation stays fail closed across restart when secure deletion fails',
       () async {
