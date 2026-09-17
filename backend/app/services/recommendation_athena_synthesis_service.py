@@ -77,7 +77,14 @@ class AthenaSynthesisResult:
 class RecommendationAthenaSynthesisService:
     """Validate an external explanatory synthesis against immutable research artifacts."""
 
-    def build(self, *, cycle_record: dict[str, Any], news_synthesis_record: dict[str, Any] | None, model_output: AthenaSynthesisModelInput) -> AthenaSynthesisResult:
+    def build(
+        self,
+        *,
+        cycle_record: dict[str, Any],
+        news_synthesis_record: dict[str, Any] | None,
+        model_output: AthenaSynthesisModelInput,
+        canonical_input_fingerprint: str | None = None,
+    ) -> AthenaSynthesisResult:
         if not isinstance(cycle_record, dict):
             raise ValueError("cycle_record debe ser un registro validado.")
         if not isinstance(model_output, AthenaSynthesisModelInput):
@@ -127,7 +134,19 @@ class RecommendationAthenaSynthesisService:
                 raise ValueError("La síntesis News no pertenece al Radar exacto del ciclo.")
         elif news_synthesis_record is not None:
             raise ValueError("No debe adjuntarse síntesis News a un ciclo sin evidencia News.")
-        expected_input_fingerprint = self.input_fingerprint(cycle_hash=cycle_hash, radar_hash=radar_hash, news_synthesis_hash=news_hash, input_as_of=input_as_of, evidence_ids=tuple(sorted(evidence_ids)), covered_categories=tuple(sorted(categories)))
+        base_input_fingerprint = self.input_fingerprint(
+            cycle_hash=cycle_hash,
+            radar_hash=radar_hash,
+            news_synthesis_hash=news_hash,
+            input_as_of=input_as_of,
+            evidence_ids=tuple(sorted(evidence_ids)),
+            covered_categories=tuple(sorted(categories)),
+        )
+        expected_input_fingerprint = (
+            self._sha256(canonical_input_fingerprint, "canonical_input_fingerprint")
+            if canonical_input_fingerprint is not None
+            else base_input_fingerprint
+        )
         supplied = self._sha256(model_output.input_fingerprint, "model_output.input_fingerprint")
         if supplied != expected_input_fingerprint:
             raise ValueError("model_output.input_fingerprint no coincide con los artefactos canónicos.")
@@ -148,8 +167,34 @@ class RecommendationAthenaSynthesisService:
             raise ValueError("ATHENA synthesis debe referenciar exactamente toda la evidencia Radar del ciclo.")
         referenced = tuple(sorted(referenced))
         covered_categories = tuple(sorted(categories))
-        output_fingerprint = self._canonical_hash({"inputFingerprint": expected_input_fingerprint, "modelProvider": provider, "modelName": model_name, "modelVersion": model_version, "generatedAt": generated_at.isoformat(), "summary": summary, "rationale": rationale, "uncertainties": list(uncertainties), "evidenceIds": list(referenced)})
-        return AthenaSynthesisResult(cycle_hash=cycle_hash, radar_hash=radar_hash, news_synthesis_hash=news_hash, input_as_of=input_as_of.isoformat(), generated_at=generated_at.isoformat(), model_provider=provider, model_name=model_name, model_version=model_version, input_fingerprint=expected_input_fingerprint, output_fingerprint=output_fingerprint, summary=summary, rationale=rationale, uncertainties=uncertainties, evidence_ids=referenced, covered_categories=covered_categories)
+        output_fingerprint = self._canonical_hash({
+            "inputFingerprint": expected_input_fingerprint,
+            "modelProvider": provider,
+            "modelName": model_name,
+            "modelVersion": model_version,
+            "generatedAt": generated_at.isoformat(),
+            "summary": summary,
+            "rationale": rationale,
+            "uncertainties": list(uncertainties),
+            "evidenceIds": list(referenced),
+        })
+        return AthenaSynthesisResult(
+            cycle_hash=cycle_hash,
+            radar_hash=radar_hash,
+            news_synthesis_hash=news_hash,
+            input_as_of=input_as_of.isoformat(),
+            generated_at=generated_at.isoformat(),
+            model_provider=provider,
+            model_name=model_name,
+            model_version=model_version,
+            input_fingerprint=expected_input_fingerprint,
+            output_fingerprint=output_fingerprint,
+            summary=summary,
+            rationale=rationale,
+            uncertainties=uncertainties,
+            evidence_ids=referenced,
+            covered_categories=covered_categories,
+        )
 
     def input_fingerprint(self, *, cycle_hash: str, radar_hash: str, news_synthesis_hash: str | None, input_as_of: datetime, evidence_ids: tuple[str, ...], covered_categories: tuple[str, ...]) -> str:
         return self._canonical_hash({"cycleHash": self._sha256(cycle_hash, "cycle_hash"), "radarHash": self._sha256(radar_hash, "radar_hash"), "newsSynthesisHash": (self._sha256(news_synthesis_hash, "news_synthesis_hash") if news_synthesis_hash is not None else None), "inputAsOf": self._aware_datetime(input_as_of, "input_as_of").isoformat(), "evidenceIds": sorted(self._text(item, "evidence_id") for item in evidence_ids), "coveredCategories": sorted(self._text(item, "covered_category").lower() for item in covered_categories)})
