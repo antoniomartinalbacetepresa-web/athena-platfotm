@@ -49,6 +49,69 @@ Future<AuthSession> _authenticatedSession(_MemoryTokenStore store) async {
 }
 
 void main() {
+  test('successful password change clears server-invalidated local session', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.changeCurrentPassword(
+      currentPassword: 'current-password',
+      newPassword: 'replacement-password',
+    );
+
+    expect(captured.url.path, '/api/v1/auth/change-password');
+    expect(captured.headers['Authorization'], 'Bearer test-access-token');
+    expect(result.localCredentialDeleted, isTrue);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, isNull);
+  });
+
+  test('password change stays unauthenticated if stale-token deletion fails', () async {
+    final client = MockClient((request) async => http.Response('', 204));
+    final store = _MemoryTokenStore(failDelete: true)..value = 'test-access-token';
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'test-access-token', account: _account());
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    final result = await lifecycle.changeCurrentPassword(
+      currentPassword: 'current-password',
+      newPassword: 'replacement-password',
+    );
+
+    expect(result.localCredentialDeleted, isFalse);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.value, 'test-access-token');
+  });
+
+  test('failed password change preserves current authenticated session', () async {
+    final client = MockClient((request) async => http.Response('{}', 401));
+    final store = _MemoryTokenStore();
+    final session = await _authenticatedSession(store);
+    final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
+    final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+    await expectLater(
+      lifecycle.changeCurrentPassword(
+        currentPassword: 'wrong-password',
+        newPassword: 'replacement-password',
+      ),
+      throwsException,
+    );
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'test-access-token');
+    expect(store.value, 'test-access-token');
+  });
+
   test('successful current-session logout revokes remotely and clears local token', () async {
     late http.Request captured;
     final client = MockClient((request) async {
