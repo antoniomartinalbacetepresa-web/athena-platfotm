@@ -21,6 +21,12 @@ E = "e" * 64
 F = "f" * 64
 
 
+def _database(tmp_path) -> AthenaDatabase:
+    database = AthenaDatabase(database_path=tmp_path / "athena.db")
+    database.initialize()
+    return database
+
+
 def _payload(*, cycle_hash: str, input_fingerprint: str, output_fingerprint: str) -> dict:
     return {
         "status": "validated_external_athena_synthesis",
@@ -44,7 +50,7 @@ def _payload(*, cycle_hash: str, input_fingerprint: str, output_fingerprint: str
 
 
 def test_latest_selection_returns_newest_canonical_record(tmp_path) -> None:
-    database = AthenaDatabase(path=tmp_path / "athena.db")
+    database = _database(tmp_path)
     canonical = RecommendationAthenaSynthesisRepository(database)
     first = canonical.append(
         cycle_hash=A,
@@ -69,14 +75,14 @@ def test_latest_selection_returns_newest_canonical_record(tmp_path) -> None:
 
 
 def test_latest_selection_fails_closed_when_empty(tmp_path) -> None:
-    database = AthenaDatabase(path=tmp_path / "athena.db")
+    database = _database(tmp_path)
 
     with pytest.raises(ValueError, match="No existe ninguna ATHENA synthesis persistida"):
         RecommendationLatestAthenaSynthesisRepository(database).get_latest()
 
 
 def test_latest_selection_revalidates_package_integrity(tmp_path) -> None:
-    database = AthenaDatabase(path=tmp_path / "athena.db")
+    database = _database(tmp_path)
     canonical = RecommendationAthenaSynthesisRepository(database)
     canonical.append(
         cycle_hash=A,
