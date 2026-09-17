@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_spacing.dart';
+import '../../../recommendations/controllers/athena_synthesis_controller.dart';
+import '../../../recommendations/di/recommendation_dependencies.dart';
+import '../../../recommendations/presentation/athena_synthesis_panel.dart';
 import '../widgets/athena_score_panel.dart';
 import '../widgets/dashboard_header.dart';
 import '../widgets/market_panel.dart';
@@ -12,11 +15,41 @@ import '../widgets/recommendations_panel.dart';
 import '../widgets/relevant_investors_panel.dart';
 import '../widgets/system_readiness_panel.dart';
 
-class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key});
+class DashboardPage extends StatefulWidget {
+  final RecommendationDependencies? recommendationDependencies;
+
+  const DashboardPage({super.key, this.recommendationDependencies});
 
   static const double _leftColumnWidth = 280;
   static const double _desktopBreakpoint = 1080;
+
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  late final RecommendationDependencies _recommendationDependencies;
+  late final bool _ownsRecommendationDependencies;
+
+  AthenaSynthesisController get _synthesisController =>
+      _recommendationDependencies.synthesisController;
+
+  @override
+  void initState() {
+    super.initState();
+    _ownsRecommendationDependencies = widget.recommendationDependencies == null;
+    _recommendationDependencies = widget.recommendationDependencies ??
+        RecommendationDependencies.create();
+    _synthesisController.loadLatest();
+  }
+
+  @override
+  void dispose() {
+    if (_ownsRecommendationDependencies) {
+      _recommendationDependencies.dispose();
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,9 +77,16 @@ class DashboardPage extends StatelessWidget {
                     const SizedBox(height: AthenaSpacing.md),
                     const PersonalizedExplanationPanel(),
                     const SizedBox(height: AthenaSpacing.md),
+                    SizedBox(
+                      height: 420,
+                      child: AthenaSynthesisPanel(
+                        controller: _synthesisController,
+                      ),
+                    ),
+                    const SizedBox(height: AthenaSpacing.md),
                     LayoutBuilder(
                       builder: (context, constraints) {
-                        if (constraints.maxWidth < _desktopBreakpoint) {
+                        if (constraints.maxWidth < DashboardPage._desktopBreakpoint) {
                           return const _CompactDashboard();
                         }
                         return const _DesktopDashboard();
