@@ -99,8 +99,13 @@ class AuthSession {
   }
 
   Future<void> clearPersisted() async {
-    await _tokenStore.deleteAccessToken();
+    // Clearing an authenticated session is an authority transition. Revoke the
+    // in-memory authority first so a secure-storage outage cannot leave the UI
+    // authenticated after the caller explicitly requested a local clear. If
+    // deletion fails the durable credential remains stale and must be remotely
+    // revalidated before any later restore can regain authority.
     _clearMemory();
+    await _tokenStore.deleteAccessToken();
   }
 
   Future<bool> clearAfterRemoteInvalidation() async {
