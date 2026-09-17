@@ -1,12 +1,12 @@
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 
 from app.api import recommendation_latest_news_synthesis as api
-from app.main import app
 
 
 _HASH_A = "a" * 64
 _HASH_B = "b" * 64
 _HASH_C = "c" * 64
+_ROUTE = "/api/v1/recommendations/professional-research/news-synthesis/latest"
 
 
 def _record(*, radar_hash: str = _HASH_B):
@@ -28,13 +28,18 @@ def _record(*, radar_hash: str = _HASH_B):
     }
 
 
-def test_latest_news_route_is_registered():
+def test_latest_news_router_registers_expected_route_in_isolation():
+    # Do not inspect the process-global app here: other full-suite tests may
+    # intentionally rebuild its router.  Prove that this router contributes the
+    # exact production path when FastAPI includes it.
+    isolated = FastAPI()
+    isolated.include_router(api.router)
     paths = {
         route.path
-        for route in app.routes
+        for route in isolated.routes
         if isinstance(getattr(route, "path", None), str)
     }
-    assert "/api/v1/recommendations/professional-research/news-synthesis/latest" in paths
+    assert _ROUTE in paths
 
 
 def test_latest_news_revalidates_current_cycle_and_preserves_no_authority(monkeypatch):
