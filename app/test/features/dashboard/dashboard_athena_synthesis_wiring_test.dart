@@ -42,6 +42,71 @@ void main() {
 
     dependencies.dispose();
   });
+
+  testWidgets('Dashboard fails closed when latest ATHENA synthesis is unavailable', (tester) async {
+    final client = MockClient((request) async => http.Response(
+          jsonEncode({'detail': 'No existe ninguna ATHENA synthesis persistida.'}),
+          404,
+          headers: {'content-type': 'application/json'},
+        ));
+    final synthesisDataSource = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: client,
+    );
+    final dependencies = _dependencies(synthesisDataSource);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(recommendationDependencies: dependencies),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('athena-synthesis-content')), findsNothing);
+    expect(find.text('Resumen canónico'), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+    expect(find.byKey(const Key('athena-synthesis-retry')), findsOneWidget);
+
+    dependencies.dispose();
+  });
+
+  testWidgets('Dashboard retry reloads latest ATHENA synthesis after transient failure', (tester) async {
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests += 1;
+      if (requests == 1) {
+        return http.Response(
+          jsonEncode({'detail': 'Servicio temporalmente no disponible.'}),
+          503,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response(jsonEncode(_validPayload()), 200,
+          headers: {'content-type': 'application/json'});
+    });
+    final synthesisDataSource = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: client,
+    );
+    final dependencies = _dependencies(synthesisDataSource);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(recommendationDependencies: dependencies),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(requests, 1);
+    expect(find.byKey(const Key('athena-synthesis-content')), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-retry')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('athena-synthesis-retry')));
+    await tester.pumpAndSettle();
+
+    expect(requests, 2);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-content')), findsOneWidget);
+    expect(find.text('Resumen canónico'), findsOneWidget);
+
+    dependencies.dispose();
+  });
 }
 
 RecommendationDependencies _dependencies(
