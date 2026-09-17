@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.recommendation_investors_synthesis import _provenance as _investors_provenance
 from app.repositories.recommendation_athena_synthesis_repository import (
     RecommendationAthenaSynthesisRepository,
 )
@@ -171,7 +172,12 @@ def _news_provenance_binding(news_record: dict[str, Any] | None) -> dict[str, An
         evidence_id = str(assessment.get("evidenceId") or "").strip()
         fingerprint = str(assessment.get("assessmentFingerprint") or "").strip().lower()
         source_ref = str(assessment.get("sourceRef") or "").strip()
-        if not evidence_id or len(fingerprint) != 64 or not source_ref.startswith("https://"):
+        if (
+            not evidence_id
+            or len(fingerprint) != 64
+            or any(ch not in "0123456789abcdef" for ch in fingerprint)
+            or not source_ref.startswith("https://")
+        ):
             raise ValueError("La provenance News canónica está incompleta.")
         if evidence_id in seen:
             raise ValueError("La provenance News canónica contiene evidenceId duplicado.")
@@ -194,6 +200,12 @@ def _news_provenance_binding(news_record: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def _investors_provenance_binding(investors_record: dict[str, Any] | None) -> dict[str, Any] | None:
+    if investors_record is None:
+        return None
+    return _investors_provenance(investors_record)
+
+
 def _input_contract(
     cycle_record: dict[str, Any],
     news_record: dict[str, Any] | None,
@@ -203,19 +215,23 @@ def _input_contract(
     news_hash = news_record["synthesis_hash"] if news_record is not None else None
     investors_hash = investors_record["synthesis_hash"] if investors_record is not None else None
     base_fingerprint = _base_input_fingerprint(cycle_record, news_record, contract)
+    news_binding = _news_provenance_binding(news_record)
+    investors_binding = _investors_provenance_binding(investors_record)
     fingerprint = _canonical_hash(
         {
             "baseAthenaInputFingerprint": base_fingerprint,
             "investorsSynthesisHash": investors_hash,
+            "newsProvenance": news_binding,
+            "investorsProvenance": investors_binding,
         }
     )
-    news_binding = _news_provenance_binding(news_record)
     return {
         "cycleHash": cycle_record["cycle_hash"],
         "radarHash": cycle_record["radar_hash"],
         **({"newsSynthesisHash": news_hash} if news_hash is not None else {}),
         **({"investorsSynthesisHash": investors_hash} if investors_hash is not None else {}),
         **({"newsProvenance": news_binding} if news_binding is not None else {}),
+        **({"investorsProvenance": investors_binding} if investors_binding is not None else {}),
         "inputAsOf": contract["inputAsOf"].isoformat(),
         "evidenceIds": list(contract["evidenceIds"]),
         "coveredCategories": list(contract["coveredCategories"]),
@@ -232,6 +248,14 @@ def _input_contract(
         "advisoryStatus": "no_advice",
         "recommendationInfluence": False,
         "automaticTrading": False,
+    }
+
+
+def _response_provenance(input_contract: dict[str, Any], input_fingerprint: str) -> dict[str, Any]:
+    return {
+        **({"news": input_contract["newsProvenance"]} if "newsProvenance" in input_contract else {}),
+        **({"investors": input_contract["investorsProvenance"]} if "investorsProvenance" in input_contract else {}),
+        "inputFingerprint": input_fingerprint,
     }
 
 
@@ -305,10 +329,7 @@ def post_athena_synthesis(cycle_hash: str, request: AthenaSynthesisRequest) -> d
         "data": {
             "artifactBindingVerified": True,
             "synthesis": payload,
-            "provenance": {
-                **({"news": input_contract["newsProvenance"]} if "newsProvenance" in input_contract else {}),
-                "inputFingerprint": supplied,
-            },
+            "provenance": _response_provenance(input_contract, supplied),
             "persistence": {
                 "appendOnly": True,
                 "packageIntegrityVerified": True,
@@ -350,10 +371,7 @@ def get_athena_synthesis(cycle_hash: str) -> dict[str, Any]:
         "data": {
             "artifactBindingVerified": True,
             "synthesis": record["package"]["synthesis"],
-            "provenance": {
-                **({"news": input_contract["newsProvenance"]} if "newsProvenance" in input_contract else {}),
-                "inputFingerprint": input_contract["inputFingerprint"],
-            },
+            "provenance": _response_provenance(input_contract, input_contract["inputFingerprint"]),
             "persistence": {
                 "appendOnly": True,
                 "packageIntegrityVerified": True,
