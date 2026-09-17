@@ -25,6 +25,17 @@ void main() {
       dependencies.professionalDossierDataSource.baseUrl,
       'https://athena.example.test',
     );
+    expect(
+      dependencies.synthesisDataSource.baseUrl,
+      'https://athena.example.test',
+    );
+    expect(
+      identical(
+        dependencies.synthesisController.dataSource,
+        dependencies.synthesisDataSource,
+      ),
+      isTrue,
+    );
   });
 
   test('fails closed when ATHENA_BACKEND_URL is explicitly empty', () {
