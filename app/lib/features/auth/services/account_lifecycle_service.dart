@@ -14,6 +14,12 @@ class SessionLogoutResult {
   final bool localCredentialDeleted;
 }
 
+class PasswordChangeResult {
+  const PasswordChangeResult({required this.localCredentialDeleted});
+
+  final bool localCredentialDeleted;
+}
+
 class AccountLifecycleService {
   AccountLifecycleService({
     required AthenaAuthService authService,
@@ -23,6 +29,30 @@ class AccountLifecycleService {
 
   final AthenaAuthService _authService;
   final AuthSession _session;
+
+  Future<PasswordChangeResult> changeCurrentPassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final token = _session.accessToken;
+    if (token == null || !_session.isAuthenticated) {
+      throw StateError('No existe una sesión autenticada para cambiar la contraseña.');
+    }
+
+    await _authService.changePassword(
+      token: token,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+
+    // Password rotation invalidates every server-side session version, including
+    // the credential that authorized this request. Never leave that now-stale
+    // credential authoritative in memory if secure-storage deletion fails.
+    final localCredentialDeleted = await _session.clearAfterRemoteInvalidation();
+    return PasswordChangeResult(
+      localCredentialDeleted: localCredentialDeleted,
+    );
+  }
 
   Future<SessionLogoutResult> logoutCurrentSession() async {
     return _logout(allSessions: false);
