@@ -29,16 +29,14 @@ def _record(*, radar_hash: str = _HASH_B):
 
 
 def test_latest_news_router_declares_expected_route_without_process_global_app():
-    # FastAPI's router object can be mutated by other full-suite tests. Verify
-    # the endpoint declaration itself rather than relying on shared router/app
-    # state. The callable remains the production function used below.
+    # APIRouter routes already include the router prefix. Assert the complete
+    # production path rather than duplicating FastAPI prefix semantics here.
     route_paths = {
         route.path
         for route in api.router.routes
         if isinstance(getattr(route, "path", None), str)
     }
-    assert _ROUTE.endswith("/news-synthesis/latest")
-    assert "/news-synthesis/latest" in route_paths
+    assert _ROUTE in route_paths
 
 
 def test_latest_news_revalidates_current_cycle_and_preserves_no_authority(monkeypatch):
