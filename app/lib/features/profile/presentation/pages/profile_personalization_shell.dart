@@ -133,7 +133,14 @@ class _ProfilePersonalizationShellState extends State<ProfilePersonalizationShel
       ),
     );
     if (sessionRejected == true && mounted) {
-      setState(() {});
+      // A protected Profile request has authoritatively rejected this session.
+      // Do not leave the user on an authenticated-looking surface after local
+      // authority has been cleared; return to the public entry point and remove
+      // the stale navigation stack.
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        AppRoutes.welcome,
+        (route) => false,
+      );
     }
   }
 }
