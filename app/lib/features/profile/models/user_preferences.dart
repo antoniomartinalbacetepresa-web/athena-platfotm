@@ -11,6 +11,13 @@ class UserPreferences {
     this.availableCapital,
   });
 
+  factory UserPreferences.defaults() => const UserPreferences(
+        riskTolerance: 'balanced',
+        investmentHorizonYears: 10,
+        baseCurrency: 'EUR',
+        objective: 'balanced_growth',
+      );
+
   static const defaultLanguage = 'es';
   static const supportedLanguages = <String>{defaultLanguage};
 
