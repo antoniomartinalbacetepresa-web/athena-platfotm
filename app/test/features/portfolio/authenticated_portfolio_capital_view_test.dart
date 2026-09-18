@@ -30,6 +30,7 @@ AuthSession _session() {
       displayName: 'Owner',
       isActive: true,
       createdAt: DateTime.parse('2026-09-15T10:00:00Z'),
+      updatedAt: DateTime.parse('2026-09-15T10:00:00Z'),
     ),
   );
   return session;
@@ -60,16 +61,7 @@ void main() {
       ),
     );
     await controller.load();
-
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: AuthenticatedPortfolioCapitalView(
-          controller: controller,
-          onRetry: controller.load,
-        ),
-      ),
-    ));
-
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsWidgets);
     expect(find.textContaining('EUR'), findsWidgets);
     expect(find.textContaining('Profile'), findsWidgets);
@@ -89,20 +81,10 @@ void main() {
       ),
     );
     await controller.load();
-
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: AuthenticatedPortfolioCapitalView(
-          controller: controller,
-          onRetry: controller.load,
-        ),
-      ),
-    ));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsWidgets);
-
     await controller.load();
     await tester.pump();
-
     expect(find.textContaining('12'), findsNothing);
     expect(find.textContaining('sesión'), findsWidgets);
     expect(auth.isAuthenticated, isFalse);
@@ -121,20 +103,10 @@ void main() {
       ),
     );
     await controller.load();
-
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: AuthenticatedPortfolioCapitalView(
-          controller: controller,
-          onRetry: controller.load,
-        ),
-      ),
-    ));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsWidgets);
-
     await controller.load();
     await tester.pump();
-
     expect(find.textContaining('12'), findsNothing);
     expect(find.textContaining('No se pudo verificar'), findsWidgets);
   });
