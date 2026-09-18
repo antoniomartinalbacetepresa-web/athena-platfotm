@@ -66,8 +66,11 @@ class AthenaAuthService {
 
   Future<String> login({required String email, required String password}) async {
     final normalizedEmail = email.trim();
-    if (normalizedEmail.isEmpty || password.isEmpty) {
-      throw ArgumentError('Email y contraseña son obligatorios.');
+    if (normalizedEmail.isEmpty) {
+      throw ArgumentError('Email obligatorio.');
+    }
+    if (password.trim().isEmpty || password.length > 256) {
+      throw ArgumentError('La contraseña no es válida.');
     }
     final response = await client.post(
       Uri.parse('$baseUrl/api/v1/auth/token'),
