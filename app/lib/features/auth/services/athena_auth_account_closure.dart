@@ -17,7 +17,7 @@ extension AthenaAuthAccountClosure on AthenaAuthService {
     if (normalizedToken.isEmpty) {
       throw ArgumentError('Token obligatorio.');
     }
-    if (currentPassword.isEmpty || currentPassword.length > 256) {
+    if (currentPassword.trim().isEmpty || currentPassword.length > 256) {
       throw ArgumentError('La contraseña actual no es válida.');
     }
     final response = await client.post(
