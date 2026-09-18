@@ -121,6 +121,12 @@ class CanonicalWeightingGovernanceService:
         proposal = self.get_proposal(proposal_id)
         if proposal.status != "pending_human_approval":
             raise ValueError("Solo una propuesta pendiente puede rechazarse.")
+        if actor.casefold() == proposal.created_by.casefold():
+            raise ValueError(
+                "El rechazo humano requiere separación de funciones: "
+                "proponente y decisor deben ser distintos."
+            )
+        self._verify_integrity(proposal)
         decided_at = self._aware_utc(self._clock(), "clock").isoformat()
         with self._database.connect() as connection:
             cursor = connection.execute(
