@@ -31,6 +31,7 @@ void main() {
         displayName: 'Owner',
         isActive: true,
         createdAt: DateTime.parse('2026-09-15T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-15T10:00:00Z'),
       ),
     );
     return value;
@@ -63,12 +64,8 @@ void main() {
       }),
       session: auth,
     );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-    );
-
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
     await controller.load();
-
     expect(controller.hasVerifiedCapital, isTrue);
     expect(controller.hasVerifiedBaseCurrency, isTrue);
     expect(controller.availableCapital, 12500);
@@ -82,12 +79,8 @@ void main() {
       client: MockClient((request) async => configured(capital: null, currency: 'usd')),
       session: session(),
     );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-    );
-
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
     await controller.load();
-
     expect(controller.hasVerifiedCapital, isFalse);
     expect(controller.availableCapital, isNull);
     expect(controller.hasVerifiedBaseCurrency, isTrue);
@@ -101,12 +94,8 @@ void main() {
       client: MockClient((request) async => configured(capital: null, currency: 'US')),
       session: session(),
     );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-    );
-
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
     await controller.load();
-
     expect(controller.hasVerifiedCapital, isFalse);
     expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
@@ -124,12 +113,8 @@ void main() {
           )),
       session: session(),
     );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-    );
-
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
     await controller.load();
-
     expect(controller.hasVerifiedCapital, isFalse);
     expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
@@ -148,16 +133,11 @@ void main() {
       }),
       session: auth,
     );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-    );
-
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
     await controller.load();
     expect(controller.hasVerifiedCapital, isTrue);
     expect(controller.hasVerifiedBaseCurrency, isTrue);
-
     await controller.load();
-
     expect(controller.hasVerifiedCapital, isFalse);
     expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
@@ -177,16 +157,11 @@ void main() {
       }),
       session: session(),
     );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-    );
-
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
     await controller.load();
     expect(controller.hasVerifiedCapital, isTrue);
     expect(controller.hasVerifiedBaseCurrency, isTrue);
-
     await controller.load();
-
     expect(controller.hasVerifiedCapital, isFalse);
     expect(controller.hasVerifiedBaseCurrency, isFalse);
     expect(controller.availableCapital, isNull);
