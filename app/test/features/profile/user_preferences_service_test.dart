@@ -30,11 +30,7 @@ void main() {
       return http.Response('{}', 500);
     });
     final service = UserPreferencesService(
-      baseUrl: 'http://athena.local',
-      client: client,
-      session: session,
-    );
-
+      baseUrl: 'http://athena.local', client: client, session: session);
     await expectLater(service.load(), throwsStateError);
     expect(called, isFalse);
   });
@@ -45,18 +41,11 @@ void main() {
     final client = MockClient((request) async {
       captured = request;
       return http.Response(
-        '{"status":"not_configured","data":null,"policy":{"sensitivePreferencesEncrypted":true}}',
-        200,
-      );
+        '{"status":"not_configured","data":null,"policy":{"sensitivePreferencesEncrypted":true}}', 200);
     });
     final service = UserPreferencesService(
-      baseUrl: 'http://athena.local',
-      client: client,
-      session: session,
-    );
-
+      baseUrl: 'http://athena.local', client: client, session: session);
     final preferences = await service.load();
-
     expect(preferences, isNull);
     expect(captured.method, 'GET');
     expect(captured.headers['Authorization'], 'Bearer profile.jwt');
@@ -68,35 +57,21 @@ void main() {
     final client = MockClient((request) async {
       captured = request;
       return http.Response(
-        '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":25000.5},"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
-        200,
-      );
+        '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":25000.5},"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}', 200);
     });
     final service = UserPreferencesService(
-      baseUrl: 'http://athena.local',
-      client: client,
-      session: session,
-    );
+      baseUrl: 'http://athena.local', client: client, session: session);
     const input = UserPreferences(
-      riskTolerance: 'balanced',
-      investmentHorizonYears: 15,
-      baseCurrency: 'eur',
-      objective: 'long_term_growth',
-      availableCapital: 25000.5,
-    );
-
+      riskTolerance: 'balanced', investmentHorizonYears: 15,
+      baseCurrency: 'eur', objective: 'long_term_growth', availableCapital: 25000.5);
     final stored = await service.save(input);
-
     final body = jsonDecode(captured.body) as Map<String, dynamic>;
     expect(captured.method, 'PUT');
     expect(captured.headers['Authorization'], 'Bearer profile.jwt');
     expect(body, {
-      'riskTolerance': 'balanced',
-      'investmentHorizonYears': 15,
-      'baseCurrency': 'EUR',
-      'objective': 'long_term_growth',
-      'language': 'es',
-      'availableCapital': 25000.5,
+      'riskTolerance': 'balanced', 'investmentHorizonYears': 15,
+      'baseCurrency': 'EUR', 'objective': 'long_term_growth',
+      'language': 'es', 'availableCapital': 25000.5,
     });
     expect(body.containsKey('ownerUserId'), isFalse);
     expect(body.containsKey('userId'), isFalse);
@@ -107,20 +82,26 @@ void main() {
     expect(stored.availableCapital, 25000.5);
   });
 
+  test('save rejects contradictory success status instead of trusting returned data', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+      '{"status":"not_configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":999999}}}', 200));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    await expectLater(
+      service.save(const UserPreferences(
+        riskTolerance: 'balanced', investmentHorizonYears: 15,
+        baseCurrency: 'EUR', objective: 'long_term_growth')),
+      throwsA(isA<FormatException>()));
+  });
+
   test('legacy profile response defaults language to Spanish', () async {
     session.establish(accessToken: 'profile.jwt', account: account());
     final client = MockClient((request) async => http.Response(
-          '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","availableCapital":75000}},"policy":{"sensitivePreferencesEncrypted":true}}',
-          200,
-        ));
+      '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","availableCapital":75000}},"policy":{"sensitivePreferencesEncrypted":true}}', 200));
     final service = UserPreferencesService(
-      baseUrl: 'http://athena.local',
-      client: client,
-      session: session,
-    );
-
+      baseUrl: 'http://athena.local', client: client, session: session);
     final stored = await service.load();
-
     expect(stored, isNotNull);
     expect(stored!.language, UserPreferences.defaultLanguage);
     expect(stored.availableCapital, 75000.0);
@@ -130,15 +111,9 @@ void main() {
   test('unsupported server language fails closed in client parser', () async {
     session.establish(accessToken: 'profile.jwt', account: account());
     final client = MockClient((request) async => http.Response(
-          '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","language":"en"}}}',
-          200,
-        ));
+      '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","language":"en"}}}', 200));
     final service = UserPreferencesService(
-      baseUrl: 'http://athena.local',
-      client: client,
-      session: session,
-    );
-
+      baseUrl: 'http://athena.local', client: client, session: session);
     await expectLater(service.load(), throwsA(isA<FormatException>()));
   });
 
@@ -150,13 +125,8 @@ void main() {
       return http.Response('', 204);
     });
     final service = UserPreferencesService(
-      baseUrl: 'http://athena.local',
-      client: client,
-      session: session,
-    );
-
+      baseUrl: 'http://athena.local', client: client, session: session);
     await service.delete();
-
     expect(captured.method, 'DELETE');
     expect(captured.url.path, '/api/v1/user/profile/preferences');
     expect(captured.headers['Authorization'], 'Bearer profile.jwt');
@@ -167,12 +137,8 @@ void main() {
     final service = UserPreferencesService(
       baseUrl: 'http://athena.local',
       client: MockClient((request) async => http.Response(
-            '{"detail":"sensitive authorization diagnostic"}',
-            403,
-          )),
-      session: session,
-    );
-
+        '{"detail":"sensitive authorization diagnostic"}', 403)),
+      session: session);
     Future<void> expectRejected(Future<void> Function() operation) async {
       try {
         await operation();
@@ -182,20 +148,12 @@ void main() {
         expect(error.toString(), isNot(contains('sensitive authorization diagnostic')));
       }
     }
-
-    await expectRejected(() async {
-      await service.load();
-    });
-    await expectRejected(() async {
-      await service.loadPersonalization();
-    });
+    await expectRejected(() async { await service.load(); });
+    await expectRejected(() async { await service.loadPersonalization(); });
     await expectRejected(() async {
       await service.save(const UserPreferences(
-        riskTolerance: 'balanced',
-        investmentHorizonYears: 15,
-        baseCurrency: 'EUR',
-        objective: 'long_term_growth',
-      ));
+        riskTolerance: 'balanced', investmentHorizonYears: 15,
+        baseCurrency: 'EUR', objective: 'long_term_growth'));
     });
     await expectRejected(service.delete);
   });
