@@ -199,7 +199,14 @@ class LongitudinalOosPolicyRepository:
 
     def _policy_record(self, row: dict[str, Any]) -> dict[str, Any]:
         artifact = self._decode_and_verify(row)
-        if row.get("policy_id") != artifact.get("policyId") or row.get("version") != artifact.get("version"):
+        if str(row.get("policy_id")) != str(artifact.get("policyId")):
+            raise RuntimeError("La identidad persistida de política no coincide con su artefacto.")
+        try:
+            indexed_version = int(row.get("version"))
+            artifact_version = int(artifact.get("version"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("La versión persistida de política es inválida.") from exc
+        if indexed_version != artifact_version:
             raise RuntimeError("La identidad persistida de política no coincide con su artefacto.")
         self._validate_time_columns(row, artifact, "precommitted_at", "precommittedAt")
         fingerprint = self._sha(artifact.get("policyFingerprint"), "policyFingerprint")
