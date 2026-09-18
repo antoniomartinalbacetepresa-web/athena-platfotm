@@ -172,7 +172,7 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
                 return ListView.separated(
                   padding: EdgeInsets.zero,
                   itemCount: activities.length,
-                  separatorBuilder: (_, __) => const Divider(
+                  separatorBuilder: (_, _) => const Divider(
                     height: 20,
                     color: AthenaColors.border,
                   ),
