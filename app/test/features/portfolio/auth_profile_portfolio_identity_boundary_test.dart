@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/account_lifecycle_service.dart';
+import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/auth/services/auth_token_store.dart';
 import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_capital_controller.dart';
@@ -208,5 +210,59 @@ void main() {
     expect(controller.currency, isNull);
     expect(controller.hasVerifiedCapital, isFalse);
     expect(controller.hasVerifiedBaseCurrency, isFalse);
+  });
+
+  test('password rotation removes Profile authority before Portfolio can reuse owner data',
+      () async {
+    final store = _MemoryTokenStore()..token = 'owner-a-token';
+    final session = AuthSession.forTesting(store);
+    session.establish(
+      accessToken: 'owner-a-token',
+      account: _account(1, 'owner-a@example.com'),
+    );
+
+    var profileCalls = 0;
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((request) async {
+        profileCalls += 1;
+        expect(request.headers['Authorization'], 'Bearer owner-a-token');
+        return _configured(10000, 'EUR');
+      }),
+    );
+    final portfolio = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await portfolio.load();
+    expect(portfolio.availableCapital, 10000);
+    expect(profileCalls, 1);
+
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/auth/change-password');
+        expect(request.headers['Authorization'], 'Bearer owner-a-token');
+        return http.Response('', 204);
+      }),
+    );
+    final lifecycle = AccountLifecycleService(
+      authService: auth,
+      session: session,
+    );
+
+    final result = await lifecycle.changeCurrentPassword(
+      currentPassword: 'current-password',
+      newPassword: 'replacement-password',
+    );
+    expect(result.localCredentialDeleted, isTrue);
+    expect(session.isAuthenticated, isFalse);
+    expect(store.token, isNull);
+
+    await portfolio.load();
+    expect(profileCalls, 1);
+    expect(portfolio.availableCapital, isNull);
+    expect(portfolio.currency, isNull);
+    expect(portfolio.hasVerifiedCapital, isFalse);
+    expect(portfolio.hasVerifiedBaseCurrency, isFalse);
   });
 }
