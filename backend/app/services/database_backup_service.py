@@ -194,6 +194,9 @@ class DatabaseBackupService:
         metadata = self._read_manifest(
             manifest_path
         )
+        self._validate_manifest_metadata(
+            metadata
+        )
 
         if metadata.format_version != self.FORMAT_VERSION:
             raise RuntimeError(
