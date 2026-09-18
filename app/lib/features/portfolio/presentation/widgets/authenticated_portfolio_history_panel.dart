@@ -191,7 +191,7 @@ class _AuthenticatedPortfolioHistoryPanelState
         key: const Key('portfolio-history-list'),
         physics: const AlwaysScrollableScrollPhysics(),
         itemCount: history.events.length + (history.hasMore ? 1 : 0),
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) {
           if (index == history.events.length) {
             return const Padding(
