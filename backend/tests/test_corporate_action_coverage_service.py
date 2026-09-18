@@ -133,3 +133,26 @@ def test_coverage_requires_timezone_aware_cutoff_and_valid_tolerance(tmp_path) -
 
     with pytest.raises(ValueError):
         CorporateActionCoverageService(database=database, numeric_tolerance=float("nan"))
+
+def test_multiple_aliases_in_one_family_do_not_outvote_independent_family(
+    tmp_path,
+) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="primary_a", amount=0.25)
+    _save_dividend(database, provider="primary_b", amount=0.25)
+    _save_dividend(database, provider="independent", amount=0.30)
+
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={
+            "primary_a": "primary",
+            "primary_b": "primary",
+            "independent": "secondary",
+        },
+    ).get_report(as_of=AS_OF)
+
+    assert report.event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 1
+    assert report.incomplete_event_count == 0
+    assert report.cross_provider_reconciliation_ready is False
