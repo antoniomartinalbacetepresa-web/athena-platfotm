@@ -7,22 +7,26 @@ import '../models/portfolio.dart';
 class PortfolioRepository {
   static const String _portfolioKey = 'athena_tyche_portfolio';
 
-  final SharedPreferencesAsync _preferences =
-      SharedPreferencesAsync();
+  PortfolioRepository({SharedPreferencesAsync? preferences})
+      : _preferences = preferences;
+
+  final SharedPreferencesAsync? _preferences;
+
+  SharedPreferencesAsync get _storage => _preferences ?? SharedPreferencesAsync();
 
   Future<void> savePortfolio(Portfolio portfolio) async {
     final jsonString = jsonEncode(
       portfolio.toJson(),
     );
 
-    await _preferences.setString(
+    await _storage.setString(
       _portfolioKey,
       jsonString,
     );
   }
 
   Future<Portfolio?> loadPortfolio() async {
-    final jsonString = await _preferences.getString(
+    final jsonString = await _storage.getString(
       _portfolioKey,
     );
 
@@ -46,7 +50,7 @@ class PortfolioRepository {
   }
 
   Future<void> deletePortfolio() async {
-    await _preferences.remove(
+    await _storage.remove(
       _portfolioKey,
     );
   }
