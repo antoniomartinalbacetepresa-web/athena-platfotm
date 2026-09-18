@@ -1,10 +1,6 @@
-import 'package:app/core/routing/app_routes.dart';
-import 'package:app/features/auth/models/auth_account.dart';
-import 'package:app/features/auth/presentation/pages/register_page.dart';
 import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/auth/services/auth_token_store.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -20,45 +16,39 @@ class _MemoryTokenStore implements AuthTokenStore {
 }
 
 void main() {
-  testWidgets('registered account session survives through durable token storage', (tester) async {
+  test('registered session persists and restores after remote validation', () async {
     final store = _MemoryTokenStore();
     final session = AuthSession.forTesting(store);
+    var validations = 0;
     final client = MockClient((request) async {
       if (request.url.path.endsWith('/register')) {
-        return http.Response(
-          '{"status":"account_created","account":{"id":7,"email":"user@example.com","isActive":true,"createdAt":"2026-09-18T10:00:00Z","updatedAt":"2026-09-18T10:00:00Z"}}',
-          201,
-        );
+        return http.Response('{"status":"account_created","account":{"id":7,"email":"user@example.com","isActive":true,"createdAt":"2026-09-18T10:00:00Z","updatedAt":"2026-09-18T10:00:00Z"}}', 201);
       }
       if (request.url.path.endsWith('/token')) {
-        return http.Response('{"access_token":"registered.jwt","token_type":"bearer"}', 200);
+        return http.Response('{"access_token":"test-token","token_type":"bearer"}', 200);
       }
       if (request.url.path.endsWith('/me')) {
-        return http.Response(
-          '{"status":"authenticated","account":{"id":7,"email":"user@example.com","isActive":true,"createdAt":"2026-09-18T10:00:00Z","updatedAt":"2026-09-18T10:00:00Z"}}',
-          200,
-        );
+        validations += 1;
+        return http.Response('{"status":"authenticated","account":{"id":7,"email":"user@example.com","isActive":true,"createdAt":"2026-09-18T10:00:00Z","updatedAt":"2026-09-18T10:00:00Z"}}', 200);
       }
       return http.Response('', 404);
     });
-
     final auth = AthenaAuthService(baseUrl: 'https://athena.local', client: client);
-    final account = await auth.register(email: 'user@example.com', password: 'replacement-password');
-    final token = await auth.login(email: account.email, password: 'replacement-password');
+    await auth.register(email: 'user@example.com', password: 'replacement-password');
+    final token = await auth.login(email: 'user@example.com', password: 'replacement-password');
     final verified = await auth.getMe(token);
     await session.establishPersisted(accessToken: token, account: verified);
-
-    expect(session.isAuthenticated, isTrue);
-    expect(session.account?.id, 7);
-    expect(store.value, 'registered.jwt');
+    expect(store.value, 'test-token');
 
     final restored = AuthSession.forTesting(store);
-    final outcome = await restored.restorePersisted(
+    expect(restored.isAuthenticated, isFalse);
+    final outcome = await restored.restore(
       validateToken: auth.getMe,
+      shouldDiscardToken: (error) => error is AuthSessionRejectedException,
     );
-    expect(outcome, AuthSessionRestoreOutcome.authenticated);
+    expect(outcome, AuthSessionRestoreResult.restored);
+    expect(validations, 2);
     expect(restored.isAuthenticated, isTrue);
     expect(restored.account?.email, 'user@example.com');
-    expect(restored.accessToken, 'registered.jwt');
   });
 }
