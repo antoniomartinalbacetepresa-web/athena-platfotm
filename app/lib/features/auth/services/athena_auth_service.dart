@@ -34,12 +34,10 @@ class AthenaAuthService {
   }) async {
     final normalizedEmail = email.trim();
     final normalizedDisplayName = displayName?.trim();
-    if (normalizedEmail.isEmpty || password.isEmpty) {
-      throw ArgumentError('Email y contraseña son obligatorios.');
+    if (normalizedEmail.isEmpty) {
+      throw ArgumentError('Email obligatorio.');
     }
-    if (password.length < 12) {
-      throw ArgumentError('La contraseña debe tener al menos 12 caracteres.');
-    }
+    _validateNewPassword(password);
     final response = await client.post(
       Uri.parse('$baseUrl/api/v1/auth/register'),
       headers: const {'Content-Type': 'application/json'},
