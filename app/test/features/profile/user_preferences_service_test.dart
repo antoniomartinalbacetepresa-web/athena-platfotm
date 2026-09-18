@@ -51,6 +51,16 @@ void main() {
     expect(captured.headers['Authorization'], 'Bearer profile.jwt');
   });
 
+  test('load rejects not_configured response carrying stale preference data', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+      '{"status":"not_configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":999999}}}', 200));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+
+    await expectLater(service.load(), throwsA(isA<FormatException>()));
+  });
+
   test('save sends only the validated preference contract', () async {
     session.establish(accessToken: 'profile.jwt', account: account());
     late http.Request captured;
