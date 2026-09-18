@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:athena_tyche/features/recommendations/data/datasources/athena_backend_synthesis_data_source.dart';
+import 'package:app/features/recommendations/data/datasources/athena_backend_synthesis_data_source.dart';
 
 const hashA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const hashB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -18,9 +18,7 @@ void main() {
       baseUrl: 'https://athena.example',
       client: MockClient((request) async => http.Response(responseBody(), 200)),
     );
-
     final result = await source.getForResearchCycle(hashB);
-
     expect(result.summary, 'Escenario explicado');
     expect(result.provenance.inputFingerprint, hashA);
     expect(result.provenance.hasNews, isTrue);
@@ -39,9 +37,7 @@ void main() {
         return http.Response(responseBody(), 200);
       }),
     );
-
     final result = await source.getLatest();
-
     expect(requested.toString(), 'https://athena.example/api/v1/recommendations/professional-research/athena-synthesis/latest');
     expect(result.summary, 'Escenario explicado');
     expect(result.isSafe, isTrue);
@@ -52,7 +48,6 @@ void main() {
       baseUrl: 'https://athena.example',
       client: MockClient((request) async => http.Response('{"detail":"stale"}', 404)),
     );
-
     expect(() => source.getLatest(), throwsException);
   });
 
@@ -61,11 +56,7 @@ void main() {
       baseUrl: 'https://athena.example',
       client: MockClient((request) async => http.Response(responseBody(fingerprint: hashB), 200)),
     );
-
-    expect(
-      () => source.getForResearchCycle(hashB),
-      throwsA(isA<FormatException>()),
-    );
+    expect(() => source.getForResearchCycle(hashB), throwsA(isA<FormatException>()));
   });
 
   test('fails closed if backend grants recommendation influence', () async {
@@ -73,10 +64,6 @@ void main() {
       baseUrl: 'https://athena.example',
       client: MockClient((request) async => http.Response(responseBody(recommendationInfluence: true), 200)),
     );
-
-    expect(
-      () => source.getForResearchCycle(hashB),
-      throwsA(isA<FormatException>()),
-    );
+    expect(() => source.getForResearchCycle(hashB), throwsA(isA<FormatException>()));
   });
 }
