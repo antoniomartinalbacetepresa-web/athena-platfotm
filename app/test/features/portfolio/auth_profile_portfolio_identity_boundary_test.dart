@@ -30,6 +30,7 @@ AuthAccount _account(int id, String email) => AuthAccount(
       displayName: 'Owner $id',
       isActive: true,
       createdAt: DateTime.parse('2026-09-15T10:00:00Z'),
+      updatedAt: DateTime.parse('2026-09-15T10:00:00Z'),
     );
 
 http.Response _configured(double capital, String currency) => http.Response(
@@ -81,7 +82,7 @@ void main() {
     expect(controller.availableCapital, 10000);
     expect(controller.currency, 'EUR');
 
-    await session.clear();
+    session.clear();
     expect(session.isAuthenticated, isFalse);
 
     session.establish(
@@ -121,7 +122,7 @@ void main() {
     await controller.load();
     expect(controller.availableCapital, 10000);
 
-    await session.clear();
+    session.clear();
     session.establish(
       accessToken: 'owner-b-expired-token',
       account: _account(2, 'owner-b@example.com'),
