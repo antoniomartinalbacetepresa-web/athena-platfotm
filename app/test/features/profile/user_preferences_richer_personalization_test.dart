@@ -15,6 +15,7 @@ void main() {
     });
 
     expect(preferences.baseCurrency, 'EUR');
+    expect(preferences.language, 'es');
     expect(preferences.experienceLevel, 'intermediate');
     expect(preferences.liquidityNeed, 'low');
     expect(preferences.maxDrawdownTolerancePct, 30);
@@ -24,6 +25,7 @@ void main() {
       'investmentHorizonYears': 15,
       'baseCurrency': 'EUR',
       'objective': 'long_term_growth',
+      'language': 'es',
       'experienceLevel': 'intermediate',
       'liquidityNeed': 'low',
       'maxDrawdownTolerancePct': 30,
@@ -39,6 +41,7 @@ void main() {
       'objective': 'balanced_growth',
     });
 
+    expect(preferences.language, 'es');
     expect(preferences.experienceLevel, isNull);
     expect(preferences.liquidityNeed, isNull);
     expect(preferences.maxDrawdownTolerancePct, isNull);
