@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:athena_tyche/features/recommendations/controllers/athena_synthesis_controller.dart';
-import 'package:athena_tyche/features/recommendations/data/datasources/athena_backend_synthesis_data_source.dart';
-import 'package:athena_tyche/features/recommendations/presentation/athena_synthesis_panel.dart';
+import 'package:app/features/recommendations/controllers/athena_synthesis_controller.dart';
+import 'package:app/features/recommendations/data/datasources/athena_backend_synthesis_data_source.dart';
+import 'package:app/features/recommendations/presentation/athena_synthesis_panel.dart';
 
 const hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -67,7 +67,6 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AthenaSynthesisPanel(controller: controller))));
     await controller.load(hash);
     await tester.pumpAndSettle();
-
     expect(find.byKey(const Key('athena-synthesis-content')), findsOneWidget);
     expect(find.text('El escenario central mantiene crecimiento moderado.'), findsOneWidget);
     expect(find.text('La demanda futura puede desviarse del escenario central.'), findsOneWidget);
@@ -87,10 +86,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AthenaSynthesisPanel(controller: controller))));
     await controller.load(hash);
     await tester.pumpAndSettle();
-
     expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
     expect(find.byKey(const Key('athena-synthesis-content')), findsNothing);
-
     await tester.tap(find.byKey(const Key('athena-synthesis-retry')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('athena-synthesis-content')), findsOneWidget);
