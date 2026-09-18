@@ -318,11 +318,20 @@ class _AuthenticatedProfile extends StatelessWidget {
           onDelete: preferences == null ? null : onDeletePreferences,
         ),
         const SizedBox(height: 12),
-        const _ProfileSection(
-          icon: Icons.language_rounded,
-          title: 'Idioma',
-          description: 'Español es el idioma activo de la versión inicial.',
-          status: 'Español',
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AthenaColors.card,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AthenaColors.border),
+          ),
+          child: const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.language_rounded),
+            title: Text('Idioma'),
+            subtitle: Text('Español es el idioma activo de la versión inicial.'),
+            trailing: Text('Español'),
+          ),
         ),
         const SizedBox(height: 20),
         OutlinedButton.icon(
@@ -538,12 +547,12 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
           TextFormField(
             key: const Key('max-drawdown-field'),
             controller: _drawdownController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Drawdown máximo tolerado (%)'),
             validator: (value) {
-              final raw = (value ?? '').trim().replaceAll(',', '.');
+              final raw = (value ?? '').trim();
               if (raw.isEmpty) return null;
-              final parsed = double.tryParse(raw);
+              final parsed = int.tryParse(raw);
               if (parsed == null || parsed < 5 || parsed > 60) {
                 return 'Introduce un drawdown entre 5% y 60%, o déjalo vacío.';
               }
@@ -572,7 +581,7 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
                 ? null
                 : () async {
                     if (!(_formKey.currentState?.validate() ?? false)) return;
-                    final drawdownRaw = _drawdownController.text.trim().replaceAll(',', '.');
+                    final drawdownRaw = _drawdownController.text.trim();
                     final capitalRaw = _capitalController.text.trim().replaceAll(',', '.');
                     await widget.onSave(
                       UserPreferences(
@@ -583,7 +592,7 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
                         experienceLevel: _experienceLevel,
                         liquidityNeed: _liquidityNeed,
                         maxDrawdownTolerancePct:
-                            drawdownRaw.isEmpty ? null : double.parse(drawdownRaw),
+                            drawdownRaw.isEmpty ? null : int.parse(drawdownRaw),
                         availableCapital: capitalRaw.isEmpty ? null : double.parse(capitalRaw),
                       ),
                     );
