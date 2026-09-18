@@ -93,6 +93,9 @@ class UserPreferencesService {
     );
     await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
+    if (payload['status'] != 'configured') {
+      throw const FormatException('Estado de preferencias persistidas no válido.');
+    }
     final data = payload['data'];
     if (data is! Map<String, dynamic>) {
       throw const FormatException('Respuesta de preferencias sin data válida.');
