@@ -9,6 +9,7 @@ from scripts.verify_backup_recovery import main, verify_backup
 
 def _managed_backup(tmp_path: Path) -> Path:
     database = AthenaDatabase(tmp_path / "source.db")
+    database.initialize()
     with database.connect() as connection:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS recovery_evidence "
