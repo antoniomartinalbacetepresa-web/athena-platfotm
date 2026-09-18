@@ -17,56 +17,40 @@ class DashboardHeader extends StatelessWidget {
           final compact = constraints.maxWidth < _compactBreakpoint;
           return Row(
             children: [
-              SvgPicture.asset(
-                'assets/branding/athena_logo_wordmark.svg',
-                height: 42,
-              ),
-              const Spacer(),
+              if (compact)
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: SvgPicture.asset(
+                      'assets/branding/athena_logo_wordmark.svg',
+                      height: 42,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                )
+              else
+                SvgPicture.asset(
+                  'assets/branding/athena_logo_wordmark.svg',
+                  height: 42,
+                ),
+              if (!compact) const Spacer(),
               if (compact)
                 PopupMenuButton<String>(
                   tooltip: 'Navegación',
                   icon: const Icon(Icons.menu_rounded, color: Colors.white),
                   onSelected: (route) => Navigator.of(context).pushNamed(route),
                   itemBuilder: (_) => const [
-                    PopupMenuItem(
-                      value: AppRoutes.market,
-                      child: Text('Mercado'),
-                    ),
-                    PopupMenuItem(
-                      value: AppRoutes.news,
-                      child: Text('Noticias'),
-                    ),
-                    PopupMenuItem(
-                      value: AppRoutes.portfolio,
-                      child: Text('Cartera'),
-                    ),
-                    PopupMenuItem(
-                      value: AppRoutes.profile,
-                      child: Text('Perfil'),
-                    ),
+                    PopupMenuItem(value: AppRoutes.market, child: Text('Mercado')),
+                    PopupMenuItem(value: AppRoutes.news, child: Text('Noticias')),
+                    PopupMenuItem(value: AppRoutes.portfolio, child: Text('Cartera')),
+                    PopupMenuItem(value: AppRoutes.profile, child: Text('Perfil')),
                   ],
                 )
               else ...[
-                _RouteButton(
-                  tooltip: 'Mercado',
-                  route: AppRoutes.market,
-                  icon: Icons.public_rounded,
-                ),
-                _RouteButton(
-                  tooltip: 'Noticias',
-                  route: AppRoutes.news,
-                  icon: Icons.article_outlined,
-                ),
-                _RouteButton(
-                  tooltip: 'Cartera',
-                  route: AppRoutes.portfolio,
-                  icon: Icons.account_balance_wallet_outlined,
-                ),
-                _RouteButton(
-                  tooltip: 'Perfil',
-                  route: AppRoutes.profile,
-                  icon: Icons.person_outline_rounded,
-                ),
+                _RouteButton(tooltip: 'Mercado', route: AppRoutes.market, icon: Icons.public_rounded),
+                _RouteButton(tooltip: 'Noticias', route: AppRoutes.news, icon: Icons.article_outlined),
+                _RouteButton(tooltip: 'Cartera', route: AppRoutes.portfolio, icon: Icons.account_balance_wallet_outlined),
+                _RouteButton(tooltip: 'Perfil', route: AppRoutes.profile, icon: Icons.person_outline_rounded),
               ],
               const SizedBox(width: 8),
               Container(
@@ -76,10 +60,7 @@ class DashboardHeader extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(
-                  Icons.notifications_none_rounded,
-                  color: Colors.white,
-                ),
+                child: const Icon(Icons.notifications_none_rounded, color: Colors.white),
               ),
             ],
           );
@@ -90,11 +71,7 @@ class DashboardHeader extends StatelessWidget {
 }
 
 class _RouteButton extends StatelessWidget {
-  const _RouteButton({
-    required this.tooltip,
-    required this.route,
-    required this.icon,
-  });
+  const _RouteButton({required this.tooltip, required this.route, required this.icon});
 
   final String tooltip;
   final String route;
