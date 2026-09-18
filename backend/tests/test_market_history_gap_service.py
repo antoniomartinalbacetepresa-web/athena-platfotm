@@ -52,31 +52,32 @@ def test_history_gap_report_classifies_actionable_blockers(tmp_path: Path) -> No
     deep_id = _insert_instrument(instruments, "DDD")
     _insert_instrument(instruments, "ETF1", instrument_type="etf")
     observations = MarketObservationRepository(database=database)
-    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    base = now - timedelta(days=365)
 
     observations.save_many(
         instrument_id=short_id,
         observations=[
-            {"timestamp": base.isoformat(), "close": 100.0},
-            {"timestamp": (base + timedelta(days=100)).isoformat(), "close": 101.0},
+            {"timestamp": (now - timedelta(days=100)).isoformat(), "close": 100.0},
+            {"timestamp": now.isoformat(), "close": 101.0},
         ],
         source_provider="yahoo_finance",
-        retrieved_at=base + timedelta(days=101),
+        retrieved_at=now,
     )
     observations.save_many(
         instrument_id=discontinuous_id,
         observations=[
             {"timestamp": base.isoformat(), "close": 100.0},
-            {"timestamp": (base + timedelta(days=365)).isoformat(), "close": 110.0},
+            {"timestamp": now.isoformat(), "close": 110.0},
         ],
         source_provider="yahoo_finance",
-        retrieved_at=base + timedelta(days=366),
+        retrieved_at=now,
     )
     observations.save_many(
         instrument_id=deep_id,
         observations=_continuous_history(base),
         source_provider="yahoo_finance",
-        retrieved_at=base + timedelta(days=366),
+        retrieved_at=now,
     )
 
     report = MarketHistoryGapService(database=database).get_report()
@@ -85,6 +86,7 @@ def test_history_gap_report_classifies_actionable_blockers(tmp_path: Path) -> No
     assert report.no_observations_count == 1
     assert report.insufficient_span_count == 1
     assert report.discontinuous_source_count == 1
+    assert report.stale_source_count == 0
     assert [item.symbol for item in report.items] == ["AAA", "BBB", "CCC"]
     assert report.items[0].instrument_id == no_history_id
     assert report.items[0].best_source_provider is None
@@ -101,13 +103,15 @@ def test_history_gap_report_classifies_actionable_blockers(tmp_path: Path) -> No
     assert payload["productionEvidenceClaimed"] is False
     assert payload["minimumHistoryDays"] == 365
     assert payload["maximumSourceGapDays"] == 7
+    assert payload["maximumLatestObservationAgeDays"] == 7
 
 
-def test_history_gap_report_accepts_any_single_deep_source_without_stitching(tmp_path: Path) -> None:
+def test_history_gap_report_accepts_any_single_current_deep_source_without_stitching(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
     observations = MarketObservationRepository(database=database)
-    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    base = now - timedelta(days=365)
 
     observations.save_many(
         instrument_id=instrument_id,
@@ -119,7 +123,7 @@ def test_history_gap_report_accepts_any_single_deep_source_without_stitching(tmp
         instrument_id=instrument_id,
         observations=_continuous_history(base),
         source_provider="source_b",
-        retrieved_at=base + timedelta(days=366),
+        retrieved_at=now,
     )
 
     report = MarketHistoryGapService(database=database).get_report()
@@ -127,11 +131,35 @@ def test_history_gap_report_accepts_any_single_deep_source_without_stitching(tmp
     assert report.items == ()
 
 
+def test_history_gap_report_rejects_deep_but_stale_history(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "STALE")
+    observations = MarketObservationRepository(database=database)
+    now = datetime.now(timezone.utc)
+    base = now - timedelta(days=800)
+
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo_finance",
+        retrieved_at=base + timedelta(days=365),
+    )
+
+    report = MarketHistoryGapService(database=database).get_report()
+
+    assert report.total_blocking_count == 1
+    assert report.stale_source_count == 1
+    assert report.items[0].reason == "stale_source"
+    assert report.items[0].best_latest_observation_age_days is not None
+    assert report.items[0].best_latest_observation_age_days > 7
+
+
 def test_history_gap_report_treats_yahoo_legacy_alias_as_same_provider(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
     observations = MarketObservationRepository(database=database)
-    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    base = now - timedelta(days=365)
     legacy = [
         {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0 + day / 100}
         for day in range(0, 181, 5)
@@ -150,7 +178,7 @@ def test_history_gap_report_treats_yahoo_legacy_alias_as_same_provider(tmp_path:
         instrument_id=instrument_id,
         observations=canonical,
         source_provider="yahoo",
-        retrieved_at=base + timedelta(days=366),
+        retrieved_at=now,
     )
 
     report = MarketHistoryGapService(database=database).get_report()
@@ -159,12 +187,13 @@ def test_history_gap_report_treats_yahoo_legacy_alias_as_same_provider(tmp_path:
     assert report.items == ()
 
 
-def test_history_gap_report_clears_old_gap_when_later_segment_is_deep(tmp_path: Path) -> None:
+def test_history_gap_report_clears_old_gap_when_later_current_segment_is_deep(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
     observations = MarketObservationRepository(database=database)
-    old_point = datetime(2023, 1, 1, 21, 0, tzinfo=timezone.utc)
-    segment_start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    old_point = now - timedelta(days=1200)
+    segment_start = now - timedelta(days=365)
 
     observations.save_many(
         instrument_id=instrument_id,
@@ -176,7 +205,7 @@ def test_history_gap_report_clears_old_gap_when_later_segment_is_deep(tmp_path: 
         instrument_id=instrument_id,
         observations=_continuous_history(segment_start),
         source_provider="yahoo_finance",
-        retrieved_at=segment_start + timedelta(days=366),
+        retrieved_at=now,
     )
 
     report = MarketHistoryGapService(database=database).get_report()
@@ -206,6 +235,8 @@ def test_history_gap_report_rejects_invalid_pagination_and_thresholds(tmp_path: 
         MarketHistoryGapService(database=database, minimum_history_days=0)
     with pytest.raises(ValueError, match="maximum_source_gap_days"):
         MarketHistoryGapService(database=database, maximum_source_gap_days=0)
+    with pytest.raises(ValueError, match="maximum_latest_observation_age_days"):
+        MarketHistoryGapService(database=database, maximum_latest_observation_age_days=0)
 
     service = MarketHistoryGapService(database=database)
     with pytest.raises(ValueError, match="limit"):
