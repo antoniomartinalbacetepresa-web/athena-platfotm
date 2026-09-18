@@ -7,12 +7,11 @@ import '../models/portfolio.dart';
 class PortfolioRepository {
   static const String _portfolioKey = 'athena_tyche_portfolio';
 
-  PortfolioRepository({SharedPreferencesAsync? preferences})
-      : _preferences = preferences;
+  PortfolioRepository({this.preferences});
 
-  final SharedPreferencesAsync? _preferences;
+  final SharedPreferencesAsync? preferences;
 
-  SharedPreferencesAsync get _storage => _preferences ?? SharedPreferencesAsync();
+  SharedPreferencesAsync get _storage => preferences ?? SharedPreferencesAsync();
 
   Future<void> savePortfolio(Portfolio portfolio) async {
     final jsonString = jsonEncode(
