@@ -318,3 +318,24 @@ def test_tampered_evidence_fails_integrity_check(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="SHA-256"):
         service.get_proposal(proposal.proposal_id)
+
+def test_proposer_cannot_reject_own_weighting_proposal(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    _seed_clean_canonical_universe(database)
+    service = CanonicalWeightingGovernanceService(
+        database=database,
+        clock=lambda: CREATED_AT,
+    )
+    proposal = service.create_proposal(created_by="quant-operator")
+
+    with pytest.raises(ValueError, match="separación de funciones"):
+        service.reject_proposal(
+            proposal.proposal_id,
+            rejected_by="QUANT-OPERATOR",
+            rejection_note="Intento de cerrar mi propia propuesta.",
+        )
+
+    persisted = service.get_proposal(proposal.proposal_id)
+    assert persisted.status == "pending_human_approval"
+    assert persisted.approved_by is None
+    assert service.get_approved_weights()["humanApproved"] is False
