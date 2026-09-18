@@ -168,8 +168,8 @@ class AthenaAuthService {
     if (normalizedToken.isEmpty) {
       throw ArgumentError('Token obligatorio.');
     }
-    if (currentPassword.isEmpty) {
-      throw ArgumentError('La contraseña actual es obligatoria.');
+    if (currentPassword.trim().isEmpty || currentPassword.length > 256) {
+      throw ArgumentError('La contraseña actual no es válida.');
     }
     _validateNewPassword(newPassword);
     final response = await client.post(
