@@ -82,6 +82,36 @@ void main() {
     expect(captured.bodyFields['password'], 'correct horse battery staple');
   });
 
+  test('login rejects invalid password before network without trimming valid credentials', () async {
+    var calls = 0;
+    late http.Request captured;
+    final client = MockClient((request) async {
+      calls += 1;
+      captured = request;
+      return http.Response(
+        '{"access_token":"signed.jwt.token","token_type":"bearer"}',
+        200,
+      );
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    for (final invalidPassword in <String>['   ', List.filled(257, 'a').join()]) {
+      await expectLater(
+        service.login(email: 'user@example.com', password: invalidPassword),
+        throwsArgumentError,
+      );
+    }
+    expect(calls, 0);
+
+    await service.login(
+      email: ' user@example.com ',
+      password: ' significant password ',
+    );
+    expect(calls, 1);
+    expect(captured.bodyFields['username'], 'user@example.com');
+    expect(captured.bodyFields['password'], ' significant password ');
+  });
+
   test('getMe sends bearer token and parses account', () async {
     late http.Request captured;
     final client = MockClient((request) async {
@@ -139,7 +169,7 @@ void main() {
       service.changePassword(
         token: 'signed.jwt.token',
         currentPassword: 'current-password',
-        newPassword: '${'a' * 257}',
+        newPassword: List.filled(257, 'a').join(),
       ),
       throwsArgumentError,
     );
@@ -154,7 +184,6 @@ void main() {
     expect(calls, 0);
   });
 
-
   test('changePassword rejects invalid current password before network', () async {
     var calls = 0;
     final client = MockClient((request) async {
@@ -163,7 +192,7 @@ void main() {
     });
     final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
 
-    for (final invalidCurrentPassword in <String>['   ', 'NaN']) {
+    for (final invalidCurrentPassword in <String>['   ', List.filled(257, 'a').join()]) {
       await expectLater(
         service.changePassword(
           token: 'signed.jwt.token',
