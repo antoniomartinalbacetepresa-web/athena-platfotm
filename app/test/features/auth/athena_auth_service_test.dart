@@ -39,22 +39,25 @@ void main() {
     expect(account.displayName, 'Athena User');
   });
 
-  test('register rejects short password before network call', () async {
-    var called = false;
+  test('register enforces canonical new-password contract before network', () async {
+    var calls = 0;
     final client = MockClient((request) async {
-      called = true;
+      calls += 1;
       return http.Response('{}', 500);
     });
     final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
 
-    expect(
-      () => service.register(
-        email: 'user@example.com',
-        password: 'too-short',
-      ),
-      throwsArgumentError,
-    );
-    expect(called, isFalse);
+    for (final invalidPassword in <String>[
+      'too-short',
+      List.filled(257, 'a').join(),
+      ' replacement-password ',
+    ]) {
+      await expectLater(
+        service.register(email: 'user@example.com', password: invalidPassword),
+        throwsArgumentError,
+      );
+    }
+    expect(calls, 0);
   });
 
   test('login uses OAuth form and validates bearer contract', () async {
