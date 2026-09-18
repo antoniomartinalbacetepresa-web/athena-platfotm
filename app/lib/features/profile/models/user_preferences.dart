@@ -164,10 +164,8 @@ class UserPreferences {
       'baseCurrency': currency,
       'objective': targetObjective,
       'language': targetLanguage,
-      if (experience != null && experience.isNotEmpty)
-        'experienceLevel': experience,
-      if (liquidity != null && liquidity.isNotEmpty)
-        'liquidityNeed': liquidity,
+      ?experience: 'experienceLevel': experience.isNotEmpty ? experience : null,
+      ?liquidity: 'liquidityNeed': liquidity.isNotEmpty ? liquidity : null,
       if (drawdown != null) 'maxDrawdownTolerancePct': drawdown,
       if (capital != null) 'availableCapital': capital,
     };
