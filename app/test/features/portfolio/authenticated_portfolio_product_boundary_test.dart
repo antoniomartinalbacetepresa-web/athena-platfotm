@@ -2,23 +2,11 @@ import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/auth_session.dart';
-import 'package:app/features/auth/services/auth_token_store.dart';
 import 'package:app/features/portfolio/presentation/pages/authenticated_portfolio_page.dart';
 import 'package:app/features/portfolio/presentation/pages/portfolio_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-class _TokenStore implements AuthTokenStore {
-  @override
-  Future<void> deleteAccessToken() async {}
-
-  @override
-  Future<String?> readAccessToken() async => null;
-
-  @override
-  Future<void> writeAccessToken(String token) async {}
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -68,6 +56,7 @@ void main() {
           displayName: 'Owner',
           isActive: true,
           createdAt: DateTime.parse('2026-09-15T10:00:00Z'),
+          updatedAt: DateTime.parse('2026-09-15T10:00:00Z'),
         ),
       );
 
