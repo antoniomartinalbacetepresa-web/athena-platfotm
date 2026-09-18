@@ -201,6 +201,8 @@ def test_history_gap_report_paginates_without_changing_totals(tmp_path: Path) ->
 def test_history_gap_report_rejects_invalid_pagination_and_thresholds(tmp_path: Path) -> None:
     database = _database(tmp_path)
     with pytest.raises(ValueError, match="minimum_history_days"):
+        MarketHistoryGapService(database=database, minimum_history_days=364)
+    with pytest.raises(ValueError, match="minimum_history_days"):
         MarketHistoryGapService(database=database, minimum_history_days=0)
     with pytest.raises(ValueError, match="maximum_source_gap_days"):
         MarketHistoryGapService(database=database, maximum_source_gap_days=0)
