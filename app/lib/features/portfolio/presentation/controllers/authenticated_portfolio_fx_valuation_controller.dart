@@ -9,8 +9,8 @@ import '../../services/authenticated_portfolio_fx_valuation_service.dart';
 /// authoritative valuation is loading or after valuation/provenance failure.
 class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
   AuthenticatedPortfolioFxValuationController({
-    required AuthenticatedPortfolioFxValuationService valuationService,
-  }) : _valuationService = valuationService;
+    required this._valuationService,
+  });
 
   final AuthenticatedPortfolioFxValuationService _valuationService;
 
@@ -43,8 +43,8 @@ class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
       _valuation = next;
     } catch (_) {
       if (generation != _generation) return;
+      _error = 'No se pudo verificar la valoración multidivisa de la cartera.';
       _valuation = null;
-      _error = 'No se pudo verificar la valoración total en tu moneda base.';
     } finally {
       if (generation == _generation) {
         _isLoading = false;
@@ -53,7 +53,6 @@ class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
     }
   }
 
-  /// Invalidates any in-flight result and removes personal monetary state.
   void clear() {
     _generation++;
     _isLoading = false;
