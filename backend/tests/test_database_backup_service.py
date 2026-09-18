@@ -435,3 +435,34 @@ def test_retention_ignores_unmanaged_files_and_rejects_zero_retention(
     assert result.kept == ()
     assert result.deleted == ()
     assert unrelated.read_bytes() == b"leave-me-alone"
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("created_at_utc", "not-a-timestamp", "fecha"),
+        ("created_at_utc", "2026-09-18T05:00:00", "zona horaria"),
+        ("format_version", 0, "formato"),
+        ("schema_version", 0, "esquema"),
+        ("size_bytes", 0, "tamaño"),
+        ("sha256", "not-a-sha256", "SHA-256"),
+    ],
+)
+def test_verify_backup_rejects_malformed_manifest_evidence(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup_path = tmp_path / "backup.db"
+    service.create_backup(backup_path)
+
+    manifest_path = service.manifest_path_for(backup_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[field] = value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=message):
+        service.verify_backup(backup_path)
