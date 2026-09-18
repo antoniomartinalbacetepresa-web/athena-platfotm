@@ -549,6 +549,33 @@ class DatabaseBackupService:
                 "El manifiesto del backup no es válido."
             ) from exc
 
+    @classmethod
+    def _validate_manifest_metadata(
+        cls,
+        metadata: DatabaseBackupMetadata,
+    ) -> None:
+        cls._parse_created_at_utc(metadata.created_at_utc)
+        if metadata.format_version <= 0:
+            raise RuntimeError(
+                "La versión de formato del manifiesto debe ser positiva."
+            )
+        if metadata.schema_version <= 0:
+            raise RuntimeError(
+                "La versión de esquema del manifiesto debe ser positiva."
+            )
+        if metadata.size_bytes <= 0:
+            raise RuntimeError(
+                "El tamaño declarado del backup debe ser positivo."
+            )
+        digest = metadata.sha256.strip().lower()
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef"
+            for character in digest
+        ):
+            raise RuntimeError(
+                "El checksum SHA-256 del manifiesto no es válido."
+            )
+
     @staticmethod
     def _parse_created_at_utc(
         raw: str,
