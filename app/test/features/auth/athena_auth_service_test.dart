@@ -154,6 +154,48 @@ void main() {
     expect(calls, 0);
   });
 
+
+  test('changePassword rejects invalid current password before network', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls += 1;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    for (final invalidCurrentPassword in <String>['   ', 'NaN']) {
+      await expectLater(
+        service.changePassword(
+          token: 'signed.jwt.token',
+          currentPassword: invalidCurrentPassword,
+          newPassword: 'replacement-password',
+        ),
+        throwsArgumentError,
+      );
+    }
+
+    expect(calls, 0);
+  });
+
+  test('changePassword preserves significant current-password whitespace', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.changePassword(
+      token: ' signed.jwt.token ',
+      currentPassword: ' current-password ',
+      newPassword: 'replacement-password',
+    );
+
+    final payload = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+    expect(payload['currentPassword'], ' current-password ');
+  });
+
   test('logout calls backend revocation endpoint with bearer token', () async {
     late http.Request captured;
     final client = MockClient((request) async {
