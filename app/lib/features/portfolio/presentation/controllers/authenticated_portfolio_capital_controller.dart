@@ -12,10 +12,11 @@ import '../../../profile/services/user_preferences_service.dart';
 /// does not depend on the user having configured a cash amount.
 class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
   AuthenticatedPortfolioCapitalController({
-    required UserPreferencesService preferencesService,
-  }) : _preferencesService = preferencesService;
+    required this.preferencesService,
+  });
 
-  final UserPreferencesService _preferencesService;
+  @visibleForTesting
+  final UserPreferencesService preferencesService;
 
   bool _isLoading = false;
   bool _sessionRejected = false;
@@ -43,7 +44,7 @@ class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final UserPreferences? preferences = await _preferencesService.load();
+      final UserPreferences? preferences = await preferencesService.load();
       if (preferences == null) return;
 
       final currency = preferences.baseCurrency.trim().toUpperCase();
