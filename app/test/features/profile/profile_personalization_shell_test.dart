@@ -148,6 +148,58 @@ void main() {
     expect(find.textContaining('weight'), findsNothing);
   });
 
+  testWidgets('protected Profile rejection clears authority and returns to welcome',
+      (tester) async {
+    final store = _MemoryTokenStore();
+    final lifecycleSession = AuthSession.forTesting(store);
+    await lifecycleSession.establishPersisted(
+      accessToken: 'revoked-owner.jwt',
+      account: account(),
+    );
+    final service = UserPreferencesService(
+      baseUrl: 'https://athena.local',
+      session: lifecycleSession,
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/user/profile/personalization');
+        expect(request.headers['Authorization'], 'Bearer revoked-owner.jwt');
+        return http.Response(jsonEncode({'detail': 'revoked'}), 401);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {
+          AppRoutes.welcome: (_) => const Scaffold(body: Text('WELCOME')),
+        },
+        home: ProfilePersonalizationShell(
+          service: service,
+          session: lifecycleSession,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('open-profile-personalization')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('personalization-session-rejected')),
+      findsOneWidget,
+    );
+    expect(lifecycleSession.isAuthenticated, isFalse);
+    expect(lifecycleSession.accessToken, isNull);
+    expect(store.value, isNull);
+
+    await tester.tap(
+      find.byKey(const Key('personalization-session-rejected-close')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('WELCOME'), findsOneWidget);
+    expect(find.byKey(const Key('open-profile-personalization')), findsNothing);
+    expect(find.byKey(const Key('open-account-lifecycle')), findsNothing);
+  });
+
   testWidgets(
       'account closure runs authenticated transport, clears persisted session and returns to welcome',
       (tester) async {
