@@ -41,6 +41,7 @@ void main() {
         displayName: 'Owner',
         isActive: true,
         createdAt: DateTime.parse('2026-09-15T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-15T10:00:00Z'),
       ),
     );
     return value;
