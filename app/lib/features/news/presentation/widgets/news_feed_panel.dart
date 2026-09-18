@@ -107,7 +107,7 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
                     child: ListView.separated(
                       padding: EdgeInsets.zero,
                       itemCount: feed.items.length,
-                      separatorBuilder: (_, __) => const Divider(
+                      separatorBuilder: (_, _) => const Divider(
                         height: 18,
                         color: AthenaColors.border,
                       ),
