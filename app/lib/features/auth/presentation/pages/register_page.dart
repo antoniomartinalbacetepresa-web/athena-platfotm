@@ -52,7 +52,10 @@ class _RegisterPageState extends State<RegisterPage> {
         password: _passwordController.text,
       );
       final account = await _service.getMe(token);
-      AuthSession.instance.establish(accessToken: token, account: account);
+      await AuthSession.instance.establishPersisted(
+        accessToken: token,
+        account: account,
+      );
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(
         context,
@@ -137,7 +140,7 @@ class _RegisterPageState extends State<RegisterPage> {
                       autofillHints: const [AutofillHints.newPassword],
                       decoration: const InputDecoration(
                         labelText: 'Contraseña',
-                        helperText: 'Mínimo 12 caracteres',
+                        helperText: 'Entre 12 y 256 caracteres, sin espacios al inicio o final',
                       ),
                     ),
                     const SizedBox(height: 14),
