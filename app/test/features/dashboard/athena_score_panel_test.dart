@@ -21,7 +21,17 @@ class FakeLearningStatusProvider implements RecommendationLearningStatusProvider
       calibration: const {'status': 'review_required'},
       evaluationSchedule: const {'dueCount': 5},
       drift: const {'status': 'stable'},
+      shadowLiveLongitudinal: const {
+        'persistedCandidateCount': 0,
+        'eligibleCandidateCount': 0,
+        'evaluatedCandidateCount': 0,
+        'evaluatedObservationCount': 0,
+      },
+      advisoryStatus: 'no_advice',
+      productionEligible: false,
       automaticModelMutation: false,
+      automaticProductionPromotion: false,
+      automaticTrading: false,
     );
   }
 }
