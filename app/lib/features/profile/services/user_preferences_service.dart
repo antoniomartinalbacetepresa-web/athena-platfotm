@@ -44,7 +44,14 @@ class UserPreferencesService {
     await _rejectInvalidSession(response);
     final payload = _decodeObject(response);
     final status = payload['status'];
-    if (status == 'not_configured') return null;
+    if (status == 'not_configured') {
+      if (payload['data'] != null) {
+        throw const FormatException(
+          'Preferencias no configuradas con datos inesperados.',
+        );
+      }
+      return null;
+    }
     if (status != 'configured') {
       throw const FormatException('Estado de preferencias no válido.');
     }
