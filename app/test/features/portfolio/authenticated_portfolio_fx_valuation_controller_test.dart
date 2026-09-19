@@ -41,6 +41,9 @@ void main() {
         rate: rate,
         status: 'ok',
         sourceProvider: 'verified-fx',
+        sourceSymbol: baseCurrency == quoteCurrency
+            ? null
+            : '${baseCurrency.toUpperCase()}${quoteCurrency.toUpperCase()}=X',
         observedAt: observed,
         retrievedAt: retrieved,
         historicalPointInTimeEligible: false,
