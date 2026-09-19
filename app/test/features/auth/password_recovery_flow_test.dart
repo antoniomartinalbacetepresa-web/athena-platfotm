@@ -108,7 +108,15 @@ void main() {
 
     expect(find.byKey(const Key('recovery-generic-success')), findsOneWidget);
     expect(find.textContaining('existe una cuenta válida'), findsOneWidget);
-    expect(find.textContaining('unknown@example.com'), findsNothing);
+    // The user's own input may remain in the editable field; anti-enumeration
+    // requires that the server-derived success surface never echoes identity.
+    final success = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const Key('recovery-generic-success')),
+        matching: find.byType(Text),
+      ).first,
+    );
+    expect(success.data, isNot(contains('unknown@example.com')));
   });
 
   testWidgets('reset UI consumes initial link token and requires fresh login', (tester) async {
