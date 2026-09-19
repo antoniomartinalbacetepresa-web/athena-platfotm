@@ -221,7 +221,7 @@ class _HistoryEventTile extends StatelessWidget {
     final quantity = event.quantity;
     final amount = event.amount;
     final details = <String>[
-      if (instrument != null) instrument,
+      ?instrument,
       if (quantity != null) 'Cantidad ${_number(quantity)}',
       if (amount != null) '${_number(amount)} ${event.currency}',
     ];

@@ -209,8 +209,7 @@ class AuthenticatedPortfolioService {
           ? null
           : normalizedExchange,
       'quantity': quantity,
-      if (averagePurchasePrice != null)
-        'averagePurchasePrice': averagePurchasePrice,
+      'averagePurchasePrice': ?averagePurchasePrice,
     };
     final response = await _client.put(
       Uri.parse('$_baseUrl/api/v1/user/portfolio/positions'),

@@ -141,7 +141,9 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       final profile = _capitalController;
       final fx = _fxValuationController;
       if (holdings == null || profile == null || fx == null ||
-          holdings.isLoading || profile.isLoading) return;
+          holdings.isLoading || profile.isLoading) {
+        return;
+      }
       final currency = profile.currency;
       if (holdings.sessionRejected || profile.sessionRejected ||
           holdings.error != null || profile.error != null ||
