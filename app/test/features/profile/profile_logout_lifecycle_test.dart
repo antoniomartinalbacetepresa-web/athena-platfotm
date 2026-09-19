@@ -65,7 +65,12 @@ void main() {
     );
 
     await tester.pumpWidget(appFor(auth));
-    await tester.pumpAndSettle();
+    // /auth/me is intentionally transient here; wait only until Profile
+    // publishes the authenticated controls instead of settling unrelated I/O.
+    for (var frame = 0; frame < 20 && find.text('CERRAR SESIÓN').evaluate().isEmpty; frame++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('CERRAR SESIÓN'), findsOneWidget);
     await tester.ensureVisible(find.text('CERRAR SESIÓN'));
     await tester.tap(find.text('CERRAR SESIÓN'));
     await tester.pumpAndSettle();
