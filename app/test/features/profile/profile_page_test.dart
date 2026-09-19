@@ -80,7 +80,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: ProfilePage(authService: auth)),
     );
-    await tester.pumpAndSettle();
+    // A 401 revokes the local session and rebuilds Profile. Avoid
+    // pumpAndSettle here: focused/animated widgets can keep a ticker alive
+    // even after the authoritative async boundary has completed.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(session.isAuthenticated, isFalse);
     expect(session.accessToken, isNull);
