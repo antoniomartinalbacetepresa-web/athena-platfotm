@@ -245,8 +245,10 @@ void main() {
       find.byKey(const Key('account-closure-confirmation')),
       'ELIMINAR',
     );
+    await tester.pump();
     await tester.tap(find.byKey(const Key('account-closure-submit')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(captured.method, 'POST');
     expect(captured.url.path, '/api/v1/auth/close-account');
@@ -299,8 +301,10 @@ void main() {
       find.byKey(const Key('account-closure-confirmation')),
       'ELIMINAR',
     );
+    await tester.pump();
     await tester.tap(find.byKey(const Key('account-closure-submit')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(find.byKey(const Key('account-closure-error')), findsOneWidget);
     expect(find.byKey(const Key('account-closure-panel')), findsOneWidget);
