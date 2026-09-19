@@ -67,7 +67,17 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('portfolio-authenticated-sync')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    for (var frame = 0; frame < 20; frame++) {
+      if (controller.status != PortfolioCloudSyncStatus.syncing) {
+        break;
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      controller.status,
+      isNot(PortfolioCloudSyncStatus.syncing),
+      reason: 'Portfolio sync boundary did not complete within 1 second.',
+    );
     return controller;
   }
 
