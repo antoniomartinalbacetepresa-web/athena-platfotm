@@ -168,14 +168,15 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        initialRoute: '/profile-test',
         routes: {
           AppRoutes.welcome: (_) => const Scaffold(body: Text('WELCOME')),
+          '/profile-test': (_) => ProfilePersonalizationShell(
+                service: service,
+                session: lifecycleSession,
+                child: const SizedBox.expand(),
+              ),
         },
-        home: ProfilePersonalizationShell(
-          service: service,
-          session: lifecycleSession,
-          child: const SizedBox.expand(),
-        ),
       ),
     );
 
@@ -220,14 +221,15 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        initialRoute: '/profile-test',
         routes: {
           AppRoutes.welcome: (_) => const Scaffold(body: Text('WELCOME')),
+          '/profile-test': (_) => ProfilePersonalizationShell(
+                session: lifecycleSession,
+                accountLifecycleAuthService: authService,
+                child: const SizedBox.expand(),
+              ),
         },
-        home: ProfilePersonalizationShell(
-          session: lifecycleSession,
-          accountLifecycleAuthService: authService,
-          child: const SizedBox.expand(),
-        ),
       ),
     );
 
@@ -275,14 +277,15 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        initialRoute: '/profile-test',
         routes: {
           AppRoutes.welcome: (_) => const Scaffold(body: Text('WELCOME')),
+          '/profile-test': (_) => ProfilePersonalizationShell(
+                session: lifecycleSession,
+                accountLifecycleAuthService: authService,
+                child: const SizedBox.expand(),
+              ),
         },
-        home: ProfilePersonalizationShell(
-          session: lifecycleSession,
-          accountLifecycleAuthService: authService,
-          child: const SizedBox.expand(),
-        ),
       ),
     );
 
