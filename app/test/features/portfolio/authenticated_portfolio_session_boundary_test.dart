@@ -84,6 +84,9 @@ void main() {
   testWidgets('401 from portfolio backend invalidates the local authenticated session',
       (tester) async {
     final controller = await pumpWithStatus(tester, statusCode: 401);
+    // The controller boundary completes before the page's async callback
+    // publishes its rejection SnackBar. Pump one frame for that UI handoff.
+    await tester.pump();
 
     expect(controller.status, PortfolioCloudSyncStatus.sessionRejected);
     expect(session.isAuthenticated, isFalse);
