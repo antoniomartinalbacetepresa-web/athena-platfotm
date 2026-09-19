@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/routing/app_routes.dart';
@@ -58,7 +60,9 @@ class _ProfilePageState extends State<ProfilePage> {
       AuthSession.instance.establish(accessToken: token, account: account);
       await _loadPreferences();
     } on AuthSessionRejectedException {
-      await AuthSession.instance.clearAfterRemoteInvalidation();
+      // clearAfterRemoteInvalidation revokes in-memory authority before its
+      // first await. Do not keep the protected UI blocked on secure-storage I/O.
+      unawaited(AuthSession.instance.clearAfterRemoteInvalidation());
       _preferences = null;
       _preferencesError = null;
       _sessionValidationError = null;

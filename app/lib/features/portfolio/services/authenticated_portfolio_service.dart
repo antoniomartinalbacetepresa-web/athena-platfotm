@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -257,7 +258,10 @@ class AuthenticatedPortfolioService {
   Future<void> _rejectInvalidSession(http.Response response) async {
     if (response.statusCode != 401 && response.statusCode != 403) return;
     _lastRejectedStatusCode = response.statusCode;
-    await _session.clearAfterRemoteInvalidation();
+    // Remote rejection revokes in-memory authority synchronously. Durable token
+    // cleanup must not block propagation of that authoritative 401/403 boundary;
+    // a stale durable token is revalidated before it can regain authority.
+    unawaited(_session.clearAfterRemoteInvalidation());
     throw AuthSessionRejectedException(response.statusCode);
   }
 
