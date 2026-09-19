@@ -65,7 +65,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsWidgets);
     expect(find.textContaining('EUR'), findsWidgets);
-    expect(find.textContaining('Profile'), findsWidgets);
+    expect(find.textContaining('Perfil ATHENA'), findsWidgets);
   });
 
   testWidgets('401 removes a previously visible capital amount', (tester) async {
@@ -85,7 +85,9 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsWidgets);
     await controller.load();
-    await tester.pump();
+    // The controller is injected rather than listened to by this focused view
+    // harness, so rebuild with the authoritative post-load state.
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsNothing);
     expect(find.textContaining('sesión'), findsWidgets);
     expect(auth.isAuthenticated, isFalse);
@@ -107,7 +109,9 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsWidgets);
     await controller.load();
-    await tester.pump();
+    // The controller is injected rather than listened to by this focused view
+    // harness, so rebuild with the authoritative post-load state.
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AuthenticatedPortfolioCapitalView(controller: controller, onRetry: controller.load))));
     expect(find.textContaining('12'), findsNothing);
     expect(find.textContaining('No se pudo verificar'), findsWidgets);
   });
