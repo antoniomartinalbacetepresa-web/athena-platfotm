@@ -42,7 +42,7 @@ class AthenaBackendNewsService {
       'limit': '$limit',
       'language': normalizedLanguage,
       'country': normalizedCountry,
-      if (normalizedQuery case final value?) 'query': value,
+      'query': ?normalizedQuery,
     };
     final uri = Uri.parse('$baseUrl/api/v1/news/feed').replace(
       queryParameters: params,
