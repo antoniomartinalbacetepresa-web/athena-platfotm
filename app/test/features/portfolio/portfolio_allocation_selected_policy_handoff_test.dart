@@ -127,7 +127,7 @@ RecommendationAllocationRequestContext _context(DateTime cutoff) {
 }
 
 void main() {
-  test('selected verified policy owns allocation policy ID and base currency',
+  test('selected verified policy owns allocation policy ID and canonical base currency',
       () async {
     final cutoff = DateTime.utc(2026, 9, 6, 12);
     final allocation = _AllocationDataSource();
@@ -136,8 +136,8 @@ void main() {
       allocationDataSource: allocation,
     );
     final selectedPolicy = PortfolioAllocationPolicy(
-      policyId: 'explicit-eur-policy-v1',
-      baseCurrency: 'EUR',
+      policyId: 'explicit-usd-policy-v1',
+      baseCurrency: 'USD',
       maximumInstrumentSleeveWeight: 0.2,
       minimumCashReserveWeight: 0.1,
       maximumAbsolutePairCorrelation: 0.8,
@@ -157,7 +157,7 @@ void main() {
 
     expect(controller.error, isNull);
     expect(controller.isReady, isTrue);
-    expect(allocation.receivedPolicyId, 'explicit-eur-policy-v1');
-    expect(allocation.receivedBaseCurrency, 'EUR');
+    expect(allocation.receivedPolicyId, 'explicit-usd-policy-v1');
+    expect(allocation.receivedBaseCurrency, 'USD');
   });
 }
