@@ -45,6 +45,7 @@ void main() {
         rate: rate,
         status: status,
         sourceProvider: provider,
+        sourceSymbol: base == quote ? null : '${base.toUpperCase()}${quote.toUpperCase()}=X',
         observedAt: observedAt ?? observed,
         retrievedAt: retrievedAt ?? retrieved,
         historicalPointInTimeEligible: pit,
@@ -128,34 +129,17 @@ void main() {
     );
   });
 
-  test('rejects current FX falsely labelled historical PIT evidence', () async {
-    final service = AuthenticatedPortfolioFxValuationService(
-      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async => fx(pit: true),
-    );
-
-    await expectLater(
-      service.value(
-        positions: [position(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100)],
-        baseCurrency: 'EUR',
-      ),
-      throwsA(isA<StateError>()),
+  test('rejects current FX falsely labelled historical PIT evidence', () {
+    expect(
+      () => fx(pit: true),
+      throwsA(isA<ArgumentError>()),
     );
   });
 
-  test('rejects FX retrieval timestamp before observation', () async {
-    final service = AuthenticatedPortfolioFxValuationService(
-      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async => fx(
-        observedAt: retrieved,
-        retrievedAt: observed,
-      ),
-    );
-
-    await expectLater(
-      service.value(
-        positions: [position(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100)],
-        baseCurrency: 'EUR',
-      ),
-      throwsA(isA<StateError>()),
+  test('rejects FX retrieval timestamp before observation', () {
+    expect(
+      () => fx(observedAt: retrieved, retrievedAt: observed),
+      throwsA(isA<ArgumentError>()),
     );
   });
 }
