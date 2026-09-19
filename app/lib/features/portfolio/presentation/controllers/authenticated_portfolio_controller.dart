@@ -51,7 +51,6 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
       _sessionRejected = true;
       _error = null;
     } catch (_) {
-      // Never retain stale owner holdings after a failed authoritative reload.
       _positions = const [];
       _sessionRejected = false;
       _error = 'No se pudo cargar la cartera autenticada con datos verificables.';
@@ -67,6 +66,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     required double quantity,
     double? averagePurchasePrice,
   }) async {
+    if (_sessionRejected) return false;
     try {
       await _portfolioService.upsertPosition(
         symbol: symbol,
@@ -90,8 +90,9 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   }
 
   Future<bool> remove(AuthenticatedPortfolioViewPosition position) async {
+    if (_sessionRejected) return false;
     try {
-      await _portfolioService.deletePosition(position.id);
+      await _portfolioService.deletePosition(position.serverPositionId);
       await load();
       return !_sessionRejected && _error == null;
     } on AuthSessionRejectedException {
@@ -105,5 +106,29 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  /// Direct summation is safe only for a single declared quote currency.
+  /// Mixed/unknown currencies must be delegated to ATHENA's verified FX path.
+  String? get directlyComparableCurrency =>
+      AuthenticatedPortfolioViewPosition.commonCurrency(_positions);
+
+  double? get directlyComparableCurrentValue {
+    if (_positions.isEmpty || directlyComparableCurrency == null) return null;
+    return _positions.fold<double>(
+      0,
+      (total, position) => total + position.currentValue,
+    );
+  }
+
+  double? get directlyComparableInvestedValue {
+    if (_positions.isEmpty || directlyComparableCurrency == null) return null;
+    var total = 0.0;
+    for (final position in _positions) {
+      final invested = position.investedValue;
+      if (invested == null) return null;
+      total += invested;
+    }
+    return total;
   }
 }
