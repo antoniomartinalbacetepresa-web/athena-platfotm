@@ -41,7 +41,11 @@ void main() {
   Future<void> submit(WidgetTester tester, String password) async {
     await enterClosureConfirmation(tester, password);
     await tester.tap(find.byKey(const Key('account-closure-submit')));
-    await tester.pumpAndSettle();
+    // The focused EditableText owns a blinking cursor ticker, so
+    // pumpAndSettle is not a valid completion primitive here. Two frames are
+    // sufficient for the async close callback and its resulting setState.
+    await tester.pump();
+    await tester.pump();
   }
 
   testWidgets('closure requires password and exact destructive confirmation',
