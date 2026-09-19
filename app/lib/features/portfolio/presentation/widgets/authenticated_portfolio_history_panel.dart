@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../auth/services/athena_auth_service.dart';
@@ -63,11 +65,9 @@ class _AuthenticatedPortfolioHistoryPanelState
         _loading = false;
       });
     } on AuthSessionRejectedException catch (error) {
-      // A 401/403 is authoritative evidence that the server no longer accepts
-      // the credential. Clear authenticated memory immediately; durable-token
-      // cleanup is best-effort and must not leave the UI presenting an active
-      // session if secure storage itself is unavailable.
-      await _session.clearAfterRemoteInvalidation();
+      // The service has already revoked in-memory authority. Durable-token
+      // cleanup remains best-effort and must not block the rejected UI state.
+      unawaited(_session.clearAfterRemoteInvalidation());
       if (!mounted) return;
       setState(() {
         _error = error;
