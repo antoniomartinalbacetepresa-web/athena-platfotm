@@ -111,10 +111,7 @@ void main() {
     // The user's own input may remain in the editable field; anti-enumeration
     // requires that the server-derived success surface never echoes identity.
     final success = tester.widget<Text>(
-      find.descendant(
-        of: find.byKey(const Key('recovery-generic-success')),
-        matching: find.byType(Text),
-      ).first,
+      find.byKey(const Key('recovery-generic-success')),
     );
     expect(success.data, isNot(contains('unknown@example.com')));
   });
