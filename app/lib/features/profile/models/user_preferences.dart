@@ -94,8 +94,8 @@ class UserPreferences {
       'language': targetLanguage,
       if (experience case final value? when value.isNotEmpty) 'experienceLevel': value,
       if (liquidity case final value? when value.isNotEmpty) 'liquidityNeed': value,
-      if (drawdown != null) 'maxDrawdownTolerancePct': drawdown,
-      if (capital != null) 'availableCapital': capital,
+      'maxDrawdownTolerancePct': ?drawdown,
+      'availableCapital': ?capital,
     };
   }
 }
