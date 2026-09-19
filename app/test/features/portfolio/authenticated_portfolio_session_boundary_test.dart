@@ -66,7 +66,8 @@ void main() {
       ),
     );
     await tester.tap(find.byKey(const Key('portfolio-authenticated-sync')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     return controller;
   }
 
