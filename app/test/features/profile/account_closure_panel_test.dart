@@ -21,7 +21,10 @@ void main() {
     );
   }
 
-  Future<void> submit(WidgetTester tester, String password) async {
+  Future<void> enterClosureConfirmation(
+    WidgetTester tester,
+    String password,
+  ) async {
     await tester.enterText(
       find.byKey(const Key('account-closure-password')),
       password,
@@ -30,6 +33,13 @@ void main() {
       find.byKey(const Key('account-closure-confirmation')),
       'ELIMINAR',
     );
+    // TextField.onChanged schedules the state rebuild that enables the
+    // destructive action. Advance one frame before observing or tapping it.
+    await tester.pump();
+  }
+
+  Future<void> submit(WidgetTester tester, String password) async {
+    await enterClosureConfirmation(tester, password);
     await tester.tap(find.byKey(const Key('account-closure-submit')));
     await tester.pumpAndSettle();
   }
@@ -56,6 +66,7 @@ void main() {
       find.byKey(const Key('account-closure-confirmation')),
       'eliminar',
     );
+    await tester.pump();
     expect(tester.widget<ElevatedButton>(submit).onPressed, isNull);
     expect(calls, 0);
 
@@ -63,6 +74,7 @@ void main() {
       find.byKey(const Key('account-closure-confirmation')),
       'ELIMINAR',
     );
+    await tester.pump();
     expect(tester.widget<ElevatedButton>(submit).onPressed, isNotNull);
   });
 
