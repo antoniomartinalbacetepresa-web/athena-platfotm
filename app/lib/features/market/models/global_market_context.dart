@@ -1,3 +1,4 @@
+import 'market_universe_status.dart';
 import 'regional_market_context.dart';
 import 'regional_market_weights.dart';
 
@@ -33,6 +34,9 @@ class GlobalMarketContext {
   /// Valor comprendido entre 0 y 1.
   final double weightConfidence;
 
+  /// Estado de calidad del universo que respalda los pesos.
+  final MarketUniverseStatus marketUniverseStatus;
+
   final double advancingPercentage;
   final double decliningPercentage;
 
@@ -54,6 +58,7 @@ class GlobalMarketContext {
     required this.asiaWeight,
     this.weightSource = RegionalMarketWeightSource.calculated,
     this.weightConfidence = 1.0,
+    this.marketUniverseStatus = const MarketUniverseStatus.fallback(),
     required this.advancingPercentage,
     required this.decliningPercentage,
     required this.sentiment,
@@ -68,6 +73,12 @@ class GlobalMarketContext {
   /// Indica si se está utilizando temporalmente el baseline.
   bool get isUsingBaselineWeights {
     return weightSource == RegionalMarketWeightSource.baseline;
+  }
+
+  /// Indica si el backend considera listo el universo persistido real.
+  bool get hasRealMarketUniverse {
+    return marketUniverseStatus.isGlobalReady &&
+        !marketUniverseStatus.usingFallback;
   }
 
   String get weightSourceKey {

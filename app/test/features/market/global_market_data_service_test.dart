@@ -2,6 +2,7 @@
 
 import 'package:app/features/market/models/market_region.dart';
 import 'package:app/features/market/models/market_universe_asset.dart';
+import 'package:app/features/market/models/market_universe_status.dart';
 import 'package:app/features/market/models/regional_market_context.dart';
 import 'package:app/features/market/models/regional_market_weights.dart';
 import 'package:app/features/market/repositories/market_universe_repository.dart';
@@ -123,10 +124,42 @@ class EmptyMarketUniverseRepository
   }
 }
 
+class ReadyMarketUniverseStatusProvider
+    implements MarketUniverseStatusProvider {
+  final bool weightingReady;
+
+  const ReadyMarketUniverseStatusProvider({
+    this.weightingReady = false,
+  });
+
+  @override
+  Future<MarketUniverseStatus> getStatus() async {
+    return MarketUniverseStatus(
+      activeCount: 16192,
+      globallyUsableCount: 2999,
+      usableCoverage: 0.1852149209486166,
+      regionCounts: const {
+        'america': 581,
+        'europe': 1427,
+        'asia': 991,
+      },
+      isGlobalReady: true,
+      usingFallback: false,
+      isWeightingReady: weightingReady,
+      weightingMethod: weightingReady
+          ? 'validated_global_method'
+          : 'country_top_n_market_cap',
+      weightingStatus: weightingReady
+          ? 'ready'
+          : 'calibration_required',
+    );
+  }
+}
+
 void main() {
   group('GlobalMarketDataService', () {
     test(
-      'calcula los pesos globales a partir del universo de mercado',
+      'calcula los pesos globales a partir del universo de mercado sin gate backend',
       () async {
         final service = GlobalMarketDataService(
           regionalMarketContextService:
@@ -141,45 +174,20 @@ void main() {
 
         final context = await service.getGlobalContext();
 
-        expect(
-          context.americaWeight,
-          closeTo(0.60, 0.000001),
-        );
-
-        expect(
-          context.europeWeight,
-          closeTo(0.20, 0.000001),
-        );
-
-        expect(
-          context.asiaWeight,
-          closeTo(0.20, 0.000001),
-        );
-
+        expect(context.americaWeight, closeTo(0.60, 0.000001));
+        expect(context.europeWeight, closeTo(0.20, 0.000001));
+        expect(context.asiaWeight, closeTo(0.20, 0.000001));
         expect(
           context.weightSource,
           RegionalMarketWeightSource.calculated,
         );
-
         expect(context.weightConfidence, 1.0);
         expect(context.hasCalculatedWeights, isTrue);
         expect(context.isUsingBaselineWeights, isFalse);
-
-        expect(
-          context.america.region,
-          MarketRegion.america.key,
-        );
-
-        expect(
-          context.europe.region,
-          MarketRegion.europe.key,
-        );
-
-        expect(
-          context.asia.region,
-          MarketRegion.asia.key,
-        );
-
+        expect(context.hasRealMarketUniverse, isFalse);
+        expect(context.america.region, MarketRegion.america.key);
+        expect(context.europe.region, MarketRegion.europe.key);
+        expect(context.asia.region, MarketRegion.asia.key);
         expect(
           context.advancingPercentage,
           closeTo(
@@ -189,7 +197,6 @@ void main() {
             0.000001,
           ),
         );
-
         expect(
           context.decliningPercentage,
           closeTo(
@@ -199,9 +206,65 @@ void main() {
             0.000001,
           ),
         );
-
         expect(context.sentiment, 'positive');
         expect(context.summary, isNotEmpty);
+      },
+    );
+
+    test(
+      'mantiene catálogo real pero usa baseline cuando la ponderación requiere calibración',
+      () async {
+        final service = GlobalMarketDataService(
+          regionalMarketContextService:
+              FakeRegionalMarketContextService(),
+          globalMarketContextService:
+              const GlobalMarketContextService(),
+          marketUniverseRepository:
+              FakeMarketUniverseRepository(),
+          regionalMarketWeightService:
+              const RegionalMarketWeightService(),
+          marketUniverseStatusProvider:
+              const ReadyMarketUniverseStatusProvider(),
+        );
+
+        final context = await service.getGlobalContext();
+
+        expect(context.hasRealMarketUniverse, isTrue);
+        expect(context.marketUniverseStatus.globallyUsableCount, 2999);
+        expect(context.marketUniverseStatus.isWeightingReady, isFalse);
+        expect(context.marketUniverseStatus.usingFallback, isFalse);
+        expect(context.weightSource, RegionalMarketWeightSource.baseline);
+        expect(context.weightConfidence, closeTo(0.35, 0.000001));
+        expect(context.americaWeight, closeTo(0.54, 0.000001));
+        expect(context.europeWeight, closeTo(0.16, 0.000001));
+        expect(context.asiaWeight, closeTo(0.30, 0.000001));
+      },
+    );
+
+    test(
+      'activa pesos calculados cuando backend valida la metodología',
+      () async {
+        final service = GlobalMarketDataService(
+          regionalMarketContextService:
+              FakeRegionalMarketContextService(),
+          globalMarketContextService:
+              const GlobalMarketContextService(),
+          marketUniverseRepository:
+              FakeMarketUniverseRepository(),
+          regionalMarketWeightService:
+              const RegionalMarketWeightService(),
+          marketUniverseStatusProvider:
+              const ReadyMarketUniverseStatusProvider(weightingReady: true),
+        );
+
+        final context = await service.getGlobalContext();
+
+        expect(context.hasRealMarketUniverse, isTrue);
+        expect(context.marketUniverseStatus.isWeightingReady, isTrue);
+        expect(context.weightSource, RegionalMarketWeightSource.calculated);
+        expect(context.americaWeight, closeTo(0.60, 0.000001));
+        expect(context.europeWeight, closeTo(0.20, 0.000001));
+        expect(context.asiaWeight, closeTo(0.20, 0.000001));
       },
     );
 
@@ -241,10 +304,7 @@ void main() {
               const RegionalMarketWeightService(),
         );
 
-        expect(
-          service.getGlobalContext,
-          throwsStateError,
-        );
+        expect(service.getGlobalContext, throwsStateError);
       },
     );
 
@@ -264,54 +324,29 @@ void main() {
 
         final context = await service.getGlobalContext();
 
-        expect(
-          context.americaWeight,
-          closeTo(0.54, 0.000001),
-        );
-
-        expect(
-          context.europeWeight,
-          closeTo(0.16, 0.000001),
-        );
-
-        expect(
-          context.asiaWeight,
-          closeTo(0.30, 0.000001),
-        );
-
+        expect(context.americaWeight, closeTo(0.54, 0.000001));
+        expect(context.europeWeight, closeTo(0.16, 0.000001));
+        expect(context.asiaWeight, closeTo(0.30, 0.000001));
         expect(
           context.weightSource,
           RegionalMarketWeightSource.baseline,
         );
-
-        expect(
-          context.weightConfidence,
-          closeTo(0.35, 0.000001),
-        );
-
+        expect(context.weightConfidence, closeTo(0.35, 0.000001));
         expect(context.hasCalculatedWeights, isFalse);
         expect(context.isUsingBaselineWeights, isTrue);
-
-        expect(
-          context.summary,
-          contains('referencia estructural'),
-        );
+        expect(context.hasRealMarketUniverse, isFalse);
+        expect(context.summary, contains('referencia estructural'));
       },
     );
 
     test(
       'el baseline regional forma una distribución válida',
       () {
-        expect(
-          RegionalMarketWeights.baseline.isValid,
-          isTrue,
-        );
-
+        expect(RegionalMarketWeights.baseline.isValid, isTrue);
         expect(
           RegionalMarketWeights.baseline.total,
           closeTo(1.0, 0.000001),
         );
-
         expect(
           RegionalMarketWeights.baseline.source,
           RegionalMarketWeightSource.baseline,
