@@ -97,8 +97,10 @@ void main() {
     );
   });
 
-  test('rejects nonfinite or out-of-range correlations', () async {
-    for (final value in <Object>[double.nan, double.infinity, 1.01, -1.01]) {
+  test('rejects nonnumeric or out-of-range correlations', () async {
+    // JSON cannot encode NaN or infinities. Exercise malformed/non-finite-like
+    // transport values with valid JSON instead, then keep the numeric bounds.
+    for (final value in <Object>['NaN', 'Infinity', 1.01, -1.01]) {
       final dataSource = AthenaBackendPortfolioCorrelationDataSource(
         baseUrl: 'https://api.athena.test',
         client: MockClient((request) async => http.Response(
@@ -114,7 +116,7 @@ void main() {
           sourceProvider: 'yahoo',
           knowledgeCutoff: DateTime.utc(2026, 9, 4, 18),
         ),
-        throwsA(anyOf(isA<FormatException>(), isA<UnsupportedError>())),
+        throwsA(isA<FormatException>()),
       );
     }
   });
