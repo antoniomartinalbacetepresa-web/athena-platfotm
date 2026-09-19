@@ -186,7 +186,9 @@ void main() {
 
     fail = true;
     await fx.load(positions: controller.positions, baseCurrency: 'EUR');
-    await tester.pump();
+    await tester.pumpWidget(
+      app(controller: controller, fx: fx, verifiedBaseCurrency: 'EUR'),
+    );
 
     expect(find.text('Valor actual: 90.00 EUR'), findsNothing);
     expect(find.textContaining('Valor total no disponible:'), findsOneWidget);
