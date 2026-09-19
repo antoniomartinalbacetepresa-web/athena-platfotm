@@ -74,9 +74,12 @@ void main() {
       throwsA(isA<UserPreferencesSessionRejectedException>()),
     );
 
-    expect(session.isAuthenticated, isTrue);
-    expect(session.accessToken, 'profile.jwt');
-    expect(store.value, 'profile.jwt');
+    // A backend 401/403 is authoritative: the service revokes both in-memory
+    // authority and the durable credential before surfacing the rejection.
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(session.account, isNull);
+    expect(store.value, isNull);
   });
 
   test('503 remains a transient profile failure, not a session rejection', () async {
