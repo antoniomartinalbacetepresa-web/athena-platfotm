@@ -134,10 +134,9 @@ class _ProfilePersonalizationShellState extends State<ProfilePersonalizationShel
     );
     if (sessionRejected == true && mounted) {
       // A protected Profile request has authoritatively rejected this session.
-      // Do not leave the user on an authenticated-looking surface after local
-      // authority has been cleared; return to the public entry point and remove
-      // the stale navigation stack.
-      Navigator.of(context).pushNamedAndRemoveUntil(
+      // Use State.context after the async gap: mounted guards this State's
+      // context, not the BuildContext parameter captured before awaiting.
+      Navigator.of(this.context).pushNamedAndRemoveUntil(
         AppRoutes.welcome,
         (route) => false,
       );
