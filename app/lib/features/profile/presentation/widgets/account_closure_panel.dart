@@ -24,13 +24,15 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
 
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmationController = TextEditingController();
+  String _password = '';
+  String _confirmation = '';
   bool _busy = false;
   String? _error;
 
   bool get _canSubmit =>
       !_busy &&
-      _passwordController.text.isNotEmpty &&
-      _confirmationController.text.trim() == _confirmationPhrase;
+      _password.isNotEmpty &&
+      _confirmation.trim() == _confirmationPhrase;
 
   @override
   void dispose() {
@@ -39,16 +41,23 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
     super.dispose();
   }
 
-  void _changed(String _) => setState(() {});
+  void _passwordChanged(String value) {
+    setState(() => _password = value);
+  }
+
+  void _confirmationChanged(String value) {
+    setState(() => _confirmation = value);
+  }
 
   Future<void> _submit() async {
     if (!_canSubmit) return;
+    final currentPassword = _password;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await widget.onClose(_passwordController.text);
+      await widget.onClose(currentPassword);
       if (!mounted) return;
       widget.onClosed();
     } on AccountClosureRejectedException {
@@ -122,7 +131,7 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
-            onChanged: _changed,
+            onChanged: _passwordChanged,
             decoration: const InputDecoration(
               labelText: 'Contraseña actual',
               helperText: 'Se usa para reautenticar el cierre en el backend.',
@@ -136,7 +145,7 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
             autocorrect: false,
             enableSuggestions: false,
             textCapitalization: TextCapitalization.characters,
-            onChanged: _changed,
+            onChanged: _confirmationChanged,
             decoration: const InputDecoration(
               labelText: 'Escribe ELIMINAR para confirmar',
             ),
