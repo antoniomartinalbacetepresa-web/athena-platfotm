@@ -39,7 +39,8 @@ http.Response _configured(double capital, String currency) => http.Response(
         'data': {
           'preferences': {
             'riskTolerance': 'balanced',
-            'investmentHorizon': 'medium_term',
+            'investmentHorizonYears': 10,
+            'objective': 'balanced_growth',
             'baseCurrency': currency,
             'availableCapital': capital,
           }

@@ -44,7 +44,8 @@ void main() {
           'data': {
             'preferences': {
               'riskTolerance': 'balanced',
-              'investmentHorizon': 'medium_term',
+              'investmentHorizonYears': 10,
+              'objective': 'balanced_growth',
               'baseCurrency': currency,
               'availableCapital': capital,
             }

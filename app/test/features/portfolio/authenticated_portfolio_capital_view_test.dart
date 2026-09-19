@@ -42,7 +42,8 @@ http.Response _configured() => http.Response(
         'data': {
           'preferences': {
             'riskTolerance': 'balanced',
-            'investmentHorizon': 'medium_term',
+            'investmentHorizonYears': 10,
+            'objective': 'balanced_growth',
             'baseCurrency': 'EUR',
             'availableCapital': 12345.67,
           }
