@@ -175,8 +175,10 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       ));
       return;
     }
-    if (_syncController.sessionRejected) await AuthSession.instance.clearAfterRemoteInvalidation();
     if (!mounted) return;
+    // The service has already revoked in-memory authority on an authoritative
+    // 401/403. Do not await secure-storage cleanup here: it is best-effort and
+    // must not delay the fail-closed UI transition or its user-visible reason.
     setState(() {});
     if (_syncController.message != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_syncController.message!)));
