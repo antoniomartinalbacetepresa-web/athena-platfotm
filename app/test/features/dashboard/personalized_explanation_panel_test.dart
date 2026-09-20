@@ -51,7 +51,7 @@ void main() {
       find.textContaining('no modifica puntuaciones, recomendaciones, ponderaciones'),
       findsOneWidget,
     );
-    expect(find.textContaining('no ejecuta operaciones'), findsOneWidget);
+    expect(find.textContaining('ni ejecuta operaciones'), findsOneWidget);
     expect(find.textContaining('125000'), findsNothing);
     expect(find.textContaining('EUR'), findsNothing);
   });
