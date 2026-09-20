@@ -111,7 +111,6 @@ class CorporateActionCoverageService:
                 retrieved = self._parse_aware_datetime(row.get("retrieved_at"), field="retrieved_at")
                 if retrieved > cutoff:
                     raise RuntimeError("Corporate action persistida viola el knowledge cutoff PIT.")
-                # Event identity is an instant, not the provider's textual timezone representation.
                 key = (action_type, effective.isoformat())
                 snapshot_key = (key, provider)
                 if snapshot_key not in latest or retrieved > latest[snapshot_key]:
@@ -119,12 +118,28 @@ class CorporateActionCoverageService:
                     latest[snapshot_key] = retrieved
 
             for by_provider in events.values():
-                classified = [(self._provider_families[p], row) for p, row in by_provider.items() if p in self._provider_families]
-                if len({family for family, _ in classified}) < 2:
+                by_family: dict[str, list[dict[str, Any]]] = {}
+                for provider, row in by_provider.items():
+                    family = self._provider_families.get(provider)
+                    if family is not None:
+                        by_family.setdefault(family, []).append(row)
+                if len(by_family) < 2:
                     incomplete += 1
                     continue
-                values = [self._public_value(row) for _, row in classified]
-                if self._all_equal(values):
+                # Multiple aliases belonging to one family are not independent votes.
+                # If they disagree internally, the event is conflicted before any
+                # cross-family comparison can claim reconciliation.
+                family_values: list[dict[str, Any]] = []
+                family_conflict = False
+                for rows_for_family in by_family.values():
+                    values = [self._public_value(row) for row in rows_for_family]
+                    if not self._all_equal_or_single(values):
+                        family_conflict = True
+                        break
+                    family_values.append(values[0])
+                if family_conflict:
+                    conflicts += 1
+                elif self._all_equal(family_values):
                     agreed += 1
                 else:
                     conflicts += 1
@@ -166,6 +181,9 @@ class CorporateActionCoverageService:
         if str(row["action_type"]).lower() == "dividend":
             return {"cashAmount": float(row["cash_amount"]), "currency": str(row["currency"]).strip().upper() if row.get("currency") is not None else None}
         return {"splitRatio": float(row["split_ratio"])}
+
+    def _all_equal_or_single(self, values: list[dict[str, Any]]) -> bool:
+        return bool(values) and all(self._value_equal(values[0], value) for value in values[1:])
 
     def _all_equal(self, values: list[dict[str, Any]]) -> bool:
         return len(values) >= 2 and all(self._value_equal(values[0], value) for value in values[1:])
