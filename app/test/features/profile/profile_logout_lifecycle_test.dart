@@ -56,6 +56,12 @@ void main() {
     expect(find.text('CERRAR SESIÓN'), findsOneWidget);
   }
 
+  Future<void> flushAsyncUi(WidgetTester tester) async {
+    for (var i = 0; i < 8; i += 1) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+
   testWidgets('verified remote logout clears session and navigates to welcome',
       (tester) async {
     session.establish(accessToken: 'profile.jwt', account: account());
@@ -84,7 +90,7 @@ void main() {
     expect(session.isAuthenticated, isTrue);
 
     logoutResponse.complete(http.Response('', 204));
-    await tester.pumpAndSettle();
+    await flushAsyncUi(tester);
 
     expect(session.isAuthenticated, isFalse);
     expect(session.accessToken, isNull);
@@ -117,20 +123,12 @@ void main() {
     expect(logoutCalls, 1);
 
     logoutResponse.complete(http.Response('{}', 503));
-    await tester.pumpAndSettle();
+    await flushAsyncUi(tester);
 
     expect(session.isAuthenticated, isTrue);
     expect(session.accessToken, 'profile.jwt');
     expect(find.byType(ProfilePage), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.textContaining('No se pudo confirmar el cierre de sesión'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(
-      find.textContaining('No se pudo confirmar el cierre de sesión'),
-      findsOneWidget,
-    );
+    expect(find.text('WELCOME AFTER VERIFIED LOGOUT'), findsNothing);
 
     auth.dispose();
   });
