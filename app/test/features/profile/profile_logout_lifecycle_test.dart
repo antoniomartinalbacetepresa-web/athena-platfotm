@@ -6,15 +6,27 @@ import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/profile/presentation/pages/profile_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
   final session = AuthSession.instance;
+  const secureStorageChannel = MethodChannel(
+    'plugins.it_nomads.com/flutter_secure_storage',
+  );
 
-  setUp(session.clear);
-  tearDown(session.clear);
+  setUp(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(secureStorageChannel, (_) async => null);
+    session.clear();
+  });
+  tearDown(() async {
+    session.clear();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(secureStorageChannel, null);
+  });
 
   AuthAccount account() => AuthAccount(
         id: 17,
@@ -57,7 +69,7 @@ void main() {
   }
 
   Future<void> flushAsyncUi(WidgetTester tester) async {
-    for (var i = 0; i < 40; i += 1) {
+    for (var i = 0; i < 8; i += 1) {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }
