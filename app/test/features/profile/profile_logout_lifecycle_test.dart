@@ -43,6 +43,21 @@ void main() {
     );
   }
 
+  Future<void> revealLogout(WidgetTester tester) async {
+    // Profile is a lazy ListView. The logout action can legitimately be below
+    // the test viewport and therefore not built yet. First let remote session
+    // validation finish, then scroll the protected surface until the action is
+    // materialized instead of treating an off-screen control as absent.
+    await tester.pumpAndSettle();
+    expect(find.text('Identidad autenticada'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('CERRAR SESIÓN'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('CERRAR SESIÓN'), findsOneWidget);
+  }
+
   testWidgets('verified remote logout clears session and navigates to welcome',
       (tester) async {
     session.establish(accessToken: 'profile.jwt', account: account());
@@ -65,13 +80,7 @@ void main() {
     );
 
     await tester.pumpWidget(appFor(auth));
-    // /auth/me is intentionally transient here; wait only until Profile
-    // publishes the authenticated controls instead of settling unrelated I/O.
-    for (var frame = 0; frame < 20 && find.text('CERRAR SESIÓN').evaluate().isEmpty; frame++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    expect(find.text('CERRAR SESIÓN'), findsOneWidget);
-    await tester.ensureVisible(find.text('CERRAR SESIÓN'));
+    await revealLogout(tester);
     await tester.tap(find.text('CERRAR SESIÓN'));
     await tester.pumpAndSettle();
 
@@ -98,8 +107,7 @@ void main() {
     );
 
     await tester.pumpWidget(appFor(auth));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('CERRAR SESIÓN'));
+    await revealLogout(tester);
     await tester.tap(find.text('CERRAR SESIÓN'));
     await tester.pumpAndSettle();
 
