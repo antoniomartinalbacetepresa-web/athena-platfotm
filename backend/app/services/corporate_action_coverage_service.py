@@ -30,6 +30,7 @@ class CorporateActionCoverageReport:
         return (
             self.event_count > 0
             and len(self.independent_provider_families) >= 2
+            and not self.unclassified_source_providers
             and self.agreed_event_count == self.event_count
             and self.conflict_event_count == 0
             and self.incomplete_event_count == 0
@@ -54,9 +55,10 @@ class CorporateActionCoverageReport:
             "productionIndependenceClaimed": False,
             "warning": (
                 "La cobertura exige que cada corporate action visible al knowledge cutoff "
-                "coincida entre al menos dos familias de proveedor configuradas. La "
-                "clasificación técnica no demuestra independencia operativa y nunca "
-                "autoriza canonicalización automática."
+                "coincida entre al menos dos familias de proveedor configuradas y que no "
+                "exista provenance de proveedor sin clasificar. La clasificación técnica "
+                "no demuestra independencia operativa y nunca autoriza canonicalización "
+                "automática."
             ),
         }
 
