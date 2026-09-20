@@ -57,7 +57,7 @@ void main() {
   }
 
   Future<void> flushAsyncUi(WidgetTester tester) async {
-    for (var i = 0; i < 8; i += 1) {
+    for (var i = 0; i < 40; i += 1) {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }
