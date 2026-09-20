@@ -9,7 +9,7 @@ from typing import Callable
 from app.database.athena_database import AthenaDatabase
 from app.services.canonical_weighting_governance_service import (
     CanonicalWeightingGovernanceService,
-    WeightingProposal,
+    CanonicalWeightingProposal,
 )
 
 
@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def require_interactive_approval(
-    proposal: WeightingProposal,
+    proposal: CanonicalWeightingProposal,
     *,
     stdin_is_tty: bool | None = None,
     input_fn: Callable[[str], str] | None = None,
