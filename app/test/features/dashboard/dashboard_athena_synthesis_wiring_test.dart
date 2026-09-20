@@ -112,10 +112,27 @@ void main() {
 RecommendationDependencies _dependencies(
     AthenaBackendSynthesisDataSource synthesisDataSource) {
   const baseUrl = 'https://athena.example';
-  final learning = AthenaBackendRecommendationLearningDataSource(baseUrl: baseUrl);
-  final shadow = AthenaBackendRecommendationShadowCandidateDataSource(baseUrl: baseUrl);
-  final production = AthenaBackendRecommendationProductionDataSource(baseUrl: baseUrl);
-  final dossier = AthenaBackendProfessionalDossierDataSource(baseUrl: baseUrl);
+  final ancillaryClient = MockClient((request) async => http.Response(
+        jsonEncode({'detail': 'Not part of synthesis wiring acceptance.'}),
+        404,
+        headers: {'content-type': 'application/json'},
+      ));
+  final learning = AthenaBackendRecommendationLearningDataSource(
+    baseUrl: baseUrl,
+    client: ancillaryClient,
+  );
+  final shadow = AthenaBackendRecommendationShadowCandidateDataSource(
+    baseUrl: baseUrl,
+    client: ancillaryClient,
+  );
+  final production = AthenaBackendRecommendationProductionDataSource(
+    baseUrl: baseUrl,
+    client: ancillaryClient,
+  );
+  final dossier = AthenaBackendProfessionalDossierDataSource(
+    baseUrl: baseUrl,
+    client: ancillaryClient,
+  );
   return RecommendationDependencies(
     learningDataSource: learning,
     shadowCandidateDataSource: shadow,
