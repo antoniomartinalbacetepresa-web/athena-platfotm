@@ -90,23 +90,29 @@ class GovernedForecastErrorOosService:
         span = measurement.get("evaluationSpanDays")
         if isinstance(span, bool) or not isinstance(span, (int, float)) or not math.isfinite(float(span)) or float(span) < 0:
             raise RuntimeError("La medición OOS contiene evaluationSpanDays inválido.")
+        counts: dict[str, int] = {}
         for field in (
             "distinctEvaluationPeriodCount",
             "eligibleOutcomeCount",
             "forecastErrorCount",
             "distinctResolvedIssuerCount",
         ):
-            cls._require_nonnegative_int(measurement.get(field), field)
+            counts[field] = cls._require_nonnegative_int(measurement.get(field), field)
+        if counts["forecastErrorCount"] > counts["eligibleOutcomeCount"]:
+            raise RuntimeError("La medición OOS contiene más forecast errors que outcomes elegibles.")
         horizons = measurement.get("horizons")
         if not isinstance(horizons, dict):
             raise RuntimeError("La medición OOS gobernada carece de horizons estructurados.")
+        horizon_error_total = 0
         for horizon, payload in horizons.items():
             if not isinstance(horizon, str) or not horizon.strip() or not isinstance(payload, dict):
                 raise RuntimeError("La medición OOS contiene un horizonte inválido.")
-            cls._require_nonnegative_int(
+            horizon_error_total += cls._require_nonnegative_int(
                 payload.get("forecastErrorCount"),
                 f"horizons.{horizon}.forecastErrorCount",
             )
+        if horizon_error_total != counts["forecastErrorCount"]:
+            raise RuntimeError("La medición OOS no reconcilia forecastErrorCount con sus horizontes.")
 
     @staticmethod
     def _require_nonnegative_int(value: Any, field: str) -> int:
