@@ -42,12 +42,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(PortfolioPage), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Must never leak into authenticated account'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+    expect(
+      find.text('Must never leak into authenticated account', skipOffstage: false),
+      findsOneWidget,
     );
-    expect(find.text('Must never leak into authenticated account'), findsOneWidget);
   });
 
   testWidgets(
