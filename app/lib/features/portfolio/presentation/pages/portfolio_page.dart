@@ -479,7 +479,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
           ],
         );
 
-        if (constraints.maxWidth < 620) {
+        if (constraints.maxWidth < 820) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
