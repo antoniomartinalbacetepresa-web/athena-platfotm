@@ -145,9 +145,13 @@ void main() {
     final controller = NewsSynthesisController(service: service);
 
     await tester.pumpWidget(MaterialApp(
-      home: NewsPage(synthesisController: controller),
+      home: NewsPage(
+        synthesisController: controller,
+        newsFeed: const SizedBox.shrink(),
+      ),
     ));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(calls, 1);
     expect(find.text('NOTICIAS'), findsOneWidget);
