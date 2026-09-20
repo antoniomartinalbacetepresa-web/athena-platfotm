@@ -69,7 +69,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('athena-synthesis-content')), findsOneWidget);
     expect(find.text('El escenario central mantiene crecimiento moderado.'), findsOneWidget);
-    expect(find.text('La demanda futura puede desviarse del escenario central.'), findsOneWidget);
+    // The presentation deliberately prefixes uncertainty items as bullets. Match
+    // the verified payload text without coupling the contract test to decoration.
+    expect(find.textContaining('La demanda futura puede desviarse del escenario central.'), findsOneWidget);
     expect(find.text('News verificada'), findsOneWidget);
     expect(find.text('Investors verificado'), findsOneWidget);
     expect(find.text('2 evidencias'), findsOneWidget);
