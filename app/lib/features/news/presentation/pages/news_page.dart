@@ -8,8 +8,13 @@ import '../widgets/news_synthesis_panel.dart';
 
 class NewsPage extends StatefulWidget {
   final NewsSynthesisController? synthesisController;
+  final Widget? newsFeed;
 
-  const NewsPage({super.key, this.synthesisController});
+  const NewsPage({
+    super.key,
+    this.synthesisController,
+    this.newsFeed,
+  });
 
   @override
   State<NewsPage> createState() => _NewsPageState();
@@ -62,7 +67,7 @@ class _NewsPageState extends State<NewsPage> {
             children: [
               NewsSynthesisPanel(controller: _synthesisController),
               const SizedBox(height: 24),
-              const NewsFeedPanel(limit: 20),
+              widget.newsFeed ?? const NewsFeedPanel(limit: 20),
             ],
           ),
         ),
