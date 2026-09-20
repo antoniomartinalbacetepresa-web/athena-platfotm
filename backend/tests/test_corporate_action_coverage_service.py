@@ -104,6 +104,27 @@ def test_two_configured_independent_families_with_full_agreement_are_ready(tmp_p
     assert payload["productionIndependenceClaimed"] is False
 
 
+def test_unclassified_provenance_blocks_readiness_even_when_classified_families_agree(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="yahoo", amount=0.25)
+    _save_dividend(database, provider="exchange_notice", amount=0.25)
+    _save_dividend(database, provider="mystery_feed", amount=0.30)
+
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={
+            "yahoo": "yahoo",
+            "exchange_notice": "exchange",
+        },
+    ).get_report(as_of=AS_OF)
+
+    assert report.event_count == 1
+    assert report.agreed_event_count == 1
+    assert report.unclassified_source_providers == ("mystery_feed",)
+    assert report.cross_provider_reconciliation_ready is False
+    assert report.to_api_dict()["crossProviderReconciliationReady"] is False
+
+
 def test_disagreement_between_independent_families_fails_closed(tmp_path) -> None:
     database = _database(tmp_path)
     _save_dividend(database, provider="yahoo", amount=0.25)
