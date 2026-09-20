@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+from typing import Callable
 
 from app.database.athena_database import AthenaDatabase
 from app.services.canonical_weighting_governance_service import (
     CanonicalWeightingGovernanceService,
+    WeightingProposal,
 )
 
 
@@ -20,7 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Gobierno manual del weighting canónico. Crear una propuesta nunca la activa; "
-            "approve/reject requieren una decisión humana explícita y quedan auditados."
+            "approve requiere una terminal humana interactiva y confirmación del SHA-256 "
+            "de evidencia; reject requiere una decisión humana explícita y queda auditado."
         )
     )
     parser.add_argument("--database", type=Path, default=None)
@@ -52,13 +56,55 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace) -> dict[str, object]:
+def require_interactive_approval(
+    proposal: WeightingProposal,
+    *,
+    stdin_is_tty: bool | None = None,
+    input_fn: Callable[[str], str] | None = None,
+) -> None:
+    """Make the production approval path explicitly human-in-the-loop.
+
+    CI, schedulers and other non-interactive callers may create/read proposals,
+    but they cannot activate canonical weighting. The reviewer must use an
+    interactive terminal and type the exact immutable evidence SHA-256 they are
+    approving. This is an execution control, not proof of the reviewer's real
+    identity; operational identity/access controls remain a deployment gate.
+    """
+
+    interactive = sys.stdin.isatty() if stdin_is_tty is None else stdin_is_tty
+    if not interactive:
+        raise RuntimeError(
+            "La aprobación de weighting está bloqueada fuera de una terminal humana interactiva."
+        )
+    reader = input if input_fn is None else input_fn
+    typed_hash = reader(
+        "Confirma el SHA-256 exacto de la evidencia revisada "
+        f"({proposal.evidence_sha256}): "
+    ).strip().lower()
+    if typed_hash != proposal.evidence_sha256.lower():
+        raise RuntimeError(
+            "La confirmación humana no coincide con el SHA-256 de evidencia; aprobación cancelada."
+        )
+
+
+def run(
+    args: argparse.Namespace,
+    *,
+    stdin_is_tty: bool | None = None,
+    input_fn: Callable[[str], str] | None = None,
+) -> dict[str, object]:
     database = AthenaDatabase(args.database)
     service = CanonicalWeightingGovernanceService(database=database)
 
     if args.command == "propose":
         return service.create_proposal(created_by=args.created_by).to_api_dict()
     if args.command == "approve":
+        proposal = service.get_proposal(args.proposal_id)
+        require_interactive_approval(
+            proposal,
+            stdin_is_tty=stdin_is_tty,
+            input_fn=input_fn,
+        )
         return service.approve_proposal(
             args.proposal_id,
             approved_by=args.approved_by,
