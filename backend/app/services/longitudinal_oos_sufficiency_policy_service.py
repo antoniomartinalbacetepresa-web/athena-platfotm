@@ -55,12 +55,26 @@ class LongitudinalOosSufficiencyPolicyService:
         last_evaluation = self._optional_iso(measurement.get("lastEvaluationPeriodEnd"), "measurement.lastEvaluationPeriodEnd")
         temporal_precommitment_verified = bool(first_start is not None and policy_created is not None and approval_created is not None and first_evaluation is not None and last_evaluation is not None and policy_created <= approved_at <= approval_created < first_start < first_evaluation <= last_evaluation <= cutoff)
         c = normalized["criteria"]
-        checks = [float(measurement.get("evaluationSpanDays", -1)) >= c["minimumEvaluationSpanDays"], int(measurement.get("distinctEvaluationPeriodCount", -1)) >= c["minimumDistinctEvaluationPeriods"], int(measurement.get("eligibleOutcomeCount", -1)) >= c["minimumEligibleOutcomes"], int(measurement.get("forecastErrorCount", -1)) >= c["minimumEligibleOutcomes"], int(measurement.get("distinctResolvedIssuerCount", -1)) >= c["minimumDistinctResolvedIssuers"]]
+        evaluation_span = self._measurement_nonnegative_number(measurement.get("evaluationSpanDays"), "measurement.evaluationSpanDays")
+        distinct_periods = self._measurement_nonnegative_int(measurement.get("distinctEvaluationPeriodCount"), "measurement.distinctEvaluationPeriodCount")
+        eligible_outcomes = self._measurement_nonnegative_int(measurement.get("eligibleOutcomeCount"), "measurement.eligibleOutcomeCount")
+        forecast_errors = self._measurement_nonnegative_int(measurement.get("forecastErrorCount"), "measurement.forecastErrorCount")
+        resolved_issuers = self._measurement_nonnegative_int(measurement.get("distinctResolvedIssuerCount"), "measurement.distinctResolvedIssuerCount")
+        if forecast_errors > eligible_outcomes:
+            raise ValueError("measurement.forecastErrorCount no puede superar eligibleOutcomeCount.")
+        checks = [evaluation_span >= c["minimumEvaluationSpanDays"], distinct_periods >= c["minimumDistinctEvaluationPeriods"], eligible_outcomes >= c["minimumEligibleOutcomes"], forecast_errors >= c["minimumEligibleOutcomes"], resolved_issuers >= c["minimumDistinctResolvedIssuers"]]
         horizons = measurement.get("horizons")
         if not isinstance(horizons, dict):
             checks.append(False)
         else:
-            checks.append(all(isinstance(horizons.get(str(horizon)), dict) and int(horizons[str(horizon)].get("forecastErrorCount", 0)) > 0 for horizon in c["requiredHorizonSeconds"]))
+            required_horizon_counts: list[int] = []
+            for horizon in c["requiredHorizonSeconds"]:
+                payload = horizons.get(str(horizon))
+                if not isinstance(payload, dict):
+                    required_horizon_counts.append(0)
+                    continue
+                required_horizon_counts.append(self._measurement_nonnegative_int(payload.get("forecastErrorCount"), f"measurement.horizons.{horizon}.forecastErrorCount"))
+            checks.append(all(count > 0 for count in required_horizon_counts))
         checks.append(temporal_precommitment_verified)
         satisfied = all(checks)
         return self._result(normalized, fingerprint, "precommitted_policy_satisfied" if satisfied else "precommitted_policy_not_satisfied", True, satisfied, checks, temporal_precommitment_verified)
@@ -109,14 +123,26 @@ class LongitudinalOosSufficiencyPolicyService:
 
     @staticmethod
     def _nonnegative_number(value: Any, field: str) -> float:
-        # bool is a subclass of int in Python; accepting it here would silently
-        # turn True/False into policy thresholds 1.0/0.0 and alter the canonical
-        # fingerprint. Policy thresholds must be explicit numeric values.
         if isinstance(value, bool):
             raise ValueError(f"{field} debe ser finito y no negativo.")
         number = float(value)
         if not math.isfinite(number) or number < 0:
             raise ValueError(f"{field} debe ser finito y no negativo.")
+        return number
+
+    @staticmethod
+    def _measurement_nonnegative_int(value: Any, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field} debe ser entero no negativo.")
+        return value
+
+    @staticmethod
+    def _measurement_nonnegative_number(value: Any, field: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} debe ser numérico finito y no negativo.")
+        number = float(value)
+        if not math.isfinite(number) or number < 0:
+            raise ValueError(f"{field} debe ser numérico finito y no negativo.")
         return number
 
     @staticmethod
