@@ -113,9 +113,7 @@ def test_declared_approval_cannot_replace_physical_governance_precommitment(reco
 def test_no_policy_or_approval_cannot_claim_sufficiency() -> None:
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
         as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=_measurement(),
-        policy_record=None,
-        approval_record=None,
+        measurement=_measurement(), policy_record=None, approval_record=None,
     )
     assert result["status"] == "policy_not_precommitted"
     assert result["policyApproved"] is False
@@ -127,27 +125,20 @@ def test_no_policy_or_approval_cannot_claim_sufficiency() -> None:
 def test_precommitted_policy_stays_blocked_without_human_approval() -> None:
     policy = _policy()
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=_measurement(),
-        policy_record=policy,
-        approval_record=None,
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        policy_record=policy, approval_record=None,
     )
     assert result["status"] == "policy_approval_required"
     assert result["policyApproved"] is False
 
 
 def test_policy_mutation_invalidates_previous_approval() -> None:
-    original = _policy()
-    old_fingerprint = original["artifact"]["policyFingerprint"]
-    criteria = _criteria()
-    criteria["minimumEligibleOutcomes"] = 11
+    original = _policy(); old_fingerprint = original["artifact"]["policyFingerprint"]
+    criteria = _criteria(); criteria["minimumEligibleOutcomes"] = 11
     mutated = _policy(criteria)
-
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=_measurement(),
-        policy_record=mutated,
-        approval_record=_approval(str(old_fingerprint)),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        policy_record=mutated, approval_record=_approval(str(old_fingerprint)),
     )
     assert result["status"] == "policy_approval_stale"
     assert result["policyApproved"] is False
@@ -155,16 +146,11 @@ def test_policy_mutation_invalidates_previous_approval() -> None:
 
 
 def test_valid_approval_is_still_separate_from_evidence_satisfaction() -> None:
-    policy = _policy()
-    fingerprint = str(policy["artifact"]["policyFingerprint"])
-    weak = _measurement()
-    weak["distinctEvaluationPeriodCount"] = 2
-
+    policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
+    weak = _measurement(); weak["distinctEvaluationPeriodCount"] = 2
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=weak,
-        policy_record=policy,
-        approval_record=_approval(fingerprint),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=weak,
+        policy_record=policy, approval_record=_approval(fingerprint),
     )
     assert result["status"] == "precommitted_policy_not_satisfied"
     assert result["policyApproved"] is True
@@ -174,18 +160,11 @@ def test_valid_approval_is_still_separate_from_evidence_satisfaction() -> None:
 
 
 def test_human_approval_after_observed_oos_evidence_cannot_bless_history() -> None:
-    policy = _policy()
-    fingerprint = str(policy["artifact"]["policyFingerprint"])
-
+    policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=_measurement(),
-        policy_record=policy,
-        approval_record=_approval(
-            fingerprint, approved_at="2026-02-20T00:00:00+00:00"
-        ),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        policy_record=policy, approval_record=_approval(fingerprint, approved_at="2026-02-20T00:00:00+00:00"),
     )
-
     assert result["status"] == "precommitted_policy_not_satisfied"
     assert result["policyApproved"] is True
     assert result["temporalPrecommitmentVerified"] is False
@@ -194,49 +173,33 @@ def test_human_approval_after_observed_oos_evidence_cannot_bless_history() -> No
 
 
 def test_same_instant_approval_and_first_evidence_fails_closed() -> None:
-    policy = _policy()
-    fingerprint = str(policy["artifact"]["policyFingerprint"])
-
+    policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=_measurement(),
-        policy_record=policy,
-        approval_record=_approval(
-            fingerprint, approved_at="2026-01-02T00:00:00+00:00"
-        ),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        policy_record=policy, approval_record=_approval(fingerprint, approved_at="2026-01-02T00:00:00+00:00"),
     )
-
     assert result["status"] == "precommitted_policy_not_satisfied"
     assert result["temporalPrecommitmentVerified"] is False
     assert result["acceptanceEvidenceVerified"] is False
 
 
 def test_future_dated_measurement_cannot_satisfy_policy_as_of_cutoff() -> None:
-    policy = _policy()
-    fingerprint = str(policy["artifact"]["policyFingerprint"])
-    measurement = _measurement()
-    measurement["lastEvaluationPeriodEnd"] = "2026-04-01T00:00:00+00:00"
-
+    policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
+    measurement = _measurement(); measurement["lastEvaluationPeriodEnd"] = "2026-04-01T00:00:00+00:00"
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=measurement,
-        policy_record=policy,
-        approval_record=_approval(fingerprint),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
+        policy_record=policy, approval_record=_approval(fingerprint),
     )
-
     assert result["status"] == "precommitted_policy_not_satisfied"
     assert result["temporalPrecommitmentVerified"] is False
     assert result["acceptanceEvidenceVerified"] is False
 
 
 def test_test_only_policy_can_prove_mechanics_without_production_claim() -> None:
-    policy = _policy()
-    fingerprint = str(policy["artifact"]["policyFingerprint"])
+    policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
-        measurement=_measurement(),
-        policy_record=policy,
-        approval_record=_approval(fingerprint),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        policy_record=policy, approval_record=_approval(fingerprint),
     )
     assert result["status"] == "precommitted_policy_satisfied"
     assert result["policyApproved"] is True
@@ -248,27 +211,55 @@ def test_test_only_policy_can_prove_mechanics_without_production_claim() -> None
 
 
 def test_eligible_outcomes_do_not_substitute_for_measured_forecast_errors() -> None:
-    policy = _policy()
-    measurement = _measurement()
-    measurement["forecastErrorCount"] = 9
+    policy = _policy(); measurement = _measurement(); measurement["forecastErrorCount"] = 9
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
         as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
-        policy_record=policy,
-        approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+        policy_record=policy, approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
     )
     assert result["status"] == "precommitted_policy_not_satisfied"
     assert result["acceptanceEvidenceVerified"] is False
 
 
 def test_required_horizon_without_measured_errors_cannot_satisfy_policy() -> None:
-    policy = _policy()
-    measurement = _measurement()
-    measurement["horizons"]["2592000"] = {"forecastErrorCount": 0}
+    policy = _policy(); measurement = _measurement(); measurement["horizons"]["2592000"] = {"forecastErrorCount": 0}
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
         as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
-        policy_record=policy,
-        approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+        policy_record=policy, approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
     )
     assert result["policyApproved"] is True
     assert result["acceptanceEvidenceVerified"] is False
     assert result["productionSufficiencyClaimed"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("distinctEvaluationPeriodCount", True),
+    ("eligibleOutcomeCount", 12.5),
+    ("forecastErrorCount", "12"),
+    ("distinctResolvedIssuerCount", -1),
+    ("evaluationSpanDays", float("nan")),
+])
+def test_malformed_measurement_cannot_be_coerced_into_policy_evidence(field, value) -> None:
+    policy = _policy(); measurement = _measurement(); measurement[field] = value
+    with pytest.raises(ValueError, match="measurement"):
+        LongitudinalOosSufficiencyPolicyService().evaluate(
+            as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
+            policy_record=policy, approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+        )
+
+
+def test_boolean_required_horizon_count_cannot_satisfy_policy() -> None:
+    policy = _policy(); measurement = _measurement(); measurement["horizons"]["604800"]["forecastErrorCount"] = True
+    with pytest.raises(ValueError, match="measurement.horizons.604800.forecastErrorCount"):
+        LongitudinalOosSufficiencyPolicyService().evaluate(
+            as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
+            policy_record=policy, approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+        )
+
+
+def test_forecast_error_count_cannot_exceed_eligible_outcomes_in_policy_boundary() -> None:
+    policy = _policy(); measurement = _measurement(); measurement["forecastErrorCount"] = 13
+    with pytest.raises(ValueError, match="no puede superar"):
+        LongitudinalOosSufficiencyPolicyService().evaluate(
+            as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
+            policy_record=policy, approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+        )
