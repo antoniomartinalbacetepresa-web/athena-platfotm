@@ -134,9 +134,8 @@ def test_coverage_requires_timezone_aware_cutoff_and_valid_tolerance(tmp_path) -
     with pytest.raises(ValueError):
         CorporateActionCoverageService(database=database, numeric_tolerance=float("nan"))
 
-def test_multiple_aliases_in_one_family_do_not_outvote_independent_family(
-    tmp_path,
-) -> None:
+
+def test_multiple_aliases_in_one_family_do_not_outvote_independent_family(tmp_path) -> None:
     database = _database(tmp_path)
     _save_dividend(database, provider="primary_a", amount=0.25)
     _save_dividend(database, provider="primary_b", amount=0.25)
@@ -155,4 +154,47 @@ def test_multiple_aliases_in_one_family_do_not_outvote_independent_family(
     assert report.agreed_event_count == 0
     assert report.conflict_event_count == 1
     assert report.incomplete_event_count == 0
+    assert report.cross_provider_reconciliation_ready is False
+
+
+def test_aliases_within_one_family_cannot_create_false_cross_provider_conflict(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="primary_a", amount=0.25)
+    _save_dividend(database, provider="primary_b", amount=0.25)
+    _save_dividend(database, provider="independent", amount=0.25)
+
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={
+            "primary_a": "primary",
+            "primary_b": "primary",
+            "independent": "secondary",
+        },
+    ).get_report(as_of=AS_OF)
+
+    assert report.event_count == 1
+    assert report.agreed_event_count == 1
+    assert report.conflict_event_count == 0
+    assert report.incomplete_event_count == 0
+    assert report.cross_provider_reconciliation_ready is True
+
+
+def test_disagreement_inside_one_provider_family_fails_closed(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="primary_a", amount=0.25)
+    _save_dividend(database, provider="primary_b", amount=0.30)
+    _save_dividend(database, provider="independent", amount=0.25)
+
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={
+            "primary_a": "primary",
+            "primary_b": "primary",
+            "independent": "secondary",
+        },
+    ).get_report(as_of=AS_OF)
+
+    assert report.event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 1
     assert report.cross_provider_reconciliation_ready is False
