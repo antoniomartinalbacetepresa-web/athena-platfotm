@@ -7,28 +7,40 @@ import '../widgets/news_feed_panel.dart';
 import '../widgets/news_synthesis_panel.dart';
 
 class NewsPage extends StatefulWidget {
-  const NewsPage({super.key});
+  final NewsSynthesisController? synthesisController;
+
+  const NewsPage({super.key, this.synthesisController});
 
   @override
   State<NewsPage> createState() => _NewsPageState();
 }
 
 class _NewsPageState extends State<NewsPage> {
-  late final AthenaBackendNewsSynthesisService _synthesisService;
+  AthenaBackendNewsSynthesisService? _ownedSynthesisService;
   late final NewsSynthesisController _synthesisController;
+  late final bool _ownsSynthesisController;
 
   @override
   void initState() {
     super.initState();
-    _synthesisService = AthenaBackendNewsSynthesisService();
-    _synthesisController = NewsSynthesisController(service: _synthesisService);
+    _ownsSynthesisController = widget.synthesisController == null;
+    if (_ownsSynthesisController) {
+      _ownedSynthesisService = AthenaBackendNewsSynthesisService();
+      _synthesisController = NewsSynthesisController(
+        service: _ownedSynthesisService!,
+      );
+    } else {
+      _synthesisController = widget.synthesisController!;
+    }
     _synthesisController.load();
   }
 
   @override
   void dispose() {
-    _synthesisController.dispose();
-    _synthesisService.dispose();
+    if (_ownsSynthesisController) {
+      _synthesisController.dispose();
+      _ownedSynthesisService?.dispose();
+    }
     super.dispose();
   }
 
