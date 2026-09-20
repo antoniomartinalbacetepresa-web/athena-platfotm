@@ -15,6 +15,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  Widget synthesisDashboard(RecommendationDependencies dependencies) => MaterialApp(
+        home: DashboardPage(
+          recommendationDependencies: dependencies,
+          renderOperationalPanels: false,
+        ),
+      );
+
   testWidgets('Dashboard loads latest canonical ATHENA synthesis without cycle hash', (tester) async {
     late Uri requested;
     final client = MockClient((request) async {
@@ -28,9 +35,7 @@ void main() {
     );
     final dependencies = _dependencies(synthesisDataSource);
 
-    await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(recommendationDependencies: dependencies),
-    ));
+    await tester.pumpWidget(synthesisDashboard(dependencies));
     await tester.pumpAndSettle();
 
     expect(requested.path,
@@ -55,9 +60,7 @@ void main() {
     );
     final dependencies = _dependencies(synthesisDataSource);
 
-    await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(recommendationDependencies: dependencies),
-    ));
+    await tester.pumpWidget(synthesisDashboard(dependencies));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('athena-synthesis-content')), findsNothing);
@@ -88,9 +91,7 @@ void main() {
     );
     final dependencies = _dependencies(synthesisDataSource);
 
-    await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(recommendationDependencies: dependencies),
-    ));
+    await tester.pumpWidget(synthesisDashboard(dependencies));
     await tester.pumpAndSettle();
 
     expect(requests, 1);
