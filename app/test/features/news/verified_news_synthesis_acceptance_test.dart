@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:app/features/news/models/verified_news_synthesis.dart';
 import 'package:app/features/news/presentation/news_synthesis_controller.dart';
+import 'package:app/features/news/presentation/pages/news_page.dart';
 import 'package:app/features/news/presentation/widgets/news_synthesis_panel.dart';
 import 'package:app/features/news/services/athena_backend_news_synthesis_service.dart';
 import 'package:flutter/material.dart';
@@ -127,6 +128,34 @@ void main() {
     expect(controller.error, isNotNull);
     expect(find.textContaining('Resultados mejores'), findsNothing);
     expect(find.text('Reintentar'), findsOneWidget);
+    controller.dispose();
+    service.dispose();
+  });
+
+  testWidgets('News page loads the canonical synthesis through its injected boundary',
+      (tester) async {
+    var calls = 0;
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: MockClient((request) async {
+        calls += 1;
+        return http.Response(jsonEncode(payload()), 200);
+      }),
+    );
+    final controller = NewsSynthesisController(service: service);
+
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(synthesisController: controller),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(calls, 1);
+    expect(find.text('NOTICIAS'), findsOneWidget);
+    expect(find.textContaining('Resultados mejores'), findsOneWidget);
+    expect(find.textContaining('Example Publisher'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(controller.hasListeners, isFalse);
     controller.dispose();
     service.dispose();
   });
