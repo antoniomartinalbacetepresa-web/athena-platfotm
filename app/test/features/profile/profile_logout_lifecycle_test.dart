@@ -102,7 +102,13 @@ void main() {
     expect(session.isAuthenticated, isTrue);
 
     logoutResponse.complete(http.Response('', 204));
-    await flushAsyncUi(tester);
+    // Let the mocked platform storage future complete in the real async zone,
+    // then settle the route transition. Fixed-duration pumps can advance frames
+    // without draining a MethodChannel future and made this test timing-bound.
+    await tester.runAsync(() async {
+      await Future<void>.delayed(Duration.zero);
+    });
+    await tester.pumpAndSettle();
 
     expect(session.isAuthenticated, isFalse);
     expect(session.accessToken, isNull);
