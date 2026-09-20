@@ -17,8 +17,13 @@ import '../widgets/system_readiness_panel.dart';
 
 class DashboardPage extends StatefulWidget {
   final RecommendationDependencies? recommendationDependencies;
+  final bool renderOperationalPanels;
 
-  const DashboardPage({super.key, this.recommendationDependencies});
+  const DashboardPage({
+    super.key,
+    this.recommendationDependencies,
+    this.renderOperationalPanels = true,
+  });
 
   static const double _leftColumnWidth = 280;
   static const double _desktopBreakpoint = 1080;
@@ -70,28 +75,32 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 child: Column(
                   children: [
-                    const SizedBox(
-                      height: 112,
-                      child: SystemReadinessPanel(),
-                    ),
-                    const SizedBox(height: AthenaSpacing.md),
-                    const PersonalizedExplanationPanel(),
-                    const SizedBox(height: AthenaSpacing.md),
+                    if (widget.renderOperationalPanels) ...[
+                      const SizedBox(
+                        height: 112,
+                        child: SystemReadinessPanel(),
+                      ),
+                      const SizedBox(height: AthenaSpacing.md),
+                      const PersonalizedExplanationPanel(),
+                      const SizedBox(height: AthenaSpacing.md),
+                    ],
                     SizedBox(
                       height: 420,
                       child: AthenaSynthesisPanel(
                         controller: _synthesisController,
                       ),
                     ),
-                    const SizedBox(height: AthenaSpacing.md),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        if (constraints.maxWidth < DashboardPage._desktopBreakpoint) {
-                          return const _CompactDashboard();
-                        }
-                        return const _DesktopDashboard();
-                      },
-                    ),
+                    if (widget.renderOperationalPanels) ...[
+                      const SizedBox(height: AthenaSpacing.md),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < DashboardPage._desktopBreakpoint) {
+                            return const _CompactDashboard();
+                          }
+                          return const _DesktopDashboard();
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),
