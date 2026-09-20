@@ -91,3 +91,28 @@ def test_malformed_horizon_error_count_fails_closed_before_policy_evaluation():
             cohort_record=None,
             error_records=[],
         )
+
+
+def test_total_forecast_errors_cannot_exceed_eligible_outcomes():
+    measurement = _measurement()
+    measurement["forecastErrorCount"] = 13
+    measurement["horizons"]["604800"]["forecastErrorCount"] = 7
+
+    with pytest.raises(RuntimeError, match="más forecast errors"):
+        _service(measurement).evaluate(
+            as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
+            cohort_record=None,
+            error_records=[],
+        )
+
+
+def test_horizon_forecast_errors_must_reconcile_with_total():
+    measurement = _measurement()
+    measurement["horizons"]["2592000"]["forecastErrorCount"] = 5
+
+    with pytest.raises(RuntimeError, match="no reconcilia"):
+        _service(measurement).evaluate(
+            as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
+            cohort_record=None,
+            error_records=[],
+        )
