@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from app.database.athena_database import AthenaDatabase
 
@@ -18,17 +19,11 @@ class DeploymentSecurityReadiness:
         return all(check.get("passed") is True for check in self.checks)
 
     def to_api_dict(self) -> dict[str, Any]:
-        blockers = [
-            str(check["blocker"])
-            for check in self.checks
-            if check.get("passed") is not True
-        ]
+        blockers = [str(check["blocker"]) for check in self.checks if check.get("passed") is not True]
         return {
             "status": "deployment_security_diagnostic",
             "ready": self.ready,
-            "passedCheckCount": sum(
-                1 for check in self.checks if check.get("passed") is True
-            ),
+            "passedCheckCount": sum(1 for check in self.checks if check.get("passed") is True),
             "totalCheckCount": len(self.checks),
             "checks": list(self.checks),
             "blockers": blockers,
@@ -75,13 +70,8 @@ class DeploymentSecurityReadinessService:
         profile_key_text = self._text(self._PROFILE_KEY)
         profile_key = self._decode_32_byte_key(profile_key_text)
         profile_version = self._positive_int(self._text(self._PROFILE_KEY_VERSION) or "1")
-        previous_keys_valid = self._previous_keyring_valid(
-            self._text(self._PREVIOUS_KEYS),
-            current_version=profile_version,
-        )
-        encrypted_storage = self._encrypted_storage_version_evidence(
-            current_version=profile_version,
-        )
+        previous_keys_valid = self._previous_keyring_valid(self._text(self._PREVIOUS_KEYS), current_version=profile_version)
+        encrypted_storage = self._encrypted_storage_version_evidence(current_version=profile_version)
         public_url = self._text(self._RECOVERY_PUBLIC_URL)
         smtp_host = self._text(self._RECOVERY_HOST)
         smtp_from = self._text(self._RECOVERY_FROM)
@@ -92,91 +82,29 @@ class DeploymentSecurityReadinessService:
         starttls_enabled = self._bool_env(self._RECOVERY_STARTTLS, default=True)
 
         auth_secret_bytes = auth_secret.encode("utf-8") if auth_secret else b""
-        auth_profile_separated = bool(auth_secret_bytes) and profile_key is not None and (
-            auth_secret_bytes != profile_key
-            and auth_secret != profile_key_text
-        )
+        auth_profile_separated = bool(auth_secret_bytes) and profile_key is not None and (auth_secret_bytes != profile_key and auth_secret != profile_key_text)
 
         checks = (
-            self._check(
-                "auth_secret_strength",
-                len(auth_secret_bytes) >= 32,
-                "auth_secret_missing_or_too_short",
-            ),
-            self._check(
-                "profile_key_strength",
-                profile_key is not None,
-                "profile_encryption_key_invalid",
-            ),
-            self._check(
-                "profile_key_versioning",
-                profile_version is not None and previous_keys_valid,
-                "profile_keyring_invalid",
-            ),
-            self._check(
-                "encrypted_storage_key_version_convergence",
-                encrypted_storage["passed"],
-                "encrypted_storage_still_depends_on_noncurrent_key",
-                evidence=encrypted_storage["evidence"],
-            ),
-            self._check(
-                "auth_profile_key_separation",
-                auth_profile_separated,
-                "auth_and_profile_keys_not_separated",
-            ),
-            self._check(
-                "recovery_public_https",
-                public_url.lower().startswith("https://"),
-                "recovery_public_url_not_https",
-            ),
-            self._check(
-                "recovery_smtp_endpoint",
-                bool(smtp_host) and bool(smtp_from) and smtp_port,
-                "recovery_smtp_endpoint_incomplete",
-            ),
-            self._check(
-                "recovery_smtp_credentials",
-                smtp_credentials_coherent,
-                "recovery_smtp_credentials_incoherent",
-            ),
-            self._check(
-                "recovery_transport_encryption",
-                starttls_enabled,
-                "recovery_smtp_tls_disabled",
-            ),
+            self._check("auth_secret_strength", len(auth_secret_bytes) >= 32, "auth_secret_missing_or_too_short"),
+            self._check("profile_key_strength", profile_key is not None, "profile_encryption_key_invalid"),
+            self._check("profile_key_versioning", profile_version is not None and previous_keys_valid, "profile_keyring_invalid"),
+            self._check("encrypted_storage_key_version_convergence", encrypted_storage["passed"], "encrypted_storage_still_depends_on_noncurrent_key", evidence=encrypted_storage["evidence"]),
+            self._check("auth_profile_key_separation", auth_profile_separated, "auth_and_profile_keys_not_separated"),
+            self._check("recovery_public_https", self._valid_public_recovery_url(public_url), "recovery_public_url_not_https"),
+            self._check("recovery_smtp_endpoint", bool(smtp_host) and bool(smtp_from) and smtp_port, "recovery_smtp_endpoint_incomplete"),
+            self._check("recovery_smtp_credentials", smtp_credentials_coherent, "recovery_smtp_credentials_incoherent"),
+            self._check("recovery_transport_encryption", starttls_enabled, "recovery_smtp_tls_disabled"),
         )
         return DeploymentSecurityReadiness(checks=checks)
 
     @staticmethod
-    def _check(
-        identifier: str,
-        passed: bool,
-        blocker: str,
-        *,
-        evidence: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "id": identifier,
-            "passed": bool(passed),
-            "blocker": blocker,
-        }
+    def _check(identifier: str, passed: bool, blocker: str, *, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {"id": identifier, "passed": bool(passed), "blocker": blocker}
         if evidence is not None:
             result["evidence"] = evidence
         return result
 
-    def _encrypted_storage_version_evidence(
-        self,
-        *,
-        current_version: int | None,
-    ) -> dict[str, Any]:
-        """Report whether persisted ciphertext metadata converges to the active key.
-
-        This is deliberately narrower than a production key-retirement claim. It
-        proves only that no persisted Profile/Portfolio ciphertext *declares* a
-        dependency on another key version and that Portfolio encryption tuples
-        are structurally complete. Actual secret-manager custody/deletion remains
-        an external operational gate.
-        """
+    def _encrypted_storage_version_evidence(self, *, current_version: int | None) -> dict[str, Any]:
         evidence: dict[str, Any] = {
             "currentKeyVersion": current_version,
             "profileCiphertextCount": 0,
@@ -189,18 +117,14 @@ class DeploymentSecurityReadinessService:
         }
         if current_version is None:
             return {"passed": False, "evidence": evidence}
-
         database_path = getattr(self._database, "database_path", None)
         if database_path is not None and not database_path.exists():
             return {"passed": True, "evidence": evidence}
-
         non_current_versions: set[int] = set()
         try:
             with self._database.connect() as connection:
                 if self._table_exists(connection, self._PROFILE_TABLE):
-                    rows = connection.execute(
-                        f"SELECT key_version FROM {self._PROFILE_TABLE}"
-                    ).fetchall()
+                    rows = connection.execute(f"SELECT key_version FROM {self._PROFILE_TABLE}").fetchall()
                     evidence["profileCiphertextCount"] = len(rows)
                     for row in rows:
                         version = self._row_positive_version(row["key_version"])
@@ -209,22 +133,13 @@ class DeploymentSecurityReadinessService:
                         elif version != current_version:
                             evidence["nonCurrentCiphertextCount"] += 1
                             non_current_versions.add(version)
-
                 if self._table_exists(connection, self._PORTFOLIO_TABLE):
-                    rows = connection.execute(
-                        f"""
-                        SELECT average_purchase_price_key_version AS key_version,
+                    rows = connection.execute(f"""SELECT average_purchase_price_key_version AS key_version,
                                average_purchase_price_nonce_b64 AS nonce_b64,
                                average_purchase_price_ciphertext_b64 AS ciphertext_b64
-                        FROM {self._PORTFOLIO_TABLE}
-                        """
-                    ).fetchall()
+                        FROM {self._PORTFOLIO_TABLE}""").fetchall()
                     for row in rows:
-                        values = (
-                            row["key_version"],
-                            row["nonce_b64"],
-                            row["ciphertext_b64"],
-                        )
+                        values = (row["key_version"], row["nonce_b64"], row["ciphertext_b64"])
                         if all(value is None for value in values):
                             continue
                         evidence["portfolioCiphertextCount"] += 1
@@ -238,23 +153,14 @@ class DeploymentSecurityReadinessService:
                             evidence["nonCurrentCiphertextCount"] += 1
                             non_current_versions.add(version)
         except Exception:
-            # Database/read failures are readiness blockers, never reasons to
-            # infer that historical keys are safe to remove.
             evidence["malformedCiphertextCount"] += 1
-
         evidence["nonCurrentKeyVersions"] = sorted(non_current_versions)
-        passed = (
-            evidence["nonCurrentCiphertextCount"] == 0
-            and evidence["malformedCiphertextCount"] == 0
-        )
+        passed = evidence["nonCurrentCiphertextCount"] == 0 and evidence["malformedCiphertextCount"] == 0
         return {"passed": passed, "evidence": evidence}
 
     @staticmethod
     def _table_exists(connection: Any, table_name: str) -> bool:
-        row = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-            (table_name,),
-        ).fetchone()
+        row = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1", (table_name,)).fetchone()
         return row is not None
 
     @classmethod
@@ -286,6 +192,24 @@ class DeploymentSecurityReadinessService:
         return 1 <= parsed <= 65535
 
     @staticmethod
+    def _valid_public_recovery_url(value: str) -> bool:
+        """Require a real absolute HTTPS endpoint, not merely an https:// prefix."""
+        if not value:
+            return False
+        try:
+            parsed = urlparse(value)
+            port = parsed.port
+        except ValueError:
+            return False
+        if parsed.scheme.lower() != "https" or not parsed.hostname:
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        if port is not None and not 1 <= port <= 65535:
+            return False
+        return True
+
+    @staticmethod
     def _decode_32_byte_key(value: str) -> bytes | None:
         if not value:
             return None
@@ -296,12 +220,7 @@ class DeploymentSecurityReadinessService:
         return decoded if len(decoded) == 32 else None
 
     @classmethod
-    def _previous_keyring_valid(
-        cls,
-        value: str,
-        *,
-        current_version: int | None,
-    ) -> bool:
+    def _previous_keyring_valid(cls, value: str, *, current_version: int | None) -> bool:
         if current_version is None:
             return False
         if not value:
