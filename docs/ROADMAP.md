@@ -79,10 +79,9 @@ ATHENA reaches 100% engineering completion only when every whole-product area ab
 
 ## Latest validated increment
 
-- Exact-SHA CI for `40b48461151bb9905f3a3c8fa9b298d5efdde23d` completed successfully after the verified News synthesis vertical and its acceptance regression.
-- News now consumes the canonical latest synthesis in Flutter and exposes summary, importance, estimated impact, confidence and provenance while keeping the raw verified feed as an independent surface.
-- The acceptance regression proves canonical transport, fail-closed parsing, FMP rejection, no recommendation/scoring/trading authority, 404 handling and stale-data removal after a 503/retry failure.
-- News therefore moves conservatively from 65% to 75%, matching the rubric level for integrated functionality with meaningful tests; it does not move to 100% because broader E2E/UX and production model-execution/corroboration evidence remain open.
-- Overall whole-product engineering completion moves conservatively from approximately 83% to approximately 84%.
-- Operational readiness is tracked separately and does not increase from this UI/acceptance increment.
-- No fixture, CI result or adapter presence is treated as proof of production data coverage, provider independence or model truth. Canonical market weighting remains human-controlled and automatic trading remains disabled.
+- Exact-SHA CI for `56f30cc41ba3139d6787aa8365f27ebd8d47e5b1` completed successfully: backend tests, Flutter analyze and the full Flutter test job are green.
+- The authenticated/guest Portfolio product boundary remains fail-closed: guest mode may mount the explicitly local portfolio, while authenticated mode never mounts that local surface or exposes its holdings.
+- The Portfolio positions header now stacks its actions at intermediate widths, removing the verified 752 px RenderFlex overflow without hiding layout errors in tests.
+- The Profile logout lifecycle acceptance now verifies both sides of the authority boundary: verified remote revocation clears the authenticated session and reaches Welcome; unverified remote failure preserves the session and remains in Profile.
+- This closes the previously red Flutter CI gate, but it does **not** raise whole-product completion by itself. Recovery delivery in the real deployment, production secret custody/rotation, scheduled off-site backup operation, real >=365-day eligible-universe history coverage, independent corporate-action reconciliation, human weighting approval, longitudinal OOS evidence and protected release gates remain open.
+- No fixture or green CI result is treated as production-data evidence. Canonical market weighting remains human-controlled and automatic trading remains disabled.
