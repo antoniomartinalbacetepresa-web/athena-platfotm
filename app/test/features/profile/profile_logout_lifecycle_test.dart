@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/core/routing/app_routes.dart';
 import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/athena_auth_service.dart';
@@ -58,6 +60,7 @@ void main() {
       (tester) async {
     session.establish(accessToken: 'profile.jwt', account: account());
     var logoutCalls = 0;
+    final logoutResponse = Completer<http.Response>();
     final auth = AthenaAuthService(
       baseUrl: 'https://athena.local',
       client: MockClient((request) async {
@@ -67,7 +70,7 @@ void main() {
         if (request.url.path == '/api/v1/auth/logout') {
           logoutCalls += 1;
           expect(request.headers['Authorization'], 'Bearer profile.jwt');
-          return http.Response('', 204);
+          return logoutResponse.future;
         }
         return http.Response('{}', 500);
       }),
@@ -76,17 +79,17 @@ void main() {
     await tester.pumpWidget(appFor(auth));
     await revealLogout(tester);
     await tester.tap(find.text('CERRAR SESIÓN'));
+    await tester.pump();
+    expect(logoutCalls, 1);
+    expect(session.isAuthenticated, isTrue);
+
+    logoutResponse.complete(http.Response('', 204));
     await tester.pumpAndSettle();
 
-    expect(logoutCalls, 1);
     expect(session.isAuthenticated, isFalse);
     expect(session.accessToken, isNull);
-    // The route replacement is the product contract. Inspect the current
-    // route instead of depending on whether the lazy welcome body has already
-    // been laid out by this focused lifecycle harness.
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
-    expect(navigator.canPop(), isFalse);
     expect(find.byType(ProfilePage), findsNothing);
+    expect(find.text('WELCOME AFTER VERIFIED LOGOUT'), findsOneWidget);
 
     auth.dispose();
   });
@@ -95,11 +98,13 @@ void main() {
       (tester) async {
     session.establish(accessToken: 'profile.jwt', account: account());
     var logoutCalls = 0;
+    final logoutResponse = Completer<http.Response>();
     final auth = AthenaAuthService(
       baseUrl: 'https://athena.local',
       client: MockClient((request) async {
         if (request.url.path == '/api/v1/auth/logout') {
           logoutCalls += 1;
+          return logoutResponse.future;
         }
         return http.Response('{}', 503);
       }),
@@ -108,14 +113,20 @@ void main() {
     await tester.pumpWidget(appFor(auth));
     await revealLogout(tester);
     await tester.tap(find.text('CERRAR SESIÓN'));
+    await tester.pump();
+    expect(logoutCalls, 1);
+
+    logoutResponse.complete(http.Response('{}', 503));
     await tester.pumpAndSettle();
 
-    expect(logoutCalls, 1);
     expect(session.isAuthenticated, isTrue);
     expect(session.accessToken, 'profile.jwt');
     expect(find.byType(ProfilePage), findsOneWidget);
-    // The list remains scrolled to the action/error region, so asserting an
-    // off-screen lazy header would test viewport position rather than auth.
+    await tester.scrollUntilVisible(
+      find.textContaining('No se pudo confirmar el cierre de sesión'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(
       find.textContaining('No se pudo confirmar el cierre de sesión'),
       findsOneWidget,
