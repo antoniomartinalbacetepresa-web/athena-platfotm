@@ -2,9 +2,17 @@ import 'package:flutter/foundation.dart';
 
 import '../../../auth/services/athena_auth_service.dart';
 import '../../models/portfolio_position.dart';
+import '../../services/authenticated_portfolio_service.dart';
 import '../../services/authenticated_portfolio_sync_service.dart';
 
-enum PortfolioCloudSyncStatus { idle, syncing, success, failure, sessionRejected }
+enum PortfolioCloudSyncStatus {
+  idle,
+  syncing,
+  success,
+  failure,
+  sessionRejected,
+  authorityChanged,
+}
 
 class PortfolioCloudSyncController extends ChangeNotifier {
   PortfolioCloudSyncController({AuthenticatedPortfolioSyncService? service})
@@ -22,8 +30,10 @@ class PortfolioCloudSyncController extends ChangeNotifier {
   bool get isSyncing => _status == PortfolioCloudSyncStatus.syncing;
   bool get hasError =>
       _status == PortfolioCloudSyncStatus.failure ||
-      _status == PortfolioCloudSyncStatus.sessionRejected;
+      _status == PortfolioCloudSyncStatus.sessionRejected ||
+      _status == PortfolioCloudSyncStatus.authorityChanged;
   bool get sessionRejected => _status == PortfolioCloudSyncStatus.sessionRejected;
+  bool get authorityChanged => _status == PortfolioCloudSyncStatus.authorityChanged;
 
   Future<void> sync(Iterable<PortfolioPosition> positions) async {
     if (isSyncing) return;
@@ -51,6 +61,11 @@ class PortfolioCloudSyncController extends ChangeNotifier {
       _status = PortfolioCloudSyncStatus.sessionRejected;
       _message =
           'Tu sesión ATHENA ya no es válida. Inicia sesión de nuevo antes de sincronizar.';
+    } on AuthenticatedPortfolioAuthorityChangedException {
+      _status = PortfolioCloudSyncStatus.authorityChanged;
+      _message =
+          'La cuenta ATHENA cambió durante la sincronización. No se continuará '
+          'con datos de la cuenta anterior; revisa la cartera antes de reintentar.';
     } catch (_) {
       _status = PortfolioCloudSyncStatus.failure;
       _message =
