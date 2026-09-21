@@ -28,6 +28,8 @@ class AuthenticatedPortfolioSyncReport {
 /// - current market price, capital, P/L and cost-basis dates remain local;
 /// - remote positions missing locally are never deleted automatically;
 /// - ownership is never supplied by the client and remains token-derived;
+/// - one sync is pinned to the authority that started it and aborts if the
+///   authenticated owner changes between requests;
 /// - this sync does not authorize recommendations or trading.
 class AuthenticatedPortfolioSyncService {
   static const double _maxEconomicValue = 1000000000000;
@@ -45,10 +47,13 @@ class AuthenticatedPortfolioSyncService {
   ) async {
     final positions = localPositions.toList(growable: false);
     _validateLocalPositions(positions);
+    final authorityToken = _remoteService.captureAuthorityToken();
 
     final before = await _remoteService.loadPositions();
+    _remoteService.requireAuthorityToken(authorityToken);
     final synced = <AuthenticatedPortfolioPosition>[];
     for (final position in positions) {
+      _remoteService.requireAuthorityToken(authorityToken);
       synced.add(
         await _remoteService.upsertPosition(
           symbol: position.symbol,
@@ -57,9 +62,12 @@ class AuthenticatedPortfolioSyncService {
           averagePurchasePrice: position.averagePrice,
         ),
       );
+      _remoteService.requireAuthorityToken(authorityToken);
     }
 
+    _remoteService.requireAuthorityToken(authorityToken);
     final after = await _remoteService.loadPositions();
+    _remoteService.requireAuthorityToken(authorityToken);
     return AuthenticatedPortfolioSyncReport(
       localPositionCount: positions.length,
       remotePositionCountBefore: before.length,
