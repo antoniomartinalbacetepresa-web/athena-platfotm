@@ -299,7 +299,7 @@ void main() {
         baseUrl: 'https://athena.local',
         client: MockClient((request) async {
           closureCalls += 1;
-          expect(request.url.path, '/api/v1/auth/account');
+          expect(request.url.path, '/api/v1/auth/close-account');
           expect(request.headers['Authorization'], 'Bearer closing-owner-token');
           final payload = jsonDecode(request.body) as Map<String, dynamic>;
           expect(payload['currentPassword'], 'current-password');
