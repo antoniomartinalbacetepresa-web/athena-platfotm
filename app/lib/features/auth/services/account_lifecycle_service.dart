@@ -22,10 +22,9 @@ class PasswordChangeResult {
 
 class AccountLifecycleService {
   AccountLifecycleService({
-    required AthenaAuthService authService,
-    required AuthSession session,
-  })  : _authService = authService,
-        _session = session;
+    required this._authService,
+    required this._session,
+  });
 
   final AthenaAuthService _authService;
   final AuthSession _session;
