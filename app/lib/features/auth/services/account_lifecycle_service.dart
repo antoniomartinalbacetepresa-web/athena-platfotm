@@ -22,12 +22,25 @@ class PasswordChangeResult {
 
 class AccountLifecycleService {
   AccountLifecycleService({
-    required this._authService,
-    required this._session,
-  });
+    required AthenaAuthService authService,
+    required AuthSession session,
+  })  : _authService = authService,
+        _session = session;
 
   final AthenaAuthService _authService;
   final AuthSession _session;
+
+  Future<bool> _clearInvalidatedCredential(String invalidatedToken) async {
+    // The remote request may complete after the user has already established a
+    // different authenticated session. Never let an old lifecycle operation
+    // revoke or delete the replacement authority. The invalidated token is
+    // already non-authoritative server-side; only clear local state when it is
+    // still the credential that authorized this operation.
+    if (!_session.isAuthenticated || _session.accessToken != invalidatedToken) {
+      return false;
+    }
+    return _session.clearAfterRemoteInvalidation();
+  }
 
   Future<PasswordChangeResult> changeCurrentPassword({
     required String currentPassword,
@@ -44,10 +57,7 @@ class AccountLifecycleService {
       newPassword: newPassword,
     );
 
-    // Password rotation invalidates every server-side session version, including
-    // the credential that authorized this request. Never leave that now-stale
-    // credential authoritative in memory if secure-storage deletion fails.
-    final localCredentialDeleted = await _session.clearAfterRemoteInvalidation();
+    final localCredentialDeleted = await _clearInvalidatedCredential(token);
     return PasswordChangeResult(
       localCredentialDeleted: localCredentialDeleted,
     );
@@ -73,10 +83,7 @@ class AccountLifecycleService {
       await _authService.logout(token);
     }
 
-    // A successful remote revocation is authoritative. Clear in-memory auth
-    // before attempting secure-storage cleanup so a local storage failure can
-    // never leave the client authenticated with a server-revoked credential.
-    final localCredentialDeleted = await _session.clearAfterRemoteInvalidation();
+    final localCredentialDeleted = await _clearInvalidatedCredential(token);
     return SessionLogoutResult(
       localCredentialDeleted: localCredentialDeleted,
     );
@@ -94,11 +101,7 @@ class AccountLifecycleService {
       currentPassword: currentPassword,
     );
 
-    // A 204 means the backend already completed an irreversible account
-    // closure. Local secure-storage cleanup must never make the UI report that
-    // the remote closure failed. Memory is cleared unconditionally; callers may
-    // still observe whether the stale durable credential was deleted locally.
-    final localCredentialDeleted = await _session.clearAfterRemoteInvalidation();
+    final localCredentialDeleted = await _clearInvalidatedCredential(token);
     return AccountClosureResult(
       localCredentialDeleted: localCredentialDeleted,
     );
