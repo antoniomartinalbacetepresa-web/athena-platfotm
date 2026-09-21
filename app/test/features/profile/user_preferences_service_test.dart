@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
@@ -140,6 +141,48 @@ void main() {
     expect(captured.method, 'DELETE');
     expect(captured.url.path, '/api/v1/user/profile/preferences');
     expect(captured.headers['Authorization'], 'Bearer profile.jwt');
+  });
+
+
+  test('successful stale preference response cannot cross an owner change', () async {
+    session.establish(accessToken: 'owner-a.jwt', account: account());
+    final pending = Completer<http.Response>();
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) {
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        return pending.future;
+      }),
+      session: session,
+    );
+
+    final load = service.load();
+    await Future<void>.delayed(Duration.zero);
+    session.establish(
+      accessToken: 'owner-b.jwt',
+      account: AuthAccount(
+        id: 23,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-21T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-21T10:00:00Z'),
+      ),
+    );
+    pending.complete(http.Response(
+      '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":12500}}}',
+      200,
+      headers: {'content-type': 'application/json'},
+    ));
+
+    await expectLater(
+      load,
+      throwsA(isA<UserPreferencesAuthorityChangedException>()),
+    );
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 23);
+    expect(session.account?.email, 'replacement@example.com');
   });
 
   test('profile authorization rejection preserves status without backend detail', () async {
