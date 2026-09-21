@@ -21,10 +21,20 @@ Treat suspected credential disclosure, unauthorized owner-data access, corrupted
 
 Incident-response readiness requires explicit evidence of all of the following: a runbook review within 90 days, an exercise within 180 days, an assigned incident owner, a verified escalation channel, a verified credential-revocation procedure and a verified recovery procedure. `IncidentResponseReadinessService` evaluates only operator-supplied evidence and never infers these facts from repository tests.
 
+Deployment tooling can evaluate a JSON evidence export with:
+
+```text
+python -m scripts.incident_response_readiness --evidence <OPERATOR_EVIDENCE_JSON>
+```
+
+The JSON object must provide `runbookReviewedAt`, `exerciseCompletedAt`, `incidentOwnerAssigned`, `escalationChannelVerified`, `credentialRevocationProcedureVerified` and `recoveryProcedureVerified`. Timestamps must be timezone-aware ISO-8601 values (or `null` when evidence is absent); claims must be actual JSON booleans. The command exits successfully only when every gate passes. Its report remains `diagnostic_only`, with `productionAuthorization=false` and `automaticTrading=false` even when ready.
+
+The evidence file is an input from the deployment/incident system. Do not commit a filled production evidence file, credentials, contact details, secret-manager identifiers or tokens to this repository. A locally authored JSON file proves evaluator behavior only; it does not prove a production exercise occurred.
+
 ## Exercise scenarios
 
 At minimum exercise: leaked authentication secret/session compromise; unavailable or corrupted primary database requiring restore; incorrect or untrusted market provenance; and loss of the recovery-delivery channel. Exercises must verify containment and recovery without exposing secrets, fabricating production evidence, authorizing automatic weighting changes or enabling automatic trading.
 
 ## Evidence handling
 
-Store operational evidence in the deployment/incident system, not as hard-coded booleans or credentials in this repository. Future integration may feed signed or authenticated deployment evidence into readiness diagnostics, but absence of such evidence must remain fail-closed.
+Store operational evidence in the deployment/incident system, not as hard-coded booleans or credentials in this repository. Deployment automation may export the six non-secret acceptance facts into a temporary evidence file for the evaluator, but absence of any required fact must remain fail-closed. Delete temporary exports according to the deployment platform's evidence-retention policy; the application repository is not the system of record for operational proof.
