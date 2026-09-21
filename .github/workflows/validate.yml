@@ -6,10 +6,14 @@ on:
       - dev/real-market-backend
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   backend-tests:
     name: Backend tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -42,6 +46,7 @@ jobs:
   flutter-validation:
     name: Flutter analyze and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: app
@@ -84,3 +89,19 @@ jobs:
             app/pubspec.lock
           if-no-files-found: warn
           retention-days: 7
+
+  release-validation-gate:
+    name: Release validation gate
+    if: always()
+    needs:
+      - backend-tests
+      - flutter-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require backend and Flutter validation
+        env:
+          BACKEND_RESULT: ${{ needs.backend-tests.result }}
+          FLUTTER_RESULT: ${{ needs.flutter-validation.result }}
+        run: |
+          test "$BACKEND_RESULT" = "success"
+          test "$FLUTTER_RESULT" = "success"
