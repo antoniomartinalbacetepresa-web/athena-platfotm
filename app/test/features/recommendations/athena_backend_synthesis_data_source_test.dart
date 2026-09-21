@@ -9,13 +9,16 @@ const hashB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 const hashC = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
 String responseBody({
+  bool presentationOnly = true,
+  bool topLevelRecommendationInfluence = false,
+  bool topLevelAutomaticTrading = false,
   bool recommendationInfluence = false,
   String fingerprint = hashA,
   String newsEvidenceId = 'news:1',
   String investorEvidenceId = 'investors:1',
   String synthesisEvidenceIds = '"news:1","investors:1"',
 }) => '''
-{"data":{"artifactBindingVerified":true,"synthesis":{"summary":"Escenario explicado","rationale":"Evidencia conjunta","uncertainties":["No es una predicción cierta"],"evidenceIds":[$synthesisEvidenceIds],"inputFingerprint":"$fingerprint","recommendationInfluence":$recommendationInfluence,"automaticTrading":false},"provenance":{"inputFingerprint":"$hashA","news":{"artifactHash":"$hashB","assessmentBindings":[{"evidenceId":"$newsEvidenceId","assessmentFingerprint":"$hashC","sourceRef":"https://example.com/news/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false},"investors":{"artifactHash":"$hashC","assessmentBindings":[{"evidenceId":"$investorEvidenceId","assessmentFingerprint":"$hashB","sourceRef":"https://example.com/investors/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false}}}}
+{"data":{"artifactBindingVerified":true,"presentationOnly":$presentationOnly,"recommendationInfluence":$topLevelRecommendationInfluence,"automaticTrading":$topLevelAutomaticTrading,"synthesis":{"summary":"Escenario explicado","rationale":"Evidencia conjunta","uncertainties":["No es una predicción cierta"],"evidenceIds":[$synthesisEvidenceIds],"inputFingerprint":"$fingerprint","recommendationInfluence":$recommendationInfluence,"automaticTrading":false},"provenance":{"inputFingerprint":"$hashA","news":{"artifactHash":"$hashB","assessmentBindings":[{"evidenceId":"$newsEvidenceId","assessmentFingerprint":"$hashC","sourceRef":"https://example.com/news/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false},"investors":{"artifactHash":"$hashC","assessmentBindings":[{"evidenceId":"$investorEvidenceId","assessmentFingerprint":"$hashB","sourceRef":"https://example.com/investors/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false}}}}
 ''';
 
 void main() {
@@ -71,6 +74,39 @@ void main() {
       client: MockClient((request) async => http.Response(responseBody(recommendationInfluence: true), 200)),
     );
     expect(() => source.getForResearchCycle(hashB), throwsA(isA<FormatException>()));
+  });
+
+  test('fails closed if top-level envelope is not presentation-only', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response(
+        responseBody(presentationOnly: false),
+        200,
+      )),
+    );
+    expect(() => source.getLatest(), throwsA(isA<FormatException>()));
+  });
+
+  test('fails closed if top-level envelope grants recommendation influence', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response(
+        responseBody(topLevelRecommendationInfluence: true),
+        200,
+      )),
+    );
+    expect(() => source.getLatest(), throwsA(isA<FormatException>()));
+  });
+
+  test('fails closed if top-level envelope grants automatic trading', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response(
+        responseBody(topLevelAutomaticTrading: true),
+        200,
+      )),
+    );
+    expect(() => source.getLatest(), throwsA(isA<FormatException>()));
   });
 
   test('fails closed when synthesis evidence is not bound by provenance', () async {
