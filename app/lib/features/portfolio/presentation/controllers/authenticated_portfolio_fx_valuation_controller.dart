@@ -12,10 +12,9 @@ import '../../services/authenticated_portfolio_fx_valuation_service.dart';
 /// owner replacement invalidates both completed and in-flight monetary state.
 class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
   AuthenticatedPortfolioFxValuationController({
-    required AuthenticatedPortfolioFxValuationService valuationService,
+    required this._valuationService,
     AuthSession? session,
-  })  : _valuationService = valuationService,
-        _session = session ?? AuthSession.instance {
+  }) : _session = session ?? AuthSession.instance {
     _session.addListener(_onAuthorityChanged);
   }
 
