@@ -55,10 +55,10 @@ class CorporateActionCoverageReport:
             "productionIndependenceClaimed": False,
             "warning": (
                 "La cobertura exige que cada corporate action visible al knowledge cutoff "
-                "coincida entre al menos dos familias de proveedor configuradas y que no "
-                "exista provenance de proveedor sin clasificar. La clasificación técnica "
-                "no demuestra independencia operativa y nunca autoriza canonicalización "
-                "automática."
+                "coincida entre al menos dos familias de proveedor configuradas, incluya "
+                "unidades económicas completas y que no exista provenance de proveedor sin "
+                "clasificar. La clasificación técnica no demuestra independencia operativa y "
+                "nunca autoriza canonicalización automática."
             ),
         }
 
@@ -120,6 +120,12 @@ class CorporateActionCoverageService:
                     latest[snapshot_key] = retrieved
 
             for by_provider in events.values():
+                # Agreement on a number without its economic unit is not usable
+                # reconciliation evidence. In particular, equal dividend amounts with
+                # unknown currency must remain incomplete rather than becoming "ready".
+                if any(not self._has_complete_economic_value(row) for row in by_provider.values()):
+                    incomplete += 1
+                    continue
                 by_family: dict[str, list[dict[str, Any]]] = {}
                 for provider, row in by_provider.items():
                     family = self._provider_families.get(provider)
@@ -128,9 +134,6 @@ class CorporateActionCoverageService:
                 if len(by_family) < 2:
                     incomplete += 1
                     continue
-                # Multiple aliases belonging to one family are not independent votes.
-                # If they disagree internally, the event is conflicted before any
-                # cross-family comparison can claim reconciliation.
                 family_values: list[dict[str, Any]] = []
                 family_conflict = False
                 for rows_for_family in by_family.values():
@@ -153,6 +156,29 @@ class CorporateActionCoverageService:
             source_providers=tuple(sorted(providers)), independent_provider_families=tuple(sorted(families_seen)),
             unclassified_source_providers=tuple(sorted(unclassified)),
         )
+
+    def _has_complete_economic_value(self, row: dict[str, Any]) -> bool:
+        action_type = str(row.get("action_type") or "").strip().lower()
+        if action_type == "dividend":
+            amount = row.get("cash_amount")
+            currency = str(row.get("currency") or "").strip().upper()
+            return (
+                isinstance(amount, (int, float))
+                and not isinstance(amount, bool)
+                and math.isfinite(float(amount))
+                and float(amount) > 0
+                and len(currency) == 3
+                and currency.isalpha()
+            )
+        if action_type == "split":
+            ratio = row.get("split_ratio")
+            return (
+                isinstance(ratio, (int, float))
+                and not isinstance(ratio, bool)
+                and math.isfinite(float(ratio))
+                and float(ratio) > 0
+            )
+        return False
 
     def _normalize_provider_families(self, values: Mapping[str, str]) -> dict[str, str]:
         normalized: dict[str, str] = {}
@@ -181,7 +207,7 @@ class CorporateActionCoverageService:
 
     def _public_value(self, row: dict[str, Any]) -> dict[str, Any]:
         if str(row["action_type"]).lower() == "dividend":
-            return {"cashAmount": float(row["cash_amount"]), "currency": str(row["currency"]).strip().upper() if row.get("currency") is not None else None}
+            return {"cashAmount": float(row["cash_amount"]), "currency": str(row["currency"]).strip().upper()}
         return {"splitRatio": float(row["split_ratio"])}
 
     def _all_equal_or_single(self, values: list[dict[str, Any]]) -> bool:
