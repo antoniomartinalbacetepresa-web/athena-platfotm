@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/auth/services/auth_token_store.dart';
@@ -5,9 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   final now = DateTime.utc(2026, 9, 11);
-  AuthAccount account({bool active = true}) => AuthAccount(
-        id: 7,
-        email: 'owner@example.com',
+  AuthAccount account({bool active = true, int id = 7, String email = 'owner@example.com'}) => AuthAccount(
+        id: id,
+        email: email,
         displayName: 'Owner',
         isActive: active,
         createdAt: now,
@@ -79,6 +81,31 @@ void main() {
     expect(result, AuthSessionRestoreResult.restored);
     expect(validatedToken, 'stored-token');
     expect(session.isAuthenticated, isTrue);
+  });
+
+  test('stale restore cannot overwrite a newer authenticated authority', () async {
+    final store = _FakeAuthTokenStore(token: 'stored-owner-a');
+    final session = AuthSession.forTesting(store);
+    final validation = Completer<AuthAccount>();
+
+    final restoring = session.restore(
+      validateToken: (token) {
+        expect(token, 'stored-owner-a');
+        return validation.future;
+      },
+      shouldDiscardToken: (_) => false,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final replacement = account(id: 23, email: 'owner-b@example.com');
+    session.establish(accessToken: 'owner-b-token', account: replacement);
+    validation.complete(account());
+
+    final result = await restoring;
+    expect(result, AuthSessionRestoreResult.restored);
+    expect(session.accessToken, 'owner-b-token');
+    expect(session.account?.id, 23);
+    expect(session.account?.email, 'owner-b@example.com');
   });
 
   test('restore normalizes persisted token before remote validation', () async {
