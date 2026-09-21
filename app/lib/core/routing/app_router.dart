@@ -20,11 +20,13 @@ class AppRouter {
     switch (path) {
       case AppRoutes.login:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const LoginPage(),
         );
 
       case AppRoutes.register:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const RegisterPage(),
         );
 
@@ -39,37 +41,44 @@ class AppRouter {
                 ? argumentToken
                 : null);
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => PasswordRecoveryPage(initialToken: initialToken),
         );
 
       case AppRoutes.dashboard:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const DashboardPage(),
         );
 
       case AppRoutes.market:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const MarketPage(),
         );
 
       case AppRoutes.news:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const NewsPage(),
         );
 
       case AppRoutes.portfolio:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const AuthenticatedPortfolioPage(),
         );
 
       case AppRoutes.profile:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const ProfilePersonalizationShell(),
         );
 
       case AppRoutes.welcome:
       default:
         return MaterialPageRoute(
+          settings: settings,
           builder: (_) => const WelcomePage(),
         );
     }
