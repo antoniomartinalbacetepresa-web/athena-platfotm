@@ -57,8 +57,15 @@ class _ProfilePageState extends State<ProfilePage> {
     });
     try {
       final account = await _authService.getMe(token);
+      // A /me response belongs to the credential that initiated this request.
+      // If authority changed while it was in flight, never resurrect the old
+      // owner or load protected preferences under the replacement session.
+      if (!AuthSession.instance.isAuthenticated ||
+          AuthSession.instance.accessToken != token) {
+        return;
+      }
       AuthSession.instance.establish(accessToken: token, account: account);
-      await _loadPreferences();
+      await _loadPreferences(expectedAccessToken: token);
     } on AuthSessionRejectedException {
       // clearAfterRemoteInvalidation revokes in-memory authority before its
       // first await. Do not keep the protected UI blocked on secure-storage I/O.
@@ -78,8 +85,12 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  Future<void> _loadPreferences() async {
+  Future<void> _loadPreferences({String? expectedAccessToken}) async {
     if (!AuthSession.instance.isAuthenticated) return;
+    if (expectedAccessToken != null &&
+        AuthSession.instance.accessToken != expectedAccessToken) {
+      return;
+    }
     setState(() {
       _preferencesBusy = true;
       _preferencesError = null;
