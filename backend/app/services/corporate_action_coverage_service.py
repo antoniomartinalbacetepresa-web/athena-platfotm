@@ -168,7 +168,7 @@ class CorporateActionCoverageService:
                 and math.isfinite(float(amount))
                 and float(amount) > 0
                 and len(currency) == 3
-                and currency.isalpha()
+                and all("A" <= character <= "Z" for character in currency)
             )
         if action_type == "split":
             ratio = row.get("split_ratio")
