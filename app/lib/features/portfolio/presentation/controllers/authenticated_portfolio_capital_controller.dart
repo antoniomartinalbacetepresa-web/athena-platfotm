@@ -23,6 +23,7 @@ class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
   String? _error;
   double? _availableCapital;
   String? _currency;
+  int _loadGeneration = 0;
 
   bool get isLoading => _isLoading;
   bool get sessionRejected => _sessionRejected;
@@ -36,6 +37,7 @@ class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
       _availableCapital != null && hasVerifiedBaseCurrency;
 
   Future<void> load() async {
+    final generation = ++_loadGeneration;
     _isLoading = true;
     _sessionRejected = false;
     _error = null;
@@ -45,6 +47,7 @@ class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
 
     try {
       final UserPreferences? preferences = await preferencesService.load();
+      if (generation != _loadGeneration) return;
       if (preferences == null) return;
 
       final currency = preferences.baseCurrency.trim().toUpperCase();
@@ -63,16 +66,25 @@ class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
         _availableCapital = capital;
       }
     } on UserPreferencesSessionRejectedException {
+      if (generation != _loadGeneration) return;
       _sessionRejected = true;
       _availableCapital = null;
       _currency = null;
+    } on UserPreferencesAuthorityChangedException {
+      if (generation != _loadGeneration) return;
+      _error = null;
+      _availableCapital = null;
+      _currency = null;
     } catch (_) {
+      if (generation != _loadGeneration) return;
       _error = 'No se pudo verificar el capital disponible de tu perfil.';
       _availableCapital = null;
       _currency = null;
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (generation == _loadGeneration) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 }
