@@ -18,6 +18,9 @@ AthenaSynthesisController _controller(http.Client client) => AthenaSynthesisCont
 Map<String, dynamic> _validPayload() => {
       'data': {
         'artifactBindingVerified': true,
+        'presentationOnly': true,
+        'recommendationInfluence': false,
+        'automaticTrading': false,
         'synthesis': {
           'inputFingerprint': hash,
           'summary': 'El escenario central mantiene crecimiento moderado.',
