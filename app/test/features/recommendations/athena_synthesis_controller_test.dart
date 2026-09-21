@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -68,6 +69,35 @@ void main() {
     expect(controller.hasData, isFalse);
     expect(controller.error, contains('No se pudo verificar'));
     expect(controller.isLoading, isFalse);
+  });
+
+  test('controller clears stale synthesis immediately while a reload is pending', () async {
+    final pending = Completer<http.Response>();
+    var requests = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.test',
+      client: MockClient((request) async {
+        requests += 1;
+        if (requests == 1) {
+          return http.Response(jsonEncode(validPayload()), 200);
+        }
+        return pending.future;
+      }),
+    );
+    final controller = AthenaSynthesisController(dataSource: source);
+
+    await controller.load(cycleHash);
+    expect(controller.hasData, isTrue);
+
+    final reload = controller.loadLatest();
+    expect(controller.isLoading, isTrue);
+    expect(controller.hasData, isFalse);
+    expect(controller.synthesis, isNull);
+
+    pending.complete(http.Response(jsonEncode(validPayload()), 200));
+    await reload;
+    expect(controller.isLoading, isFalse);
+    expect(controller.hasData, isTrue);
   });
 
   test('retry reloads the same research cycle after a transient backend failure', () async {
