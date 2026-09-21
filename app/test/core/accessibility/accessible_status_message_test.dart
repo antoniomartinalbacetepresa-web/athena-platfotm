@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('status is exposed as one live semantic announcement', (tester) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
 
     await tester.pumpWidget(
       const MaterialApp(
@@ -23,8 +22,10 @@ void main() {
     final node = tester.getSemantics(
       find.bySemanticsLabel('Error: la operación ha fallado.'),
     );
-    expect(node.hasFlag(SemanticsFlag.isLiveRegion), isTrue);
+    expect(node.flagsCollection.contains(SemanticsFlag.isLiveRegion), isTrue);
     expect(node.label, 'Error: la operación ha fallado.');
     expect(find.text('La operación ha fallado.'), findsOneWidget);
+
+    semantics.dispose();
   });
 }
