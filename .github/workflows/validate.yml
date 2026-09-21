@@ -44,7 +44,7 @@ jobs:
           retention-days: 7
 
   flutter-validation:
-    name: Flutter analyze and tests
+    name: Flutter analyze, tests and release build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -78,6 +78,10 @@ jobs:
           set -o pipefail
           flutter test 2>&1 | tee flutter-test.log
 
+      - name: Build release web bundle
+        if: success()
+        run: flutter build web --release
+
       - name: Upload Flutter validation logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,6 +94,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Upload release web bundle
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-web-release
+          path: app/build/web
+          if-no-files-found: error
+          retention-days: 7
+
   release-validation-gate:
     name: Release validation gate
     if: always()
@@ -97,8 +110,9 @@ jobs:
       - backend-tests
       - flutter-validation
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Require backend and Flutter validation
+      - name: Require backend, Flutter and release-build validation
         env:
           BACKEND_RESULT: ${{ needs.backend-tests.result }}
           FLUTTER_RESULT: ${{ needs.flutter-validation.result }}
