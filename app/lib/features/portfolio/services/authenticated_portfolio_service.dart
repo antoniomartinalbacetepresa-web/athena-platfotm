@@ -9,6 +9,13 @@ import '../../market/repositories/market_repository.dart';
 import '../models/authenticated_portfolio_history.dart';
 import '../models/authenticated_portfolio_position.dart';
 
+class AuthenticatedPortfolioAuthorityChangedException implements Exception {
+  const AuthenticatedPortfolioAuthorityChangedException();
+
+  @override
+  String toString() => 'La autoridad ATHENA cambió durante la operación de cartera.';
+}
+
 class AuthenticatedPortfolioValuedPosition {
   const AuthenticatedPortfolioValuedPosition({required this.holding, required this.quote});
   final AuthenticatedPortfolioPosition holding;
@@ -44,6 +51,7 @@ class AuthenticatedPortfolioService {
     final token=_currentToken();
     final response=await _client.get(Uri.parse('$_baseUrl/api/v1/user/portfolio'),headers:_headersFor(token));
     await _rejectInvalidSession(response, token);
+    _requireCurrentToken(token);
     final data=_decodeObject(response)['data']; if(data is! Map<String,dynamic>) throw const FormatException('Respuesta de cartera sin data válida.');
     final raw=data['positions']; if(raw is! List) throw const FormatException('Respuesta de cartera sin positions válidas.');
     return raw.map((item){if(item is! Map<String,dynamic>) throw const FormatException('Posición autenticada no válida.'); return AuthenticatedPortfolioPosition.fromJson(item);}).toList(growable:false);
@@ -67,15 +75,22 @@ class AuthenticatedPortfolioService {
   Future<AuthenticatedPortfolioHistory> loadHistory({String portfolioId='primary',DateTime? asOf,int limit=100}) async {
     final id=portfolioId.trim(); if(id.isEmpty||id.length>128) throw ArgumentError.value(portfolioId,'portfolioId','Portfolio id no válido.'); if(limit<1||limit>500) throw ArgumentError.value(limit,'limit','Limit debe estar entre 1 y 500.');
     final cutoff=(asOf??DateTime.now()).toUtc(); final uri=Uri.parse('$_baseUrl/api/v1/user/portfolio/history').replace(queryParameters:{'portfolioId':id,'asOf':cutoff.toIso8601String(),'limit':'$limit'});
-    final token=_currentToken(); final response=await _client.get(uri,headers:_headersFor(token)); await _rejectInvalidSession(response,token); final data=_decodeObject(response)['data']; if(data is! Map<String,dynamic>) throw const FormatException('Respuesta de historial sin data válida.'); return AuthenticatedPortfolioHistory.fromJson(data);
+    final token=_currentToken(); final response=await _client.get(uri,headers:_headersFor(token)); await _rejectInvalidSession(response,token); _requireCurrentToken(token); final data=_decodeObject(response)['data']; if(data is! Map<String,dynamic>) throw const FormatException('Respuesta de historial sin data válida.'); return AuthenticatedPortfolioHistory.fromJson(data);
   }
 
   Future<AuthenticatedPortfolioPosition> upsertPosition({required String symbol,String? exchange,required double quantity,double? averagePurchasePrice}) async {
     final ns=symbol.trim().toUpperCase(), ne=exchange?.trim().toUpperCase(); if(ns.isEmpty||ns.length>32) throw ArgumentError.value(symbol,'symbol','Símbolo no válido.'); if(!quantity.isFinite||quantity<=0||quantity>_maxEconomicValue) throw ArgumentError.value(quantity,'quantity','Cantidad no válida.'); if(averagePurchasePrice!=null&&(!averagePurchasePrice.isFinite||averagePurchasePrice<=0||averagePurchasePrice>_maxEconomicValue)) throw ArgumentError.value(averagePurchasePrice,'averagePurchasePrice','Precio medio no válido.');
-    final body=<String,dynamic>{'symbol':ns,'exchange':ne==null||ne.isEmpty?null:ne,'quantity':quantity,'averagePurchasePrice':?averagePurchasePrice}; final token=_currentToken(); final response=await _client.put(Uri.parse('$_baseUrl/api/v1/user/portfolio/positions'),headers:_headersFor(token,json:true),body:jsonEncode(body)); await _rejectInvalidSession(response,token); final data=_decodeObject(response)['data']; if(data is! Map<String,dynamic>) throw const FormatException('Respuesta de posición sin data válida.'); return AuthenticatedPortfolioPosition.fromJson(data);
+    final body=<String,dynamic>{'symbol':ns,'exchange':ne==null||ne.isEmpty?null:ne,'quantity':quantity,'averagePurchasePrice':?averagePurchasePrice}; final token=_currentToken(); final response=await _client.put(Uri.parse('$_baseUrl/api/v1/user/portfolio/positions'),headers:_headersFor(token,json:true),body:jsonEncode(body)); await _rejectInvalidSession(response,token); _requireCurrentToken(token); final data=_decodeObject(response)['data']; if(data is! Map<String,dynamic>) throw const FormatException('Respuesta de posición sin data válida.'); return AuthenticatedPortfolioPosition.fromJson(data);
   }
 
-  Future<void> deletePosition(int positionId) async { if(positionId<=0) throw ArgumentError.value(positionId,'positionId','Id no válido.'); final token=_currentToken(); final response=await _client.delete(Uri.parse('$_baseUrl/api/v1/user/portfolio/positions/$positionId'),headers:_headersFor(token)); await _rejectInvalidSession(response,token); if(response.statusCode!=204) throw StateError(_errorMessage(response)); }
+  Future<void> deletePosition(int positionId) async { if(positionId<=0) throw ArgumentError.value(positionId,'positionId','Id no válido.'); final token=_currentToken(); final response=await _client.delete(Uri.parse('$_baseUrl/api/v1/user/portfolio/positions/$positionId'),headers:_headersFor(token)); await _rejectInvalidSession(response,token); _requireCurrentToken(token); if(response.statusCode!=204) throw StateError(_errorMessage(response)); }
+
+  void _requireCurrentToken(String requestToken) {
+    final currentToken = _session.accessToken?.trim();
+    if (!_session.isAuthenticated || currentToken != requestToken) {
+      throw const AuthenticatedPortfolioAuthorityChangedException();
+    }
+  }
 
   Future<void> _rejectInvalidSession(http.Response response,String requestToken) async { if(response.statusCode!=401&&response.statusCode!=403) return; _lastRejectedStatusCode=response.statusCode; await _session.clearAfterRemoteInvalidationIfCurrent(requestToken); throw AuthSessionRejectedException(response.statusCode); }
 
