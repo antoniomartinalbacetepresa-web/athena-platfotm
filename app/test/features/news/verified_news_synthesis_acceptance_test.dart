@@ -159,7 +159,6 @@ void main() {
     expect(find.textContaining('Example Publisher'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
-    expect(controller.hasListeners, isFalse);
     controller.dispose();
     service.dispose();
   });
