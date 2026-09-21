@@ -61,6 +61,28 @@ def test_sensitive_user_responses_are_no_store_even_when_unauthorized() -> None:
     assert response.headers["strict-transport-security"] == "max-age=31536000"
 
 
+def test_authenticated_portfolio_namespace_is_never_cacheable() -> None:
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get("/api/v1/portfolio/valuation-evidence")
+
+    # Authentication may reject before route-specific validation; either way the
+    # account-scoped namespace must be protected from browser/proxy persistence.
+    assert response.status_code in {401, 403, 404, 422}
+    _assert_common_security_headers(response)
+    _assert_sensitive_response_is_not_cacheable(response)
+    assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_similarly_named_portfolio_path_is_not_misclassified_as_sensitive() -> None:
+    with TestClient(app, base_url="http://testserver") as client:
+        response = client.get("/api/v1/portfolios")
+
+    assert response.status_code == 404
+    _assert_common_security_headers(response)
+    assert "cache-control" not in response.headers
+    assert "pragma" not in response.headers
+
+
 def test_similarly_named_public_path_is_not_misclassified_as_sensitive() -> None:
     with TestClient(app, base_url="http://testserver") as client:
         response = client.get("/api/v1/authors")
