@@ -104,8 +104,18 @@ class AthenaBackendSynthesisDataSource {
       throw const FormatException('ATHENA synthesis contiene evidenceIds duplicados.');
     }
     final uncertainties = _strings(synthesis['uncertainties'], 'uncertainties');
-    final hasNews = _artifact(provenance['news'], 'news');
-    final hasInvestors = _artifact(provenance['investors'], 'investors');
+    final newsEvidenceIds = _artifactEvidenceIds(provenance['news'], 'news');
+    final investorEvidenceIds = _artifactEvidenceIds(provenance['investors'], 'investors');
+    final boundEvidenceIds = <String>{...newsEvidenceIds, ...investorEvidenceIds};
+    if (boundEvidenceIds.length != newsEvidenceIds.length + investorEvidenceIds.length) {
+      throw const FormatException('ATHENA provenance repite evidenceIds entre familias.');
+    }
+    if (boundEvidenceIds.length != evidenceIds.length ||
+        !boundEvidenceIds.containsAll(evidenceIds)) {
+      throw const FormatException(
+        'ATHENA synthesis contiene evidencia no reconciliada con provenance.',
+      );
+    }
     return AthenaSynthesisView(
       summary: _string(synthesis['summary'], 'summary'),
       rationale: _string(synthesis['rationale'], 'rationale'),
@@ -115,14 +125,14 @@ class AthenaBackendSynthesisDataSource {
       automaticTrading: false,
       provenance: AthenaSynthesisProvenance(
         inputFingerprint: inputFingerprint,
-        hasNews: hasNews,
-        hasInvestors: hasInvestors,
+        hasNews: newsEvidenceIds.isNotEmpty,
+        hasInvestors: investorEvidenceIds.isNotEmpty,
       ),
     );
   }
 
-  bool _artifact(dynamic value, String field) {
-    if (value == null) return false;
+  Set<String> _artifactEvidenceIds(dynamic value, String field) {
+    if (value == null) return const <String>{};
     if (value is! Map) throw FormatException('provenance.$field debe ser un objeto.');
     final artifact = Map<String, dynamic>.from(value);
     final hash = _string(artifact['artifactHash'], 'provenance.$field.artifactHash').toLowerCase();
@@ -147,7 +157,7 @@ class AthenaBackendSynthesisDataSource {
         throw FormatException('provenance.$field contiene un binding no verificable.');
       }
     }
-    return true;
+    return Set.unmodifiable(seen);
   }
 
   List<String> _strings(dynamic value, String field) {
