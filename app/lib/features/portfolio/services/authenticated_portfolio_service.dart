@@ -66,8 +66,18 @@ class AuthenticatedPortfolioService {
   }
 
   Future<List<AuthenticatedPortfolioValuedPosition>> loadValuedPositions({required MarketRepository marketRepository}) async {
-    final holdings=await loadPositions(); final valued=<AuthenticatedPortfolioValuedPosition>[];
-    for(final holding in holdings){final quote=await marketRepository.getQuote(holding.symbol); _validateMarketQuote(holding:holding,quote:quote); valued.add(AuthenticatedPortfolioValuedPosition(holding:holding,quote:quote));}
+    final authorityToken = captureAuthorityToken();
+    final holdings = await loadPositions();
+    requireAuthorityToken(authorityToken);
+    final valued = <AuthenticatedPortfolioValuedPosition>[];
+    for (final holding in holdings) {
+      requireAuthorityToken(authorityToken);
+      final quote = await marketRepository.getQuote(holding.symbol);
+      requireAuthorityToken(authorityToken);
+      _validateMarketQuote(holding: holding, quote: quote);
+      valued.add(AuthenticatedPortfolioValuedPosition(holding: holding, quote: quote));
+    }
+    requireAuthorityToken(authorityToken);
     return List.unmodifiable(valued);
   }
 
