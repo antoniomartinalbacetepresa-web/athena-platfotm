@@ -17,12 +17,10 @@ import '../../services/authenticated_portfolio_service.dart';
 /// holdings cannot silently fall back to a second local source of truth.
 class AuthenticatedPortfolioController extends ChangeNotifier {
   AuthenticatedPortfolioController({
-    required AuthenticatedPortfolioService portfolioService,
-    required MarketRepository marketRepository,
+    required this._portfolioService,
+    required this._marketRepository,
     AuthSession? session,
-  })  : _portfolioService = portfolioService,
-        _marketRepository = marketRepository,
-        _session = session ?? AuthSession.instance {
+  }) : _session = session ?? AuthSession.instance {
     _session.addListener(_onAuthorityChanged);
   }
 
