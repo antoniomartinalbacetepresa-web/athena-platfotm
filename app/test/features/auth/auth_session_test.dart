@@ -29,6 +29,24 @@ void main() {
     expect(session.isAuthenticated, isTrue);
   });
 
+  test('authority transitions notify observers without duplicate no-op clears', () async {
+    final store = _FakeAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+    var notifications = 0;
+    session.addListener(() => notifications += 1);
+
+    session.establish(accessToken: 'token-123', account: account());
+    expect(notifications, 1);
+    expect(session.isAuthenticated, isTrue);
+
+    await session.clearPersisted();
+    expect(notifications, 2);
+    expect(session.isAuthenticated, isFalse);
+
+    await session.clearPersisted();
+    expect(notifications, 2);
+  });
+
   test('persistence failure fails closed and never exposes session in memory', () async {
     final store = _FakeAuthTokenStore(failWrites: true);
     final session = AuthSession.forTesting(store);
