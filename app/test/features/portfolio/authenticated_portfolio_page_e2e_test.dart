@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
@@ -58,6 +59,64 @@ void main() {
     expect(find.textContaining('Sincronización completada: 1 de 1'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
+  });
+
+
+  testWidgets('owner replacement while local sync snapshot loads sends no data',
+      (tester) async {
+    session.establish(accessToken: 'owner-a-token', account: account());
+    final localSnapshot = Completer<List<PortfolioPosition>>();
+    var networkCalled = false;
+    final remote = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      session: session,
+      client: MockClient((request) async {
+        networkCalled = true;
+        return http.Response('{}', 500);
+      }),
+    );
+    final controller = PortfolioCloudSyncController(
+      service: AuthenticatedPortfolioSyncService(remoteService: remote),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedPortfolioPage(
+          positionsLoader: () => localSnapshot.future,
+          syncController: controller,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    ));
+
+    await tester.tap(find.byKey(const Key('portfolio-authenticated-sync')));
+    await tester.pump();
+    session.establish(
+      accessToken: 'owner-b-token',
+      account: AuthAccount(
+        id: 8,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-21T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-21T10:00:00Z'),
+      ),
+    );
+    localSnapshot.complete([position()]);
+    await tester.pumpAndSettle();
+
+    expect(networkCalled, isFalse);
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b-token');
+    expect(session.account?.id, 8);
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(
+      find.textContaining('No se ha enviado ningún dato'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+    remote.dispose();
   });
 
   testWidgets('guest account controls are disabled and perform no local or network work', (tester) async {
