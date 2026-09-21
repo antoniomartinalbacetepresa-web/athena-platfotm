@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/core/routing/app_router.dart';
 import 'package:app/core/routing/app_routes.dart';
 import 'package:app/features/auth/models/auth_account.dart';
@@ -65,6 +67,55 @@ void main() {
     );
     expect(find.textContaining('problema temporal'), findsOneWidget);
     expect(find.text('Perfil protegido'), findsNothing);
+
+    auth.dispose();
+  });
+
+
+  testWidgets('stale me response cannot resurrect a replaced authenticated owner',
+      (tester) async {
+    session.establish(accessToken: 'owner-a.jwt', account: account());
+    final response = Completer<http.Response>();
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/auth/me');
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        return response.future;
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ProfilePage(authService: auth)),
+    );
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    final replacement = AuthAccount(
+      id: 23,
+      email: 'replacement@example.com',
+      displayName: 'Replacement Owner',
+      isActive: true,
+      createdAt: DateTime.utc(2026, 9, 21),
+      updatedAt: DateTime.utc(2026, 9, 21),
+    );
+    session.clear();
+    session.establish(
+      accessToken: 'owner-b.jwt',
+      account: replacement,
+    );
+
+    response.complete(http.Response(
+      '{"id":17,"email":"profile-owner@example.com","displayName":"Profile Owner","isActive":true,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}',
+      200,
+      headers: {'content-type': 'application/json'},
+    ));
+    await tester.pumpAndSettle();
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 23);
+    expect(session.account?.email, 'replacement@example.com');
 
     auth.dispose();
   });
