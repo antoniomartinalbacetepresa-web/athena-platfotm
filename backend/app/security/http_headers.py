@@ -9,7 +9,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _PRIVATE_PRODUCTION_SURFACES = frozenset({"/docs", "/redoc", "/openapi.json"})
 _PRODUCTION_ENVIRONMENTS = frozenset({"prod", "production"})
-_SENSITIVE_API_PREFIXES = ("/api/v1/auth", "/api/v1/user")
+# Every route below is authenticated/account-scoped. Keep the segment list
+# explicit: public market/news responses may legitimately acquire cache policy
+# later, while personal portfolio evidence must never enter browser/proxy caches.
+_SENSITIVE_API_PREFIXES = ("/api/v1/auth", "/api/v1/user", "/api/v1/portfolio")
 
 
 def _is_production_runtime() -> bool:
