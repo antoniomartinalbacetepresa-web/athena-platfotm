@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../models/auth_account.dart';
 import 'auth_token_store.dart';
 
@@ -10,7 +12,7 @@ enum AuthSessionRestoreResult {
   temporarilyUnavailable,
 }
 
-class AuthSession {
+class AuthSession extends ChangeNotifier {
   AuthSession._({AuthTokenStore? tokenStore})
       : _tokenStore = tokenStore ?? SecureAuthTokenStore();
 
@@ -31,8 +33,10 @@ class AuthSession {
     if (token.isEmpty || !account.isActive) {
       throw ArgumentError('La sesión autenticada no es válida.');
     }
+    final changed = _accessToken != token || _account != account;
     _accessToken = token;
     _account = account;
+    if (changed) notifyListeners();
   }
 
   Future<void> establishPersisted({
@@ -132,7 +136,9 @@ class AuthSession {
   }
 
   void _clearMemory() {
+    final changed = _accessToken != null || _account != null;
     _accessToken = null;
     _account = null;
+    if (changed) notifyListeners();
   }
 }
