@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
@@ -169,5 +170,33 @@ void main() {
     expect(controller.currency, isNull);
     expect(controller.sessionRejected, isFalse);
     expect(controller.error, isNotNull);
+  });
+
+  test('older overlapping load cannot overwrite newer verified capital', () async {
+    final first = Completer<http.Response>();
+    var calls = 0;
+    final service = UserPreferencesService(
+      client: MockClient((request) {
+        calls += 1;
+        if (calls == 1) return first.future;
+        return Future.value(configured(capital: 25000, currency: 'USD'));
+      }),
+      session: session(),
+    );
+    final controller = AuthenticatedPortfolioCapitalController(preferencesService: service);
+
+    final olderLoad = controller.load();
+    await Future<void>.delayed(Duration.zero);
+    await controller.load();
+    expect(controller.availableCapital, 25000);
+    expect(controller.currency, 'USD');
+
+    first.complete(configured(capital: 12500, currency: 'EUR'));
+    await olderLoad;
+
+    expect(controller.availableCapital, 25000);
+    expect(controller.currency, 'USD');
+    expect(controller.error, isNull);
+    expect(controller.isLoading, isFalse);
   });
 }
