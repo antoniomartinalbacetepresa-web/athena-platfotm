@@ -58,7 +58,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   }
 
   Future<void> load() async {
-    if (_isLoading || !_session.isAuthenticated) return;
+    if (_isLoading) return;
     final generation = _authorityGeneration;
     _isLoading = true;
     _error = null;
@@ -97,7 +97,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     required double quantity,
     double? averagePurchasePrice,
   }) async {
-    if (_sessionRejected || !_session.isAuthenticated) return false;
+    if (_sessionRejected) return false;
     final generation = _authorityGeneration;
     try {
       await _portfolioService.upsertPosition(
@@ -127,7 +127,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   }
 
   Future<bool> remove(AuthenticatedPortfolioViewPosition position) async {
-    if (_sessionRejected || !_session.isAuthenticated) return false;
+    if (_sessionRejected) return false;
     final generation = _authorityGeneration;
     try {
       await _portfolioService.deletePosition(position.serverPositionId);
