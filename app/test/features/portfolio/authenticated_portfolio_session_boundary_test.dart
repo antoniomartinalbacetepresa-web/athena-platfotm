@@ -6,6 +6,7 @@ import 'package:app/features/portfolio/presentation/pages/authenticated_portfoli
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_sync_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,7 +14,10 @@ import 'package:http/testing.dart';
 void main() {
   final session = AuthSession.instance;
 
-  setUp(() => session.clear());
+  setUp(() {
+    FlutterSecureStorage.setMockInitialValues({});
+    session.clear();
+  });
   tearDown(() => session.clear());
 
   AuthAccount account() => AuthAccount(
@@ -84,8 +88,6 @@ void main() {
   testWidgets('401 from portfolio backend invalidates the local authenticated session',
       (tester) async {
     final controller = await pumpWithStatus(tester, statusCode: 401);
-    // The controller boundary completes before the page's async callback
-    // publishes its rejection SnackBar. Pump one frame for that UI handoff.
     await tester.pump();
 
     expect(controller.status, PortfolioCloudSyncStatus.sessionRejected);
