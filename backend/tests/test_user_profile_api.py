@@ -111,10 +111,17 @@ def test_preferences_are_owner_scoped_and_ciphertext_only(monkeypatch, tmp_path)
             "SELECT nonce_b64, ciphertext_b64 FROM athena_user_profile_preferences"
         ).fetchone()
     assert row is not None
-    serialized = " ".join(str(value) for value in row)
-    assert "balanced" not in serialized
-    assert "long_term_growth" not in serialized
-    assert "EUR" not in serialized
+    # Ciphertext is base64 text, so short plaintext substrings can occur by
+    # chance. Decode the stored fields and assert that complete sensitive
+    # plaintext values are not present in the encrypted bytes instead.
+    import base64
+
+    encrypted_bytes = b" ".join(
+        base64.urlsafe_b64decode(str(value).encode("ascii")) for value in row
+    )
+    assert b"balanced" not in encrypted_bytes
+    assert b"long_term_growth" not in encrypted_bytes
+    assert b'"baseCurrency":"EUR"' not in encrypted_bytes
 
 
 def test_profile_language_is_spanish_only_until_multilingual_ui_exists(monkeypatch, tmp_path) -> None:
