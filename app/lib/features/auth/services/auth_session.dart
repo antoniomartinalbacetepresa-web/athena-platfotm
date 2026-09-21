@@ -84,10 +84,6 @@ class AuthSession extends ChangeNotifier {
       return AuthSessionRestoreResult.noStoredToken;
     }
 
-    // Secure storage is a persistence mechanism, not an authority boundary.
-    // Never send malformed/blank persisted credentials to the backend and never
-    // expose them as an authenticated in-memory session. Whitespace is
-    // normalized consistently with establishPersisted().
     final token = storedToken.trim();
     if (token.isEmpty) {
       _clearMemory();
@@ -101,9 +97,6 @@ class AuthSession extends ChangeNotifier {
 
     try {
       final account = await validateToken(token);
-      // Validation is tied to the authority snapshot that initiated restore.
-      // A login/logout/account transition while validation is in flight wins;
-      // a late persisted credential must never resurrect an older owner.
       if (_authorityVersion != restoreAuthorityVersion) {
         return isAuthenticated
             ? AuthSessionRestoreResult.restored
@@ -131,20 +124,11 @@ class AuthSession extends ChangeNotifier {
   }
 
   Future<void> clearPersisted() async {
-    // Clearing an authenticated session is an authority transition. Revoke the
-    // in-memory authority first so a secure-storage outage cannot leave the UI
-    // authenticated after the caller explicitly requested a local clear. If
-    // deletion fails the durable credential remains stale and must be remotely
-    // revalidated before any later restore can regain authority.
     _clearMemory();
     await _tokenStore.deleteAccessToken();
   }
 
   Future<bool> clearAfterRemoteInvalidation() async {
-    // Once the server has irreversibly invalidated the credential/account, the
-    // client must stop presenting an authenticated in-memory state even if the
-    // platform secure-storage deletion fails. A retained token is stale and is
-    // revalidated/rejected on the next restore attempt.
     _clearMemory();
     try {
       await _tokenStore.deleteAccessToken();
@@ -154,12 +138,20 @@ class AuthSession extends ChangeNotifier {
     }
   }
 
+  /// Applies a remote 401/403 only to the credential that actually received it.
+  /// A late response from an older owner must never revoke a replacement owner.
+  Future<bool> clearAfterRemoteInvalidationIfCurrent(
+    String expectedAccessToken,
+  ) async {
+    final expected = expectedAccessToken.trim();
+    if (expected.isEmpty || !isAuthenticated || _accessToken != expected) {
+      return false;
+    }
+    return clearAfterRemoteInvalidation();
+  }
+
   void clear() {
     _clearMemory();
-    // Existing UI call sites use a synchronous clear contract. Remove the
-    // durable token as well so a local logout cannot intentionally preserve a
-    // credential for the next launch. Explicit security-sensitive flows can
-    // await clearPersisted() when they need deletion failure surfaced.
     unawaited(_tokenStore.deleteAccessToken().catchError((Object _) {}));
   }
 
