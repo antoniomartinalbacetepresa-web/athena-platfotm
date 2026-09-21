@@ -37,11 +37,12 @@ class UserPreferencesService {
   int? _lastRejectedStatusCode;
 
   Future<UserPreferences?> load() async {
+    final token = _authenticatedToken();
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
-      headers: _authenticatedHeaders(),
+      headers: _authenticatedHeaders(token),
     );
-    await _rejectInvalidSession(response);
+    await _rejectInvalidSession(response, token);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -67,11 +68,12 @@ class UserPreferencesService {
   }
 
   Future<UserPersonalization?> loadPersonalization() async {
+    final token = _authenticatedToken();
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/user/profile/personalization'),
-      headers: _authenticatedHeaders(),
+      headers: _authenticatedHeaders(token),
     );
-    await _rejectInvalidSession(response);
+    await _rejectInvalidSession(response, token);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -93,12 +95,13 @@ class UserPreferencesService {
   }
 
   Future<UserPreferences> save(UserPreferences preferences) async {
+    final token = _authenticatedToken();
     final response = await _client.put(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
-      headers: _authenticatedHeaders(json: true),
+      headers: _authenticatedHeaders(token, json: true),
       body: jsonEncode(preferences.toJson()),
     );
-    await _rejectInvalidSession(response);
+    await _rejectInvalidSession(response, token);
     final payload = _decodeObject(response);
     if (payload['status'] != 'configured') {
       throw const FormatException('Estado de preferencias persistidas no válido.');
@@ -115,17 +118,18 @@ class UserPreferencesService {
   }
 
   Future<void> delete() async {
+    final token = _authenticatedToken();
     final response = await _client.delete(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
-      headers: _authenticatedHeaders(),
+      headers: _authenticatedHeaders(token),
     );
-    await _rejectInvalidSession(response);
+    await _rejectInvalidSession(response, token);
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
   }
 
-  Map<String, String> _authenticatedHeaders({bool json = false}) {
+  String _authenticatedToken() {
     final token = _session.accessToken?.trim();
     if (!_session.isAuthenticated || token == null || token.isEmpty) {
       final rejectedStatus = _lastRejectedStatusCode;
@@ -134,16 +138,26 @@ class UserPreferencesService {
       }
       throw StateError('Se requiere una sesión ATHENA autenticada.');
     }
+    return token;
+  }
+
+  Map<String, String> _authenticatedHeaders(
+    String token, {
+    bool json = false,
+  }) {
     return {
       'Authorization': 'Bearer $token',
       if (json) 'Content-Type': 'application/json',
     };
   }
 
-  Future<void> _rejectInvalidSession(http.Response response) async {
+  Future<void> _rejectInvalidSession(
+    http.Response response,
+    String requestToken,
+  ) async {
     if (response.statusCode != 401 && response.statusCode != 403) return;
     _lastRejectedStatusCode = response.statusCode;
-    await _session.clearAfterRemoteInvalidation();
+    await _session.clearAfterRemoteInvalidationIfCurrent(requestToken);
     throw UserPreferencesSessionRejectedException(response.statusCode);
   }
 
