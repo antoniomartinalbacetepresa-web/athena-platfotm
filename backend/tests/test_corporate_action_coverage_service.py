@@ -104,6 +104,18 @@ def test_equal_dividend_amounts_without_currency_are_incomplete_not_agreed(tmp_p
     assert report.cross_provider_reconciliation_ready is False
 
 
+def test_non_ascii_currency_code_is_incomplete_not_reconciliation_evidence(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="yahoo", amount=0.25, currency="ÉUR")
+    _save_dividend(database, provider="exchange_notice", amount=0.25, currency="ÉUR")
+    report = CorporateActionCoverageService(database=database, provider_families={"yahoo": "yahoo", "exchange_notice": "exchange"}).get_report(as_of=AS_OF)
+    assert report.event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 0
+    assert report.incomplete_event_count == 1
+    assert report.cross_provider_reconciliation_ready is False
+
+
 def test_equal_amounts_in_different_currencies_conflict(tmp_path) -> None:
     database = _database(tmp_path)
     _save_dividend(database, provider="yahoo", amount=0.25, currency="USD")
