@@ -65,9 +65,10 @@ def test_authenticated_portfolio_namespace_is_never_cacheable() -> None:
     with TestClient(app, base_url="https://testserver") as client:
         response = client.get("/api/v1/portfolio/valuation-evidence")
 
-    # Authentication may reject before route-specific validation; either way the
-    # account-scoped namespace must be protected from browser/proxy persistence.
-    assert response.status_code in {401, 403, 404, 422}
+    # The route currently rejects GET with 405 before authentication. The cache
+    # policy belongs to the sensitive namespace itself, so method rejection must
+    # be protected exactly like auth/validation failures.
+    assert response.status_code in {401, 403, 404, 405, 422}
     _assert_common_security_headers(response)
     _assert_sensitive_response_is_not_cacheable(response)
     assert response.headers["strict-transport-security"] == "max-age=31536000"
