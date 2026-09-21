@@ -15,6 +15,13 @@ class UserPreferencesSessionRejectedException implements Exception {
   String toString() => 'La sesión ATHENA ya no está autorizada.';
 }
 
+class UserPreferencesAuthorityChangedException implements Exception {
+  const UserPreferencesAuthorityChangedException();
+
+  @override
+  String toString() => 'La autoridad ATHENA cambió durante la operación.';
+}
+
 class UserPreferencesService {
   static const String _defaultBackendUrl = String.fromEnvironment(
     'ATHENA_BACKEND_URL',
@@ -43,6 +50,7 @@ class UserPreferencesService {
       headers: _authenticatedHeaders(token),
     );
     await _rejectInvalidSession(response, token);
+    _requireCurrentToken(token);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -74,6 +82,7 @@ class UserPreferencesService {
       headers: _authenticatedHeaders(token),
     );
     await _rejectInvalidSession(response, token);
+    _requireCurrentToken(token);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -102,6 +111,7 @@ class UserPreferencesService {
       body: jsonEncode(preferences.toJson()),
     );
     await _rejectInvalidSession(response, token);
+    _requireCurrentToken(token);
     final payload = _decodeObject(response);
     if (payload['status'] != 'configured') {
       throw const FormatException('Estado de preferencias persistidas no válido.');
@@ -124,6 +134,7 @@ class UserPreferencesService {
       headers: _authenticatedHeaders(token),
     );
     await _rejectInvalidSession(response, token);
+    _requireCurrentToken(token);
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
@@ -159,6 +170,13 @@ class UserPreferencesService {
     _lastRejectedStatusCode = response.statusCode;
     await _session.clearAfterRemoteInvalidationIfCurrent(requestToken);
     throw UserPreferencesSessionRejectedException(response.statusCode);
+  }
+
+  void _requireCurrentToken(String requestToken) {
+    final currentToken = _session.accessToken?.trim();
+    if (!_session.isAuthenticated || currentToken != requestToken) {
+      throw const UserPreferencesAuthorityChangedException();
+    }
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {
