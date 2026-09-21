@@ -134,13 +134,14 @@ void main() {
   });
 
   testWidgets('login while Portfolio is mounted initializes the authenticated boundary', (tester) async {
+    const authenticatedSubtitle = 'Posiciones personales protegidas por tu cuenta ATHENA';
     await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
-    expect(find.text('MI CARTERA'), findsNothing);
+    expect(find.text(authenticatedSubtitle), findsNothing);
 
     session.establish(accessToken: 'owner-token', account: account());
     await tester.pump();
 
-    expect(find.text('MI CARTERA'), findsOneWidget);
+    expect(find.text(authenticatedSubtitle), findsOneWidget);
     expect(find.text('No se pudo inicializar la cartera autenticada.'), findsNothing);
 
     await tester.pumpWidget(const SizedBox());
