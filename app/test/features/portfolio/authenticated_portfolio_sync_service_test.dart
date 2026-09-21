@@ -2,12 +2,43 @@ import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/portfolio/models/authenticated_portfolio_position.dart';
 import 'package:app/features/portfolio/models/portfolio_position.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_sync_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+class _OwnerSwitchingPortfolioService extends AuthenticatedPortfolioService {
+  _OwnerSwitchingPortfolioService({
+    required this.session,
+    required http.Client client,
+  }) : super(baseUrl: 'http://athena.local', client: client, session: session);
+
+  final AuthSession session;
+  var _switched = false;
+
+  @override
+  Future<List<AuthenticatedPortfolioPosition>> loadPositions() async {
+    final result = await super.loadPositions();
+    if (!_switched) {
+      _switched = true;
+      session.establish(
+        accessToken: 'owner-b.jwt',
+        account: AuthAccount(
+          id: 8,
+          email: 'replacement@example.com',
+          displayName: 'Replacement Owner',
+          isActive: true,
+          createdAt: DateTime.parse('2026-09-21T12:00:00Z'),
+          updatedAt: DateTime.parse('2026-09-21T12:00:00Z'),
+        ),
+      );
+    }
+    return result;
+  }
+}
 
 void main() {
   final session = AuthSession.instance;
@@ -102,6 +133,35 @@ void main() {
     expect(report.remotePositionCountAfter, 1);
     expect(report.destructiveChangesApplied, isFalse);
     expect(report.sensitiveCostBasisTransmitted, isTrue);
+  });
+
+  test('one sync cannot continue writing after authenticated owner changes', () async {
+    session.establish(accessToken: 'owner-a.jwt', account: account());
+    var putCalls = 0;
+    final client = MockClient((request) async {
+      if (request.method == 'GET') {
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        return http.Response('{"data":{"positions":[],"positionCount":0}}', 200);
+      }
+      if (request.method == 'PUT') {
+        putCalls += 1;
+        fail('A sync started by owner A must never write under owner B.');
+      }
+      return http.Response('{}', 500);
+    });
+    final remote = _OwnerSwitchingPortfolioService(session: session, client: client);
+    final sync = AuthenticatedPortfolioSyncService(remoteService: remote);
+
+    await expectLater(
+      sync.syncDeclaredPositions([localPosition()]),
+      throwsA(isA<AuthenticatedPortfolioAuthorityChangedException>()),
+    );
+
+    expect(putCalls, 0);
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 8);
+    expect(session.account?.email, 'replacement@example.com');
   });
 
   test('sync rejects duplicate local listing identities before network', () async {
