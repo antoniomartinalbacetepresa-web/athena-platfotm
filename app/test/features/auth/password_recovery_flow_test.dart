@@ -116,6 +116,52 @@ void main() {
     expect(success.data, isNot(contains('unknown@example.com')));
   });
 
+
+  testWidgets('recovery status and errors are accessibility live regions', (tester) async {
+    var fail = false;
+    final service = AthenaAuthService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async {
+        if (fail) return http.Response('{}', 503);
+        return http.Response(
+          '{"status":"recovery_requested","message":"generic"}',
+          202,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: PasswordRecoveryPage(service: service)),
+    );
+    await tester.enterText(
+      find.byKey(const Key('recovery-email')),
+      'owner@example.com',
+    );
+    await tester.tap(find.byKey(const Key('recovery-request')));
+    await tester.pumpAndSettle();
+
+    final successSemantics = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.byKey(const Key('recovery-generic-success')),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(successSemantics.properties.liveRegion, isTrue);
+
+    fail = true;
+    await tester.tap(find.byKey(const Key('recovery-request')));
+    await tester.pumpAndSettle();
+
+    final errorSemantics = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.byKey(const Key('recovery-error')),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(errorSemantics.properties.liveRegion, isTrue);
+  });
+
   testWidgets('reset UI consumes initial link token and requires fresh login', (tester) async {
     late Map<String, dynamic> resetPayload;
     final service = AthenaAuthService(
