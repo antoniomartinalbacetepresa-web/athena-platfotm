@@ -146,4 +146,35 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('logout disposes owner boundary and relogin rebuilds it cleanly', (tester) async {
+    const authenticatedSubtitle = 'Posiciones personales protegidas por tu cuenta ATHENA';
+    session.establish(accessToken: 'owner-a-token', account: account());
+    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    expect(find.text(authenticatedSubtitle), findsOneWidget);
+
+    await session.clear();
+    await tester.pump();
+    expect(find.text(authenticatedSubtitle), findsNothing);
+
+    session.establish(
+      accessToken: 'owner-b-token',
+      account: AuthAccount(
+        id: 8,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-21T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-21T10:00:00Z'),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text(authenticatedSubtitle), findsOneWidget);
+    expect(find.text('No se pudo inicializar la cartera autenticada.'), findsNothing);
+    expect(session.account?.id, 8);
+    expect(session.accessToken, 'owner-b-token');
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }
