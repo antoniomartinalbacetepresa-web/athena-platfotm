@@ -267,4 +267,111 @@ void main() {
     expect(portfolio.hasVerifiedCapital, isFalse);
     expect(portfolio.hasVerifiedBaseCurrency, isFalse);
   });
+
+  test('account closure revokes Profile and Portfolio authority after backend confirmation',
+      () async {
+    final store = _MemoryTokenStore()..token = 'closing-owner-token';
+    final session = AuthSession.forTesting(store);
+    session.establish(
+      accessToken: 'closing-owner-token',
+      account: _account(11, 'closing-owner@example.com'),
+    );
+
+    var profileCalls = 0;
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((request) async {
+        profileCalls += 1;
+        expect(request.headers['Authorization'], 'Bearer closing-owner-token');
+        return _configured(42000, 'EUR');
+      }),
+    );
+    final portfolio = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await portfolio.load();
+    expect(portfolio.availableCapital, 42000);
+    expect(profileCalls, 1);
+
+    var closureCalls = 0;
+    final lifecycle = AccountLifecycleService(
+      authService: AthenaAuthService(
+        baseUrl: 'https://athena.local',
+        client: MockClient((request) async {
+          closureCalls += 1;
+          expect(request.url.path, '/api/v1/auth/account');
+          expect(request.headers['Authorization'], 'Bearer closing-owner-token');
+          final payload = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(payload['currentPassword'], 'current-password');
+          return http.Response('', 204);
+        }),
+      ),
+      session: session,
+    );
+
+    final result = await lifecycle.closeCurrentAccount(
+      currentPassword: 'current-password',
+    );
+    expect(closureCalls, 1);
+    expect(result.localCredentialDeleted, isTrue);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.token, isNull);
+
+    await portfolio.load();
+    expect(profileCalls, 1);
+    expect(portfolio.availableCapital, isNull);
+    expect(portfolio.currency, isNull);
+    expect(portfolio.hasVerifiedCapital, isFalse);
+    expect(portfolio.hasVerifiedBaseCurrency, isFalse);
+  });
+
+  test('failed account closure preserves authenticated authority and owner state',
+      () async {
+    final store = _MemoryTokenStore()..token = 'owner-token';
+    final session = AuthSession.forTesting(store);
+    session.establish(
+      accessToken: 'owner-token',
+      account: _account(12, 'owner@example.com'),
+    );
+
+    var profileCalls = 0;
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((request) async {
+        profileCalls += 1;
+        return _configured(5100, 'USD');
+      }),
+    );
+    final portfolio = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await portfolio.load();
+
+    final lifecycle = AccountLifecycleService(
+      authService: AthenaAuthService(
+        baseUrl: 'https://athena.local',
+        client: MockClient((request) async => http.Response(
+              jsonEncode({'detail': 'password rejected'}),
+              401,
+              headers: {'content-type': 'application/json'},
+            )),
+      ),
+      session: session,
+    );
+
+    await expectLater(
+      lifecycle.closeCurrentAccount(currentPassword: 'wrong-password'),
+      throwsA(isA<Exception>()),
+    );
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-token');
+    expect(store.token, 'owner-token');
+
+    await portfolio.load();
+    expect(profileCalls, 2);
+    expect(portfolio.availableCapital, 5100);
+    expect(portfolio.currency, 'USD');
+    expect(portfolio.hasVerifiedCapital, isTrue);
+  });
 }
