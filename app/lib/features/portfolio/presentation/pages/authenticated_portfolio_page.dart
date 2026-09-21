@@ -82,25 +82,46 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     unawaited(capitalController.load());
   }
 
+  void _disposeAuthenticatedBoundary() {
+    _valuationRefreshScheduled = false;
+    final fxController = _fxValuationController;
+    final capitalController = _capitalController;
+    final preferencesService = _preferencesService;
+    final authenticatedController = _authenticatedController;
+    final authenticatedService = _authenticatedService;
+    final marketDependencies = _marketDependencies;
+    _fxValuationController = null;
+    _capitalController = null;
+    _preferencesService = null;
+    _authenticatedController = null;
+    _authenticatedService = null;
+    _marketDependencies = null;
+    fxController?.removeListener(_onFxChanged);
+    fxController?.dispose();
+    capitalController?.removeListener(_onAuthenticatedChanged);
+    capitalController?.dispose();
+    preferencesService?.dispose();
+    authenticatedController?.removeListener(_onAuthenticatedChanged);
+    authenticatedController?.dispose();
+    authenticatedService?.dispose();
+    marketDependencies?.dispose();
+  }
+
   @override
   void dispose() {
     AuthSession.instance.removeListener(_onSessionAuthorityChanged);
-    _fxValuationController?.removeListener(_onFxChanged);
-    _fxValuationController?.dispose();
-    _capitalController?.removeListener(_onAuthenticatedChanged);
-    _capitalController?.dispose();
-    _preferencesService?.dispose();
-    _authenticatedController?.removeListener(_onAuthenticatedChanged);
-    _authenticatedController?.dispose();
-    _authenticatedService?.dispose();
-    _marketDependencies?.dispose();
+    _disposeAuthenticatedBoundary();
     _syncController.removeListener(_onSyncChanged);
     if (_ownsSyncController) _syncController.dispose();
     super.dispose();
   }
 
   void _onSessionAuthorityChanged() {
-    _ensureAuthenticatedBoundary();
+    if (AuthSession.instance.isAuthenticated) {
+      _ensureAuthenticatedBoundary();
+    } else {
+      _disposeAuthenticatedBoundary();
+    }
     if (mounted) setState(() {});
   }
   void _onSyncChanged() { if (mounted) setState(() {}); }
