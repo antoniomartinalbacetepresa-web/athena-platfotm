@@ -23,6 +23,7 @@ class AuthSession extends ChangeNotifier {
   final AuthTokenStore _tokenStore;
   String? _accessToken;
   AuthAccount? _account;
+  int _authorityVersion = 0;
 
   String? get accessToken => _accessToken;
   AuthAccount? get account => _account;
@@ -36,7 +37,10 @@ class AuthSession extends ChangeNotifier {
     final changed = _accessToken != token || _account != account;
     _accessToken = token;
     _account = account;
-    if (changed) notifyListeners();
+    if (changed) {
+      _authorityVersion += 1;
+      notifyListeners();
+    }
   }
 
   Future<void> establishPersisted({
@@ -56,13 +60,24 @@ class AuthSession extends ChangeNotifier {
     required bool Function(Object error) shouldDiscardToken,
   }) async {
     if (isAuthenticated) return AuthSessionRestoreResult.restored;
+    final restoreAuthorityVersion = _authorityVersion;
 
     final String? storedToken;
     try {
       storedToken = await _tokenStore.readAccessToken();
     } catch (_) {
+      if (_authorityVersion != restoreAuthorityVersion) {
+        return isAuthenticated
+            ? AuthSessionRestoreResult.restored
+            : AuthSessionRestoreResult.temporarilyUnavailable;
+      }
       _clearMemory();
       return AuthSessionRestoreResult.temporarilyUnavailable;
+    }
+    if (_authorityVersion != restoreAuthorityVersion) {
+      return isAuthenticated
+          ? AuthSessionRestoreResult.restored
+          : AuthSessionRestoreResult.temporarilyUnavailable;
     }
     if (storedToken == null) {
       _clearMemory();
@@ -86,9 +101,22 @@ class AuthSession extends ChangeNotifier {
 
     try {
       final account = await validateToken(token);
+      // Validation is tied to the authority snapshot that initiated restore.
+      // A login/logout/account transition while validation is in flight wins;
+      // a late persisted credential must never resurrect an older owner.
+      if (_authorityVersion != restoreAuthorityVersion) {
+        return isAuthenticated
+            ? AuthSessionRestoreResult.restored
+            : AuthSessionRestoreResult.temporarilyUnavailable;
+      }
       establish(accessToken: token, account: account);
       return AuthSessionRestoreResult.restored;
     } catch (error) {
+      if (_authorityVersion != restoreAuthorityVersion) {
+        return isAuthenticated
+            ? AuthSessionRestoreResult.restored
+            : AuthSessionRestoreResult.temporarilyUnavailable;
+      }
       _clearMemory();
       if (!shouldDiscardToken(error)) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
@@ -139,6 +167,9 @@ class AuthSession extends ChangeNotifier {
     final changed = _accessToken != null || _account != null;
     _accessToken = null;
     _account = null;
-    if (changed) notifyListeners();
+    if (changed) {
+      _authorityVersion += 1;
+      notifyListeners();
+    }
   }
 }
