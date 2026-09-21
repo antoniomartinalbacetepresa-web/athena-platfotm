@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../auth/services/athena_auth_service.dart';
+import '../../../auth/services/auth_session.dart';
 import '../../../market/repositories/market_repository.dart';
 import '../../models/authenticated_portfolio_view_position.dart';
 import '../../services/authenticated_portfolio_service.dart';
@@ -14,17 +17,24 @@ import '../../services/authenticated_portfolio_service.dart';
 /// holdings cannot silently fall back to a second local source of truth.
 class AuthenticatedPortfolioController extends ChangeNotifier {
   AuthenticatedPortfolioController({
-    required this._portfolioService,
-    required this._marketRepository,
-  });
+    required AuthenticatedPortfolioService portfolioService,
+    required MarketRepository marketRepository,
+    AuthSession? session,
+  })  : _portfolioService = portfolioService,
+        _marketRepository = marketRepository,
+        _session = session ?? AuthSession.instance {
+    _session.addListener(_onAuthorityChanged);
+  }
 
   final AuthenticatedPortfolioService _portfolioService;
   final MarketRepository _marketRepository;
+  final AuthSession _session;
 
   List<AuthenticatedPortfolioViewPosition> _positions = const [];
   bool _isLoading = false;
   bool _sessionRejected = false;
   String? _error;
+  int _authorityGeneration = 0;
 
   List<AuthenticatedPortfolioViewPosition> get positions => _positions;
   bool get isLoading => _isLoading;
@@ -32,8 +42,24 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   String? get error => _error;
   bool get isEmpty => !_isLoading && !_sessionRejected && _positions.isEmpty;
 
+  void _onAuthorityChanged() {
+    // Owner data must disappear synchronously when authentication authority
+    // changes. Any response already in flight belongs to the old generation
+    // and is forbidden from repopulating this controller.
+    _authorityGeneration += 1;
+    _positions = const [];
+    _isLoading = false;
+    _sessionRejected = false;
+    _error = null;
+    notifyListeners();
+    if (_session.isAuthenticated) {
+      unawaited(load());
+    }
+  }
+
   Future<void> load() async {
-    if (_isLoading) return;
+    if (_isLoading || !_session.isAuthenticated) return;
+    final generation = _authorityGeneration;
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -42,21 +68,26 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
       final valued = await _portfolioService.loadValuedPositions(
         marketRepository: _marketRepository,
       );
+      if (generation != _authorityGeneration) return;
       _positions = List.unmodifiable(
         valued.map(AuthenticatedPortfolioViewPosition.fromValuedPosition),
       );
       _sessionRejected = false;
     } on AuthSessionRejectedException {
+      if (generation != _authorityGeneration) return;
       _positions = const [];
       _sessionRejected = true;
       _error = null;
     } catch (_) {
+      if (generation != _authorityGeneration) return;
       _positions = const [];
       _sessionRejected = false;
       _error = 'No se pudo cargar la cartera autenticada con datos verificables.';
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (generation == _authorityGeneration) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -66,7 +97,8 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     required double quantity,
     double? averagePurchasePrice,
   }) async {
-    if (_sessionRejected) return false;
+    if (_sessionRejected || !_session.isAuthenticated) return false;
+    final generation = _authorityGeneration;
     try {
       await _portfolioService.upsertPosition(
         symbol: symbol,
@@ -74,15 +106,20 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
         quantity: quantity,
         averagePurchasePrice: averagePurchasePrice,
       );
+      if (generation != _authorityGeneration) return false;
       await load();
-      return !_sessionRejected && _error == null;
+      return generation == _authorityGeneration &&
+          !_sessionRejected &&
+          _error == null;
     } on AuthSessionRejectedException {
+      if (generation != _authorityGeneration) return false;
       _positions = const [];
       _sessionRejected = true;
       _error = null;
       notifyListeners();
       return false;
     } catch (_) {
+      if (generation != _authorityGeneration) return false;
       _error = 'No se pudo guardar la posición autenticada.';
       notifyListeners();
       return false;
@@ -90,18 +127,24 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   }
 
   Future<bool> remove(AuthenticatedPortfolioViewPosition position) async {
-    if (_sessionRejected) return false;
+    if (_sessionRejected || !_session.isAuthenticated) return false;
+    final generation = _authorityGeneration;
     try {
       await _portfolioService.deletePosition(position.serverPositionId);
+      if (generation != _authorityGeneration) return false;
       await load();
-      return !_sessionRejected && _error == null;
+      return generation == _authorityGeneration &&
+          !_sessionRejected &&
+          _error == null;
     } on AuthSessionRejectedException {
+      if (generation != _authorityGeneration) return false;
       _positions = const [];
       _sessionRejected = true;
       _error = null;
       notifyListeners();
       return false;
     } catch (_) {
+      if (generation != _authorityGeneration) return false;
       _error = 'No se pudo eliminar la posición autenticada.';
       notifyListeners();
       return false;
@@ -130,5 +173,11 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
       total += invested;
     }
     return total;
+  }
+
+  @override
+  void dispose() {
+    _session.removeListener(_onAuthorityChanged);
+    super.dispose();
   }
 }
