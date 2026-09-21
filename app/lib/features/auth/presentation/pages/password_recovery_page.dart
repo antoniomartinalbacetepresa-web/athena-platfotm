@@ -127,7 +127,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: AthenaColors.border),
                 ),
-                child: AutofillGroup(\n                  child: _resetComplete ? _buildCompleted() : _buildForm(),\n                ),
+                child: _resetComplete ? _buildCompleted() : _buildForm(),
               ),
             ),
           ),
