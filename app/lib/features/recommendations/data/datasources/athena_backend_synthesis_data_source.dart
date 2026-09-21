@@ -80,6 +80,11 @@ class AthenaBackendSynthesisDataSource {
     if (data['artifactBindingVerified'] is! bool || data['artifactBindingVerified'] != true) {
       throw const FormatException('ATHENA synthesis no acredita artifact binding.');
     }
+    if (data['presentationOnly'] is! bool || data['presentationOnly'] != true ||
+        data['recommendationInfluence'] is! bool || data['recommendationInfluence'] != false ||
+        data['automaticTrading'] is! bool || data['automaticTrading'] != false) {
+      throw const FormatException('ATHENA synthesis viola el contrato superior de presentación segura.');
+    }
     final rawSynthesis = data['synthesis'];
     final rawProvenance = data['provenance'];
     if (rawSynthesis is! Map || rawProvenance is! Map) {
