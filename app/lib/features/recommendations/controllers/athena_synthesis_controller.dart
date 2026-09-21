@@ -23,6 +23,7 @@ class AthenaSynthesisController extends ChangeNotifier {
     if (_isLoading) return;
     _latestRequested = true;
     _cycleHash = null;
+    _synthesis = null;
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -52,6 +53,7 @@ class AthenaSynthesisController extends ChangeNotifier {
 
     final requestedCycle = cycleHash.trim().toLowerCase();
     _latestRequested = false;
+    _synthesis = null;
     _isLoading = true;
     _error = null;
     _cycleHash = requestedCycle;
