@@ -153,7 +153,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
     expect(find.text(authenticatedSubtitle), findsOneWidget);
 
-    await session.clear();
+    session.clear();
     await tester.pump();
     expect(find.text(authenticatedSubtitle), findsNothing);
 
