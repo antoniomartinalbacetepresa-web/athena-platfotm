@@ -20,59 +20,7 @@ class _TokenStore implements AuthTokenStore {
   @override
   Future<void> writeAccessToken(String token) async {}
 
-  test('owner replacement clears old capital synchronously and reloads only the new owner', () async {
-    final auth = session();
-    final ownerA = Completer<http.Response>();
-    final service = UserPreferencesService(
-      client: MockClient((request) {
-        final token = request.headers['Authorization'];
-        if (token == 'Bearer token') return ownerA.future;
-        if (token == 'Bearer token-b') {
-          return Future.value(configured(capital: 40000, currency: 'USD'));
-        }
-        return Future.value(http.Response('{}', 401));
-      }),
-      session: auth,
-    );
-    final controller = AuthenticatedPortfolioCapitalController(
-      preferencesService: service,
-      session: auth,
-    );
 
-    final loadA = controller.load();
-    await Future<void>.delayed(Duration.zero);
-    expect(controller.isLoading, isTrue);
-
-    auth.establish(
-      accessToken: 'token-b',
-      account: AuthAccount(
-        id: 10,
-        email: 'owner-b@example.com',
-        displayName: 'Owner B',
-        isActive: true,
-        createdAt: DateTime.parse('2026-09-16T10:00:00Z'),
-        updatedAt: DateTime.parse('2026-09-16T10:00:00Z'),
-      ),
-    );
-
-    expect(controller.availableCapital, isNull);
-    expect(controller.currency, isNull);
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
-
-    expect(controller.availableCapital, 40000);
-    expect(controller.currency, 'USD');
-    expect(controller.hasVerifiedCapital, isTrue);
-
-    ownerA.complete(configured(capital: 12500, currency: 'EUR'));
-    await loadA;
-
-    expect(controller.availableCapital, 40000);
-    expect(controller.currency, 'USD');
-    expect(controller.error, isNull);
-    controller.dispose();
-    service.dispose();
-  });
 
 }
 
@@ -253,5 +201,59 @@ void main() {
     expect(controller.currency, 'USD');
     expect(controller.error, isNull);
     expect(controller.isLoading, isFalse);
+  });
+
+  test('owner replacement clears old capital synchronously and reloads only the new owner', () async {
+    final auth = session();
+    final ownerA = Completer<http.Response>();
+    final service = UserPreferencesService(
+      client: MockClient((request) {
+        final token = request.headers['Authorization'];
+        if (token == 'Bearer token') return ownerA.future;
+        if (token == 'Bearer token-b') {
+          return Future.value(configured(capital: 40000, currency: 'USD'));
+        }
+        return Future.value(http.Response('{}', 401));
+      }),
+      session: auth,
+    );
+    final controller = AuthenticatedPortfolioCapitalController(
+      preferencesService: service,
+      session: auth,
+    );
+
+    final loadA = controller.load();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.isLoading, isTrue);
+
+    auth.establish(
+      accessToken: 'token-b',
+      account: AuthAccount(
+        id: 10,
+        email: 'owner-b@example.com',
+        displayName: 'Owner B',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-16T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-16T10:00:00Z'),
+      ),
+    );
+
+    expect(controller.availableCapital, isNull);
+    expect(controller.currency, isNull);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.availableCapital, 40000);
+    expect(controller.currency, 'USD');
+    expect(controller.hasVerifiedCapital, isTrue);
+
+    ownerA.complete(configured(capital: 12500, currency: 'EUR'));
+    await loadA;
+
+    expect(controller.availableCapital, 40000);
+    expect(controller.currency, 'USD');
+    expect(controller.error, isNull);
+    controller.dispose();
+    service.dispose();
   });
 }
