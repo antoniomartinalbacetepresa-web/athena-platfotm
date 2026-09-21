@@ -124,9 +124,9 @@ class _LoginPageState extends State<LoginPage> {
                       child: ElevatedButton(
                         onPressed: _loading ? null : _login,
                         child: _loading
-                            ? const Semantics(
+                            ? Semantics(
                                 label: 'Iniciando sesión',
-                                child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                                child: const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
                               )
                             : const Text('ENTRAR CON CUENTA'),
                       ),
