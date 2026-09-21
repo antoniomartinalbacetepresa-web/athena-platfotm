@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/accessibility/accessible_status_message.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../services/athena_auth_service.dart';
@@ -56,9 +57,7 @@ class _LoginPageState extends State<LoginPage> {
         _error = 'No se pudo iniciar sesión. Revisa tus credenciales o la configuración segura del dispositivo/backend.';
       });
     } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -91,16 +90,13 @@ class _LoginPageState extends State<LoginPage> {
                     const Text(
                       'ATHENA TYCHE',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AthenaColors.primary,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      style: TextStyle(color: AthenaColors.primary, fontSize: 22, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 24),
                     TextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
                       autofillHints: const [AutofillHints.email],
                       decoration: const InputDecoration(labelText: 'Email'),
                     ),
@@ -108,14 +104,17 @@ class _LoginPageState extends State<LoginPage> {
                     TextField(
                       controller: _passwordController,
                       obscureText: true,
+                      textInputAction: TextInputAction.done,
                       autofillHints: const [AutofillHints.password],
                       onSubmitted: (_) => _login(),
                       decoration: const InputDecoration(labelText: 'Contraseña'),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 14),
-                      Text(
-                        _error!,
+                      AccessibleStatusMessage(
+                        key: const Key('login-error-status'),
+                        message: _error!,
+                        semanticLabel: 'Error de inicio de sesión: $_error',
                         style: const TextStyle(color: AthenaColors.danger),
                       ),
                     ],
@@ -125,10 +124,9 @@ class _LoginPageState extends State<LoginPage> {
                       child: ElevatedButton(
                         onPressed: _loading ? null : _login,
                         child: _loading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                            ? const Semantics(
+                                label: 'Iniciando sesión',
+                                child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
                               )
                             : const Text('ENTRAR CON CUENTA'),
                       ),
@@ -136,43 +134,25 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 10),
                     TextButton(
                       key: const Key('login-recovery'),
-                      onPressed: _loading
-                          ? null
-                          : () => Navigator.pushNamed(
-                                context,
-                                AppRoutes.recovery,
-                              ),
+                      onPressed: _loading ? null : () => Navigator.pushNamed(context, AppRoutes.recovery),
                       child: const Text('¿Has olvidado tu contraseña?'),
                     ),
                     TextButton(
-                      onPressed: _loading
-                          ? null
-                          : () => Navigator.pushNamed(
-                                context,
-                                AppRoutes.register,
-                              ),
+                      onPressed: _loading ? null : () => Navigator.pushNamed(context, AppRoutes.register),
                       child: const Text('Crear una cuenta'),
                     ),
                     const SizedBox(height: 4),
                     TextButton(
                       onPressed: _loading
                           ? null
-                          : () => Navigator.pushNamedAndRemoveUntil(
-                                context,
-                                AppRoutes.dashboard,
-                                (route) => false,
-                              ),
+                          : () => Navigator.pushNamedAndRemoveUntil(context, AppRoutes.dashboard, (route) => false),
                       child: const Text('Continuar como invitado'),
                     ),
                     const SizedBox(height: 8),
                     const Text(
                       'La sesión se guarda únicamente en el almacén seguro de la plataforma y se vuelve a validar con el backend antes de restaurarse.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AthenaColors.textSecondary,
-                        fontSize: 11,
-                        height: 1.35,
-                      ),
+                      style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11, height: 1.35),
                     ),
                   ],
                 ),
