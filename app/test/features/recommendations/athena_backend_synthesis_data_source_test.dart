@@ -8,8 +8,14 @@ const hashA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const hashB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const hashC = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
-String responseBody({bool recommendationInfluence = false, String fingerprint = hashA}) => '''
-{"data":{"artifactBindingVerified":true,"synthesis":{"summary":"Escenario explicado","rationale":"Evidencia conjunta","uncertainties":["No es una predicción cierta"],"evidenceIds":["news:1","investors:1"],"inputFingerprint":"$fingerprint","recommendationInfluence":$recommendationInfluence,"automaticTrading":false},"provenance":{"inputFingerprint":"$hashA","news":{"artifactHash":"$hashB","assessmentBindings":[{"evidenceId":"news:1","assessmentFingerprint":"$hashC","sourceRef":"https://example.com/news/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false},"investors":{"artifactHash":"$hashC","assessmentBindings":[{"evidenceId":"investors:1","assessmentFingerprint":"$hashB","sourceRef":"https://example.com/investors/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false}}}}
+String responseBody({
+  bool recommendationInfluence = false,
+  String fingerprint = hashA,
+  String newsEvidenceId = 'news:1',
+  String investorEvidenceId = 'investors:1',
+  String synthesisEvidenceIds = '"news:1","investors:1"',
+}) => '''
+{"data":{"artifactBindingVerified":true,"synthesis":{"summary":"Escenario explicado","rationale":"Evidencia conjunta","uncertainties":["No es una predicción cierta"],"evidenceIds":[$synthesisEvidenceIds],"inputFingerprint":"$fingerprint","recommendationInfluence":$recommendationInfluence,"automaticTrading":false},"provenance":{"inputFingerprint":"$hashA","news":{"artifactHash":"$hashB","assessmentBindings":[{"evidenceId":"$newsEvidenceId","assessmentFingerprint":"$hashC","sourceRef":"https://example.com/news/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false},"investors":{"artifactHash":"$hashC","assessmentBindings":[{"evidenceId":"$investorEvidenceId","assessmentFingerprint":"$hashB","sourceRef":"https://example.com/investors/1"}],"userFacingTraceability":true,"recommendationInfluence":false,"automaticTrading":false}}}}
 ''';
 
 void main() {
@@ -65,5 +71,41 @@ void main() {
       client: MockClient((request) async => http.Response(responseBody(recommendationInfluence: true), 200)),
     );
     expect(() => source.getForResearchCycle(hashB), throwsA(isA<FormatException>()));
+  });
+
+  test('fails closed when synthesis evidence is not bound by provenance', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response(
+        responseBody(synthesisEvidenceIds: '"news:1","unbound:1"'),
+        200,
+      )),
+    );
+    expect(() => source.getLatest(), throwsA(isA<FormatException>()));
+  });
+
+  test('fails closed when provenance binds evidence omitted by synthesis', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response(
+        responseBody(synthesisEvidenceIds: '"news:1"'),
+        200,
+      )),
+    );
+    expect(() => source.getLatest(), throwsA(isA<FormatException>()));
+  });
+
+  test('fails closed when provenance repeats one evidence id across families', () async {
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async => http.Response(
+        responseBody(
+          investorEvidenceId: 'news:1',
+          synthesisEvidenceIds: '"news:1"',
+        ),
+        200,
+      )),
+    );
+    expect(() => source.getLatest(), throwsA(isA<FormatException>()));
   });
 }
