@@ -7,23 +7,32 @@ import '../../models/global_market_context.dart';
 import '../../models/regional_market_context.dart';
 
 class GlobalMarketPanel extends StatefulWidget {
-  const GlobalMarketPanel({super.key});
+  final GlobalMarketContextController? controller;
+
+  const GlobalMarketPanel({super.key, this.controller});
 
   @override
   State<GlobalMarketPanel> createState() => _GlobalMarketPanelState();
 }
 
 class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
-  late final MarketDependencies _dependencies;
+  MarketDependencies? _dependencies;
   late final GlobalMarketContextController _contextController;
+  late final bool _ownsController;
 
   @override
   void initState() {
     super.initState();
-    _dependencies = MarketDependencies.create();
-    _contextController = GlobalMarketContextController(
-      service: _dependencies.globalMarketDataService,
-    )..addListener(_onControllerChanged);
+    _ownsController = widget.controller == null;
+    if (_ownsController) {
+      _dependencies = MarketDependencies.create();
+      _contextController = GlobalMarketContextController(
+        service: _dependencies!.globalMarketDataService,
+      );
+    } else {
+      _contextController = widget.controller!;
+    }
+    _contextController.addListener(_onControllerChanged);
     _contextController.loadGlobalContext();
   }
 
@@ -35,10 +44,11 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
 
   @override
   void dispose() {
-    _contextController
-      ..removeListener(_onControllerChanged)
-      ..dispose();
-    _dependencies.dispose();
+    _contextController.removeListener(_onControllerChanged);
+    if (_ownsController) {
+      _contextController.dispose();
+      _dependencies?.dispose();
+    }
     super.dispose();
   }
 
