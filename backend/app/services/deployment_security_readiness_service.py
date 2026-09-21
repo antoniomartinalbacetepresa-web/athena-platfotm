@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -31,6 +32,8 @@ class DeploymentSecurityReadiness:
                 "secretsDisclosed": False,
                 "productionDeploymentVerified": False,
                 "offsiteBackupVerified": False,
+                "scheduledBackupExecutionVerified": False,
+                "restoreDrillOperationallyVerified": False,
                 "smtpDeliveryVerified": False,
                 "automaticSecretRotation": False,
                 "productionHistoricalKeyRetirementVerified": False,
@@ -42,10 +45,9 @@ class DeploymentSecurityReadiness:
 class DeploymentSecurityReadinessService:
     """Validate deploy-time security invariants without exposing secret material.
 
-    This diagnostic intentionally distinguishes *configuration readiness* from
-    proof that a production deployment, SMTP channel, secret-manager operation
-    or off-site backup actually exists. It only reports boolean properties,
-    blocker identifiers and non-secret ciphertext-version counts.
+    Configuration diagnostics are deliberately weaker than operational proof.
+    In particular, a configured backup directory/retention policy cannot prove
+    that a scheduler ran, an off-site copy exists, or a restore drill succeeded.
     """
 
     _AUTH_SECRET = "ATHENA_AUTH_SECRET"
@@ -59,6 +61,8 @@ class DeploymentSecurityReadinessService:
     _RECOVERY_FROM = "ATHENA_RECOVERY_FROM_EMAIL"
     _RECOVERY_PUBLIC_URL = "ATHENA_RECOVERY_PUBLIC_URL"
     _RECOVERY_STARTTLS = "ATHENA_RECOVERY_SMTP_STARTTLS"
+    _BACKUP_DIRECTORY = "ATHENA_BACKUP_DIRECTORY"
+    _BACKUP_KEEP_LAST = "ATHENA_BACKUP_KEEP_LAST"
     _PROFILE_TABLE = "athena_user_profile_preferences"
     _PORTFOLIO_TABLE = "athena_user_portfolio_positions"
 
@@ -80,6 +84,9 @@ class DeploymentSecurityReadinessService:
         smtp_password = os.getenv(self._RECOVERY_PASSWORD) or ""
         smtp_credentials_coherent = bool(smtp_username) == bool(smtp_password)
         starttls_enabled = self._bool_env(self._RECOVERY_STARTTLS, default=True)
+        backup_directory = self._text(self._BACKUP_DIRECTORY)
+        backup_keep_last = self._positive_int(self._text(self._BACKUP_KEEP_LAST))
+        backup_destination_safe = self._backup_destination_safe(backup_directory)
 
         auth_secret_bytes = auth_secret.encode("utf-8") if auth_secret else b""
         auth_profile_separated = bool(auth_secret_bytes) and profile_key is not None and (auth_secret_bytes != profile_key and auth_secret != profile_key_text)
@@ -94,8 +101,22 @@ class DeploymentSecurityReadinessService:
             self._check("recovery_smtp_endpoint", bool(smtp_host) and bool(smtp_from) and smtp_port, "recovery_smtp_endpoint_incomplete"),
             self._check("recovery_smtp_credentials", smtp_credentials_coherent, "recovery_smtp_credentials_incoherent"),
             self._check("recovery_transport_encryption", starttls_enabled, "recovery_smtp_tls_disabled"),
+            self._check("backup_destination", backup_destination_safe, "backup_destination_missing_or_unsafe"),
+            self._check("backup_retention", backup_keep_last is not None, "backup_retention_invalid"),
         )
         return DeploymentSecurityReadiness(checks=checks)
+
+    def _backup_destination_safe(self, value: str) -> bool:
+        if not value:
+            return False
+        try:
+            destination = Path(value).expanduser().resolve()
+            database_path = self._database.database_path.expanduser().resolve()
+        except (OSError, RuntimeError):
+            return False
+        # A backup alongside the live SQLite/WAL files is not an independent
+        # recovery destination. Configuration still does not prove off-site use.
+        return destination != database_path.parent and destination != database_path
 
     @staticmethod
     def _check(identifier: str, passed: bool, blocker: str, *, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -193,7 +214,6 @@ class DeploymentSecurityReadinessService:
 
     @staticmethod
     def _valid_public_recovery_url(value: str) -> bool:
-        """Require a real absolute HTTPS endpoint, not merely an https:// prefix."""
         if not value:
             return False
         try:
