@@ -45,6 +45,14 @@ class AuthenticatedPortfolioService {
     return token;
   }
 
+  /// Captures the authenticated owner boundary for a multi-request operation.
+  /// Callers must re-check it before every subsequent request so one logical
+  /// operation can never continue under a replacement account.
+  String captureAuthorityToken() => _currentToken();
+
+  void requireAuthorityToken(String authorityToken) =>
+      _requireCurrentToken(authorityToken);
+
   Map<String,String> _headersFor(String token,{bool json=false}) => {'Authorization':'Bearer $token', if(json) 'Content-Type':'application/json'};
 
   Future<List<AuthenticatedPortfolioPosition>> loadPositions() async {
