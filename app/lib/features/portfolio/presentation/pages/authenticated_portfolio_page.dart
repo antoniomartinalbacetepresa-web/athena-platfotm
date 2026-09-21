@@ -175,8 +175,22 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   Future<void> _syncDeclaredPositions() async {
     if (_syncController.isSyncing || !AuthSession.instance.isAuthenticated) return;
+    final authorityToken = AuthSession.instance.accessToken?.trim();
+    if (authorityToken == null || authorityToken.isEmpty) return;
     try {
-      await _syncController.sync(await _loadDeclaredPositions());
+      final positions = await _loadDeclaredPositions();
+      if (!AuthSession.instance.isAuthenticated ||
+          AuthSession.instance.accessToken?.trim() != authorityToken) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+            'La cuenta ATHENA cambió mientras se preparaba la sincronización. '
+            'No se ha enviado ningún dato.',
+          ),
+        ));
+        return;
+      }
+      await _syncController.sync(positions);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
