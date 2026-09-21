@@ -16,6 +16,9 @@ const assessmentFingerprint = 'ddddddddddddddddddddddddddddddddddddddddddddddddd
 Map<String, dynamic> validPayload() => {
       'data': {
         'artifactBindingVerified': true,
+        'presentationOnly': true,
+        'recommendationInfluence': false,
+        'automaticTrading': false,
         'synthesis': {
           'inputFingerprint': inputFingerprint,
           'summary': 'ATHENA integra la evidencia verificada.',
