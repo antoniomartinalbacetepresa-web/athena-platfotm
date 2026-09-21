@@ -1,5 +1,6 @@
 import 'package:app/features/portfolio/models/portfolio_position.dart';
 import 'package:app/features/portfolio/presentation/controllers/portfolio_cloud_sync_controller.dart';
+import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_sync_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -76,5 +77,23 @@ void main() {
     expect(controller.hasError, isTrue);
     expect(controller.message, contains('cartera local no se ha modificado'));
     expect(controller.message, contains('no aplica cambios destructivos'));
+  });
+
+  test('owner replacement during sync is explicit and never reported as success', () async {
+    final service = _FakeSyncService(
+      error: const AuthenticatedPortfolioAuthorityChangedException(),
+    );
+    final controller = PortfolioCloudSyncController(service: service);
+
+    await controller.sync([_position()]);
+
+    expect(service.calls, 1);
+    expect(controller.status, PortfolioCloudSyncStatus.authorityChanged);
+    expect(controller.authorityChanged, isTrue);
+    expect(controller.sessionRejected, isFalse);
+    expect(controller.hasError, isTrue);
+    expect(controller.message, contains('cuenta ATHENA cambió'));
+    expect(controller.message, contains('cuenta anterior'));
+    expect(controller.message, isNot(contains('Sincronización completada')));
   });
 }
