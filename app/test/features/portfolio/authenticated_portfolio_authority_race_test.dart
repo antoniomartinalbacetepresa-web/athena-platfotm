@@ -69,6 +69,46 @@ http.Response _portfolio(String symbol, int id) => http.Response(
     );
 
 void main() {
+
+  test('late successful Portfolio response is rejected after owner replacement',
+      () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    session.establish(
+      accessToken: 'owner-a.jwt',
+      account: _account(1, 'a@example.com'),
+    );
+    final pending = Completer<http.Response>();
+    final requested = Completer<void>();
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'https://athena.local',
+      session: session,
+      client: MockClient((request) {
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        if (!requested.isCompleted) requested.complete();
+        return pending.future;
+      }),
+    );
+
+    final load = service.loadPositions();
+    await requested.future;
+    session.establish(
+      accessToken: 'owner-b.jwt',
+      account: _account(2, 'b@example.com'),
+    );
+    pending.complete(_portfolio('AAPL', 11));
+
+    await expectLater(
+      load,
+      throwsA(isA<AuthenticatedPortfolioAuthorityChangedException>()),
+    );
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 2);
+    expect(session.account?.email, 'b@example.com');
+
+    service.dispose();
+  });
+
   test('late owner A load cannot repopulate Portfolio after owner B replaces authority',
       () async {
     final session = AuthSession.forTesting(_TokenStore());
