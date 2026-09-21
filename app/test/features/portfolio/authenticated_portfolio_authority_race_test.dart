@@ -39,6 +39,34 @@ class _MarketRepository implements MarketRepository {
       );
 }
 
+
+
+class _PendingMarketRepository implements MarketRepository {
+  _PendingMarketRepository({required this.requested, required this.pending});
+
+  final Completer<void> requested;
+  final Completer<MarketQuote> pending;
+
+  @override
+  Future<MarketQuote> getQuote(String symbol) {
+    if (!requested.isCompleted) requested.complete();
+    return pending.future;
+  }
+}
+
+MarketQuote _quote(String symbol) => MarketQuote(
+      symbol: symbol,
+      companyName: symbol,
+      currentPrice: 200,
+      change: 1,
+      changePercentage: 0.5,
+      currency: 'USD',
+      exchange: 'NASDAQ',
+      updatedAt: DateTime.parse('2026-09-21T09:00:00Z'),
+      sourceProvider: 'yahoo_finance',
+      retrievedAt: DateTime.parse('2026-09-21T09:00:02Z'),
+    );
+
 AuthAccount _account(int id, String email) => AuthAccount(
       id: id,
       email: email,
@@ -166,4 +194,48 @@ void main() {
     controller.dispose();
     service.dispose();
   });
+
+  test('owner replacement during market quote rejects the whole valuation', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    session.establish(
+      accessToken: 'owner-a.jwt',
+      account: _account(1, 'a@example.com'),
+    );
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'https://athena.local',
+      session: session,
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        return _portfolio('AAPL', 11);
+      }),
+    );
+    final quoteRequested = Completer<void>();
+    final pendingQuote = Completer<MarketQuote>();
+    final marketRepository = _PendingMarketRepository(
+      requested: quoteRequested,
+      pending: pendingQuote,
+    );
+
+    final valuation = service.loadValuedPositions(
+      marketRepository: marketRepository,
+    );
+    await quoteRequested.future;
+
+    session.establish(
+      accessToken: 'owner-b.jwt',
+      account: _account(2, 'b@example.com'),
+    );
+    pendingQuote.complete(_quote('AAPL'));
+
+    await expectLater(
+      valuation,
+      throwsA(isA<AuthenticatedPortfolioAuthorityChangedException>()),
+    );
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 2);
+
+    service.dispose();
+  });
+
 }
