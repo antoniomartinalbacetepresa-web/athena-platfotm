@@ -59,6 +59,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   @override
   void initState() {
     super.initState();
+    AuthSession.instance.addListener(_onSessionAuthorityChanged);
     _ownsSyncController = widget.syncController == null;
     _syncController = widget.syncController ?? PortfolioCloudSyncController();
     _syncController.addListener(_onSyncChanged);
@@ -104,6 +105,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   @override
   void dispose() {
+    AuthSession.instance.removeListener(_onSessionAuthorityChanged);
     _fxValuationController?.removeListener(_onFxChanged);
     _fxValuationController?.dispose();
     _capitalController?.removeListener(_onAuthenticatedChanged);
@@ -116,6 +118,13 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     _syncController.removeListener(_onSyncChanged);
     if (_ownsSyncController) _syncController.dispose();
     super.dispose();
+  }
+
+  void _onSessionAuthorityChanged() {
+    // Session revocation/logout is an authority change, not merely persisted
+    // state. Rebuild immediately so protected controls and owner data disappear
+    // without waiting for an unrelated widget event or navigation cycle.
+    if (mounted) setState(() {});
   }
 
   void _onSyncChanged() {
@@ -176,9 +185,6 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       return;
     }
     if (!mounted) return;
-    // The service has already revoked in-memory authority on an authoritative
-    // 401/403. Do not await secure-storage cleanup here: it is best-effort and
-    // must not delay the fail-closed UI transition or its user-visible reason.
     setState(() {});
     if (_syncController.message != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_syncController.message!)));
