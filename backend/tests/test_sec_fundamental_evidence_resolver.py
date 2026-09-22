@@ -243,3 +243,37 @@ def test_resolver_rejects_naive_as_of_and_unknown_concept() -> None:
             canonical_concept="free_cash_flow_magic",
             as_of=AS_OF,
         )
+
+
+def test_resolver_selects_annual_capex_with_explicit_concept_priority() -> None:
+    repository = FakeRepository(
+        [
+            fact(
+                key="5",
+                concept="PaymentsForAdditionsToPropertyPlantAndEquipment",
+                value=42.0,
+                period_start="2025-01-01",
+                period_end="2025-12-31",
+                available_at="2026-02-01T12:00:00+00:00",
+            ),
+            fact(
+                key="6",
+                concept="PaymentsToAcquirePropertyPlantAndEquipment",
+                value=40.0,
+                period_start="2025-01-01",
+                period_end="2025-12-31",
+                available_at="2026-01-31T12:00:00+00:00",
+            ),
+        ]
+    )
+    result = SecFundamentalEvidenceResolver(repository).resolve(
+        cik="123456",
+        canonical_concept="capital_expenditure_annual",
+        as_of=AS_OF,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["selectedFact"]["concept"] == "PaymentsToAcquirePropertyPlantAndEquipment"
+    assert result["selectedFact"]["value"] == 40.0
+    assert result["policy"]["periodKind"] == "annual_duration"
+    assert result["productionEligible"] is False
