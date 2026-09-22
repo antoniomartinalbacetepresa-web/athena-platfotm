@@ -200,6 +200,29 @@ def test_rejects_invalid_action_payloads(tmp_path) -> None:
             )
 
 
+def test_rejects_non_iso_currency_before_persisting_corporate_action(tmp_path) -> None:
+    repository = CorporateActionRepository(_database(tmp_path))
+    retrieved_at = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
+
+    for invalid_currency in ("US", "USDT", "€UR", "ÉUR", "12A"):
+        with pytest.raises(ValueError, match="currency"):
+            repository.save_many(
+                instrument_id=1,
+                source_provider="secondary_provider",
+                retrieved_at=retrieved_at,
+                actions=[
+                    {
+                        "type": "dividend",
+                        "effectiveAt": "2026-08-15T00:00:00+00:00",
+                        "cashAmount": 0.25,
+                        "currency": invalid_currency,
+                    }
+                ],
+            )
+
+    assert repository.list_for_instrument(1) == []
+
+
 def test_repository_creates_durable_indexes(tmp_path) -> None:
     database = _database(tmp_path)
     repository = CorporateActionRepository(database)
