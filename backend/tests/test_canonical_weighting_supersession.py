@@ -12,6 +12,16 @@ from app.services.canonical_weighting_governance_service import CanonicalWeighti
 NOW = datetime(2026, 9, 15, 8, 0, tzinfo=timezone.utc)
 
 
+class _ReadyReport:
+    ready = True
+    blockers: tuple[str, ...] = ()
+
+
+class _ReadyWeightingReadiness:
+    def get_report(self) -> _ReadyReport:
+        return _ReadyReport()
+
+
 def _seed(database: AthenaDatabase) -> None:
     instruments = InstrumentRepository(database=database)
     identities = IssuerIdentityRepository(database=database)
@@ -40,7 +50,11 @@ def _service(tmp_path: Path) -> CanonicalWeightingGovernanceService:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
     _seed(database)
-    return CanonicalWeightingGovernanceService(database=database, clock=lambda: NOW)
+    return CanonicalWeightingGovernanceService(
+        database=database,
+        clock=lambda: NOW,
+        readiness_service=_ReadyWeightingReadiness(),
+    )
 
 
 def test_new_pending_proposal_supersedes_older_human_approval(tmp_path: Path) -> None:
