@@ -87,6 +87,16 @@ class SecFundamentalEvidenceResolver:
             ),
             allowed_forms=("10-K", "10-K/A"),
         ),
+        "diluted_shares_annual": FundamentalConceptPolicy(
+            canonical_name="diluted_shares_annual",
+            period_kind="annual_duration",
+            concepts=(
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+                "WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
+            ),
+            allowed_forms=("10-K", "10-K/A"),
+            unit="shares",
+        ),
         "revenue_quarter": FundamentalConceptPolicy(
             canonical_name="revenue_quarter",
             period_kind="quarter_duration",
