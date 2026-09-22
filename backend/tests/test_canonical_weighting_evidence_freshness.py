@@ -124,7 +124,11 @@ def test_proposal_cannot_be_approved_after_evidence_changes(tmp_path: Path) -> N
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
     clock = MutableClock(PROPOSED_AT)
-    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    service = CanonicalWeightingGovernanceService(
+        database=database,
+        clock=clock,
+        readiness_service=_ReadyWeightingReadiness(),
+    )
 
     proposal = service.create_proposal(created_by="quant-operator")
     _change_us_market_cap(database, 900.0)
