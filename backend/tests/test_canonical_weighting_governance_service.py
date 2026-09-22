@@ -23,6 +23,24 @@ class MutableClock:
         return self.value
 
 
+
+
+class _ReadyReport:
+    ready = True
+    blockers: tuple[str, ...] = ()
+
+
+class _ReadyWeightingReadiness:
+    def get_report(self) -> _ReadyReport:
+        return _ReadyReport()
+
+
+def _governance_service(**kwargs) -> CanonicalWeightingGovernanceService:
+    return CanonicalWeightingGovernanceService(
+        readiness_service=_ReadyWeightingReadiness(),
+        **kwargs,
+    )
+
 def _database(tmp_path: Path) -> AthenaDatabase:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
@@ -73,7 +91,7 @@ def test_proposal_is_pending_and_cannot_be_consumed_without_human_approval(
 ) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
-    service = CanonicalWeightingGovernanceService(
+    service = _governance_service(
         database=database,
         clock=lambda: CREATED_AT,
     )
@@ -103,7 +121,7 @@ def test_explicit_distinct_human_approval_unlocks_exact_immutable_weights(
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
     clock = MutableClock(CREATED_AT)
-    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    service = _governance_service(database=database, clock=clock)
     proposal = service.create_proposal(created_by="quant-operator")
     original_hash = proposal.evidence_sha256
 
@@ -132,7 +150,7 @@ def test_newer_pending_proposal_supersedes_older_human_approval(tmp_path: Path) 
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
     clock = MutableClock(CREATED_AT)
-    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    service = _governance_service(database=database, clock=clock)
     first = service.create_proposal(created_by="quant-operator")
 
     clock.value = APPROVED_AT
@@ -160,7 +178,7 @@ def test_approved_weights_fail_closed_after_canonical_evidence_changes(tmp_path:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
     clock = MutableClock(CREATED_AT)
-    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    service = _governance_service(database=database, clock=clock)
     proposal = service.create_proposal(created_by="quant-operator")
 
     clock.value = APPROVED_AT
@@ -201,7 +219,7 @@ def test_approved_weights_fail_closed_after_canonical_evidence_changes(tmp_path:
 def test_self_approval_and_empty_approval_reason_are_rejected(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
-    service = CanonicalWeightingGovernanceService(
+    service = _governance_service(
         database=database,
         clock=lambda: CREATED_AT,
     )
@@ -225,7 +243,7 @@ def test_self_approval_and_empty_approval_reason_are_rejected(tmp_path: Path) ->
 def test_rejection_never_unlocks_weighting(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
-    service = CanonicalWeightingGovernanceService(
+    service = _governance_service(
         database=database,
         clock=lambda: CREATED_AT,
     )
@@ -299,7 +317,7 @@ def test_proposal_fails_closed_when_canonical_evidence_is_incomplete(tmp_path: P
             confidence=1.0,
         )
 
-    service = CanonicalWeightingGovernanceService(
+    service = _governance_service(
         database=database,
         clock=lambda: CREATED_AT,
     )
@@ -310,7 +328,7 @@ def test_proposal_fails_closed_when_canonical_evidence_is_incomplete(tmp_path: P
 def test_tampered_evidence_fails_integrity_check(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
-    service = CanonicalWeightingGovernanceService(
+    service = _governance_service(
         database=database,
         clock=lambda: CREATED_AT,
     )
@@ -328,7 +346,7 @@ def test_tampered_evidence_fails_integrity_check(tmp_path: Path) -> None:
 def test_proposer_cannot_reject_own_weighting_proposal(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
-    service = CanonicalWeightingGovernanceService(
+    service = _governance_service(
         database=database,
         clock=lambda: CREATED_AT,
     )
