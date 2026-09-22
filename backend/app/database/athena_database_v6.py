@@ -30,7 +30,7 @@ class AthenaDatabase(_V5AthenaDatabase):
     ) -> None:
         columns = {
             row["name"]
-            for row in connection.execute("PRAGMA table_info(corporate_actions)").fetchall()
+            for row in connection.execute("PRAGMA table_xinfo(corporate_actions)").fetchall()
         }
         if "event_identity" in columns:
             return
@@ -48,7 +48,12 @@ class AthenaDatabase(_V5AthenaDatabase):
                 cash_amount REAL,
                 split_ratio REAL,
                 currency TEXT,
-                event_identity TEXT NOT NULL,
+                event_identity TEXT GENERATED ALWAYS AS (
+                    action_type || '|' ||
+                    COALESCE(CAST(cash_amount AS TEXT), '') || '|' ||
+                    COALESCE(CAST(split_ratio AS TEXT), '') || '|' ||
+                    COALESCE(currency, '')
+                ) STORED,
                 source_provider TEXT NOT NULL,
                 source_timestamp TEXT,
                 retrieved_at TEXT NOT NULL,
@@ -81,7 +86,6 @@ class AthenaDatabase(_V5AthenaDatabase):
                 cash_amount,
                 split_ratio,
                 currency,
-                event_identity,
                 source_provider,
                 source_timestamp,
                 retrieved_at,
@@ -95,12 +99,6 @@ class AthenaDatabase(_V5AthenaDatabase):
                 cash_amount,
                 split_ratio,
                 currency,
-                CASE
-                    WHEN action_type = 'dividend' THEN
-                        'dividend|' || printf('%.17g', cash_amount) || '|' || COALESCE(currency, '')
-                    ELSE
-                        'split|' || printf('%.17g', split_ratio)
-                END,
                 source_provider,
                 source_timestamp,
                 retrieved_at,
