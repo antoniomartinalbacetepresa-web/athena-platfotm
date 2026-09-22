@@ -16,6 +16,7 @@ from app.services.canonical_weighting_governance_service import (
 _BLOCKED_CURRENT_STATUSES = {
     "blocked_pending_human_approval",
     "blocked_stale_evidence_requires_human_approval",
+    "blocked_rejected_requires_new_proposal",
 }
 
 
