@@ -13,10 +13,11 @@ AS_OF = datetime(2026, 8, 2, tzinfo=timezone.utc)
 
 
 class _Market:
-    def __init__(self, *, status="diagnostic_ready", price=20.0, as_of=AS_OF):
+    def __init__(self, *, status="diagnostic_ready", price=20.0, as_of=AS_OF, return_60d=0.10):
         self.status = status
         self.price = price
         self.as_of = as_of
+        self.return_60d = return_60d
 
     def evaluate(self, *, symbol, as_of):
         payload = {
@@ -28,6 +29,7 @@ class _Market:
             "latestObservedAt": self.as_of.isoformat(),
             "latestRetrievedAt": self.as_of.isoformat(),
             "sourceProviders": ["yahoo"],
+            "return60d": self.return_60d,
             "productionEligible": False,
         }
         return type("MarketResult", (), {"to_api_dict": lambda self: payload})()
@@ -67,6 +69,8 @@ def test_dividend_signal_uses_same_pit_price_and_cutoff(tmp_path: Path) -> None:
     assert result.dividend is not None
     assert result.dividend["trailingCashPerShare"] == pytest.approx(1.0)
     assert result.dividend["trailingYield"] == pytest.approx(0.05)
+    assert result.price_return_60d == pytest.approx(0.10)
+    assert result.total_return_60d == pytest.approx(0.15)
     assert result.dividend["knowledgeCutoff"] == AS_OF.isoformat()
     assert result.production_eligible is False
 
@@ -94,3 +98,19 @@ def test_dividend_signal_rejects_market_diagnostic_from_different_cutoff(tmp_pat
 
     with pytest.raises(RuntimeError, match="otro corte point-in-time"):
         service.evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def test_total_return_is_not_fabricated_without_price_return(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    _seed(database)
+    result = RecommendationDividendSignalService(
+        database=database,
+        market_service=_Market(return_60d=None),
+    ).evaluate(symbol="DIV", as_of=AS_OF)
+
+    assert result.status == "diagnostic_ready"
+    assert result.dividend is not None
+    assert result.dividend["trailingYield"] == pytest.approx(0.05)
+    assert result.price_return_60d is None
+    assert result.total_return_60d is None
+    assert result.production_eligible is False
