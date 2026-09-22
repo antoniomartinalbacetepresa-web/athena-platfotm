@@ -112,3 +112,38 @@ def test_growth_is_unknown_without_prior_comparable_window(tmp_path: Path) -> No
     result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=known)
     assert result.dividend_growth_rate is None
     assert result.cut_detected is None
+
+
+def test_regular_quarterly_history_reports_stable_without_suspension(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    dates = [datetime(2025, 11, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc), datetime(2026, 5, 1, tzinfo=timezone.utc), datetime(2026, 8, 1, tzinfo=timezone.utc)]
+    _save(database, instrument_id, "primary", cutoff, dates)
+    result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=cutoff)
+    assert result.suspected_suspension is False
+    assert result.payment_stability_score is not None and result.payment_stability_score > 0.95
+
+
+def test_overdue_quarterly_cadence_flags_suspected_suspension_fail_closed(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    dates = [datetime(2025, 5, 1, tzinfo=timezone.utc), datetime(2025, 8, 1, tzinfo=timezone.utc), datetime(2025, 11, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc)]
+    _save(database, instrument_id, "primary", cutoff, dates)
+    result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=cutoff)
+    assert result.frequency == "quarterly"
+    assert result.suspected_suspension is True
+    assert result.payment_stability_score == 0.0
+
+
+def test_irregular_history_does_not_invent_suspension_threshold(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database); repo = CorporateActionRepository(database=database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    repo.save_many(instrument_id=instrument_id, source_provider="primary", retrieved_at=cutoff, actions=[
+        {"action_type":"dividend","effective_at":datetime(2025,1,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
+        {"action_type":"dividend","effective_at":datetime(2025,3,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
+        {"action_type":"dividend","effective_at":datetime(2026,2,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
+    ])
+    result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=cutoff)
+    assert result.frequency == "irregular"
+    assert result.suspected_suspension is None
+    assert result.payment_stability_score is None
