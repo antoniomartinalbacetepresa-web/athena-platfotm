@@ -23,9 +23,9 @@ class _Fcf:
         return type("FcfResult", (), {"to_api_dict": lambda self: payload})()
 
 class _Market:
-    def __init__(self, *, status="diagnostic_ready", price=20.0, as_of=AS_OF, return_60d=0.10): self.status,self.price,self.as_of,self.return_60d=status,price,as_of,return_60d
+    def __init__(self, *, status="diagnostic_ready", price=20.0, as_of=AS_OF, return_60d=0.10, price_60d_start=20.0/1.10): self.status,self.price,self.as_of,self.return_60d,self.price_60d_start=status,price,as_of,return_60d,price_60d_start
     def evaluate(self, *, symbol, as_of):
-        payload={"status":self.status,"symbol":symbol,"instrumentId":1,"asOf":self.as_of.isoformat(),"latestPrice":self.price,"latestObservedAt":self.as_of.isoformat(),"latestRetrievedAt":self.as_of.isoformat(),"sourceProviders":["yahoo"],"return60d":self.return_60d,"productionEligible":False}
+        payload={"status":self.status,"symbol":symbol,"instrumentId":1,"asOf":self.as_of.isoformat(),"latestPrice":self.price,"price60dStart":self.price_60d_start,"latestObservedAt":self.as_of.isoformat(),"latestRetrievedAt":self.as_of.isoformat(),"sourceProviders":["yahoo"],"return60d":self.return_60d,"productionEligible":False}
         return type("MarketResult", (), {"to_api_dict": lambda self: payload})()
 
 def _database(tmp_path: Path) -> AthenaDatabase:
@@ -38,7 +38,7 @@ def _seed(database: AthenaDatabase) -> int:
 def test_dividend_signal_uses_same_pit_price_and_cutoff(tmp_path: Path) -> None:
     database=_database(tmp_path); assert _seed(database)==1
     result=RecommendationDividendSignalService(database=database,market_service=_Market(),valuation_service=_Valuation()).evaluate(symbol="DIV",as_of=AS_OF)
-    assert result.status=="diagnostic_ready"; assert result.latest_price==20.0; assert result.dividend is not None; assert result.dividend["trailingCashPerShare"]==pytest.approx(1.25); assert result.dividend["trailingYield"]==pytest.approx(0.0625); assert result.dividend["cashPerShare60d"]==pytest.approx(0.25); assert result.dividend["yield60d"]==pytest.approx(0.0125); assert result.price_return_60d==pytest.approx(0.10); assert result.total_return_60d==pytest.approx(0.1125); assert result.earnings_payout_ratio==pytest.approx(0.625); assert result.fcf_payout_ratio is None; assert result.dividend["knowledgeCutoff"]==AS_OF.isoformat(); assert result.production_eligible is False
+    assert result.status=="diagnostic_ready"; assert result.latest_price==20.0; assert result.price_60d_start==pytest.approx(20.0/1.10); assert result.dividend is not None; assert result.dividend["trailingCashPerShare"]==pytest.approx(1.25); assert result.dividend["trailingYield"]==pytest.approx(0.0625); assert result.dividend["cashPerShare60d"]==pytest.approx(0.25); assert result.dividend["yield60d"]==pytest.approx(0.0125); assert result.price_return_60d==pytest.approx(0.10); assert result.total_return_60d==pytest.approx(0.11375); assert result.earnings_payout_ratio==pytest.approx(0.625); assert result.fcf_payout_ratio is None; assert result.dividend["knowledgeCutoff"]==AS_OF.isoformat(); assert result.production_eligible is False
 
 def test_dividend_signal_fails_closed_without_ready_market_evidence(tmp_path: Path) -> None:
     database=_database(tmp_path); _seed(database); result=RecommendationDividendSignalService(database=database,market_service=_Market(status="insufficient_history")).evaluate(symbol="DIV",as_of=AS_OF); assert result.status=="market_evidence_not_ready"; assert result.dividend is None; assert result.production_eligible is False
@@ -49,6 +49,9 @@ def test_dividend_signal_rejects_market_diagnostic_from_different_cutoff(tmp_pat
 
 def test_total_return_is_not_fabricated_without_price_return(tmp_path: Path) -> None:
     database=_database(tmp_path); _seed(database); result=RecommendationDividendSignalService(database=database,market_service=_Market(return_60d=None),valuation_service=_Valuation()).evaluate(symbol="DIV",as_of=AS_OF); assert result.dividend is not None; assert result.dividend["trailingYield"]==pytest.approx(0.0625); assert result.price_return_60d is None; assert result.total_return_60d is None
+
+def test_total_return_is_not_fabricated_without_holding_period_start_price(tmp_path: Path) -> None:
+    database=_database(tmp_path); _seed(database); result=RecommendationDividendSignalService(database=database,market_service=_Market(price_60d_start=None),valuation_service=_Valuation()).evaluate(symbol="DIV",as_of=AS_OF); assert result.price_return_60d==pytest.approx(0.10); assert result.total_return_60d is None
 
 def test_payout_is_unknown_when_eps_currency_is_not_comparable(tmp_path: Path) -> None:
     database=_database(tmp_path); _seed(database); result=RecommendationDividendSignalService(database=database,market_service=_Market(),valuation_service=_Valuation(unit="EUR/share")).evaluate(symbol="DIV",as_of=AS_OF); assert result.earnings_payout_ratio is None
