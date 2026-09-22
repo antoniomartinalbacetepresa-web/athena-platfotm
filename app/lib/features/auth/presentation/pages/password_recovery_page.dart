@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/accessibility/accessible_status_message.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../services/athena_auth_service.dart';
 
 class PasswordRecoveryPage extends StatefulWidget {
-  const PasswordRecoveryPage({
-    super.key,
-    this.initialToken,
-    this.service,
-  });
+  const PasswordRecoveryPage({super.key, this.initialToken, this.service});
 
   final String? initialToken;
   final AthenaAuthService? service;
@@ -36,9 +33,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
     _service = widget.service ?? AthenaAuthService();
     _ownsService = widget.service == null;
     final initialToken = widget.initialToken?.trim() ?? '';
-    if (initialToken.isNotEmpty) {
-      _tokenController.text = initialToken;
-    }
+    if (initialToken.isNotEmpty) _tokenController.text = initialToken;
   }
 
   @override
@@ -47,27 +42,20 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
     _tokenController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    if (_ownsService) {
-      _service.dispose();
-    }
+    if (_ownsService) _service.dispose();
     super.dispose();
   }
 
   Future<void> _requestRecovery() async {
     if (_loading) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = true; _error = null; });
     try {
       await _service.requestPasswordRecovery(email: _emailController.text);
       if (!mounted) return;
       setState(() => _requestAccepted = true);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _error = 'No se pudo procesar la solicitud de recuperación. Inténtalo de nuevo más tarde.';
-      });
+      setState(() => _error = 'No se pudo procesar la solicitud de recuperación. Inténtalo de nuevo más tarde.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -80,15 +68,9 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
       setState(() => _error = 'Las contraseñas no coinciden.');
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = true; _error = null; });
     try {
-      await _service.resetPassword(
-        token: _tokenController.text,
-        newPassword: password,
-      );
+      await _service.resetPassword(token: _tokenController.text, newPassword: password);
       if (!mounted) return;
       _tokenController.clear();
       _passwordController.clear();
@@ -96,9 +78,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
       setState(() => _resetComplete = true);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _error = 'No se pudo restablecer la contraseña. Comprueba que el enlace siga siendo válido y vuelve a intentarlo.';
-      });
+      setState(() => _error = 'No se pudo restablecer la contraseña. Comprueba que el enlace siga siendo válido y vuelve a intentarlo.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -140,14 +120,11 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Contraseña restablecida',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: AthenaColors.primary,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-          ),
+        const AccessibleStatusMessage(
+          key: Key('recovery-reset-complete'),
+          message: 'Contraseña restablecida',
+          semanticLabel: 'Contraseña restablecida correctamente. Debes iniciar sesión de nuevo.',
+          style: TextStyle(color: AthenaColors.primary, fontSize: 22, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 14),
         const Text(
@@ -157,11 +134,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
         ),
         const SizedBox(height: 22),
         ElevatedButton(
-          onPressed: () => Navigator.pushNamedAndRemoveUntil(
-            context,
-            AppRoutes.login,
-            (route) => false,
-          ),
+          onPressed: () => Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (route) => false),
           child: const Text('VOLVER A INICIAR SESIÓN'),
         ),
       ],
@@ -172,60 +145,41 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Recuperación segura',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: AthenaColors.primary,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
+        const Text('Recuperación segura', textAlign: TextAlign.center, style: TextStyle(color: AthenaColors.primary, fontSize: 22, fontWeight: FontWeight.w800)),
         const SizedBox(height: 10),
-        const Text(
-          'Solicita un enlace para tu email. La respuesta no revelará si existe una cuenta asociada.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: AthenaColors.textSecondary, height: 1.4),
-        ),
+        const Text('Solicita un enlace para tu email. La respuesta no revelará si existe una cuenta asociada.', textAlign: TextAlign.center, style: TextStyle(color: AthenaColors.textSecondary, height: 1.4)),
         const SizedBox(height: 22),
         TextField(
           key: const Key('recovery-email'),
           controller: _emailController,
           keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.done,
           autofillHints: const [AutofillHints.email],
+          onSubmitted: (_) => _requestRecovery(),
           decoration: const InputDecoration(labelText: 'Email'),
         ),
         const SizedBox(height: 12),
-        ElevatedButton(
-          key: const Key('recovery-request'),
-          onPressed: _loading ? null : _requestRecovery,
-          child: const Text('ENVIAR INSTRUCCIONES'),
-        ),
+        ElevatedButton(key: const Key('recovery-request'), onPressed: _loading ? null : _requestRecovery, child: const Text('ENVIAR INSTRUCCIONES')),
         if (_requestAccepted) ...[
           const SizedBox(height: 12),
-          const Text(
-            'Si existe una cuenta válida para ese email, recibirás instrucciones de recuperación.',
+          const AccessibleStatusMessage(
             key: Key('recovery-generic-success'),
+            message: 'Si existe una cuenta válida para ese email, recibirás instrucciones de recuperación.',
+            semanticLabel: 'Solicitud de recuperación procesada. Si existe una cuenta válida para ese email, recibirás instrucciones.',
             style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
           ),
         ],
         const SizedBox(height: 28),
         const Divider(),
         const SizedBox(height: 20),
-        const Text(
-          'Restablecer contraseña',
-          style: TextStyle(
-            color: AthenaColors.text,
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
-        ),
+        const Text('Restablecer contraseña', style: TextStyle(color: AthenaColors.text, fontWeight: FontWeight.w700, fontSize: 16)),
         const SizedBox(height: 12),
         TextField(
           key: const Key('recovery-token'),
           controller: _tokenController,
           autocorrect: false,
           enableSuggestions: false,
+          textInputAction: TextInputAction.next,
           decoration: const InputDecoration(labelText: 'Token del enlace'),
         ),
         const SizedBox(height: 12),
@@ -233,26 +187,26 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
           key: const Key('recovery-password'),
           controller: _passwordController,
           obscureText: true,
+          textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.newPassword],
-          decoration: const InputDecoration(
-            labelText: 'Nueva contraseña',
-            helperText: 'Entre 12 y 256 caracteres',
-          ),
+          decoration: const InputDecoration(labelText: 'Nueva contraseña', helperText: 'Entre 12 y 256 caracteres'),
         ),
         const SizedBox(height: 12),
         TextField(
           key: const Key('recovery-password-confirm'),
           controller: _confirmPasswordController,
           obscureText: true,
+          textInputAction: TextInputAction.done,
           autofillHints: const [AutofillHints.newPassword],
           onSubmitted: (_) => _resetPassword(),
           decoration: const InputDecoration(labelText: 'Confirmar contraseña'),
         ),
         if (_error != null) ...[
           const SizedBox(height: 14),
-          Text(
-            _error!,
+          AccessibleStatusMessage(
             key: const Key('recovery-error'),
+            message: _error!,
+            semanticLabel: 'Error de recuperación. $_error',
             style: const TextStyle(color: AthenaColors.danger),
           ),
         ],
@@ -261,22 +215,15 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
           key: const Key('recovery-reset'),
           onPressed: _loading ? null : _resetPassword,
           child: _loading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? const Semantics(
+                  label: 'Procesando recuperación',
+                  child: ExcludeSemantics(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
                 )
               : const Text('RESTABLECER CONTRASEÑA'),
         ),
         const SizedBox(height: 10),
         TextButton(
-          onPressed: _loading
-              ? null
-              : () => Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    AppRoutes.login,
-                    (route) => false,
-                  ),
+          onPressed: _loading ? null : () => Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (route) => false),
           child: const Text('Volver al inicio de sesión'),
         ),
       ],
