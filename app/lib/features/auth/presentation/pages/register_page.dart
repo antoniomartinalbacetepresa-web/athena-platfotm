@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/accessibility/accessible_status_message.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../services/athena_auth_service.dart';
@@ -121,6 +122,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     const SizedBox(height: 22),
                     TextField(
                       controller: _nameController,
+                      textInputAction: TextInputAction.next,
                       autofillHints: const [AutofillHints.name],
                       decoration: const InputDecoration(
                         labelText: 'Nombre visible (opcional)',
@@ -130,6 +132,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
                       autofillHints: const [AutofillHints.newUsername],
                       decoration: const InputDecoration(labelText: 'Email'),
                     ),
@@ -137,6 +140,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextField(
                       controller: _passwordController,
                       obscureText: true,
+                      textInputAction: TextInputAction.next,
                       autofillHints: const [AutofillHints.newPassword],
                       decoration: const InputDecoration(
                         labelText: 'Contraseña',
@@ -147,6 +151,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextField(
                       controller: _confirmController,
                       obscureText: true,
+                      textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _register(),
                       decoration: const InputDecoration(
                         labelText: 'Repetir contraseña',
@@ -154,8 +159,10 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 14),
-                      Text(
-                        _error!,
+                      AccessibleStatusMessage(
+                        key: const Key('register-error'),
+                        message: _error!,
+                        semanticLabel: 'Error al crear la cuenta. $_error',
                         style: const TextStyle(color: AthenaColors.danger),
                       ),
                     ],
@@ -165,10 +172,15 @@ class _RegisterPageState extends State<RegisterPage> {
                       child: ElevatedButton(
                         onPressed: _loading ? null : _register,
                         child: _loading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                            ? const Semantics(
+                                label: 'Creando cuenta',
+                                child: ExcludeSemantics(
+                                  child: SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                ),
                               )
                             : const Text('CREAR CUENTA'),
                       ),
