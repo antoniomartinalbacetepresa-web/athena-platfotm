@@ -24,6 +24,8 @@ class RecommendationDividendSignal:
     latest_price_retrieved_at: str | None
     market_source_providers: tuple[str, ...]
     dividend: dict[str, Any] | None
+    price_return_60d: float | None
+    total_return_60d: float | None
     production_eligible: bool
     reason: str
 
@@ -38,12 +40,15 @@ class RecommendationDividendSignal:
             "latestPriceRetrievedAt": self.latest_price_retrieved_at,
             "marketSourceProviders": list(self.market_source_providers),
             "dividend": self.dividend,
+            "priceReturn60d": self.price_return_60d,
+            "totalReturn60d": self.total_return_60d,
             "productionEligible": self.production_eligible,
             "reason": self.reason,
             "policy": {
                 "temporal": "same_as_of_for_market_price_and_dividend_knowledge",
                 "yield": "trailing_dividend_cash_divided_by_explicit_pit_price",
                 "currency": "yield_blocked_when_dividend_currency_is_inconsistent",
+                "totalReturn": "price_return_60d_plus_trailing_dividend_yield_diagnostic",
                 "authority": "diagnostic_only_not_buy_sell_or_trading_authority",
             },
         }
@@ -94,11 +99,13 @@ class RecommendationDividendSignalService:
             latest_price_retrieved_at=self._optional_text(market.get("latestRetrievedAt")),
             market_source_providers=source_providers,
             production_eligible=False,
+            price_return_60d=self._optional_float(market.get("return60d")),
         )
         if str(market.get("status") or "") != "diagnostic_ready" or instrument_id is None or latest_price is None or latest_price <= 0:
             return RecommendationDividendSignal(
                 status="market_evidence_not_ready",
                 dividend=None,
+                total_return_60d=None,
                 reason="El análisis de dividendos requiere primero un precio point-in-time válido y trazable.",
                 **common,
             )
@@ -108,12 +115,20 @@ class RecommendationDividendSignalService:
             knowledge_cutoff=as_of_utc,
             pit_price=latest_price,
         ).to_api_dict()
+        price_return_60d = self._optional_float(market.get("return60d"))
+        dividend_yield = self._optional_float(dividend.get("trailingYield"))
+        total_return_60d = (
+            price_return_60d + dividend_yield
+            if price_return_60d is not None and dividend_yield is not None
+            else None
+        )
         status = "diagnostic_ready" if dividend.get("frequency") != "none" else "no_dividend_history"
         return RecommendationDividendSignal(
             status=status,
             dividend=dividend,
+            total_return_60d=total_return_60d,
             reason=(
-                "Dividendos y yield están ligados al mismo corte point-in-time del precio; son evidencia diagnóstica y no una recomendación."
+                "Dividendos, yield y retorno total diagnóstico están ligados al mismo corte point-in-time; no constituyen una recomendación."
                 if status == "diagnostic_ready"
                 else "No existe historial de dividendos conocido en el corte point-in-time analizado."
             ),
