@@ -79,7 +79,7 @@ class RecommendationDividendSignalService:
         if str(market.get("status") or "") != "diagnostic_ready" or instrument_id is None or latest_price is None or latest_price <= 0:
             return RecommendationDividendSignal(status="market_evidence_not_ready", dividend=None, total_return_60d=None, earnings_payout_ratio=None, fcf_payout_ratio=None, reason="El análisis de dividendos requiere primero un precio point-in-time válido y trazable.", **common)
         dividend = self._dividend_service.analyze(instrument_id=instrument_id, knowledge_cutoff=as_of_utc, pit_price=latest_price).to_api_dict()
-        price_return_60d = self._optional_float(market.get("return60d")); dividend_yield = self._optional_float(dividend.get("trailingYield")); total_return_60d = price_return_60d + dividend_yield if price_return_60d is not None and dividend_yield is not None else None
+        price_return_60d = self._optional_float(market.get("return60d")); dividend_yield_60d = self._optional_float(dividend.get("yield60d")); total_return_60d = price_return_60d + dividend_yield_60d if price_return_60d is not None and dividend_yield_60d is not None else None
         valuation = self._valuation_payload(symbol=normalized_symbol, as_of=as_of_utc)
         earnings_payout_ratio = self._earnings_payout_ratio(dividend=dividend, valuation=valuation); fcf_payout_ratio = self._fcf_payout_ratio(dividend=dividend, valuation=valuation, as_of=as_of_utc)
         status = "diagnostic_ready" if dividend.get("frequency") != "none" else "no_dividend_history"
