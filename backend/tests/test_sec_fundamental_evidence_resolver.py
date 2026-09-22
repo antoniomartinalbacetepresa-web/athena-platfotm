@@ -277,3 +277,40 @@ def test_resolver_selects_annual_capex_with_explicit_concept_priority() -> None:
     assert result["selectedFact"]["value"] == 40.0
     assert result["policy"]["periodKind"] == "annual_duration"
     assert result["productionEligible"] is False
+
+
+def test_resolver_selects_annual_diluted_shares_in_share_units() -> None:
+    repository = FakeRepository(
+        [
+            fact(
+                key="7",
+                concept="WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
+                value=110.0,
+                period_start="2025-01-01",
+                period_end="2025-12-31",
+                available_at="2026-02-01T12:00:00+00:00",
+                unit="shares",
+            ),
+            fact(
+                key="8",
+                concept="WeightedAverageNumberOfDilutedSharesOutstanding",
+                value=100.0,
+                period_start="2025-01-01",
+                period_end="2025-12-31",
+                available_at="2026-01-31T12:00:00+00:00",
+                unit="shares",
+            ),
+        ]
+    )
+    result = SecFundamentalEvidenceResolver(repository).resolve(
+        cik="123456",
+        canonical_concept="diluted_shares_annual",
+        as_of=AS_OF,
+    )
+
+    assert result["status"] == "resolved"
+    assert result["selectedFact"]["concept"] == "WeightedAverageNumberOfDilutedSharesOutstanding"
+    assert result["selectedFact"]["value"] == 100.0
+    assert result["selectedFact"]["unit"] == "shares"
+    assert result["policy"]["periodKind"] == "annual_duration"
+    assert result["productionEligible"] is False
