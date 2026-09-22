@@ -363,3 +363,71 @@ def test_proposer_cannot_reject_own_weighting_proposal(tmp_path: Path) -> None:
     assert persisted.status == "pending_human_approval"
     assert persisted.approved_by is None
     assert service.get_approved_weights()["humanApproved"] is False
+
+
+class _BlockedReport:
+    ready = False
+    blockers = ("external_market_cap_validation_required",)
+
+
+class _BlockedWeightingReadiness:
+    def get_report(self) -> _BlockedReport:
+        return _BlockedReport()
+
+
+class _MutableWeightingReadiness:
+    def __init__(self) -> None:
+        self.ready = True
+
+    def get_report(self):
+        if self.ready:
+            return _ReadyReport()
+        return _BlockedReport()
+
+
+def test_proposal_fails_closed_before_human_workflow_when_weighting_readiness_is_blocked(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    _seed_clean_canonical_universe(database)
+    service = CanonicalWeightingGovernanceService(
+        database=database,
+        clock=lambda: CREATED_AT,
+        readiness_service=_BlockedWeightingReadiness(),
+    )
+
+    with pytest.raises(ValueError, match="external_market_cap_validation_required"):
+        service.create_proposal(created_by="quant-operator")
+
+    with database.connect() as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) AS count FROM canonical_weighting_proposals"
+        ).fetchone()["count"]
+    assert count == 0
+
+
+def test_approval_rechecks_readiness_and_cannot_activate_after_gate_regresses(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    _seed_clean_canonical_universe(database)
+    readiness = _MutableWeightingReadiness()
+    service = CanonicalWeightingGovernanceService(
+        database=database,
+        clock=lambda: CREATED_AT,
+        readiness_service=readiness,
+    )
+    proposal = service.create_proposal(created_by="quant-operator")
+
+    readiness.ready = False
+    with pytest.raises(ValueError, match="external_market_cap_validation_required"):
+        service.approve_proposal(
+            proposal.proposal_id,
+            approved_by="risk-officer",
+            approval_note="No debe activarse con readiness degradado.",
+        )
+
+    persisted = service.get_proposal(proposal.proposal_id)
+    assert persisted.status == "pending_human_approval"
+    assert persisted.human_approved is False
+    assert service.get_approved_weights()["regionWeights"] is None
