@@ -147,3 +147,31 @@ def test_irregular_history_does_not_invent_suspension_threshold(tmp_path: Path) 
     assert result.frequency == "irregular"
     assert result.suspected_suspension is None
     assert result.payment_stability_score is None
+
+
+def test_sparse_cadence_does_not_claim_suspension_even_when_overdue(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    dates = [datetime(2025, 11, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc), datetime(2026, 5, 1, tzinfo=timezone.utc)]
+    _save(database, instrument_id, "primary", cutoff, dates)
+    result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=cutoff)
+    assert result.frequency == "quarterly"
+    assert result.suspected_suspension is None
+    assert result.payment_stability_score is None
+
+
+def test_noisy_median_cadence_does_not_claim_suspension(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    dates = [
+        datetime(2025, 8, 1, tzinfo=timezone.utc),
+        datetime(2025, 9, 1, tzinfo=timezone.utc),
+        datetime(2025, 12, 1, tzinfo=timezone.utc),
+        datetime(2026, 5, 1, tzinfo=timezone.utc),
+    ]
+    _save(database, instrument_id, "primary", cutoff, dates)
+    result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=cutoff)
+    assert result.frequency == "quarterly"
+    assert result.regularity_score is not None and result.regularity_score < 0.80
+    assert result.suspected_suspension is None
+    assert result.payment_stability_score is None
