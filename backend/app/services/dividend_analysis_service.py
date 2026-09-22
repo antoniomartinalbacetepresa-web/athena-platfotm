@@ -22,6 +22,8 @@ class DividendAnalysis:
     regularity_score: float | None
     dividend_growth_rate: float | None
     cut_detected: bool | None
+    payment_stability_score: float | None
+    suspected_suspension: bool | None
     currency: str | None
     currency_consistent: bool
     knowledge_cutoff: str
@@ -39,6 +41,8 @@ class DividendAnalysis:
             "regularityScore": self.regularity_score,
             "dividendGrowthRate": self.dividend_growth_rate,
             "cutDetected": self.cut_detected,
+            "paymentStabilityScore": self.payment_stability_score,
+            "suspectedSuspension": self.suspected_suspension,
             "currency": self.currency,
             "currencyConsistent": self.currency_consistent,
             "knowledgeCutoff": self.knowledge_cutoff,
@@ -92,7 +96,7 @@ class DividendAnalysisService:
 
         ordered = sorted(unique.values(), key=lambda row: str(row["effective_at"]))
         if not ordered:
-            return DividendAnalysis(0, None, 0.0, None, None, None, "none", None, None, None, None, None, True, cutoff.isoformat())
+            return DividendAnalysis(0, None, 0.0, None, None, None, "none", None, None, None, None, None, None, None, True, cutoff.isoformat())
 
         currencies = {row["currency"] for row in ordered if row["currency"] is not None}
         currency_consistent = len(currencies) <= 1 and all(row["currency"] is not None for row in ordered)
@@ -116,7 +120,7 @@ class DividendAnalysisService:
             cut_detected = dividend_growth_rate < -1e-12
 
         if len(ordered) < 2:
-            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, "insufficient_history", None, None, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat())
+            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, "insufficient_history", None, None, dividend_growth_rate, cut_detected, None, None, currency, currency_consistent, cutoff.isoformat())
 
         dates = [datetime.fromisoformat(str(row["effective_at"])) for row in ordered]
         intervals = [(b - a).total_seconds() / 86400.0 for a, b in zip(dates, dates[1:])]
@@ -129,9 +133,17 @@ class DividendAnalysisService:
             regularity = max(0.0, min(1.0, 1.0 - sum(deviations) / len(deviations)))
 
         annualized = trailing_cash if currency_consistent and trailing else None
+        payment_stability = regularity
+        suspected_suspension = None
+        if expected_days is not None:
+            days_since_last = age_days(ordered[-1])
+            suspected_suspension = days_since_last > expected_days * 1.75
+            if payment_stability is not None and suspected_suspension:
+                payment_stability = 0.0
         return DividendAnalysis(
             len(ordered), annualized, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, frequency, payments_per_year,
-            regularity, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat(),
+            regularity, dividend_growth_rate, cut_detected, payment_stability, suspected_suspension,
+            currency, currency_consistent, cutoff.isoformat(),
         )
 
     @staticmethod
