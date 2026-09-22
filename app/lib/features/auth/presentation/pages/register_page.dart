@@ -172,9 +172,9 @@ class _RegisterPageState extends State<RegisterPage> {
                       child: ElevatedButton(
                         onPressed: _loading ? null : _register,
                         child: _loading
-                            ? const Semantics(
+                            ? Semantics(
                                 label: 'Creando cuenta',
-                                child: ExcludeSemantics(
+                                child: const ExcludeSemantics(
                                   child: SizedBox(
                                     width: 22,
                                     height: 22,
