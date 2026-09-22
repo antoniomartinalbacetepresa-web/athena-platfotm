@@ -86,7 +86,7 @@ def _create_v4_database_with_existing_action(database_path: Path) -> None:
         )
 
 
-def test_fresh_database_registers_schema_v5_and_corporate_actions(tmp_path: Path) -> None:
+def test_fresh_database_registers_current_schema_and_corporate_actions(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "fresh.db")
     database.initialize()
 
@@ -105,7 +105,7 @@ def test_fresh_database_registers_schema_v5_and_corporate_actions(tmp_path: Path
         }
 
     assert version is not None
-    assert version["value"] == "5"
+    assert version["value"] == "6"
     assert table is not None
     assert "idx_corporate_actions_instrument_effective" in indexes
     assert "idx_corporate_actions_pit" in indexes
@@ -132,7 +132,7 @@ def test_v4_upgrade_preserves_preexisting_corporate_action_rows(tmp_path: Path) 
         ).fetchone()
 
     assert version is not None
-    assert version["value"] == "5"
+    assert version["value"] == "6"
     assert row is not None
     assert row["instrument_id"] == 7
     assert row["action_type"] == "dividend"
@@ -160,10 +160,10 @@ def test_v4_upgrade_without_corporate_actions_creates_canonical_table(tmp_path: 
 
     assert table is not None
     assert version is not None
-    assert version["value"] == "5"
+    assert version["value"] == "6"
 
 
-def test_repository_operates_on_canonical_v5_schema(tmp_path: Path) -> None:
+def test_repository_operates_on_current_schema(tmp_path: Path) -> None:
     database = AthenaDatabase(tmp_path / "repository.db")
     database.initialize()
     repository = CorporateActionRepository(database)
