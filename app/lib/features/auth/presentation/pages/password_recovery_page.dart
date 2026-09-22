@@ -215,9 +215,9 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
           key: const Key('recovery-reset'),
           onPressed: _loading ? null : _resetPassword,
           child: _loading
-              ? const Semantics(
+              ? Semantics(
                   label: 'Procesando recuperación',
-                  child: ExcludeSemantics(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
+                  child: const ExcludeSemantics(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
                 )
               : const Text('RESTABLECER CONTRASEÑA'),
         ),
