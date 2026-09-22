@@ -163,3 +163,18 @@ def test_payout_rejects_valuation_from_different_pit_cutoff(tmp_path: Path) -> N
 
     with pytest.raises(RuntimeError, match="valoración usó otro corte point-in-time"):
         service.evaluate(symbol="DIV", as_of=AS_OF)
+
+
+@pytest.mark.parametrize("eps", [0.0, -1.0])
+def test_payout_is_unknown_for_nonpositive_eps(tmp_path: Path, eps: float) -> None:
+    database = _database(tmp_path)
+    _seed(database)
+    result = RecommendationDividendSignalService(
+        database=database,
+        market_service=_Market(),
+        valuation_service=_Valuation(eps=eps),
+    ).evaluate(symbol="DIV", as_of=AS_OF)
+
+    assert result.status == "diagnostic_ready"
+    assert result.earnings_payout_ratio is None
+    assert result.production_eligible is False
