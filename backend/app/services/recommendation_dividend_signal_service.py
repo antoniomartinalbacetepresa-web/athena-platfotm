@@ -113,13 +113,13 @@ class RecommendationDividendSignalService:
             market_source_providers=source_providers,
             production_eligible=False,
             price_return_60d=self._optional_float(market.get("return60d")),
-            earnings_payout_ratio=None,
         )
         if str(market.get("status") or "") != "diagnostic_ready" or instrument_id is None or latest_price is None or latest_price <= 0:
             return RecommendationDividendSignal(
                 status="market_evidence_not_ready",
                 dividend=None,
                 total_return_60d=None,
+                earnings_payout_ratio=None,
                 reason="El análisis de dividendos requiere primero un precio point-in-time válido y trazable.",
                 **common,
             )
