@@ -140,7 +140,7 @@ def test_irregular_history_does_not_invent_suspension_threshold(tmp_path: Path) 
     cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
     repo.save_many(instrument_id=instrument_id, source_provider="primary", retrieved_at=cutoff, actions=[
         {"action_type":"dividend","effective_at":datetime(2025,1,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
-        {"action_type":"dividend","effective_at":datetime(2025,3,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
+        {"action_type":"dividend","effective_at":datetime(2025,2,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
         {"action_type":"dividend","effective_at":datetime(2026,2,1,tzinfo=timezone.utc),"cash_amount":0.2,"currency":"USD"},
     ])
     result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=cutoff)
