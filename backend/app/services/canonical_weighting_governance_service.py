@@ -150,6 +150,12 @@ class CanonicalWeightingGovernanceService:
             return self._blocked_response(None, None)
         proposal = self.get_proposal(int(row["id"]))
         if not proposal.human_approved:
+            if proposal.status == "rejected":
+                return self._blocked_response(
+                    proposal.proposal_id,
+                    proposal.status,
+                    status="blocked_rejected_requires_new_proposal",
+                )
             return self._blocked_response(proposal.proposal_id, proposal.status)
         self._verify_integrity(proposal)
         try:
@@ -184,9 +190,15 @@ class CanonicalWeightingGovernanceService:
             "automaticTrading": False,
         }
 
-    def _blocked_response(self, proposal_id: int | None, proposal_status: str | None) -> dict[str, Any]:
+    def _blocked_response(
+        self,
+        proposal_id: int | None,
+        proposal_status: str | None,
+        *,
+        status: str = "blocked_pending_human_approval",
+    ) -> dict[str, Any]:
         response: dict[str, Any] = {
-            "status": "blocked_pending_human_approval",
+            "status": status,
             "regionWeights": None,
             "proposalId": proposal_id,
             "humanApproved": False,
