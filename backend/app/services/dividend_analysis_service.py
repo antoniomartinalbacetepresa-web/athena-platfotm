@@ -22,6 +22,7 @@ class DividendAnalysis:
     regularity_score: float | None
     dividend_growth_rate: float | None
     cut_detected: bool | None
+    consecutive_full_years_without_cut: int | None
     payment_stability_score: float | None
     suspected_suspension: bool | None
     currency: str | None
@@ -41,6 +42,7 @@ class DividendAnalysis:
             "regularityScore": self.regularity_score,
             "dividendGrowthRate": self.dividend_growth_rate,
             "cutDetected": self.cut_detected,
+            "consecutiveFullYearsWithoutCut": self.consecutive_full_years_without_cut,
             "paymentStabilityScore": self.payment_stability_score,
             "suspectedSuspension": self.suspected_suspension,
             "currency": self.currency,
@@ -102,7 +104,7 @@ class DividendAnalysisService:
 
         ordered = sorted(unique.values(), key=lambda row: str(row["effective_at"]))
         if not ordered:
-            return DividendAnalysis(0, None, 0.0, None, None, None, "none", None, None, None, None, None, None, None, True, cutoff.isoformat())
+            return DividendAnalysis(0, None, 0.0, None, None, None, "none", None, None, None, None, None, None, None, None, True, cutoff.isoformat())
 
         currencies = {row["currency"] for row in ordered if row["currency"] is not None}
         currency_consistent = len(currencies) <= 1 and all(row["currency"] is not None for row in ordered)
@@ -121,12 +123,16 @@ class DividendAnalysisService:
         yield_60d = cash_per_share_60d / pit_price if cash_per_share_60d is not None and pit_price is not None else None
         dividend_growth_rate = None
         cut_detected = None
+        consecutive_full_years_without_cut = None
         if currency_consistent and trailing and prior and prior_cash > 0:
             dividend_growth_rate = (trailing_cash / prior_cash) - 1.0
             cut_detected = dividend_growth_rate < -1e-12
+            # With the default 730-day lookback exactly one adjacent full-year
+            # comparison is observable. Never extrapolate additional years.
+            consecutive_full_years_without_cut = 0 if cut_detected else 1
 
         if len(ordered) < 2:
-            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, "insufficient_history", None, None, dividend_growth_rate, cut_detected, None, None, currency, currency_consistent, cutoff.isoformat())
+            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, "insufficient_history", None, None, dividend_growth_rate, cut_detected, consecutive_full_years_without_cut, None, None, currency, currency_consistent, cutoff.isoformat())
 
         dates = [datetime.fromisoformat(str(row["effective_at"])) for row in ordered]
         intervals = [(b - a).total_seconds() / 86400.0 for a, b in zip(dates, dates[1:])]
@@ -154,7 +160,7 @@ class DividendAnalysisService:
                 payment_stability = 0.0
         return DividendAnalysis(
             len(ordered), annualized, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, frequency, payments_per_year,
-            regularity, dividend_growth_rate, cut_detected, payment_stability, suspected_suspension,
+            regularity, dividend_growth_rate, cut_detected, consecutive_full_years_without_cut, payment_stability, suspected_suspension,
             currency, currency_consistent, cutoff.isoformat(),
         )
 
