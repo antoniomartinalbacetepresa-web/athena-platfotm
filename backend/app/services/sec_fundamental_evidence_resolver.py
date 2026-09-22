@@ -78,6 +78,15 @@ class SecFundamentalEvidenceResolver:
             concepts=("NetCashProvidedByUsedInOperatingActivities",),
             allowed_forms=("10-K", "10-K/A"),
         ),
+        "capital_expenditure_annual": FundamentalConceptPolicy(
+            canonical_name="capital_expenditure_annual",
+            period_kind="annual_duration",
+            concepts=(
+                "PaymentsToAcquirePropertyPlantAndEquipment",
+                "PaymentsForAdditionsToPropertyPlantAndEquipment",
+            ),
+            allowed_forms=("10-K", "10-K/A"),
+        ),
         "revenue_quarter": FundamentalConceptPolicy(
             canonical_name="revenue_quarter",
             period_kind="quarter_duration",
