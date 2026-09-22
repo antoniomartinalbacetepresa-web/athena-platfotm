@@ -57,8 +57,14 @@ class DividendAnalysisService:
     It supplies evidence for total-return/recommendation engines. Duplicate economic
     events learned from multiple providers are collapsed before cadence is measured.
     Growth compares complete adjacent 365-day PIT windows and is omitted when the
-    prior window has no comparable cash evidence.
+    prior window has no comparable cash evidence. A suspected suspension is emitted
+    only after at least three observed intervals establish a sufficiently regular
+    cadence; sparse or noisy histories remain unknown instead of inventing certainty.
     """
+
+    _MIN_SUSPENSION_INTERVALS = 3
+    _MIN_SUSPENSION_REGULARITY = 0.80
+    _SUSPENSION_OVERDUE_MULTIPLIER = 1.75
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
@@ -133,12 +139,18 @@ class DividendAnalysisService:
             regularity = max(0.0, min(1.0, 1.0 - sum(deviations) / len(deviations)))
 
         annualized = trailing_cash if currency_consistent and trailing else None
-        payment_stability = regularity
+        cadence_established = (
+            expected_days is not None
+            and len(intervals) >= self._MIN_SUSPENSION_INTERVALS
+            and regularity is not None
+            and regularity >= self._MIN_SUSPENSION_REGULARITY
+        )
+        payment_stability = regularity if cadence_established else None
         suspected_suspension = None
-        if expected_days is not None:
+        if cadence_established and expected_days is not None:
             days_since_last = age_days(ordered[-1])
-            suspected_suspension = days_since_last > expected_days * 1.75
-            if payment_stability is not None and suspected_suspension:
+            suspected_suspension = days_since_last > expected_days * self._SUSPENSION_OVERDUE_MULTIPLIER
+            if suspected_suspension:
                 payment_stability = 0.0
         return DividendAnalysis(
             len(ordered), annualized, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, frequency, payments_per_year,
