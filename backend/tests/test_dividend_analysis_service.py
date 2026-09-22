@@ -104,6 +104,7 @@ def test_dividend_growth_and_cut_compare_adjacent_pit_years(tmp_path: Path) -> N
     result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=known)
     assert result.dividend_growth_rate == pytest.approx(-0.20)
     assert result.cut_detected is True
+    assert result.consecutive_full_years_without_cut == 0
 
 
 def test_growth_is_unknown_without_prior_comparable_window(tmp_path: Path) -> None:
@@ -112,6 +113,7 @@ def test_growth_is_unknown_without_prior_comparable_window(tmp_path: Path) -> No
     result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=known)
     assert result.dividend_growth_rate is None
     assert result.cut_detected is None
+    assert result.consecutive_full_years_without_cut is None
 
 
 def test_regular_quarterly_history_reports_stable_without_suspension(tmp_path: Path) -> None:
@@ -175,3 +177,18 @@ def test_noisy_median_cadence_does_not_claim_suspension(tmp_path: Path) -> None:
     assert result.regularity_score is not None and result.regularity_score < 0.80
     assert result.suspected_suspension is None
     assert result.payment_stability_score is None
+
+
+def test_one_complete_comparable_year_without_cut_is_reported_without_extrapolation(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database); repo = CorporateActionRepository(database=database)
+    known = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    actions = []
+    for date in [datetime(2024,11,1,tzinfo=timezone.utc), datetime(2025,2,1,tzinfo=timezone.utc), datetime(2025,5,1,tzinfo=timezone.utc)]:
+        actions.append({"action_type":"dividend","effective_at":date,"cash_amount":0.40,"currency":"USD"})
+    for date in [datetime(2025,11,1,tzinfo=timezone.utc), datetime(2026,2,1,tzinfo=timezone.utc), datetime(2026,5,1,tzinfo=timezone.utc)]:
+        actions.append({"action_type":"dividend","effective_at":date,"cash_amount":0.50,"currency":"USD"})
+    repo.save_many(instrument_id=instrument_id, source_provider="primary", retrieved_at=known, actions=actions)
+    result = DividendAnalysisService(database=database).analyze(instrument_id=instrument_id, knowledge_cutoff=known)
+    assert result.cut_detected is False
+    assert result.consecutive_full_years_without_cut == 1
+    assert result.to_api_dict()["consecutiveFullYearsWithoutCut"] == 1
