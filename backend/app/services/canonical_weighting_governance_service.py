@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from app.database.athena_database import AthenaDatabase
 from app.services.canonical_market_cap_service import CanonicalMarketCapService
+from app.services.market_weighting_readiness_service import MarketWeightingReadinessService
 
 
 Clock = Callable[[], datetime]
@@ -60,13 +61,25 @@ class CanonicalWeightingGovernanceService:
 
     _REGIONS = ("america", "europe", "asia")
 
-    def __init__(self, *, database: AthenaDatabase | None = None, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        database: AthenaDatabase | None = None,
+        clock: Clock | None = None,
+        readiness_service: MarketWeightingReadinessService | None = None,
+    ) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
+        self._readiness_service = (
+            readiness_service
+            if readiness_service is not None
+            else MarketWeightingReadinessService(database=self._database)
+        )
         self._initialize_schema()
 
     def create_proposal(self, *, created_by: str) -> CanonicalWeightingProposal:
         actor = self._required_text(created_by, "created_by")
+        self._require_weighting_readiness()
         snapshot, region_weights = self._current_evidence_snapshot()
         snapshot_json = self._canonical_json(snapshot)
         evidence_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
@@ -93,6 +106,7 @@ class CanonicalWeightingGovernanceService:
         if approver.casefold() == proposal.created_by.casefold():
             raise ValueError("La aprobación humana requiere separación de funciones: proponente y aprobador deben ser distintos.")
         self._verify_integrity(proposal)
+        self._require_weighting_readiness()
         current_hash = self._current_evidence_hash()
         if current_hash != proposal.evidence_sha256:
             raise ValueError("La evidencia canónica cambió desde la propuesta; debe generarse y revisarse una nueva propuesta.")
@@ -219,6 +233,15 @@ class CanonicalWeightingGovernanceService:
         proposal = self._from_row(dict(row))
         self._verify_integrity(proposal)
         return proposal
+
+    def _require_weighting_readiness(self) -> None:
+        report = self._readiness_service.get_report()
+        if not report.ready:
+            blockers = ", ".join(report.blockers) or "unknown_weighting_readiness_blocker"
+            raise ValueError(
+                "El weighting canónico no puede proponerse ni aprobarse hasta que "
+                f"readiness sea completo: {blockers}."
+            )
 
     def _current_evidence_snapshot(self) -> tuple[dict[str, Any], dict[str, float]]:
         report = CanonicalMarketCapService(database=self._database).get_report()
