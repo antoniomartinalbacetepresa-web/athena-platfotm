@@ -18,6 +18,8 @@ class DividendAnalysis:
     frequency: str
     payments_per_year: float | None
     regularity_score: float | None
+    dividend_growth_rate: float | None
+    cut_detected: bool | None
     currency: str | None
     currency_consistent: bool
     knowledge_cutoff: str
@@ -31,6 +33,8 @@ class DividendAnalysis:
             "frequency": self.frequency,
             "paymentsPerYear": self.payments_per_year,
             "regularityScore": self.regularity_score,
+            "dividendGrowthRate": self.dividend_growth_rate,
+            "cutDetected": self.cut_detected,
             "currency": self.currency,
             "currencyConsistent": self.currency_consistent,
             "knowledgeCutoff": self.knowledge_cutoff,
@@ -39,11 +43,13 @@ class DividendAnalysis:
 
 
 class DividendAnalysisService:
-    """PIT-safe dividend cadence and cash-distribution diagnostics.
+    """PIT-safe dividend cadence, growth and cash-distribution diagnostics.
 
     This service intentionally does not turn dividend yield into a recommendation.
     It supplies evidence for total-return/recommendation engines. Duplicate economic
     events learned from multiple providers are collapsed before cadence is measured.
+    Growth compares complete adjacent 365-day PIT windows and is omitted when the
+    prior window has no comparable cash evidence.
     """
 
     def __init__(self, *, database: AthenaDatabase | None = None) -> None:
@@ -55,7 +61,7 @@ class DividendAnalysisService:
         *,
         instrument_id: int,
         knowledge_cutoff: datetime,
-        lookback_days: int = 550,
+        lookback_days: int = 730,
         pit_price: float | None = None,
     ) -> DividendAnalysis:
         if instrument_id <= 0:
@@ -68,42 +74,42 @@ class DividendAnalysisService:
             raise ValueError("pit_price debe ser positivo cuando se proporciona.")
 
         cutoff = knowledge_cutoff.astimezone(timezone.utc)
-        actions = self._repository.list_for_instrument(
-            instrument_id,
-            knowledge_cutoff=cutoff,
-        )
+        actions = self._repository.list_for_instrument(instrument_id, knowledge_cutoff=cutoff)
         dividends = [row for row in actions if row["action_type"] == "dividend"]
 
-        # Same economic event may arrive from independent providers. Count it once.
         unique: dict[tuple[str, float, str | None], dict[str, Any]] = {}
         for row in dividends:
             effective = datetime.fromisoformat(str(row["effective_at"]))
-            if (cutoff - effective).days > lookback_days:
+            age_days = (cutoff - effective).total_seconds() / 86400.0
+            if age_days < 0 or age_days > lookback_days:
                 continue
             key = (str(row["effective_at"]), float(row["cash_amount"]), row["currency"])
             unique.setdefault(key, row)
 
         ordered = sorted(unique.values(), key=lambda row: str(row["effective_at"]))
         if not ordered:
-            return DividendAnalysis(0, None, 0.0, None, "none", None, None, None, True, cutoff.isoformat())
+            return DividendAnalysis(0, None, 0.0, None, "none", None, None, None, None, None, True, cutoff.isoformat())
 
         currencies = {row["currency"] for row in ordered if row["currency"] is not None}
         currency_consistent = len(currencies) <= 1 and all(row["currency"] is not None for row in ordered)
         currency = next(iter(currencies)) if currency_consistent and currencies else None
 
-        trailing = [
-            row for row in ordered
-            if 0 <= (cutoff - datetime.fromisoformat(str(row["effective_at"]))).days <= 365
-        ]
+        def age_days(row: dict[str, Any]) -> float:
+            return (cutoff - datetime.fromisoformat(str(row["effective_at"]))).total_seconds() / 86400.0
+
+        trailing = [row for row in ordered if 0 <= age_days(row) <= 365]
+        prior = [row for row in ordered if 365 < age_days(row) <= 730]
         trailing_cash = sum(float(row["cash_amount"]) for row in trailing) if currency_consistent else 0.0
-        trailing_yield = (
-            trailing_cash / pit_price
-            if currency_consistent and trailing and pit_price is not None
-            else None
-        )
+        prior_cash = sum(float(row["cash_amount"]) for row in prior) if currency_consistent else 0.0
+        trailing_yield = trailing_cash / pit_price if currency_consistent and trailing and pit_price is not None else None
+        dividend_growth_rate = None
+        cut_detected = None
+        if currency_consistent and trailing and prior and prior_cash > 0:
+            dividend_growth_rate = (trailing_cash / prior_cash) - 1.0
+            cut_detected = dividend_growth_rate < -1e-12
 
         if len(ordered) < 2:
-            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, "insufficient_history", None, None, currency, currency_consistent, cutoff.isoformat())
+            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, "insufficient_history", None, None, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat())
 
         dates = [datetime.fromisoformat(str(row["effective_at"])) for row in ordered]
         intervals = [(b - a).total_seconds() / 86400.0 for a, b in zip(dates, dates[1:])]
@@ -115,13 +121,10 @@ class DividendAnalysisService:
             deviations = [abs(days - expected_days) / expected_days for days in intervals]
             regularity = max(0.0, min(1.0, 1.0 - sum(deviations) / len(deviations)))
 
-        annualized = None
-        if currency_consistent and trailing:
-            annualized = trailing_cash
-
+        annualized = trailing_cash if currency_consistent and trailing else None
         return DividendAnalysis(
             len(ordered), annualized, trailing_cash, trailing_yield, frequency, payments_per_year,
-            regularity, currency, currency_consistent, cutoff.isoformat(),
+            regularity, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat(),
         )
 
     @staticmethod
