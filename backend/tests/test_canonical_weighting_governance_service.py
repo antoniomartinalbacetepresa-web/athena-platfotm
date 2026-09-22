@@ -239,7 +239,13 @@ def test_rejection_never_unlocks_weighting(tmp_path: Path) -> None:
 
     assert rejected.status == "rejected"
     assert rejected.human_approved is False
-    assert service.get_approved_weights()["status"] == "blocked_pending_human_approval"
+    blocked = service.get_approved_weights()
+    assert blocked["status"] == "blocked_rejected_requires_new_proposal"
+    assert blocked["proposalStatus"] == "rejected"
+    assert blocked["regionWeights"] is None
+    assert blocked["humanApproved"] is False
+    assert blocked["automaticApproval"] is False
+    assert blocked["automaticTrading"] is False
     with pytest.raises(ValueError, match="pendiente"):
         service.approve_proposal(
             proposal.proposal_id,
