@@ -15,6 +15,8 @@ class DividendAnalysis:
     annualized_cash_per_share: float | None
     trailing_cash_per_share: float
     trailing_yield: float | None
+    cash_per_share_60d: float | None
+    yield_60d: float | None
     frequency: str
     payments_per_year: float | None
     regularity_score: float | None
@@ -30,6 +32,8 @@ class DividendAnalysis:
             "annualizedCashPerShare": self.annualized_cash_per_share,
             "trailingCashPerShare": self.trailing_cash_per_share,
             "trailingYield": self.trailing_yield,
+            "cashPerShare60d": self.cash_per_share_60d,
+            "yield60d": self.yield_60d,
             "frequency": self.frequency,
             "paymentsPerYear": self.payments_per_year,
             "regularityScore": self.regularity_score,
@@ -88,7 +92,7 @@ class DividendAnalysisService:
 
         ordered = sorted(unique.values(), key=lambda row: str(row["effective_at"]))
         if not ordered:
-            return DividendAnalysis(0, None, 0.0, None, "none", None, None, None, None, None, True, cutoff.isoformat())
+            return DividendAnalysis(0, None, 0.0, None, None, None, "none", None, None, None, None, None, True, cutoff.isoformat())
 
         currencies = {row["currency"] for row in ordered if row["currency"] is not None}
         currency_consistent = len(currencies) <= 1 and all(row["currency"] is not None for row in ordered)
@@ -102,6 +106,9 @@ class DividendAnalysisService:
         trailing_cash = sum(float(row["cash_amount"]) for row in trailing) if currency_consistent else 0.0
         prior_cash = sum(float(row["cash_amount"]) for row in prior) if currency_consistent else 0.0
         trailing_yield = trailing_cash / pit_price if currency_consistent and trailing and pit_price is not None else None
+        cash_60d_rows = [row for row in ordered if 0 <= age_days(row) <= 60]
+        cash_per_share_60d = sum(float(row["cash_amount"]) for row in cash_60d_rows) if currency_consistent and cash_60d_rows else None
+        yield_60d = cash_per_share_60d / pit_price if cash_per_share_60d is not None and pit_price is not None else None
         dividend_growth_rate = None
         cut_detected = None
         if currency_consistent and trailing and prior and prior_cash > 0:
@@ -109,7 +116,7 @@ class DividendAnalysisService:
             cut_detected = dividend_growth_rate < -1e-12
 
         if len(ordered) < 2:
-            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, "insufficient_history", None, None, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat())
+            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, "insufficient_history", None, None, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat())
 
         dates = [datetime.fromisoformat(str(row["effective_at"])) for row in ordered]
         intervals = [(b - a).total_seconds() / 86400.0 for a, b in zip(dates, dates[1:])]
@@ -123,7 +130,7 @@ class DividendAnalysisService:
 
         annualized = trailing_cash if currency_consistent and trailing else None
         return DividendAnalysis(
-            len(ordered), annualized, trailing_cash, trailing_yield, frequency, payments_per_year,
+            len(ordered), annualized, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, frequency, payments_per_year,
             regularity, dividend_growth_rate, cut_detected, currency, currency_consistent, cutoff.isoformat(),
         )
 
