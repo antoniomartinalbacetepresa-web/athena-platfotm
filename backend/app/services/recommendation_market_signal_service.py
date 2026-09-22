@@ -19,6 +19,7 @@ class RecommendationMarketSignal:
     latest_observed_at: str | None
     latest_retrieved_at: str | None
     latest_price: float | None
+    price_60d_start: float | None
     source_providers: tuple[str, ...]
     return_20d: float | None
     return_60d: float | None
@@ -39,6 +40,7 @@ class RecommendationMarketSignal:
             "latestObservedAt": self.latest_observed_at,
             "latestRetrievedAt": self.latest_retrieved_at,
             "latestPrice": self.latest_price,
+            "price60dStart": self.price_60d_start,
             "sourceProviders": list(self.source_providers),
             "return20d": self.return_20d,
             "return60d": self.return_60d,
@@ -81,207 +83,86 @@ class RecommendationMarketSignalService:
 
         instrument_ids = self._active_instrument_ids(normalized_symbol)
         if not instrument_ids:
-            return self._empty(
-                status="instrument_not_found",
-                symbol=normalized_symbol,
-                as_of=as_of_utc,
-                reason="No existe un instrumento activo con ese símbolo.",
-            )
+            return self._empty(status="instrument_not_found", symbol=normalized_symbol, as_of=as_of_utc, reason="No existe un instrumento activo con ese símbolo.")
         if len(instrument_ids) != 1:
-            return self._empty(
-                status="instrument_ambiguous",
-                symbol=normalized_symbol,
-                as_of=as_of_utc,
-                reason="El símbolo corresponde a más de un instrumento activo.",
-            )
+            return self._empty(status="instrument_ambiguous", symbol=normalized_symbol, as_of=as_of_utc, reason="El símbolo corresponde a más de un instrumento activo.")
 
         instrument_id = instrument_ids[0]
-        observations = self._point_in_time_prices(
-            instrument_id=instrument_id,
-            as_of=as_of_utc,
-        )
-        source_providers = tuple(
-            sorted(
-                {
-                    str(item["source_provider"]).strip()
-                    for item in observations
-                    if item.get("source_provider")
-                    and str(item["source_provider"]).strip()
-                }
-            )
-        )
-        latest_retrieved_at = (
-            str(observations[-1]["retrieved_at"]) if observations else None
-        )
+        observations = self._point_in_time_prices(instrument_id=instrument_id, as_of=as_of_utc)
+        source_providers = tuple(sorted({str(item["source_provider"]).strip() for item in observations if item.get("source_provider") and str(item["source_provider"]).strip()}))
+        latest_retrieved_at = str(observations[-1]["retrieved_at"]) if observations else None
 
         if len(observations) < self._MIN_OBSERVATIONS:
             return RecommendationMarketSignal(
-                status="insufficient_history",
-                symbol=normalized_symbol,
-                instrument_id=instrument_id,
-                as_of=as_of_utc.isoformat(),
-                observation_count=len(observations),
-                latest_observed_at=(
-                    str(observations[-1]["observed_at"]) if observations else None
-                ),
+                status="insufficient_history", symbol=normalized_symbol, instrument_id=instrument_id,
+                as_of=as_of_utc.isoformat(), observation_count=len(observations),
+                latest_observed_at=(str(observations[-1]["observed_at"]) if observations else None),
                 latest_retrieved_at=latest_retrieved_at,
                 latest_price=(float(observations[-1]["price"]) if observations else None),
-                source_providers=source_providers,
-                return_20d=None,
-                return_60d=None,
-                annualized_volatility=None,
-                max_drawdown_60d=None,
-                technical_score=None,
-                risk_score=None,
+                price_60d_start=None, source_providers=source_providers, return_20d=None, return_60d=None,
+                annualized_volatility=None, max_drawdown_60d=None, technical_score=None, risk_score=None,
                 production_eligible=False,
-                reason=(
-                    "Se requieren al menos 61 observaciones point-in-time para "
-                    "calcular momentum y riesgo sin rellenar datos artificialmente."
-                ),
+                reason="Se requieren al menos 61 observaciones point-in-time para calcular momentum y riesgo sin rellenar datos artificialmente.",
             )
 
         recent = observations[-61:]
         prices = [float(item["price"]) for item in recent]
         latest_price = prices[-1]
+        price_60d_start = prices[0]
         return_20d = (latest_price / prices[-21]) - 1.0
-        return_60d = (latest_price / prices[0]) - 1.0
-        daily_returns = [
-            (prices[index] / prices[index - 1]) - 1.0
-            for index in range(1, len(prices))
-        ]
+        return_60d = (latest_price / price_60d_start) - 1.0
+        daily_returns = [(prices[index] / prices[index - 1]) - 1.0 for index in range(1, len(prices))]
         annualized_volatility = stdev(daily_returns) * sqrt(252.0)
         max_drawdown = self._max_drawdown(prices)
-
-        # These bounded transforms are intentionally simple and transparent.
-        # They create stable features, not a calibrated buy/sell decision.
-        technical_score = self._clip(
-            50.0 + (return_20d * 100.0) + (return_60d * 50.0),
-            0.0,
-            100.0,
-        )
-        risk_score = self._clip(
-            (annualized_volatility * 100.0) + (abs(max_drawdown) * 100.0),
-            0.0,
-            100.0,
-        )
+        technical_score = self._clip(50.0 + (return_20d * 100.0) + (return_60d * 50.0), 0.0, 100.0)
+        risk_score = self._clip((annualized_volatility * 100.0) + (abs(max_drawdown) * 100.0), 0.0, 100.0)
 
         return RecommendationMarketSignal(
-            status="diagnostic_ready",
-            symbol=normalized_symbol,
-            instrument_id=instrument_id,
-            as_of=as_of_utc.isoformat(),
-            observation_count=len(observations),
-            latest_observed_at=str(recent[-1]["observed_at"]),
-            latest_retrieved_at=str(recent[-1]["retrieved_at"]),
-            latest_price=latest_price,
-            source_providers=source_providers,
-            return_20d=return_20d,
-            return_60d=return_60d,
-            annualized_volatility=annualized_volatility,
-            max_drawdown_60d=max_drawdown,
-            technical_score=technical_score,
-            risk_score=risk_score,
+            status="diagnostic_ready", symbol=normalized_symbol, instrument_id=instrument_id,
+            as_of=as_of_utc.isoformat(), observation_count=len(observations),
+            latest_observed_at=str(recent[-1]["observed_at"]), latest_retrieved_at=str(recent[-1]["retrieved_at"]),
+            latest_price=latest_price, price_60d_start=price_60d_start, source_providers=source_providers,
+            return_20d=return_20d, return_60d=return_60d, annualized_volatility=annualized_volatility,
+            max_drawdown_60d=max_drawdown, technical_score=technical_score, risk_score=risk_score,
             production_eligible=False,
-            reason=(
-                "Las señales técnicas y de riesgo están calculadas con datos "
-                "point-in-time y procedencia explícita, pero aún deben calibrarse "
-                "fuera de muestra junto con fundamentales, valoración y calidad."
-            ),
+            reason="Las señales técnicas y de riesgo están calculadas con datos point-in-time y procedencia explícita, pero aún deben calibrarse fuera de muestra junto con fundamentales, valoración y calidad.",
         )
 
     def _active_instrument_ids(self, symbol: str) -> tuple[int, ...]:
         with self._database.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT id
-                FROM instruments
-                WHERE is_active = 1
-                  AND UPPER(symbol) = ?
-                ORDER BY id
-                """,
-                (symbol,),
-            ).fetchall()
+            rows = connection.execute("SELECT id FROM instruments WHERE is_active = 1 AND UPPER(symbol) = ? ORDER BY id", (symbol,)).fetchall()
         return tuple(int(row["id"]) for row in rows)
 
-    def _point_in_time_prices(
-        self,
-        *,
-        instrument_id: int,
-        as_of: datetime,
-    ) -> list[dict[str, Any]]:
+    def _point_in_time_prices(self, *, instrument_id: int, as_of: datetime) -> list[dict[str, Any]]:
         cutoff = as_of.astimezone(timezone.utc).isoformat()
         with self._database.connect() as connection:
             rows = connection.execute(
                 """
                 WITH eligible AS (
-                    SELECT
-                        observed_at,
-                        COALESCE(close, adjusted_close) AS price,
-                        source_provider,
-                        retrieved_at,
-                        id,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY observed_at
-                            ORDER BY retrieved_at DESC, id DESC
-                        ) AS row_rank
+                    SELECT observed_at, COALESCE(close, adjusted_close) AS price, source_provider, retrieved_at, id,
+                        ROW_NUMBER() OVER (PARTITION BY observed_at ORDER BY retrieved_at DESC, id DESC) AS row_rank
                     FROM market_observations
-                    WHERE instrument_id = ?
-                      AND observed_at <= ?
-                      AND retrieved_at <= ?
-                      AND COALESCE(close, adjusted_close) IS NOT NULL
-                      AND COALESCE(close, adjusted_close) > 0
+                    WHERE instrument_id = ? AND observed_at <= ? AND retrieved_at <= ?
+                      AND COALESCE(close, adjusted_close) IS NOT NULL AND COALESCE(close, adjusted_close) > 0
                 )
-                SELECT observed_at, price, source_provider, retrieved_at
-                FROM eligible
-                WHERE row_rank = 1
-                ORDER BY observed_at ASC
-                """,
-                (instrument_id, cutoff, cutoff),
-            ).fetchall()
+                SELECT observed_at, price, source_provider, retrieved_at FROM eligible
+                WHERE row_rank = 1 ORDER BY observed_at ASC
+                """, (instrument_id, cutoff, cutoff)).fetchall()
         return [dict(row) for row in rows]
 
     def _max_drawdown(self, prices: list[float]) -> float:
-        peak = prices[0]
-        worst = 0.0
+        peak = prices[0]; worst = 0.0
         for price in prices:
-            if price > peak:
-                peak = price
+            if price > peak: peak = price
             drawdown = (price / peak) - 1.0
-            if drawdown < worst:
-                worst = drawdown
+            if drawdown < worst: worst = drawdown
         return worst
 
-    def _empty(
-        self,
-        *,
-        status: str,
-        symbol: str,
-        as_of: datetime,
-        reason: str,
-    ) -> RecommendationMarketSignal:
-        return RecommendationMarketSignal(
-            status=status,
-            symbol=symbol,
-            instrument_id=None,
-            as_of=as_of.isoformat(),
-            observation_count=0,
-            latest_observed_at=None,
-            latest_retrieved_at=None,
-            latest_price=None,
-            source_providers=(),
-            return_20d=None,
-            return_60d=None,
-            annualized_volatility=None,
-            max_drawdown_60d=None,
-            technical_score=None,
-            risk_score=None,
-            production_eligible=False,
-            reason=reason,
-        )
+    def _empty(self, *, status: str, symbol: str, as_of: datetime, reason: str) -> RecommendationMarketSignal:
+        return RecommendationMarketSignal(status=status, symbol=symbol, instrument_id=None, as_of=as_of.isoformat(), observation_count=0, latest_observed_at=None, latest_retrieved_at=None, latest_price=None, price_60d_start=None, source_providers=(), return_20d=None, return_60d=None, annualized_volatility=None, max_drawdown_60d=None, technical_score=None, risk_score=None, production_eligible=False, reason=reason)
 
     def _aware_utc(self, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("as_of debe incluir zona horaria.")
+        if value.tzinfo is None or value.utcoffset() is None: raise ValueError("as_of debe incluir zona horaria.")
         return value.astimezone(timezone.utc)
 
     def _clip(self, value: float, low: float, high: float) -> float:
