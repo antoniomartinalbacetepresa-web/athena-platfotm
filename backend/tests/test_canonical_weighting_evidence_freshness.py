@@ -21,6 +21,16 @@ class MutableClock:
         return self.value
 
 
+class _ReadyReport:
+    ready = True
+    blockers: tuple[str, ...] = ()
+
+
+class _ReadyWeightingReadiness:
+    def get_report(self) -> _ReadyReport:
+        return _ReadyReport()
+
+
 def _database(tmp_path: Path) -> AthenaDatabase:
     database = AthenaDatabase(tmp_path / "athena.db")
     database.initialize()
@@ -78,7 +88,11 @@ def test_approved_weights_fail_closed_when_canonical_evidence_changes(tmp_path: 
     database = _database(tmp_path)
     _seed_clean_canonical_universe(database)
     clock = MutableClock(PROPOSED_AT)
-    service = CanonicalWeightingGovernanceService(database=database, clock=clock)
+    service = CanonicalWeightingGovernanceService(
+        database=database,
+        clock=clock,
+        readiness_service=_ReadyWeightingReadiness(),
+    )
 
     proposal = service.create_proposal(created_by="quant-operator")
     clock.value = APPROVED_AT
