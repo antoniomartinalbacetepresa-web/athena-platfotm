@@ -7,9 +7,14 @@ from typing import Any, Protocol
 from app.database.athena_database import AthenaDatabase
 from app.services.dividend_analysis_service import DividendAnalysisService
 from app.services.recommendation_market_signal_service import RecommendationMarketSignalService
+from app.services.recommendation_valuation_signal_service import RecommendationValuationSignalService
 
 
 class _MarketDiagnosticService(Protocol):
+    def evaluate(self, *, symbol: str, as_of: datetime) -> object: ...
+
+
+class _ValuationDiagnosticService(Protocol):
     def evaluate(self, *, symbol: str, as_of: datetime) -> object: ...
 
 
@@ -26,6 +31,7 @@ class RecommendationDividendSignal:
     dividend: dict[str, Any] | None
     price_return_60d: float | None
     total_return_60d: float | None
+    earnings_payout_ratio: float | None
     production_eligible: bool
     reason: str
 
@@ -42,6 +48,7 @@ class RecommendationDividendSignal:
             "dividend": self.dividend,
             "priceReturn60d": self.price_return_60d,
             "totalReturn60d": self.total_return_60d,
+            "earningsPayoutRatio": self.earnings_payout_ratio,
             "productionEligible": self.production_eligible,
             "reason": self.reason,
             "policy": {
@@ -49,6 +56,7 @@ class RecommendationDividendSignal:
                 "yield": "trailing_dividend_cash_divided_by_explicit_pit_price",
                 "currency": "yield_blocked_when_dividend_currency_is_inconsistent",
                 "totalReturn": "price_return_60d_plus_trailing_dividend_yield_diagnostic",
+                "sustainability": "earnings_payout_only_when_pit_annual_eps_is_positive_and_currency_compatible",
                 "authority": "diagnostic_only_not_buy_sell_or_trading_authority",
             },
         }
@@ -63,10 +71,15 @@ class RecommendationDividendSignalService:
         database: AthenaDatabase | None = None,
         market_service: _MarketDiagnosticService | None = None,
         dividend_service: DividendAnalysisService | None = None,
+        valuation_service: _ValuationDiagnosticService | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._market_service = market_service or RecommendationMarketSignalService(database=self._database)
         self._dividend_service = dividend_service or DividendAnalysisService(database=self._database)
+        self._valuation_service = valuation_service or RecommendationValuationSignalService(
+            database=self._database,
+            market_service=self._market_service,
+        )
 
     def evaluate(self, *, symbol: str, as_of: datetime) -> RecommendationDividendSignal:
         normalized_symbol = str(symbol or "").strip().upper()
@@ -100,6 +113,7 @@ class RecommendationDividendSignalService:
             market_source_providers=source_providers,
             production_eligible=False,
             price_return_60d=self._optional_float(market.get("return60d")),
+            earnings_payout_ratio=None,
         )
         if str(market.get("status") or "") != "diagnostic_ready" or instrument_id is None or latest_price is None or latest_price <= 0:
             return RecommendationDividendSignal(
@@ -122,11 +136,17 @@ class RecommendationDividendSignalService:
             if price_return_60d is not None and dividend_yield is not None
             else None
         )
+        earnings_payout_ratio = self._earnings_payout_ratio(
+            symbol=normalized_symbol,
+            as_of=as_of_utc,
+            dividend=dividend,
+        )
         status = "diagnostic_ready" if dividend.get("frequency") != "none" else "no_dividend_history"
         return RecommendationDividendSignal(
             status=status,
             dividend=dividend,
             total_return_60d=total_return_60d,
+            earnings_payout_ratio=earnings_payout_ratio,
             reason=(
                 "Dividendos, yield y retorno total diagnóstico están ligados al mismo corte point-in-time; no constituyen una recomendación."
                 if status == "diagnostic_ready"
@@ -134,6 +154,40 @@ class RecommendationDividendSignalService:
             ),
             **common,
         )
+
+    def _earnings_payout_ratio(
+        self,
+        *,
+        symbol: str,
+        as_of: datetime,
+        dividend: dict[str, Any],
+    ) -> float | None:
+        cash = self._optional_float(dividend.get("annualizedCashPerShare"))
+        currency = self._optional_text(dividend.get("currency"))
+        if cash is None or cash < 0 or currency is None:
+            return None
+        diagnostic = self._valuation_service.evaluate(symbol=symbol, as_of=as_of)
+        to_api_dict = getattr(diagnostic, "to_api_dict", None)
+        if not callable(to_api_dict):
+            raise RuntimeError("El diagnóstico de valoración no respeta el contrato.")
+        payload = to_api_dict()
+        if not isinstance(payload, dict) or payload.get("productionEligible") is not False:
+            raise RuntimeError("El diagnóstico de valoración devolvió un contrato inválido.")
+        if str(payload.get("symbol") or "").strip().upper() != symbol:
+            raise RuntimeError("El diagnóstico de valoración devolvió otro símbolo.")
+        if self._parse_aware_datetime(payload.get("asOf")) != as_of:
+            raise RuntimeError("El diagnóstico de valoración usó otro corte point-in-time.")
+        eps = payload.get("annualDilutedEps")
+        if not isinstance(eps, dict):
+            return None
+        eps_value = self._optional_float(eps.get("value"))
+        eps_unit = self._optional_text(eps.get("unit"))
+        if eps_value is None or eps_value <= 0 or eps_unit is None:
+            return None
+        normalized_unit = eps_unit.lower().replace(" ", "")
+        if normalized_unit not in {f"{currency.lower()}/share", f"{currency.lower()}/shares"}:
+            return None
+        return cash / eps_value
 
     @staticmethod
     def _aware_utc(value: datetime) -> datetime:
