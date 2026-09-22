@@ -60,8 +60,6 @@ class CorporateActionRepository:
                             "source_timestamp no puede ser posterior a retrieved_at."
                         )
 
-                # effective_at may legitimately predate discovery; that is why
-                # PIT visibility is based on retrieved_at as well as effective_at.
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO corporate_actions (
@@ -243,6 +241,11 @@ class CorporateActionRepository:
         currency = None
         if currency_raw is not None:
             currency = self._required_text(str(currency_raw), "currency").upper()
+            if (
+                len(currency) != 3
+                or any(character < "A" or character > "Z" for character in currency)
+            ):
+                raise ValueError("currency debe ser un código ISO de tres letras ASCII.")
 
         return {
             "action_type": action_type,
