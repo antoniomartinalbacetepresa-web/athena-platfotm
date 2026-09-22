@@ -12,6 +12,23 @@ from app.services.recommendation_dividend_signal_service import RecommendationDi
 AS_OF = datetime(2026, 8, 2, tzinfo=timezone.utc)
 
 
+class _Valuation:
+    def __init__(self, *, eps=2.0, unit="USD/share", as_of=AS_OF):
+        self.eps = eps
+        self.unit = unit
+        self.as_of = as_of
+
+    def evaluate(self, *, symbol, as_of):
+        payload = {
+            "status": "diagnostic_ready",
+            "symbol": symbol,
+            "asOf": self.as_of.isoformat(),
+            "annualDilutedEps": {"value": self.eps, "unit": self.unit},
+            "productionEligible": False,
+        }
+        return type("ValuationResult", (), {"to_api_dict": lambda self: payload})()
+
+
 class _Market:
     def __init__(self, *, status="diagnostic_ready", price=20.0, as_of=AS_OF, return_60d=0.10):
         self.status = status
@@ -62,7 +79,11 @@ def _seed(database: AthenaDatabase) -> int:
 def test_dividend_signal_uses_same_pit_price_and_cutoff(tmp_path: Path) -> None:
     database = _database(tmp_path)
     assert _seed(database) == 1
-    result = RecommendationDividendSignalService(database=database, market_service=_Market()).evaluate(symbol="DIV", as_of=AS_OF)
+    result = RecommendationDividendSignalService(
+        database=database,
+        market_service=_Market(),
+        valuation_service=_Valuation(),
+    ).evaluate(symbol="DIV", as_of=AS_OF)
 
     assert result.status == "diagnostic_ready"
     assert result.latest_price == 20.0
@@ -71,6 +92,7 @@ def test_dividend_signal_uses_same_pit_price_and_cutoff(tmp_path: Path) -> None:
     assert result.dividend["trailingYield"] == pytest.approx(0.05)
     assert result.price_return_60d == pytest.approx(0.10)
     assert result.total_return_60d == pytest.approx(0.15)
+    assert result.earnings_payout_ratio == pytest.approx(0.5)
     assert result.dividend["knowledgeCutoff"] == AS_OF.isoformat()
     assert result.production_eligible is False
 
@@ -114,3 +136,30 @@ def test_total_return_is_not_fabricated_without_price_return(tmp_path: Path) -> 
     assert result.price_return_60d is None
     assert result.total_return_60d is None
     assert result.production_eligible is False
+
+
+def test_payout_is_unknown_when_eps_currency_is_not_comparable(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    _seed(database)
+    result = RecommendationDividendSignalService(
+        database=database,
+        market_service=_Market(),
+        valuation_service=_Valuation(unit="EUR/share"),
+    ).evaluate(symbol="DIV", as_of=AS_OF)
+
+    assert result.status == "diagnostic_ready"
+    assert result.earnings_payout_ratio is None
+    assert result.production_eligible is False
+
+
+def test_payout_rejects_valuation_from_different_pit_cutoff(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    _seed(database)
+    service = RecommendationDividendSignalService(
+        database=database,
+        market_service=_Market(),
+        valuation_service=_Valuation(as_of=datetime(2026, 8, 3, tzinfo=timezone.utc)),
+    )
+
+    with pytest.raises(RuntimeError, match="valoración usó otro corte point-in-time"):
+        service.evaluate(symbol="DIV", as_of=AS_OF)
