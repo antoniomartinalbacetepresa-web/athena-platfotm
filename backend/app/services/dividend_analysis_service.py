@@ -14,6 +14,7 @@ class DividendAnalysis:
     payment_count: int
     annualized_cash_per_share: float | None
     trailing_cash_per_share: float
+    trailing_yield: float | None
     frequency: str
     payments_per_year: float | None
     regularity_score: float | None
@@ -26,6 +27,7 @@ class DividendAnalysis:
             "paymentCount": self.payment_count,
             "annualizedCashPerShare": self.annualized_cash_per_share,
             "trailingCashPerShare": self.trailing_cash_per_share,
+            "trailingYield": self.trailing_yield,
             "frequency": self.frequency,
             "paymentsPerYear": self.payments_per_year,
             "regularityScore": self.regularity_score,
@@ -54,6 +56,7 @@ class DividendAnalysisService:
         instrument_id: int,
         knowledge_cutoff: datetime,
         lookback_days: int = 550,
+        pit_price: float | None = None,
     ) -> DividendAnalysis:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
@@ -61,6 +64,8 @@ class DividendAnalysisService:
             raise ValueError("knowledge_cutoff debe incluir zona horaria.")
         if lookback_days < 365:
             raise ValueError("lookback_days debe ser al menos 365 para inferir frecuencia.")
+        if pit_price is not None and pit_price <= 0:
+            raise ValueError("pit_price debe ser positivo cuando se proporciona.")
 
         cutoff = knowledge_cutoff.astimezone(timezone.utc)
         actions = self._repository.list_for_instrument(
@@ -80,7 +85,7 @@ class DividendAnalysisService:
 
         ordered = sorted(unique.values(), key=lambda row: str(row["effective_at"]))
         if not ordered:
-            return DividendAnalysis(0, None, 0.0, "none", None, None, None, True, cutoff.isoformat())
+            return DividendAnalysis(0, None, 0.0, None, "none", None, None, None, True, cutoff.isoformat())
 
         currencies = {row["currency"] for row in ordered if row["currency"] is not None}
         currency_consistent = len(currencies) <= 1 and all(row["currency"] is not None for row in ordered)
@@ -91,9 +96,14 @@ class DividendAnalysisService:
             if 0 <= (cutoff - datetime.fromisoformat(str(row["effective_at"]))).days <= 365
         ]
         trailing_cash = sum(float(row["cash_amount"]) for row in trailing) if currency_consistent else 0.0
+        trailing_yield = (
+            trailing_cash / pit_price
+            if currency_consistent and trailing and pit_price is not None
+            else None
+        )
 
         if len(ordered) < 2:
-            return DividendAnalysis(len(ordered), None, trailing_cash, "insufficient_history", None, None, currency, currency_consistent, cutoff.isoformat())
+            return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, "insufficient_history", None, None, currency, currency_consistent, cutoff.isoformat())
 
         dates = [datetime.fromisoformat(str(row["effective_at"])) for row in ordered]
         intervals = [(b - a).total_seconds() / 86400.0 for a, b in zip(dates, dates[1:])]
@@ -110,7 +120,7 @@ class DividendAnalysisService:
             annualized = trailing_cash
 
         return DividendAnalysis(
-            len(ordered), annualized, trailing_cash, frequency, payments_per_year,
+            len(ordered), annualized, trailing_cash, trailing_yield, frequency, payments_per_year,
             regularity, currency, currency_consistent, cutoff.isoformat(),
         )
 
