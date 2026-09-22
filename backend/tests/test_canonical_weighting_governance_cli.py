@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.canonical_weighting_governance import require_interactive_approval
+from scripts.canonical_weighting_governance import exit_code_for_result, require_interactive_approval
 
 
 _EVIDENCE_SHA = "a" * 64
@@ -47,3 +47,16 @@ def test_weighting_approval_accepts_interactive_exact_evidence_hash() -> None:
         stdin_is_tty=True,
         input_fn=lambda _: f"  {_EVIDENCE_SHA.upper()}  ",
     )
+
+
+def test_current_rejected_weighting_is_a_blocking_exit_status() -> None:
+    result = {
+        "status": "blocked_rejected_requires_new_proposal",
+        "proposalStatus": "rejected",
+        "regionWeights": None,
+        "humanApproved": False,
+        "automaticApproval": False,
+        "automaticTrading": False,
+    }
+
+    assert exit_code_for_result("current", result) == 2
