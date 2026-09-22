@@ -58,10 +58,10 @@ class DividendAnalysisService:
     This service intentionally does not turn dividend yield into a recommendation.
     It supplies evidence for total-return/recommendation engines. Duplicate economic
     events learned from multiple providers are collapsed before cadence is measured.
-    Growth compares complete adjacent 365-day PIT windows and is omitted when the
-    prior window has no comparable cash evidence. A suspected suspension is emitted
-    only after at least three observed intervals establish a sufficiently regular
-    cadence; sparse or noisy histories remain unknown instead of inventing certainty.
+    Growth compares adjacent 365-day PIT windows and is omitted when the prior window
+    has no comparable cash evidence. No-cut years are counted only across consecutive
+    fully observable annual comparisons inside the requested lookback. A suspected
+    suspension requires at least three sufficiently regular observed intervals.
     """
 
     _MIN_SUSPENSION_INTERVALS = 3
@@ -72,14 +72,7 @@ class DividendAnalysisService:
         self._database = database if database is not None else AthenaDatabase()
         self._repository = CorporateActionRepository(database=self._database)
 
-    def analyze(
-        self,
-        *,
-        instrument_id: int,
-        knowledge_cutoff: datetime,
-        lookback_days: int = 730,
-        pit_price: float | None = None,
-    ) -> DividendAnalysis:
+    def analyze(self, *, instrument_id: int, knowledge_cutoff: datetime, lookback_days: int = 730, pit_price: float | None = None) -> DividendAnalysis:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
         if knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None:
@@ -92,15 +85,13 @@ class DividendAnalysisService:
         cutoff = knowledge_cutoff.astimezone(timezone.utc)
         actions = self._repository.list_for_instrument(instrument_id, knowledge_cutoff=cutoff)
         dividends = [row for row in actions if row["action_type"] == "dividend"]
-
         unique: dict[tuple[str, float, str | None], dict[str, Any]] = {}
         for row in dividends:
             effective = datetime.fromisoformat(str(row["effective_at"]))
-            age_days = (cutoff - effective).total_seconds() / 86400.0
-            if age_days < 0 or age_days > lookback_days:
+            age = (cutoff - effective).total_seconds() / 86400.0
+            if age < 0 or age > lookback_days:
                 continue
-            key = (str(row["effective_at"]), float(row["cash_amount"]), row["currency"])
-            unique.setdefault(key, row)
+            unique.setdefault((str(row["effective_at"]), float(row["cash_amount"]), row["currency"]), row)
 
         ordered = sorted(unique.values(), key=lambda row: str(row["effective_at"]))
         if not ordered:
@@ -113,23 +104,36 @@ class DividendAnalysisService:
         def age_days(row: dict[str, Any]) -> float:
             return (cutoff - datetime.fromisoformat(str(row["effective_at"]))).total_seconds() / 86400.0
 
-        trailing = [row for row in ordered if 0 <= age_days(row) <= 365]
-        prior = [row for row in ordered if 365 < age_days(row) <= 730]
+        annual_windows: list[list[dict[str, Any]]] = []
+        for window_index in range(max(1, lookback_days // 365)):
+            lower = window_index * 365
+            upper = (window_index + 1) * 365
+            annual_windows.append([row for row in ordered if lower < age_days(row) <= upper or (window_index == 0 and age_days(row) == 0)])
+        trailing = annual_windows[0]
+        prior = annual_windows[1] if len(annual_windows) > 1 else []
         trailing_cash = sum(float(row["cash_amount"]) for row in trailing) if currency_consistent else 0.0
         prior_cash = sum(float(row["cash_amount"]) for row in prior) if currency_consistent else 0.0
         trailing_yield = trailing_cash / pit_price if currency_consistent and trailing and pit_price is not None else None
         cash_60d_rows = [row for row in ordered if 0 <= age_days(row) <= 60]
         cash_per_share_60d = sum(float(row["cash_amount"]) for row in cash_60d_rows) if currency_consistent and cash_60d_rows else None
         yield_60d = cash_per_share_60d / pit_price if cash_per_share_60d is not None and pit_price is not None else None
+
         dividend_growth_rate = None
         cut_detected = None
         consecutive_full_years_without_cut = None
         if currency_consistent and trailing and prior and prior_cash > 0:
             dividend_growth_rate = (trailing_cash / prior_cash) - 1.0
             cut_detected = dividend_growth_rate < -1e-12
-            # With the default 730-day lookback exactly one adjacent full-year
-            # comparison is observable. Never extrapolate additional years.
-            consecutive_full_years_without_cut = 0 if cut_detected else 1
+            consecutive_full_years_without_cut = 0
+            newer_cash = trailing_cash
+            for older_window in annual_windows[1:]:
+                if not older_window:
+                    break
+                older_cash = sum(float(row["cash_amount"]) for row in older_window)
+                if older_cash <= 0 or newer_cash < older_cash - 1e-12:
+                    break
+                consecutive_full_years_without_cut += 1
+                newer_cash = older_cash
 
         if len(ordered) < 2:
             return DividendAnalysis(len(ordered), None, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, "insufficient_history", None, None, dividend_growth_rate, cut_detected, consecutive_full_years_without_cut, None, None, currency, currency_consistent, cutoff.isoformat())
@@ -145,33 +149,18 @@ class DividendAnalysisService:
             regularity = max(0.0, min(1.0, 1.0 - sum(deviations) / len(deviations)))
 
         annualized = trailing_cash if currency_consistent and trailing else None
-        cadence_established = (
-            expected_days is not None
-            and len(intervals) >= self._MIN_SUSPENSION_INTERVALS
-            and regularity is not None
-            and regularity >= self._MIN_SUSPENSION_REGULARITY
-        )
+        cadence_established = expected_days is not None and len(intervals) >= self._MIN_SUSPENSION_INTERVALS and regularity is not None and regularity >= self._MIN_SUSPENSION_REGULARITY
         payment_stability = regularity if cadence_established else None
         suspected_suspension = None
         if cadence_established and expected_days is not None:
-            days_since_last = age_days(ordered[-1])
-            suspected_suspension = days_since_last > expected_days * self._SUSPENSION_OVERDUE_MULTIPLIER
+            suspected_suspension = age_days(ordered[-1]) > expected_days * self._SUSPENSION_OVERDUE_MULTIPLIER
             if suspected_suspension:
                 payment_stability = 0.0
-        return DividendAnalysis(
-            len(ordered), annualized, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, frequency, payments_per_year,
-            regularity, dividend_growth_rate, cut_detected, consecutive_full_years_without_cut, payment_stability, suspected_suspension,
-            currency, currency_consistent, cutoff.isoformat(),
-        )
+        return DividendAnalysis(len(ordered), annualized, trailing_cash, trailing_yield, cash_per_share_60d, yield_60d, frequency, payments_per_year, regularity, dividend_growth_rate, cut_detected, consecutive_full_years_without_cut, payment_stability, suspected_suspension, currency, currency_consistent, cutoff.isoformat())
 
     @staticmethod
     def _classify_frequency(days: float) -> tuple[str, float | None]:
-        bands = (
-            ("monthly", 30.44, 10.0),
-            ("quarterly", 91.31, 25.0),
-            ("semiannual", 182.62, 40.0),
-            ("annual", 365.24, 70.0),
-        )
+        bands = (("monthly", 30.44, 10.0), ("quarterly", 91.31, 25.0), ("semiannual", 182.62, 40.0), ("annual", 365.24, 70.0))
         for name, expected, tolerance in bands:
             if abs(days - expected) <= tolerance:
                 return name, expected
