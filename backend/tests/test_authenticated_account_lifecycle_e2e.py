@@ -86,10 +86,12 @@ def test_authenticated_account_lifecycle_across_profile_and_portfolio(
                 "symbol": "AAPL",
                 "exchange": "NASDAQ",
                 "quantity": 3.5,
+                "averagePurchasePrice": 150.25,
             },
         )
         assert position.status_code == 200, position.text
         assert position.json()["data"]["quantity"] == 3.5
+        assert position.json()["data"]["averagePurchasePrice"] == 150.25
 
         changed = client.post(
             "/api/v1/auth/change-password",
