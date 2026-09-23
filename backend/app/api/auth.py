@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -8,6 +10,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.auth_service import AuthService
+from app.security.portfolio_owner_storage import purge_owner_scoped_ledger
 from app.services.password_recovery_mailer import (
     PasswordRecoveryDeliveryError,
     PasswordRecoveryMailer,
@@ -287,8 +290,15 @@ def close_account(
     # The account is already inactive and all bearer validation fails closed.
     # Recovery-token cleanup is defense in depth and must not turn a completed,
     # irreversible account closure into a misleading HTTP 500 for the client.
+    owner_user_id = int(account["id"])
     try:
-        _recovery_service().invalidate(user_id=int(account["id"]))
+        configured_ledger = os.environ.get("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", "var/athena/portfolio_event_ledger.jsonl").strip()
+        if configured_ledger:
+            purge_owner_scoped_ledger(Path(configured_ledger), owner_user_id=owner_user_id)
+    except OSError:
+        logger.exception("Account closed successfully, but owner portfolio-ledger cleanup failed.")
+    try:
+        _recovery_service().invalidate(user_id=owner_user_id)
     except Exception:
         logger.exception(
             "Account closed successfully, but recovery-token cleanup failed."
