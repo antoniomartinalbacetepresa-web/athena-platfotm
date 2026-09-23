@@ -46,6 +46,7 @@ class FinancialPeriodRepository:
         return FinancialPeriodSaveStats(len(normalized), inserted, len(normalized) - inserted)
 
     def list_for_instrument(self, instrument_id: int, *, knowledge_cutoff: datetime) -> list[dict]:
+        """Return every immutable revision visible at the PIT cutoff."""
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
         cutoff = self._utc_iso(knowledge_cutoff, "knowledge_cutoff")
@@ -61,6 +62,23 @@ class FinancialPeriodRepository:
         if any(row["retrieved_at"] > cutoff or row["period_end"] > cutoff for row in result):
             raise RuntimeError("Un periodo financiero posterior al knowledge_cutoff atravesó el filtro PIT.")
         return result
+
+    def list_latest_for_instrument(self, instrument_id: int, *, knowledge_cutoff: datetime) -> list[dict]:
+        """Return one latest-known revision per economic period/provider at the cutoff.
+
+        Financial statements can be restated. Consumers must not sum the immutable
+        revision history as if each filing were a distinct period. Provider is part
+        of the identity so independent sources remain visible rather than being
+        silently selected or reconciled here.
+        """
+        rows = self.list_for_instrument(instrument_id, knowledge_cutoff=knowledge_cutoff)
+        latest: dict[tuple[str, str, str, str], dict] = {}
+        for row in rows:
+            key = (row["period_start"], row["period_end"], row["currency"], row["source_provider"])
+            current = latest.get(key)
+            if current is None or (row["retrieved_at"], row["id"]) > (current["retrieved_at"], current["id"]):
+                latest[key] = row
+        return sorted(latest.values(), key=lambda row: (row["period_end"], row["source_provider"], row["id"]))
 
     def _normalize(self, value: dict) -> dict:
         start = self._date(value.get("period_start"), "period_start")
