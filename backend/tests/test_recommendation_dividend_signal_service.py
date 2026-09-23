@@ -5,6 +5,7 @@ import pytest
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
+from app.repositories.financial_period_repository import FinancialPeriodRepository
 from app.repositories.instrument_repository import InstrumentRepository
 from app.services.recommendation_dividend_signal_service import RecommendationDividendSignalService
 
@@ -78,3 +79,32 @@ def test_fcf_payout_fails_closed_on_nonpositive_or_currency_mismatch(tmp_path: P
 def test_fcf_payout_rejects_different_pit_cutoff(tmp_path: Path) -> None:
     database=_database(tmp_path); _seed(database); service=RecommendationDividendSignalService(database=database,market_service=_Market(),valuation_service=_Valuation(entity_id="sec-cik:0000123456"),free_cash_flow_service=_Fcf(as_of=datetime(2026,8,3,tzinfo=timezone.utc)))
     with pytest.raises(RuntimeError,match="FCF devolvió un contrato PIT inválido"): service.evaluate(symbol="DIV",as_of=AS_OF)
+
+
+def test_dividend_signal_binds_explicit_repository_backed_sustainability_without_auto_authority(tmp_path: Path) -> None:
+    database=_database(tmp_path); instrument_id=_seed(database)
+    FinancialPeriodRepository(database).save_many(
+        instrument_id=instrument_id,
+        source_provider="issuer_filing",
+        retrieved_at=AS_OF,
+        periods=[{
+            "period_start": datetime(2025,1,1,tzinfo=timezone.utc),
+            "period_end": datetime(2025,12,31,tzinfo=timezone.utc),
+            "currency": "USD",
+            "net_income": 100.0,
+            "free_cash_flow": 80.0,
+            "dividends_paid": 40.0,
+            "source_timestamp": AS_OF,
+        }],
+    )
+    service=RecommendationDividendSignalService(database=database,market_service=_Market(),valuation_service=_Valuation())
+    without_authority=service.evaluate(symbol="DIV",as_of=AS_OF)
+    assert without_authority.financial_period_sustainability is None
+    result=service.evaluate(symbol="DIV",as_of=AS_OF,sustainability_provider="issuer_filing")
+    assert result.financial_period_sustainability is not None
+    assert result.financial_period_sustainability["earningsPayoutRatio"]==pytest.approx(0.40)
+    assert result.financial_period_sustainability["fcfPayoutRatio"]==pytest.approx(0.50)
+    assert result.financial_period_sustainability["sustainabilityScore"]==pytest.approx(0.55)
+    assert result.financial_period_sustainability["sourceProvider"]=="issuer_filing"
+    assert result.financial_period_sustainability["knowledgeCutoff"]==AS_OF.isoformat()
+    assert result.production_eligible is False
