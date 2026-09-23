@@ -69,6 +69,25 @@ def test_account_closure_purges_owner_dividend_history(monkeypatch, tmp_path) ->
 
         physical_ledger = owner_scoped_ledger_path(ledger_path, owner_user_id=owner_id)
         assert physical_ledger.exists()
+
+        rejected = client.post(
+            "/api/v1/auth/close-account",
+            headers=headers,
+            json={"currentPassword": "DefinitelyWrongPassword!"},
+        )
+        assert rejected.status_code == 401, rejected.text
+        assert physical_ledger.exists()
+        assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
+        preserved_history = client.get(
+            "/api/v1/user/portfolio/history",
+            headers=headers,
+            params={"portfolioId": "personal", "asOf": "2026-09-23T00:00:00Z"},
+        )
+        assert preserved_history.status_code == 200, preserved_history.text
+        preserved_events = preserved_history.json()["data"]["events"]
+        assert len(preserved_events) == 1
+        assert preserved_events[0]["sourceRef"] == "closure-dividend-q3"
+
         closed = client.post(
             "/api/v1/auth/close-account",
             headers=headers,
