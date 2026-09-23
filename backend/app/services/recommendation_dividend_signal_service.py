@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from app.database.athena_database import AthenaDatabase
 from app.repositories.sec_fundamental_pit_repository import SecFundamentalPitRepository
 from app.services.dividend_analysis_service import DividendAnalysisService
+from app.services.dividend_sustainability_service import DividendSustainabilityService
 from app.services.recommendation_market_signal_service import RecommendationMarketSignalService
 from app.services.recommendation_valuation_signal_service import RecommendationValuationSignalService
 from app.services.sec_free_cash_flow_service import SecFreeCashFlowService
@@ -37,24 +38,26 @@ class RecommendationDividendSignal:
     total_return_60d: float | None
     earnings_payout_ratio: float | None
     fcf_payout_ratio: float | None
+    financial_period_sustainability: dict[str, Any] | None
     production_eligible: bool
     reason: str
 
     def to_api_dict(self) -> dict[str, Any]:
-        return {"status": self.status, "symbol": self.symbol, "instrumentId": self.instrument_id, "asOf": self.as_of, "latestPrice": self.latest_price, "price60dStart": self.price_60d_start, "latestPriceObservedAt": self.latest_price_observed_at, "latestPriceRetrievedAt": self.latest_price_retrieved_at, "marketSourceProviders": list(self.market_source_providers), "dividend": self.dividend, "priceReturn60d": self.price_return_60d, "totalReturn60d": self.total_return_60d, "earningsPayoutRatio": self.earnings_payout_ratio, "fcfPayoutRatio": self.fcf_payout_ratio, "productionEligible": self.production_eligible, "reason": self.reason, "policy": {"temporal": "same_as_of_for_market_price_dividend_and_fundamental_knowledge", "yield": "trailing_dividend_cash_divided_by_explicit_pit_price", "currency": "yield_and_payout_blocked_when_currency_is_inconsistent", "totalReturn": "holding_period_price_change_plus_60d_dividend_cash_all_divided_by_60d_start_price", "sustainability": "earnings_and_fcf_payout_only_with_positive_comparable_pit_per_share_denominators", "authority": "diagnostic_only_not_buy_sell_or_trading_authority"}}
+        return {"status": self.status, "symbol": self.symbol, "instrumentId": self.instrument_id, "asOf": self.as_of, "latestPrice": self.latest_price, "price60dStart": self.price_60d_start, "latestPriceObservedAt": self.latest_price_observed_at, "latestPriceRetrievedAt": self.latest_price_retrieved_at, "marketSourceProviders": list(self.market_source_providers), "dividend": self.dividend, "priceReturn60d": self.price_return_60d, "totalReturn60d": self.total_return_60d, "earningsPayoutRatio": self.earnings_payout_ratio, "fcfPayoutRatio": self.fcf_payout_ratio, "financialPeriodSustainability": self.financial_period_sustainability, "productionEligible": self.production_eligible, "reason": self.reason, "policy": {"temporal": "same_as_of_for_market_price_dividend_and_fundamental_knowledge", "yield": "trailing_dividend_cash_divided_by_explicit_pit_price", "currency": "yield_and_payout_blocked_when_currency_is_inconsistent", "totalReturn": "holding_period_price_change_plus_60d_dividend_cash_all_divided_by_60d_start_price", "sustainability": "earnings_and_fcf_payout_only_with_positive_comparable_pit_per_share_denominators", "authority": "diagnostic_only_not_buy_sell_or_trading_authority"}}
 
 
 class RecommendationDividendSignalService:
     """Bind dividend evidence to PIT market and fundamental diagnostics."""
 
-    def __init__(self, *, database: AthenaDatabase | None = None, market_service: _MarketDiagnosticService | None = None, dividend_service: DividendAnalysisService | None = None, valuation_service: _ValuationDiagnosticService | None = None, free_cash_flow_service: _FreeCashFlowDiagnosticService | None = None) -> None:
+    def __init__(self, *, database: AthenaDatabase | None = None, market_service: _MarketDiagnosticService | None = None, dividend_service: DividendAnalysisService | None = None, valuation_service: _ValuationDiagnosticService | None = None, free_cash_flow_service: _FreeCashFlowDiagnosticService | None = None, sustainability_service: DividendSustainabilityService | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._market_service = market_service or RecommendationMarketSignalService(database=self._database)
         self._dividend_service = dividend_service or DividendAnalysisService(database=self._database)
         self._valuation_service = valuation_service or RecommendationValuationSignalService(database=self._database, market_service=self._market_service)
         self._free_cash_flow_service = free_cash_flow_service or SecFreeCashFlowService(SecFundamentalEvidenceResolver(SecFundamentalPitRepository(database=self._database)))
+        self._sustainability_service = sustainability_service or DividendSustainabilityService(database=self._database)
 
-    def evaluate(self, *, symbol: str, as_of: datetime) -> RecommendationDividendSignal:
+    def evaluate(self, *, symbol: str, as_of: datetime, sustainability_provider: str | None = None) -> RecommendationDividendSignal:
         normalized_symbol = str(symbol or "").strip().upper()
         if not normalized_symbol: raise ValueError("symbol es obligatorio.")
         as_of_utc = self._aware_utc(as_of)
@@ -69,7 +72,7 @@ class RecommendationDividendSignalService:
         source_providers = tuple(sorted({str(item).strip() for item in providers if str(item).strip()})) if isinstance(providers, list) else ()
         common = dict(symbol=normalized_symbol, instrument_id=instrument_id, as_of=as_of_utc.isoformat(), latest_price=latest_price, price_60d_start=price_60d_start, latest_price_observed_at=self._optional_text(market.get("latestObservedAt")), latest_price_retrieved_at=self._optional_text(market.get("latestRetrievedAt")), market_source_providers=source_providers, production_eligible=False, price_return_60d=self._optional_float(market.get("return60d")))
         if str(market.get("status") or "") != "diagnostic_ready" or instrument_id is None or latest_price is None or latest_price <= 0:
-            return RecommendationDividendSignal(status="market_evidence_not_ready", dividend=None, total_return_60d=None, earnings_payout_ratio=None, fcf_payout_ratio=None, reason="El análisis de dividendos requiere primero un precio point-in-time válido y trazable.", **common)
+            return RecommendationDividendSignal(status="market_evidence_not_ready", dividend=None, total_return_60d=None, earnings_payout_ratio=None, fcf_payout_ratio=None, financial_period_sustainability=None, reason="El análisis de dividendos requiere primero un precio point-in-time válido y trazable.", **common)
         dividend = self._dividend_service.analyze(instrument_id=instrument_id, knowledge_cutoff=as_of_utc, pit_price=latest_price).to_api_dict()
         price_return_60d = self._optional_float(market.get("return60d")); dividend_cash_60d = self._optional_float(dividend.get("cashPerShare60d"))
         total_return_60d = None
@@ -77,8 +80,14 @@ class RecommendationDividendSignalService:
             total_return_60d = price_return_60d + (dividend_cash_60d / price_60d_start)
         valuation = self._valuation_payload(symbol=normalized_symbol, as_of=as_of_utc)
         earnings_payout_ratio = self._earnings_payout_ratio(dividend=dividend, valuation=valuation); fcf_payout_ratio = self._fcf_payout_ratio(dividend=dividend, valuation=valuation, as_of=as_of_utc)
+        financial_period_sustainability = None
+        provider = str(sustainability_provider or "").strip()
+        if provider:
+            financial_period_sustainability = self._sustainability_service.analyze_latest_period(
+                instrument_id=instrument_id, knowledge_cutoff=as_of_utc, source_provider=provider
+            ).to_api_dict()
         status = "diagnostic_ready" if dividend.get("frequency") != "none" else "no_dividend_history"
-        return RecommendationDividendSignal(status=status, dividend=dividend, total_return_60d=total_return_60d, earnings_payout_ratio=earnings_payout_ratio, fcf_payout_ratio=fcf_payout_ratio, reason="Dividendos y sostenibilidad están ligados al mismo corte PIT; no constituyen una recomendación." if status == "diagnostic_ready" else "No existe historial de dividendos conocido en el corte point-in-time analizado.", **common)
+        return RecommendationDividendSignal(status=status, dividend=dividend, total_return_60d=total_return_60d, earnings_payout_ratio=earnings_payout_ratio, fcf_payout_ratio=fcf_payout_ratio, financial_period_sustainability=financial_period_sustainability, reason="Dividendos y sostenibilidad están ligados al mismo corte PIT; no constituyen una recomendación." if status == "diagnostic_ready" else "No existe historial de dividendos conocido en el corte point-in-time analizado.", **common)
 
     def _valuation_payload(self, *, symbol: str, as_of: datetime) -> dict[str, Any]:
         diagnostic = self._valuation_service.evaluate(symbol=symbol, as_of=as_of); to_api_dict = getattr(diagnostic, "to_api_dict", None)
