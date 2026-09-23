@@ -87,10 +87,14 @@ def test_irregular_dividend_cadence_remains_irregular_without_projection(tmp_pat
         }
     )
     cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    # Deliberately use a short interval followed by a roughly 500-day gap.
+    # With two intervals the median is their midpoint (~260 days), safely
+    # outside every supported cadence tolerance. This fixture therefore tests
+    # the irregular contract rather than accidentally matching a regular band.
     dates = [
-        datetime(2025, 9, 1, tzinfo=timezone.utc),
-        datetime(2025, 9, 21, tzinfo=timezone.utc),
-        datetime(2026, 7, 20, tzinfo=timezone.utc),
+        datetime(2025, 2, 1, tzinfo=timezone.utc),
+        datetime(2025, 2, 21, tzinfo=timezone.utc),
+        datetime(2026, 7, 6, tzinfo=timezone.utc),
     ]
     CorporateActionRepository(database=database).save_many(
         instrument_id=instrument_id,
