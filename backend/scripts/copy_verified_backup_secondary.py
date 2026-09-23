@@ -18,7 +18,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backup", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("--offsite-attestation", action="store_true", help="Operator attests the destination is operationally off-site; never inferred from the path.")
+    parser.add_argument(
+        "--offsite-attestation",
+        action="store_true",
+        help=(
+            "Registra únicamente la declaración del operador de que el destino es off-site; "
+            "no la convierte en verificación operacional."
+        ),
+    )
     return parser
 
 
@@ -77,7 +84,8 @@ def copy_verified_backup(
         "sha256": expected_sha,
         "policy": {
             "secondaryCopyVerified": True,
-            "offsiteLocationVerified": offsite_attested is True,
+            "offsiteLocationOperatorAttested": offsite_attested is True,
+            "offsiteLocationVerified": False,
             "scheduledExecutionVerified": False,
             "productionRecoveryVerified": False,
         },
