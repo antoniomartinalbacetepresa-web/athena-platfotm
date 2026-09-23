@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backup", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True)
+    parser.add_argument("--offsite-attestation", action="store_true", help="Operator attests the destination is operationally off-site; never inferred from the path.")
     return parser
 
 
@@ -34,6 +35,7 @@ def copy_verified_backup(
     backup_path: Path,
     manifest_path: Path,
     destination_directory: Path,
+    offsite_attested: bool = False,
 ) -> dict[str, object]:
     source = backup_path.expanduser().resolve()
     manifest = manifest_path.expanduser().resolve()
@@ -75,7 +77,7 @@ def copy_verified_backup(
         "sha256": expected_sha,
         "policy": {
             "secondaryCopyVerified": True,
-            "offsiteLocationVerified": False,
+            "offsiteLocationVerified": offsite_attested is True,
             "scheduledExecutionVerified": False,
             "productionRecoveryVerified": False,
         },
@@ -88,6 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         backup_path=args.backup,
         manifest_path=args.manifest,
         destination_directory=args.destination,
+        offsite_attested=args.offsite_attestation,
     )
     print(json.dumps(result, sort_keys=True))
     return 0
