@@ -22,3 +22,21 @@ def owner_scoped_ledger_path(base_path: Path, *, owner_user_id: int | None = Non
     if not filename:
         raise ValueError("portfolio event ledger path must include a filename")
     return path.parent / "owners" / str(owner_id) / filename
+
+
+def purge_owner_scoped_ledger(base_path: Path, *, owner_user_id: int) -> bool:
+    """Delete one closed owner's ledger without touching any other owner.
+
+    Returns True when a ledger existed and was removed. Empty owner directories
+    are removed best-effort; the shared owners directory is never removed here.
+    """
+    ledger_path = owner_scoped_ledger_path(base_path, owner_user_id=owner_user_id)
+    try:
+        ledger_path.unlink()
+    except FileNotFoundError:
+        return False
+    try:
+        ledger_path.parent.rmdir()
+    except OSError:
+        pass
+    return True
