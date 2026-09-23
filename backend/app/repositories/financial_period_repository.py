@@ -37,10 +37,11 @@ class FinancialPeriodRepository:
                 cursor = connection.execute(
                     """INSERT OR IGNORE INTO financial_periods
                     (instrument_id, period_start, period_end, currency, net_income, free_cash_flow,
-                     source_provider, source_timestamp, retrieved_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     source_provider, source_timestamp, retrieved_at, dividends_paid)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (instrument_id, item["period_start"], item["period_end"], item["currency"],
-                     item["net_income"], item["free_cash_flow"], provider, source_ts, retrieved),
+                     item["net_income"], item["free_cash_flow"], provider, source_ts, retrieved,
+                     item["dividends_paid"]),
                 )
                 inserted += 1 if cursor.rowcount == 1 else 0
         return FinancialPeriodSaveStats(len(normalized), inserted, len(normalized) - inserted)
@@ -64,13 +65,7 @@ class FinancialPeriodRepository:
         return result
 
     def list_latest_for_instrument(self, instrument_id: int, *, knowledge_cutoff: datetime) -> list[dict]:
-        """Return one latest-known revision per economic period/provider at the cutoff.
-
-        Financial statements can be restated. Consumers must not sum the immutable
-        revision history as if each filing were a distinct period. Provider is part
-        of the identity so independent sources remain visible rather than being
-        silently selected or reconciled here.
-        """
+        """Return one latest-known revision per economic period/provider at the cutoff."""
         rows = self.list_for_instrument(instrument_id, knowledge_cutoff=knowledge_cutoff)
         latest: dict[tuple[str, str, str, str], dict] = {}
         for row in rows:
@@ -90,13 +85,16 @@ class FinancialPeriodRepository:
             raise ValueError("currency debe ser un código ISO de tres letras.")
         net_income = self._number(value.get("net_income"), "net_income")
         free_cash_flow = self._number(value.get("free_cash_flow"), "free_cash_flow")
+        dividends_paid = self._number(value.get("dividends_paid"), "dividends_paid")
+        if dividends_paid is not None and dividends_paid < 0:
+            raise ValueError("dividends_paid no puede ser negativo.")
         if net_income is None and free_cash_flow is None:
             raise ValueError("net_income o free_cash_flow es obligatorio.")
         source_raw = value.get("source_timestamp")
         source_timestamp = None if source_raw is None else self._date(source_raw, "source_timestamp")
         return {"period_start": start, "period_end": end, "currency": currency,
                 "net_income": net_income, "free_cash_flow": free_cash_flow,
-                "source_timestamp": source_timestamp}
+                "dividends_paid": dividends_paid, "source_timestamp": source_timestamp}
 
     @staticmethod
     def _number(value: object, field: str) -> float | None:
