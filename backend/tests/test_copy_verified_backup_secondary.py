@@ -80,3 +80,27 @@ def test_secondary_copy_never_overwrites_existing_evidence(tmp_path: Path) -> No
             manifest_path=manifest,
             destination_directory=destination,
         )
+
+
+def test_secondary_copy_only_claims_offsite_when_operator_explicitly_attests(tmp_path: Path) -> None:
+    backup, manifest = _backup(tmp_path)
+    result = copy_verified_backup(
+        backup_path=backup,
+        manifest_path=manifest,
+        destination_directory=tmp_path / "operator-declared-offsite",
+        offsite_attested=True,
+    )
+    assert result["policy"]["secondaryCopyVerified"] is True
+    assert result["policy"]["offsiteLocationVerified"] is True
+    assert result["policy"]["scheduledExecutionVerified"] is False
+    assert result["policy"]["productionRecoveryVerified"] is False
+
+
+def test_secondary_copy_does_not_infer_offsite_from_different_path(tmp_path: Path) -> None:
+    backup, manifest = _backup(tmp_path)
+    result = copy_verified_backup(
+        backup_path=backup,
+        manifest_path=manifest,
+        destination_directory=tmp_path / "looks-remote-but-is-not-evidence",
+    )
+    assert result["policy"]["offsiteLocationVerified"] is False
