@@ -133,3 +133,39 @@ def get_external_cash_flows(
             "policy": _policy_payload(service),
         }
     }
+
+
+@router.get("/portfolio-event-ledger/internal-cash-events")
+def get_internal_cash_events(
+    portfolioId: str = Query(min_length=1),
+    reportingCurrency: str = Query(min_length=3, max_length=3),
+    periodStart: datetime = Query(),
+    periodEnd: datetime = Query(),
+    asOf: datetime = Query(),
+) -> dict[str, object]:
+    """Expose observed dividends/fees/taxes as PIT internal return evidence, never as external flows."""
+
+    service = _service()
+    try:
+        events = service.internal_cash_events(
+            portfolio_id=portfolioId,
+            reporting_currency=reportingCurrency,
+            period_start=_aware_utc(periodStart, "periodStart"),
+            period_end=_aware_utc(periodEnd, "periodEnd"),
+            as_of=_aware_utc(asOf, "asOf"),
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudieron proyectar eventos internos de cartera.") from exc
+    return {
+        "data": {
+            "module": "portfolio_event_ledger_internal_cash_events",
+            "portfolioId": portfolioId,
+            "reportingCurrency": reportingCurrency.upper(),
+            "events": [item.to_api_dict() for item in events],
+            "policy": _policy_payload(service),
+        }
+    }
