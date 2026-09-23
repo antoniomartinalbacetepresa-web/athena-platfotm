@@ -90,7 +90,7 @@ def test_irregular_dividend_cadence_remains_irregular_without_projection(tmp_pat
     dates = [
         datetime(2025, 9, 1, tzinfo=timezone.utc),
         datetime(2025, 9, 21, tzinfo=timezone.utc),
-        datetime(2026, 1, 19, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, tzinfo=timezone.utc),
     ]
     CorporateActionRepository(database=database).save_many(
         instrument_id=instrument_id,
