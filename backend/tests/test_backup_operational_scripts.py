@@ -56,6 +56,7 @@ def test_verified_cycle_then_secondary_copy_preserves_fail_closed_policy(tmp_pat
     assert copied["status"] == "secondary_copy_verified"
     assert copied["policy"] == {
         "secondaryCopyVerified": True,
+        "offsiteLocationOperatorAttested": False,
         "offsiteLocationVerified": False,
         "scheduledExecutionVerified": False,
         "productionRecoveryVerified": False,
