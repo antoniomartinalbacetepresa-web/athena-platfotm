@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from statistics import median
 
 from app.services.recommendation_portfolio_event_ledger_service import (
     RecommendationPortfolioEventLedgerService,
@@ -16,6 +17,7 @@ class PortfolioDividendReturnEvidence:
     taxes: float
     net_internal_cash_return: float
     dividend_event_count: int
+    observed_frequency: str
     provenance_refs: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
@@ -26,6 +28,7 @@ class PortfolioDividendReturnEvidence:
             "taxes": self.taxes,
             "netInternalCashReturn": self.net_internal_cash_return,
             "dividendEventCount": self.dividend_event_count,
+            "observedFrequency": self.observed_frequency,
             "provenanceRefs": list(self.provenance_refs),
             "pitSafe": True,
             "productionEligible": False,
@@ -38,6 +41,32 @@ class PortfolioDividendReturnEvidenceService:
 
     def __init__(self, ledger: RecommendationPortfolioEventLedgerService):
         self._ledger = ledger
+
+    @staticmethod
+    def _observed_frequency(dividends) -> str:
+        """Classify cadence from observed dates only; never infer a promised schedule."""
+        dates = sorted(item.occurred_at for item in dividends)
+        if len(dates) < 2:
+            return "insufficient_evidence"
+        gaps = [(right - left).total_seconds() / 86400.0 for left, right in zip(dates, dates[1:])]
+        typical_gap = median(gaps)
+        if 20 <= typical_gap <= 40:
+            candidate = "monthly"
+        elif 70 <= typical_gap <= 110:
+            candidate = "quarterly"
+        elif 150 <= typical_gap <= 220:
+            candidate = "semiannual"
+        elif 300 <= typical_gap <= 430:
+            candidate = "annual"
+        else:
+            return "irregular"
+        lower, upper = {
+            "monthly": (20, 40),
+            "quarterly": (70, 110),
+            "semiannual": (150, 220),
+            "annual": (300, 430),
+        }[candidate]
+        return candidate if all(lower <= gap <= upper for gap in gaps) else "irregular"
 
     def build(
         self,
@@ -69,5 +98,6 @@ class PortfolioDividendReturnEvidenceService:
             taxes=tax_total,
             net_internal_cash_return=gross_dividends + fee_total + tax_total,
             dividend_event_count=len(dividends),
+            observed_frequency=self._observed_frequency(dividends),
             provenance_refs=refs,
         )
