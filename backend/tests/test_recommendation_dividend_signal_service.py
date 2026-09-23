@@ -100,6 +100,8 @@ def test_dividend_signal_binds_explicit_repository_backed_sustainability_without
     service=RecommendationDividendSignalService(database=database,market_service=_Market(),valuation_service=_Valuation())
     without_authority=service.evaluate(symbol="DIV",as_of=AS_OF)
     assert without_authority.financial_period_sustainability is None
+    assert without_authority.earnings_payout_ratio==pytest.approx(0.625)
+    assert without_authority.fcf_payout_ratio is None
     result=service.evaluate(symbol="DIV",as_of=AS_OF,sustainability_provider="issuer_filing")
     assert result.financial_period_sustainability is not None
     assert result.financial_period_sustainability["earningsPayoutRatio"]==pytest.approx(0.40)
@@ -107,4 +109,6 @@ def test_dividend_signal_binds_explicit_repository_backed_sustainability_without
     assert result.financial_period_sustainability["sustainabilityScore"]==pytest.approx(0.55)
     assert result.financial_period_sustainability["sourceProvider"]=="issuer_filing"
     assert result.financial_period_sustainability["knowledgeCutoff"]==AS_OF.isoformat()
+    assert result.earnings_payout_ratio==pytest.approx(0.40)
+    assert result.fcf_payout_ratio==pytest.approx(0.50)
     assert result.production_eligible is False
