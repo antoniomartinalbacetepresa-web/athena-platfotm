@@ -74,15 +74,18 @@ def test_authenticated_account_lifecycle_across_profile_and_portfolio(monkeypatc
         assert persisted_position["quantity"] == 3.5
         assert persisted_position["averagePurchasePrice"] == 150.25
 
-        history = client.get("/api/v1/user/portfolio/history", headers=_headers(rotated_token))
+        history_params = {"portfolioId": "personal", "asOf": "2026-09-23T00:00:00Z"}
+        history = client.get("/api/v1/user/portfolio/history", headers=_headers(rotated_token), params=history_params)
         assert history.status_code == 200, history.text
         history_data = history.json()["data"]
-        assert history_data["eventCount"] >= 1
+        assert history_data["eventCount"] == 0
+        assert history_data["events"] == []
 
         closed = client.post("/api/v1/auth/close-account", headers=_headers(rotated_token), json={"currentPassword": NEW_PASSWORD})
         assert closed.status_code == 204, closed.text
-        for path in ("/api/v1/auth/me", "/api/v1/user/profile/preferences", "/api/v1/user/portfolio", "/api/v1/user/portfolio/history"):
+        for path in ("/api/v1/auth/me", "/api/v1/user/profile/preferences", "/api/v1/user/portfolio"):
             assert client.get(path, headers=_headers(rotated_token)).status_code == 401
+        assert client.get("/api/v1/user/portfolio/history", headers=_headers(rotated_token), params=history_params).status_code == 401
         assert _login(client, NEW_PASSWORD).status_code == 401
 
         returned = client.post("/api/v1/auth/register", json={"email": EMAIL, "password": ORIGINAL_PASSWORD})
@@ -100,7 +103,7 @@ def test_authenticated_account_lifecycle_across_profile_and_portfolio(monkeypatc
         assert clean_portfolio.status_code == 200
         assert clean_portfolio.json()["data"]["positionCount"] == 0
         assert clean_portfolio.json()["data"]["positions"] == []
-        clean_history = client.get("/api/v1/user/portfolio/history", headers=_headers(returned_token))
+        clean_history = client.get("/api/v1/user/portfolio/history", headers=_headers(returned_token), params=history_params)
         assert clean_history.status_code == 200
         assert clean_history.json()["data"]["eventCount"] == 0
         assert clean_history.json()["data"]["events"] == []
