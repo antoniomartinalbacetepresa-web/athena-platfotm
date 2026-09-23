@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 
@@ -52,9 +53,13 @@ class DividendTotalReturnService:
         source_provider: str,
         knowledge_cutoff: datetime,
     ) -> DividendTotalReturn:
-        if start_price <= 0 or end_price < 0:
-            raise ValueError("Los precios deben ser finitos y start_price debe ser positivo.")
-        if dividend_cash_per_share < 0:
+        values = (float(start_price), float(end_price), float(dividend_cash_per_share))
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Los precios y dividendos deben ser finitos.")
+        start, end, cash = values
+        if start <= 0 or end < 0:
+            raise ValueError("start_price debe ser positivo y end_price no negativo.")
+        if cash < 0:
             raise ValueError("dividend_cash_per_share no puede ser negativo.")
         if not currency.strip():
             raise ValueError("currency es obligatoria.")
@@ -63,9 +68,6 @@ class DividendTotalReturnService:
         if knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None:
             raise ValueError("knowledge_cutoff debe incluir zona horaria.")
 
-        start = float(start_price)
-        end = float(end_price)
-        cash = float(dividend_cash_per_share)
         price_return = end / start - 1.0
         dividend_return = cash / start
         total_return = (end + cash) / start - 1.0
