@@ -43,7 +43,7 @@ class RecommendationDividendSignal:
     reason: str
 
     def to_api_dict(self) -> dict[str, Any]:
-        return {"status": self.status, "symbol": self.symbol, "instrumentId": self.instrument_id, "asOf": self.as_of, "latestPrice": self.latest_price, "price60dStart": self.price_60d_start, "latestPriceObservedAt": self.latest_price_observed_at, "latestPriceRetrievedAt": self.latest_price_retrieved_at, "marketSourceProviders": list(self.market_source_providers), "dividend": self.dividend, "priceReturn60d": self.price_return_60d, "totalReturn60d": self.total_return_60d, "earningsPayoutRatio": self.earnings_payout_ratio, "fcfPayoutRatio": self.fcf_payout_ratio, "financialPeriodSustainability": self.financial_period_sustainability, "productionEligible": self.production_eligible, "reason": self.reason, "policy": {"temporal": "same_as_of_for_market_price_dividend_and_fundamental_knowledge", "yield": "trailing_dividend_cash_divided_by_explicit_pit_price", "currency": "yield_and_payout_blocked_when_currency_is_inconsistent", "totalReturn": "holding_period_price_change_plus_60d_dividend_cash_all_divided_by_60d_start_price", "sustainability": "earnings_and_fcf_payout_only_with_positive_comparable_pit_per_share_denominators", "authority": "diagnostic_only_not_buy_sell_or_trading_authority"}}
+        return {"status": self.status, "symbol": self.symbol, "instrumentId": self.instrument_id, "asOf": self.as_of, "latestPrice": self.latest_price, "price60dStart": self.price_60d_start, "latestPriceObservedAt": self.latest_price_observed_at, "latestPriceRetrievedAt": self.latest_price_retrieved_at, "marketSourceProviders": list(self.market_source_providers), "dividend": self.dividend, "priceReturn60d": self.price_return_60d, "totalReturn60d": self.total_return_60d, "earningsPayoutRatio": self.earnings_payout_ratio, "fcfPayoutRatio": self.fcf_payout_ratio, "financialPeriodSustainability": self.financial_period_sustainability, "productionEligible": self.production_eligible, "reason": self.reason, "policy": {"temporal": "same_as_of_for_market_price_dividend_and_fundamental_knowledge", "yield": "trailing_dividend_cash_divided_by_explicit_pit_price", "currency": "yield_and_payout_blocked_when_currency_is_inconsistent", "totalReturn": "holding_period_price_change_plus_60d_dividend_cash_all_divided_by_60d_start_price", "sustainability": "explicit_provider_period_payout_preferred_when_same_revision_period_currency_and_pit_provenance_are_available_otherwise_comparable_per_share_diagnostics", "authority": "provider_selection_is_explicit_and_diagnostic_only_not_buy_sell_weighting_or_trading_authority"}}
 
 
 class RecommendationDividendSignalService:
@@ -86,6 +86,12 @@ class RecommendationDividendSignalService:
             financial_period_sustainability = self._sustainability_service.analyze_latest_period(
                 instrument_id=instrument_id, knowledge_cutoff=as_of_utc, source_provider=provider
             ).to_api_dict()
+            period_earnings = self._optional_float(financial_period_sustainability.get("earningsPayoutRatio"))
+            period_fcf = self._optional_float(financial_period_sustainability.get("fcfPayoutRatio"))
+            if period_earnings is not None:
+                earnings_payout_ratio = period_earnings
+            if period_fcf is not None:
+                fcf_payout_ratio = period_fcf
         status = "diagnostic_ready" if dividend.get("frequency") != "none" else "no_dividend_history"
         return RecommendationDividendSignal(status=status, dividend=dividend, total_return_60d=total_return_60d, earnings_payout_ratio=earnings_payout_ratio, fcf_payout_ratio=fcf_payout_ratio, financial_period_sustainability=financial_period_sustainability, reason="Dividendos y sostenibilidad están ligados al mismo corte PIT; no constituyen una recomendación." if status == "diagnostic_ready" else "No existe historial de dividendos conocido en el corte point-in-time analizado.", **common)
 
