@@ -24,7 +24,7 @@ def _recovery(now: datetime) -> RecoveryEvidence:
     )
 
 
-def test_production_scoped_attributable_recent_evidence_can_pass_diagnostic() -> None:
+def test_production_scoped_attributable_recent_evidence_still_requires_independent_verification() -> None:
     now = _now()
     report = OperationalRecoveryEvidenceService().evaluate(
         OperationalRecoveryEvidence(
@@ -35,9 +35,26 @@ def test_production_scoped_attributable_recent_evidence_can_pass_diagnostic() ->
         ),
         now=now,
     )
-    assert report.ready is True
+    assert report.ready is False
+    assert report.checks["operationalEvidenceIndependentlyVerified"] is False
     assert report.to_dict()["productionAuthorization"] is False
+
+
+def test_independently_verified_production_evidence_can_pass_diagnostic_without_authorizing_production() -> None:
+    now = _now()
+    report = OperationalRecoveryEvidenceService().evaluate(
+        OperationalRecoveryEvidence(
+            evidence=_recovery(now),
+            environment="production",
+            source="external-recovery-verifier",
+            observed_at=now - timedelta(minutes=5),
+            independently_verified=True,
+        ),
+        now=now,
+    )
+    assert report.ready is True
     assert all(report.checks.values())
+    assert report.to_dict()["productionAuthorization"] is False
 
 
 def test_fixture_like_unscoped_evidence_cannot_claim_production_readiness() -> None:
@@ -48,6 +65,7 @@ def test_fixture_like_unscoped_evidence_cannot_claim_production_readiness() -> N
             environment="test",
             source="pytest-fixture",
             observed_at=now,
+            independently_verified=True,
         ),
         now=now,
     )
@@ -63,6 +81,7 @@ def test_missing_source_or_stale_observation_fails_closed() -> None:
             environment="production",
             source="   ",
             observed_at=now - timedelta(hours=25),
+            independently_verified=True,
         ),
         now=now,
     )
@@ -77,8 +96,9 @@ def test_future_observation_fails_closed() -> None:
         OperationalRecoveryEvidence(
             evidence=_recovery(now),
             environment="production",
-            source="deployment-recovery-controller",
+            source="external-recovery-verifier",
             observed_at=now + timedelta(seconds=1),
+            independently_verified=True,
         ),
         now=now,
     )
