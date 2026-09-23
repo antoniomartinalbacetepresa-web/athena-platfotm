@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from app.database.athena_database import AthenaDatabase
+from app.repositories.financial_period_repository import FinancialPeriodRepository
+
 
 @dataclass(frozen=True)
 class DividendSustainability:
@@ -37,8 +40,65 @@ class DividendSustainabilityService:
 
     Inputs are aggregate cash amounts for the same reporting window and currency.
     The service deliberately refuses to infer payout from per-share/aggregate mixes,
-    negative denominators, post-cutoff evidence, or missing provenance.
+    negative denominators, post-cutoff evidence, or missing provenance. Repository-
+    backed analysis requires an explicit provider so independent sources are never
+    silently promoted to authority or blended when they disagree.
     """
+
+    def __init__(self, *, database: AthenaDatabase | None = None) -> None:
+        self._database = database if database is not None else AthenaDatabase()
+        self._repository = FinancialPeriodRepository(database=self._database)
+
+    def analyze_latest_period(
+        self,
+        *,
+        instrument_id: int,
+        knowledge_cutoff: datetime,
+        source_provider: str,
+    ) -> DividendSustainability:
+        """Analyze the latest PIT-visible period for one explicitly selected provider.
+
+        All payout inputs come from one immutable financial-period revision, which
+        guarantees a common economic window and currency. Provider selection stays
+        outside this service: reconciliation/authority must not be automated here.
+        """
+        if instrument_id <= 0:
+            raise ValueError("instrument_id debe ser positivo.")
+        provider = str(source_provider or "").strip()
+        if not provider:
+            raise ValueError("source_provider es obligatorio.")
+        rows = [
+            row for row in self._repository.list_latest_for_instrument(
+                instrument_id, knowledge_cutoff=knowledge_cutoff
+            )
+            if row["source_provider"] == provider
+        ]
+        if not rows:
+            return self.analyze(
+                dividends_paid=None,
+                net_income=None,
+                free_cash_flow=None,
+                knowledge_cutoff=knowledge_cutoff,
+                source_provider=None,
+                retrieved_at=None,
+                comparable_window=False,
+                currency_consistent=False,
+            )
+        row = max(rows, key=lambda item: (item["period_end"], item["retrieved_at"], item["id"]))
+        return self.analyze(
+            dividends_paid=row["dividends_paid"],
+            net_income=row["net_income"],
+            free_cash_flow=row["free_cash_flow"],
+            knowledge_cutoff=knowledge_cutoff,
+            source_provider=row["source_provider"],
+            retrieved_at=datetime.fromisoformat(row["retrieved_at"]),
+            source_timestamp=(
+                datetime.fromisoformat(row["source_timestamp"])
+                if row["source_timestamp"] is not None else None
+            ),
+            comparable_window=True,
+            currency_consistent=True,
+        )
 
     @staticmethod
     def analyze(
