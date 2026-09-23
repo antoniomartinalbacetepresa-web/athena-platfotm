@@ -16,10 +16,11 @@ class OperationalRecoveryEvidence:
     environment: str
     source: str
     observed_at: datetime
+    independently_verified: bool = False
 
 
 class OperationalRecoveryEvidenceService:
-    """Require attributable, production-scoped evidence before recovery can be ready."""
+    """Require attributable production evidence without promoting operator assertions."""
 
     def __init__(self, *, max_observation_age: timedelta = timedelta(hours=24)) -> None:
         if max_observation_age <= timedelta(0):
@@ -40,12 +41,16 @@ class OperationalRecoveryEvidenceService:
             "productionEnvironmentScoped": operational.environment.strip().lower() == "production",
             "operationalEvidenceSourceIdentified": bool(operational.source.strip()),
             "operationalEvidenceRecent": timedelta(0) <= evaluated_at - observed_at <= self._max_observation_age,
+            "operationalEvidenceIndependentlyVerified": operational.independently_verified is True,
             **base.checks,
         }
         messages = {
             "productionEnvironmentScoped": "La evidencia no está vinculada explícitamente al entorno production.",
             "operationalEvidenceSourceIdentified": "La evidencia operacional no identifica su fuente.",
             "operationalEvidenceRecent": "La observación operacional es futura o demasiado antigua.",
+            "operationalEvidenceIndependentlyVerified": (
+                "La evidencia operacional no tiene verificación independiente; una declaración del operador no basta."
+            ),
         }
         blockers = tuple(messages[name] for name in messages if not checks[name]) + base.blockers
         return ProductionRecoveryReadinessReport(
