@@ -41,13 +41,17 @@ class RecommendationDividendEvidenceContract:
 
 
 class RecommendationDividendEvidenceContractService:
-    """Fail-closed canonical contract for dividend evidence used by recommendations.
+    """Fail-closed canonical contract for dividend evidence used by recommendations."""
 
-    This layer does not invent missing values. It verifies that the existing dividend
-    signal preserves the requested PIT cutoff and exposes the complete analytical
-    surface: cadence, yield, growth, stability, payout/FCF, sustainability and total
-    return. Missing evidence remains ``None`` and never becomes production authority.
-    """
+    _ALLOWED_FREQUENCIES = {
+        "none",
+        "insufficient_history",
+        "monthly",
+        "quarterly",
+        "semiannual",
+        "annual",
+        "irregular",
+    }
 
     def __init__(self, *, signal_service: _DividendSignalService | None = None) -> None:
         self._signal_service = signal_service or RecommendationDividendSignalService()
@@ -85,6 +89,11 @@ class RecommendationDividendEvidenceContractService:
             for field in ("frequency", "trailingYield", "dividendGrowthRate", "paymentStabilityScore"):
                 if field not in dividend:
                     raise RuntimeError(f"La evidencia de dividendos no expone {field}.")
+            frequency = dividend.get("frequency")
+            if frequency not in self._ALLOWED_FREQUENCIES:
+                raise RuntimeError("La frecuencia de dividendos no pertenece al contrato canónico.")
+            self._optional_ratio(dividend.get("trailingYield"), "dividend.trailingYield", minimum=0.0)
+            self._optional_ratio(dividend.get("paymentStabilityScore"), "dividend.paymentStabilityScore", minimum=0.0, maximum=1.0)
 
         sustainability = signal.get("financialPeriodSustainability")
         if sustainability is not None:
@@ -96,12 +105,32 @@ class RecommendationDividendEvidenceContractService:
             )
             if sustainability_cutoff != cutoff:
                 raise RuntimeError("La sostenibilidad de dividendos usó otro knowledge_cutoff.")
+            provider = sustainability.get("sourceProvider")
+            if not isinstance(provider, str) or not provider.strip():
+                raise RuntimeError("La sostenibilidad de dividendos carece de provenance de proveedor.")
+            self._optional_ratio(sustainability.get("sustainabilityScore"), "financialPeriodSustainability.sustainabilityScore", minimum=0.0, maximum=1.0)
 
         for field in ("totalReturn60d", "earningsPayoutRatio", "fcfPayoutRatio", "financialPeriodSustainability"):
             if field not in signal:
                 raise RuntimeError(f"La señal canónica no expone {field}.")
+        self._optional_ratio(signal.get("earningsPayoutRatio"), "earningsPayoutRatio", minimum=0.0)
+        self._optional_ratio(signal.get("fcfPayoutRatio"), "fcfPayoutRatio", minimum=0.0)
 
         return RecommendationDividendEvidenceContract(signal=signal, knowledge_cutoff=cutoff.isoformat())
+
+    @staticmethod
+    def _optional_ratio(value: object, field: str, *, minimum: float | None = None, maximum: float | None = None) -> None:
+        if value is None:
+            return
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RuntimeError(f"{field} debe ser numérico cuando existe.")
+        numeric = float(value)
+        if numeric != numeric or numeric in (float("inf"), float("-inf")):
+            raise RuntimeError(f"{field} debe ser finito.")
+        if minimum is not None and numeric < minimum:
+            raise RuntimeError(f"{field} está por debajo del mínimo permitido.")
+        if maximum is not None and numeric > maximum:
+            raise RuntimeError(f"{field} supera el máximo permitido.")
 
     @staticmethod
     def _aware_utc(value: datetime) -> datetime:
