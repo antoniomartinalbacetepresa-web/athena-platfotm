@@ -96,6 +96,12 @@ class PortfolioDividendReturnEvidenceService:
         return candidate if all(lower <= gap <= upper for gap in gaps) else "irregular"
 
     @staticmethod
+    def _single_instrument(dividends) -> bool:
+        """Return True only when observed dividend events belong to one instrument."""
+        instruments = {item.instrument_id for item in dividends if item.instrument_id}
+        return len(instruments) <= 1
+
+    @staticmethod
     def _stability(dividends) -> float | None:
         amounts = [item.amount for item in dividends if item.amount > 0]
         if len(amounts) < 2:
@@ -179,11 +185,14 @@ class PortfolioDividendReturnEvidenceService:
             taxes=tax_total,
             net_internal_cash_return=gross_dividends + fee_total + tax_total,
             dividend_event_count=len(dividends),
-            observed_frequency=self._observed_frequency(dividends),
+            # Cadence/growth/stability are per-security concepts. Combining cash
+            # distributions from different instruments can manufacture a plausible
+            # cadence or growth rate that no holding actually has.
+            observed_frequency=(self._observed_frequency(dividends) if self._single_instrument(dividends) else "mixed_instruments"),
             trailing_dividend_per_share=trailing_dps,
             trailing_dividend_yield=trailing_yield,
-            annualized_dividend_growth=self._annualized_growth(dividends),
-            payment_stability=self._stability(dividends),
+            annualized_dividend_growth=(self._annualized_growth(dividends) if self._single_instrument(dividends) else None),
+            payment_stability=(self._stability(dividends) if self._single_instrument(dividends) else None),
             payout_ratio=payout,
             fcf_payout_ratio=fcf,
             sustainability=sustainability,
