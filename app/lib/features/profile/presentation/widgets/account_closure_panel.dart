@@ -92,35 +92,51 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Cerrar cuenta',
-                  style: TextStyle(
-                    color: AthenaColors.text,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
+          Semantics(
+            container: true,
+            header: true,
+            label: 'Cerrar cuenta',
+            child: const Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Cerrar cuenta',
+                    style: TextStyle(
+                      color: AthenaColors.text,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Esta acción es irreversible. El backend revocará la sesión, anonimizará la identidad y eliminará las preferencias protegidas y las posiciones actuales asociadas a la cuenta.',
-            style: TextStyle(color: AthenaColors.textSecondary, height: 1.4),
+          Semantics(
+            container: true,
+            label:
+                'Acción irreversible. El cierre revoca la sesión, anonimiza la identidad y elimina preferencias protegidas y posiciones actuales asociadas a la cuenta.',
+            child: const Text(
+              'Esta acción es irreversible. El backend revocará la sesión, anonimizará la identidad y eliminará las preferencias protegidas y las posiciones actuales asociadas a la cuenta.',
+              key: Key('account-closure-irreversible-note'),
+              style: TextStyle(color: AthenaColors.textSecondary, height: 1.4),
+            ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'La evidencia histórica append-only y las copias de seguridad pueden estar sujetas a una política de retención y no se presentan como borradas inmediatamente.',
-            key: Key('account-closure-retention-note'),
-            style: TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 12,
-              height: 1.4,
+          Semantics(
+            container: true,
+            label:
+                'La evidencia histórica y las copias de seguridad pueden conservarse según la política de retención y no se consideran borradas inmediatamente.',
+            child: const Text(
+              'La evidencia histórica append-only y las copias de seguridad pueden estar sujetas a una política de retención y no se presentan como borradas inmediatamente.',
+              key: Key('account-closure-retention-note'),
+              style: TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 12,
+                height: 1.4,
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -152,13 +168,27 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(
-              _error!,
-              key: const Key('account-closure-error'),
-              style: const TextStyle(color: Colors.redAccent, height: 1.35),
+            Semantics(
+              container: true,
+              liveRegion: true,
+              label: _error,
+              child: Text(
+                _error!,
+                key: const Key('account-closure-error'),
+                style: const TextStyle(color: Colors.redAccent, height: 1.35),
+              ),
             ),
           ],
           const SizedBox(height: 18),
+          if (_busy)
+            const Semantics(
+              container: true,
+              liveRegion: true,
+              label: 'Cerrando cuenta. Esperando confirmación del servidor.',
+              child: SizedBox.shrink(
+                key: Key('account-closure-busy-announcement'),
+              ),
+            ),
           Wrap(
             spacing: 10,
             runSpacing: 10,
