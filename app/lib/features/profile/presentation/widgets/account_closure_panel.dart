@@ -181,11 +181,11 @@ class _AccountClosurePanelState extends State<AccountClosurePanel> {
           ],
           const SizedBox(height: 18),
           if (_busy)
-            const Semantics(
+            Semantics(
               container: true,
               liveRegion: true,
               label: 'Cerrando cuenta. Esperando confirmación del servidor.',
-              child: SizedBox.shrink(
+              child: const SizedBox.shrink(
                 key: Key('account-closure-busy-announcement'),
               ),
             ),
