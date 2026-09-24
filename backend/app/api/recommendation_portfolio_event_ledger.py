@@ -9,6 +9,10 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.security.portfolio_owner_storage import owner_scoped_ledger_path
+from app.services.portfolio_dividend_return_evidence_service import (
+    DividendFundamentalEvidence,
+    PortfolioDividendReturnEvidenceService,
+)
 from app.services.recommendation_portfolio_event_ledger_service import (
     PortfolioLedgerEventInput,
     RecommendationPortfolioEventLedgerService,
@@ -90,82 +94,90 @@ def append_portfolio_event(request: PortfolioLedgerEventRequest) -> dict[str, ob
         raise HTTPException(status_code=500, detail="No se pudo persistir el evento histórico de cartera.") from exc
     if _SHA256_RE.fullmatch(record.event.event_key) is None or _SHA256_RE.fullmatch(record.record_hash) is None:
         raise HTTPException(status_code=500, detail="Portfolio ledger devolvió identidad inválida.")
-    return {
-        "data": {
-            "module": "portfolio_event_ledger",
-            "record": record.to_dict(),
-            "policy": _policy_payload(service),
-        }
-    }
+    return {"data": {"module": "portfolio_event_ledger", "record": record.to_dict(), "policy": _policy_payload(service)}}
 
 
 @router.get("/portfolio-event-ledger/external-cash-flows")
 def get_external_cash_flows(
-    portfolioId: str = Query(min_length=1),
-    reportingCurrency: str = Query(min_length=3, max_length=3),
-    periodStart: datetime = Query(),
-    periodEnd: datetime = Query(),
-    asOf: datetime = Query(),
+    portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3),
+    periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query(),
 ) -> dict[str, object]:
     """Project persisted external flows for historical TWR boundaries without FX inference."""
-
     service = _service()
     try:
-        flows = service.external_cash_flows(
-            portfolio_id=portfolioId,
-            reporting_currency=reportingCurrency,
-            period_start=_aware_utc(periodStart, "periodStart"),
-            period_end=_aware_utc(periodEnd, "periodEnd"),
-            as_of=_aware_utc(asOf, "asOf"),
-        )
+        flows = service.external_cash_flows(portfolio_id=portfolioId, reporting_currency=reportingCurrency, period_start=_aware_utc(periodStart, "periodStart"), period_end=_aware_utc(periodEnd, "periodEnd"), as_of=_aware_utc(asOf, "asOf"))
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo proyectar cash flow histórico de cartera.") from exc
-    return {
-        "data": {
-            "module": "portfolio_event_ledger_external_cash_flows",
-            "portfolioId": portfolioId,
-            "reportingCurrency": reportingCurrency.upper(),
-            "flows": [item.to_api_dict() for item in flows],
-            "policy": _policy_payload(service),
-        }
-    }
+    return {"data": {"module": "portfolio_event_ledger_external_cash_flows", "portfolioId": portfolioId, "reportingCurrency": reportingCurrency.upper(), "flows": [item.to_api_dict() for item in flows], "policy": _policy_payload(service)}}
 
 
 @router.get("/portfolio-event-ledger/internal-cash-events")
 def get_internal_cash_events(
-    portfolioId: str = Query(min_length=1),
-    reportingCurrency: str = Query(min_length=3, max_length=3),
-    periodStart: datetime = Query(),
-    periodEnd: datetime = Query(),
-    asOf: datetime = Query(),
+    portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3),
+    periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query(),
 ) -> dict[str, object]:
     """Expose observed dividends/fees/taxes as PIT internal return evidence, never as external flows."""
-
     service = _service()
     try:
-        events = service.internal_cash_events(
-            portfolio_id=portfolioId,
-            reporting_currency=reportingCurrency,
-            period_start=_aware_utc(periodStart, "periodStart"),
-            period_end=_aware_utc(periodEnd, "periodEnd"),
-            as_of=_aware_utc(asOf, "asOf"),
-        )
+        events = service.internal_cash_events(portfolio_id=portfolioId, reporting_currency=reportingCurrency, period_start=_aware_utc(periodStart, "periodStart"), period_end=_aware_utc(periodEnd, "periodEnd"), as_of=_aware_utc(asOf, "asOf"))
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudieron proyectar eventos internos de cartera.") from exc
-    return {
-        "data": {
-            "module": "portfolio_event_ledger_internal_cash_events",
-            "portfolioId": portfolioId,
-            "reportingCurrency": reportingCurrency.upper(),
-            "events": [item.to_api_dict() for item in events],
-            "policy": _policy_payload(service),
-        }
-    }
+    return {"data": {"module": "portfolio_event_ledger_internal_cash_events", "portfolioId": portfolioId, "reportingCurrency": reportingCurrency.upper(), "events": [item.to_api_dict() for item in events], "policy": _policy_payload(service)}}
+
+
+@router.get("/portfolio-event-ledger/dividend-return-evidence")
+def get_dividend_return_evidence(
+    portfolioId: str = Query(min_length=1),
+    reportingCurrency: str = Query(min_length=3, max_length=3),
+    periodStart: datetime = Query(),
+    periodEnd: datetime = Query(),
+    asOf: datetime = Query(),
+    price: float | None = Query(None, gt=0.0),
+    payoutRatio: float | None = Query(None),
+    fcfPayoutRatio: float | None = Query(None),
+    fundamentalAvailableAt: datetime | None = Query(None),
+    fundamentalSource: str | None = Query(None, min_length=1),
+    fundamentalSourceRef: str | None = Query(None, min_length=1),
+) -> dict[str, object]:
+    """Aggregate observed dividend return and optional explicit PIT fundamentals; never infer missing evidence."""
+    ledger = _service()
+    supplied = (price, payoutRatio, fcfPayoutRatio, fundamentalAvailableAt, fundamentalSource, fundamentalSourceRef)
+    fundamentals = None
+    if any(value is not None for value in supplied):
+        if fundamentalAvailableAt is None or fundamentalSource is None or fundamentalSourceRef is None:
+            raise HTTPException(status_code=400, detail="Fundamentales de dividendos requieren availableAt y provenance explícita.")
+        fundamentals = DividendFundamentalEvidence(
+            price=price,
+            payout_ratio=payoutRatio,
+            fcf_payout_ratio=fcfPayoutRatio,
+            available_at=_aware_utc(fundamentalAvailableAt, "fundamentalAvailableAt"),
+            source=fundamentalSource,
+            source_ref=fundamentalSourceRef,
+        )
+    try:
+        evidence = PortfolioDividendReturnEvidenceService(ledger).build(
+            portfolio_id=portfolioId,
+            reporting_currency=reportingCurrency,
+            period_start=_aware_utc(periodStart, "periodStart"),
+            period_end=_aware_utc(periodEnd, "periodEnd"),
+            as_of=_aware_utc(asOf, "asOf"),
+            fundamentals=fundamentals,
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo construir la evidencia PIT de dividendos.") from exc
+    payload = evidence.to_dict()
+    if payload.get("productionEligible") is not False or payload.get("automaticTrading") is not False or payload.get("pitSafe") is not True:
+        raise HTTPException(status_code=500, detail="Evidencia de dividendos violó el contrato de seguridad.")
+    return {"data": {"module": "portfolio_dividend_return_evidence", "portfolioId": portfolioId, "evidence": payload, "policy": _policy_payload(ledger)}}
