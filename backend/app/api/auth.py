@@ -203,7 +203,7 @@ def close_account(payload: CloseAccountRequest, account: Annotated[dict[str, Any
         configured_ledger = os.environ.get("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", "var/athena/portfolio_event_ledger.jsonl").strip()
         if configured_ledger:
             purge_owner_scoped_ledger(Path(configured_ledger), owner_user_id=owner_user_id)
-    except OSError:
+    except (OSError, ValueError):
         logger.exception("Account closed successfully, but owner portfolio-ledger cleanup failed.")
     try:
         _recovery_service().invalidate(user_id=owner_user_id)
