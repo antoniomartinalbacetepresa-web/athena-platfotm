@@ -28,7 +28,7 @@ def _payload():
                      "paymentStabilityScore": 0.92, "knowledgeCutoff": cutoff, "pitSafe": True},
         "totalReturn60d": 0.07, "earningsPayoutRatio": 0.45, "fcfPayoutRatio": 0.50,
         "financialPeriodSustainability": {"earningsPayoutRatio": 0.45, "fcfPayoutRatio": 0.50,
-            "sustainabilityScore": 0.525, "sourceProvider": "issuer_filing", "knowledgeCutoff": cutoff},
+            "sustainabilityScore": 0.525, "sourceProvider": "issuer_filing", "knowledgeCutoff": cutoff, "pitSafe": True},
         "productionEligible": False,
     }
 
@@ -100,4 +100,31 @@ def test_contract_rejects_unknown_frequency_and_invalid_numeric_evidence():
 def test_contract_requires_sustainability_provenance_when_sustainability_exists():
     payload = _payload(); payload["financialPeriodSustainability"]["sourceProvider"] = ""
     with pytest.raises(RuntimeError, match="provenance"):
+        RecommendationDividendEvidenceContractService(signal_service=_Signal(payload)).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("dividendGrowthRate", float("nan"), "finito"),
+        ("dividendGrowthRate", float("inf"), "finito"),
+    ],
+)
+def test_contract_rejects_non_finite_dividend_growth(field, value, message):
+    payload = _payload(); payload["dividend"][field] = value
+    with pytest.raises(RuntimeError, match=message):
+        RecommendationDividendEvidenceContractService(signal_service=_Signal(payload)).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_contract_rejects_non_finite_total_return(value):
+    payload = _payload(); payload["totalReturn60d"] = value
+    with pytest.raises(RuntimeError, match="totalReturn60d.*finito"):
+        RecommendationDividendEvidenceContractService(signal_service=_Signal(payload)).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def test_contract_rejects_sustainability_without_explicit_pit_safety():
+    payload = _payload(); payload["financialPeriodSustainability"]["pitSafe"] = False
+    with pytest.raises(RuntimeError, match="sostenibilidad.*PIT-safe"):
         RecommendationDividendEvidenceContractService(signal_service=_Signal(payload)).evaluate(symbol="DIV", as_of=AS_OF)
