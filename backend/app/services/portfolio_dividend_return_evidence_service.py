@@ -32,6 +32,7 @@ class PortfolioDividendReturnEvidence:
     net_internal_cash_return: float
     dividend_event_count: int
     observed_frequency: str
+    trailing_dividend_per_share: float | None
     trailing_dividend_yield: float | None
     annualized_dividend_growth: float | None
     payment_stability: float | None
@@ -49,6 +50,7 @@ class PortfolioDividendReturnEvidence:
             "netInternalCashReturn": self.net_internal_cash_return,
             "dividendEventCount": self.dividend_event_count,
             "observedFrequency": self.observed_frequency,
+            "trailingDividendPerShare": self.trailing_dividend_per_share,
             "trailingDividendYield": self.trailing_dividend_yield,
             "annualizedDividendGrowth": self.annualized_dividend_growth,
             "paymentStability": self.payment_stability,
@@ -178,6 +180,7 @@ class PortfolioDividendReturnEvidenceService:
             net_internal_cash_return=gross_dividends + fee_total + tax_total,
             dividend_event_count=len(dividends),
             observed_frequency=self._observed_frequency(dividends),
+            trailing_dividend_per_share=trailing_dps,
             trailing_dividend_yield=trailing_yield,
             annualized_dividend_growth=self._annualized_growth(dividends),
             payment_stability=self._stability(dividends),
