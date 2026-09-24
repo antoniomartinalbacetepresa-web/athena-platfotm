@@ -96,3 +96,46 @@ def test_account_closure_purges_owner_dividend_history(monkeypatch, tmp_path) ->
         assert closed.status_code == 204, closed.text
         assert not physical_ledger.exists()
         assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
+
+def test_account_closure_survives_invalid_ledger_cleanup_path(monkeypatch, tmp_path) -> None:
+    database_path = tmp_path / "closure-invalid-ledger.db"
+    monkeypatch.setenv("ATHENA_DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("ATHENA_AUTH_SECRET", "y" * 64)
+    monkeypatch.setenv(
+        "ATHENA_PROFILE_ENCRYPTION_KEY",
+        base64.urlsafe_b64encode(bytes(reversed(range(32)))).decode("ascii"),
+    )
+    # A directory-like path has no ledger filename. Account closure is already
+    # irreversible at cleanup time, so auxiliary cleanup must not turn a
+    # successful closure into an HTTP 500 response.
+    monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", ".")
+
+    email = "closure-invalid-ledger@example.com"
+    password = "CorrectHorseBatteryStaple!"
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": password},
+        )
+        assert created.status_code == 201, created.text
+        login = client.post(
+            "/api/v1/auth/token",
+            data={"username": email, "password": password},
+        )
+        assert login.status_code == 200, login.text
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        closed = client.post(
+            "/api/v1/auth/close-account",
+            headers=headers,
+            json={"currentPassword": password},
+        )
+        assert closed.status_code == 204, closed.text
+        assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
+        relogin = client.post(
+            "/api/v1/auth/token",
+            data={"username": email, "password": password},
+        )
+        assert relogin.status_code == 401, relogin.text
