@@ -144,3 +144,24 @@ def test_portfolio_dividend_metrics_do_not_mix_instruments_into_false_cadence_or
         "issuer_filing:msft-2025",
         "issuer_filing:msft-2026",
     )
+
+
+def test_dividend_fundamentals_fail_closed_on_nonnumeric_values(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    service = PortfolioDividendReturnEvidenceService(ledger)
+    invalid_cases = (
+        DividendFundamentalEvidence(price="not-a-price", available_at=AS_OF, source="market_observation", source_ref="bad-price"),
+        DividendFundamentalEvidence(price=100.0, trailing_dividend_per_share="unknown", available_at=AS_OF, source="issuer_filing", source_ref="bad-dps"),
+        DividendFundamentalEvidence(price=100.0, trailing_dividend_per_share=2.0, payout_ratio="n/a", available_at=AS_OF, source="issuer_filing", source_ref="bad-payout"),
+        DividendFundamentalEvidence(price=100.0, trailing_dividend_per_share=2.0, fcf_payout_ratio=object(), available_at=AS_OF, source="issuer_filing", source_ref="bad-fcf"),
+    )
+    for evidence in invalid_cases:
+        with pytest.raises(ValueError, match="numeric and finite"):
+            service.build(
+                portfolio_id="personal",
+                reporting_currency="EUR",
+                period_start=START,
+                period_end=END,
+                as_of=AS_OF,
+                fundamentals=evidence,
+            )
