@@ -15,8 +15,8 @@ def _event(event_type: str, amount: float, source_ref: str) -> PortfolioLedgerEv
     return PortfolioLedgerEventInput(portfolio_id="personal", event_type=event_type, occurred_at=datetime(2026, 1, 15, tzinfo=UTC), available_at=datetime(2026, 1, 16, tzinfo=UTC), currency="EUR", amount=amount, instrument_id="AAPL:XNAS" if event_type == "cash_dividend" else None, quantity=None, source="issuer_filing" if event_type == "cash_dividend" else "broker_statement", source_ref=source_ref)
 
 
-def _dividend(at: datetime, source_ref: str, amount: float = 1.0) -> PortfolioLedgerEventInput:
-    return PortfolioLedgerEventInput(portfolio_id="personal", event_type="cash_dividend", occurred_at=at, available_at=at, currency="EUR", amount=amount, instrument_id="AAPL:XNAS", quantity=None, source="issuer_filing", source_ref=source_ref)
+def _dividend(at: datetime, source_ref: str, amount: float = 1.0, instrument_id: str = "AAPL:XNAS") -> PortfolioLedgerEventInput:
+    return PortfolioLedgerEventInput(portfolio_id="personal", event_type="cash_dividend", occurred_at=at, available_at=at, currency="EUR", amount=amount, instrument_id=instrument_id, quantity=None, source="issuer_filing", source_ref=source_ref)
 
 
 def test_dividend_return_evidence_keeps_gross_net_costs_and_provenance(tmp_path) -> None:
@@ -113,3 +113,34 @@ def test_dividend_return_evidence_excludes_information_unavailable_at_cutoff(tmp
     assert result.dividend_event_count == 0
     assert result.observed_frequency == "insufficient_evidence"
     assert result.provenance_refs == ()
+
+
+
+def test_portfolio_dividend_metrics_do_not_mix_instruments_into_false_cadence_or_growth(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    cutoff = datetime(2026, 5, 1, tzinfo=UTC)
+    events = (
+        _dividend(datetime(2025, 1, 15, tzinfo=UTC), "aapl-2025", 1.0, "AAPL:XNAS"),
+        _dividend(datetime(2025, 4, 15, tzinfo=UTC), "msft-2025", 2.0, "MSFT:XNAS"),
+        _dividend(datetime(2026, 1, 15, tzinfo=UTC), "aapl-2026", 1.1, "AAPL:XNAS"),
+        _dividend(datetime(2026, 4, 15, tzinfo=UTC), "msft-2026", 2.2, "MSFT:XNAS"),
+    )
+    for item in events:
+        ledger.append(as_of=cutoff, item=item)
+    result = PortfolioDividendReturnEvidenceService(ledger).build(
+        portfolio_id="personal",
+        reporting_currency="EUR",
+        period_start=datetime(2025, 1, 1, tzinfo=UTC),
+        period_end=cutoff,
+        as_of=cutoff,
+    )
+    assert result.gross_dividends == pytest.approx(6.3)
+    assert result.observed_frequency == "mixed_instruments"
+    assert result.annualized_dividend_growth is None
+    assert result.payment_stability is None
+    assert result.provenance_refs == (
+        "issuer_filing:aapl-2025",
+        "issuer_filing:aapl-2026",
+        "issuer_filing:msft-2025",
+        "issuer_filing:msft-2026",
+    )
