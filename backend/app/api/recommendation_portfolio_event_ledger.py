@@ -19,10 +19,7 @@ from app.services.recommendation_portfolio_event_ledger_service import (
 )
 
 
-router = APIRouter(
-    prefix="/api/v1/recommendations/professional-research",
-    tags=["recommendations-professional-research"],
-)
+router = APIRouter(prefix="/api/v1/recommendations/professional-research", tags=["recommendations-professional-research"])
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
 
@@ -67,25 +64,9 @@ def _policy_payload(service: RecommendationPortfolioEventLedgerService) -> dict[
 
 @router.post("/portfolio-event-ledger/events")
 def append_portfolio_event(request: PortfolioLedgerEventRequest) -> dict[str, object]:
-    """Persist an already-observed portfolio event. This endpoint never creates or routes orders."""
-
     service = _service()
     try:
-        record = service.append(
-            as_of=_aware_utc(request.asOf, "asOf"),
-            item=PortfolioLedgerEventInput(
-                portfolio_id=request.portfolioId,
-                event_type=request.eventType,
-                occurred_at=_aware_utc(request.occurredAt, "occurredAt"),
-                available_at=_aware_utc(request.availableAt, "availableAt"),
-                currency=request.currency,
-                amount=request.amount,
-                instrument_id=request.instrumentId,
-                quantity=request.quantity,
-                source=request.source,
-                source_ref=request.sourceRef,
-            ),
-        )
+        record = service.append(as_of=_aware_utc(request.asOf, "asOf"), item=PortfolioLedgerEventInput(portfolio_id=request.portfolioId, event_type=request.eventType, occurred_at=_aware_utc(request.occurredAt, "occurredAt"), available_at=_aware_utc(request.availableAt, "availableAt"), currency=request.currency, amount=request.amount, instrument_id=request.instrumentId, quantity=request.quantity, source=request.source, source_ref=request.sourceRef))
     except HTTPException:
         raise
     except ValueError as exc:
@@ -98,11 +79,7 @@ def append_portfolio_event(request: PortfolioLedgerEventRequest) -> dict[str, ob
 
 
 @router.get("/portfolio-event-ledger/external-cash-flows")
-def get_external_cash_flows(
-    portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3),
-    periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query(),
-) -> dict[str, object]:
-    """Project persisted external flows for historical TWR boundaries without FX inference."""
+def get_external_cash_flows(portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3), periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query()) -> dict[str, object]:
     service = _service()
     try:
         flows = service.external_cash_flows(portfolio_id=portfolioId, reporting_currency=reportingCurrency, period_start=_aware_utc(periodStart, "periodStart"), period_end=_aware_utc(periodEnd, "periodEnd"), as_of=_aware_utc(asOf, "asOf"))
@@ -116,11 +93,7 @@ def get_external_cash_flows(
 
 
 @router.get("/portfolio-event-ledger/internal-cash-events")
-def get_internal_cash_events(
-    portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3),
-    periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query(),
-) -> dict[str, object]:
-    """Expose observed dividends/fees/taxes as PIT internal return evidence, never as external flows."""
+def get_internal_cash_events(portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3), periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query()) -> dict[str, object]:
     service = _service()
     try:
         events = service.internal_cash_events(portfolio_id=portfolioId, reporting_currency=reportingCurrency, period_start=_aware_utc(periodStart, "periodStart"), period_end=_aware_utc(periodEnd, "periodEnd"), as_of=_aware_utc(asOf, "asOf"))
@@ -135,42 +108,23 @@ def get_internal_cash_events(
 
 @router.get("/portfolio-event-ledger/dividend-return-evidence")
 def get_dividend_return_evidence(
-    portfolioId: str = Query(min_length=1),
-    reportingCurrency: str = Query(min_length=3, max_length=3),
-    periodStart: datetime = Query(),
-    periodEnd: datetime = Query(),
-    asOf: datetime = Query(),
-    price: float | None = Query(None, gt=0.0),
-    payoutRatio: float | None = Query(None),
-    fcfPayoutRatio: float | None = Query(None),
-    fundamentalAvailableAt: datetime | None = Query(None),
-    fundamentalSource: str | None = Query(None, min_length=1),
+    portfolioId: str = Query(min_length=1), reportingCurrency: str = Query(min_length=3, max_length=3),
+    periodStart: datetime = Query(), periodEnd: datetime = Query(), asOf: datetime = Query(),
+    price: float | None = Query(None, gt=0.0), trailingDividendPerShare: float | None = Query(None, ge=0.0),
+    payoutRatio: float | None = Query(None), fcfPayoutRatio: float | None = Query(None),
+    fundamentalAvailableAt: datetime | None = Query(None), fundamentalSource: str | None = Query(None, min_length=1),
     fundamentalSourceRef: str | None = Query(None, min_length=1),
 ) -> dict[str, object]:
-    """Aggregate observed dividend return and optional explicit PIT fundamentals; never infer missing evidence."""
+    """Aggregate observed dividend return and explicit PIT fundamentals without dimensional yield inference."""
     ledger = _service()
-    supplied = (price, payoutRatio, fcfPayoutRatio, fundamentalAvailableAt, fundamentalSource, fundamentalSourceRef)
+    supplied = (price, trailingDividendPerShare, payoutRatio, fcfPayoutRatio, fundamentalAvailableAt, fundamentalSource, fundamentalSourceRef)
     fundamentals = None
     if any(value is not None for value in supplied):
         if fundamentalAvailableAt is None or fundamentalSource is None or fundamentalSourceRef is None:
             raise HTTPException(status_code=400, detail="Fundamentales de dividendos requieren availableAt y provenance explícita.")
-        fundamentals = DividendFundamentalEvidence(
-            price=price,
-            payout_ratio=payoutRatio,
-            fcf_payout_ratio=fcfPayoutRatio,
-            available_at=_aware_utc(fundamentalAvailableAt, "fundamentalAvailableAt"),
-            source=fundamentalSource,
-            source_ref=fundamentalSourceRef,
-        )
+        fundamentals = DividendFundamentalEvidence(price=price, trailing_dividend_per_share=trailingDividendPerShare, payout_ratio=payoutRatio, fcf_payout_ratio=fcfPayoutRatio, available_at=_aware_utc(fundamentalAvailableAt, "fundamentalAvailableAt"), source=fundamentalSource, source_ref=fundamentalSourceRef)
     try:
-        evidence = PortfolioDividendReturnEvidenceService(ledger).build(
-            portfolio_id=portfolioId,
-            reporting_currency=reportingCurrency,
-            period_start=_aware_utc(periodStart, "periodStart"),
-            period_end=_aware_utc(periodEnd, "periodEnd"),
-            as_of=_aware_utc(asOf, "asOf"),
-            fundamentals=fundamentals,
-        )
+        evidence = PortfolioDividendReturnEvidenceService(ledger).build(portfolio_id=portfolioId, reporting_currency=reportingCurrency, period_start=_aware_utc(periodStart, "periodStart"), period_end=_aware_utc(periodEnd, "periodEnd"), as_of=_aware_utc(asOf, "asOf"), fundamentals=fundamentals)
     except HTTPException:
         raise
     except ValueError as exc:
