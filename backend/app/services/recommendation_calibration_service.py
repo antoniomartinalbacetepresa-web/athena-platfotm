@@ -92,7 +92,7 @@ class RecommendationCalibrationService:
             ).fetchone()
         if row is not None:
             raise RuntimeError(
-                f"Outcome {row['id']} viola la integridad temporal/horizonte OOS (outcome={row['outcome_horizon']}, recommendation={row['recommendation_horizon']}); la calibración falla cerrado."
+                f"Outcome {row['id']} viola la integridad temporal/horizonte OOS: usa horizonte {row['outcome_horizon']} pero la recomendación congeló {row['recommendation_horizon']}; la calibración falla cerrado."
             )
 
     def _evaluation_time_coverage(self, *, model_version: str | None, horizon_days: int | None, minimum_conviction: float | None = None, maximum_conviction_exclusive: float | None = None, directional_only: bool = False) -> tuple[int, int]:
