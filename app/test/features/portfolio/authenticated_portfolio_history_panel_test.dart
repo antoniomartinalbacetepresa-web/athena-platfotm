@@ -57,8 +57,11 @@ void main() {
     expect(find.text('Operación ejecutada'), findsOneWidget);
     expect(find.textContaining('MSFT:XNAS'), findsOneWidget);
     expect(find.textContaining('Fuente: user_portfolio'), findsOneWidget);
-    expect(find.bySemanticsLabel('Historial de cartera autenticado'), findsOneWidget);
-    expect(find.bySemanticsLabel('Historial de solo lectura. No ejecuta operaciones ni órdenes.'), findsOneWidget);
+    final header = tester.widget<Semantics>(find.ancestor(of: find.text('Historial de cartera'), matching: find.byType(Semantics)).first);
+    expect(header.properties.header, isTrue);
+    expect(header.properties.label, 'Historial de cartera autenticado');
+    final disclosure = tester.widget<Semantics>(find.ancestor(of: find.text('Fuente: Event Ledger autenticado. Solo lectura; no envía órdenes.'), matching: find.byType(Semantics)).first);
+    expect(disclosure.properties.label, 'Historial de solo lectura. No ejecuta operaciones ni órdenes.');
   });
 
   testWidgets('renders empty authenticated history without fabricating events', (tester) async {
@@ -79,7 +82,9 @@ void main() {
     await tester.pumpWidget(harness(service));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('portfolio-history-error')), findsOneWidget);
-    expect(find.bySemanticsLabel('Error al cargar el historial de la cuenta.'), findsOneWidget);
+    final errorSemantics = tester.widget<Semantics>(find.ancestor(of: find.byKey(const Key('portfolio-history-error')), matching: find.byType(Semantics)).first);
+    expect(errorSemantics.properties.liveRegion, isTrue);
+    expect(errorSemantics.properties.label, 'Error al cargar el historial de la cuenta.');
     expect(find.textContaining('No se pudo leer el historial de cartera.'), findsNothing);
     expect(find.byKey(const Key('portfolio-history-session-rejected')), findsNothing);
     expect(session.isAuthenticated, isTrue);
@@ -97,7 +102,9 @@ void main() {
     await tester.pumpWidget(harness(service));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('portfolio-history-session-rejected')), findsOneWidget);
-    expect(find.bySemanticsLabel('Sesión no válida. Inicia sesión de nuevo para consultar el historial de la cuenta.'), findsOneWidget);
+    final rejectedSemantics = tester.widget<Semantics>(find.ancestor(of: find.byKey(const Key('portfolio-history-session-rejected')), matching: find.byType(Semantics)).first);
+    expect(rejectedSemantics.properties.liveRegion, isTrue);
+    expect(rejectedSemantics.properties.label, 'Sesión no válida. Inicia sesión de nuevo para consultar el historial de la cuenta.');
     expect(find.byKey(const Key('portfolio-history-retry')), findsNothing);
     expect(find.byKey(const Key('portfolio-history-error')), findsNothing);
     expect(session.isAuthenticated, isFalse);
