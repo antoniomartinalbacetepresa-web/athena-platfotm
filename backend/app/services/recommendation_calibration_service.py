@@ -77,7 +77,7 @@ class RecommendationCalibrationService:
         return RecommendationCalibrationReport(model_version, horizon_days, self._minimum_sample_size, self._learning_rate, self._maximum_step, tuple(proposals), distinct_days, span_days, self._minimum_distinct_evaluation_days, self._minimum_evaluation_span_days)
 
     def _validate_outcome_horizon_integrity(self, *, model_version: str | None, horizon_days: int | None) -> None:
-        clauses = ["o.horizon_days <> r.horizon_days"]
+        clauses = ["(o.horizon_days <> r.horizon_days OR o.evaluated_at < datetime(r.generated_at, '+' || r.horizon_days || ' days'))"]
         params: list[object] = []
         if model_version is not None:
             clauses.append("r.model_version = ?")
@@ -92,7 +92,7 @@ class RecommendationCalibrationService:
             ).fetchone()
         if row is not None:
             raise RuntimeError(
-                f"Outcome {row['id']} usa horizonte {row['outcome_horizon']} pero la recomendación congeló {row['recommendation_horizon']}; la calibración OOS falla cerrado."
+                f"Outcome {row['id']} viola la integridad temporal/horizonte OOS (outcome={row['outcome_horizon']}, recommendation={row['recommendation_horizon']}); la calibración falla cerrado."
             )
 
     def _evaluation_time_coverage(self, *, model_version: str | None, horizon_days: int | None, minimum_conviction: float | None = None, maximum_conviction_exclusive: float | None = None, directional_only: bool = False) -> tuple[int, int]:
