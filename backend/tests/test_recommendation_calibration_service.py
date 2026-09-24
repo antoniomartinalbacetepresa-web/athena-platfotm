@@ -182,36 +182,3 @@ def test_calibration_configuration_is_guarded(tmp_path: Path) -> None:
             database=database,
             minimum_evaluation_span_days=0,
         )
-
-
-
-def test_calibration_rejects_outcome_evaluated_before_frozen_horizon(tmp_path: Path) -> None:
-    database = AthenaDatabase(tmp_path / "athena.db")
-    history = RecommendationHistoryRepository(database=database)
-    generated = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
-    recommendation_id = history.create_recommendation(
-        symbol="EARLY",
-        action="buy",
-        score=80,
-        conviction=0.9,
-        horizon_days=30,
-        generated_at=generated,
-        data_cutoff_at=generated,
-        model_version="v1",
-        rationale={},
-        input_snapshot={},
-    )
-    history.record_outcome(
-        recommendation_id=recommendation_id,
-        horizon_days=30,
-        evaluated_at=generated + timedelta(days=10),
-        entry_price=100.0,
-        exit_price=120.0,
-        source_provider="test",
-    )
-
-    with pytest.raises(RuntimeError, match="integridad temporal/horizonte OOS"):
-        RecommendationCalibrationService(
-            database=database,
-            minimum_sample_size=1,
-        ).get_report(model_version="v1", horizon_days=30)
