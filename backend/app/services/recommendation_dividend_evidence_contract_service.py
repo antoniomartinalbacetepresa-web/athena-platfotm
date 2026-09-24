@@ -93,12 +93,15 @@ class RecommendationDividendEvidenceContractService:
             if frequency not in self._ALLOWED_FREQUENCIES:
                 raise RuntimeError("La frecuencia de dividendos no pertenece al contrato canónico.")
             self._optional_ratio(dividend.get("trailingYield"), "dividend.trailingYield", minimum=0.0)
+            self._optional_ratio(dividend.get("dividendGrowthRate"), "dividend.dividendGrowthRate")
             self._optional_ratio(dividend.get("paymentStabilityScore"), "dividend.paymentStabilityScore", minimum=0.0, maximum=1.0)
 
         sustainability = signal.get("financialPeriodSustainability")
         if sustainability is not None:
             if not isinstance(sustainability, dict):
                 raise RuntimeError("La sostenibilidad de dividendos tiene formato inválido.")
+            if sustainability.get("pitSafe") is not True:
+                raise RuntimeError("La sostenibilidad de dividendos no es PIT-safe.")
             sustainability_cutoff = self._parse_aware(
                 sustainability.get("knowledgeCutoff"),
                 "financialPeriodSustainability.knowledgeCutoff",
@@ -113,6 +116,7 @@ class RecommendationDividendEvidenceContractService:
         for field in ("totalReturn60d", "earningsPayoutRatio", "fcfPayoutRatio", "financialPeriodSustainability"):
             if field not in signal:
                 raise RuntimeError(f"La señal canónica no expone {field}.")
+        self._optional_ratio(signal.get("totalReturn60d"), "totalReturn60d")
         self._optional_ratio(signal.get("earningsPayoutRatio"), "earningsPayoutRatio", minimum=0.0)
         self._optional_ratio(signal.get("fcfPayoutRatio"), "fcfPayoutRatio", minimum=0.0)
 
