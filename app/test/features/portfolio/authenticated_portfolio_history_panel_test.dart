@@ -57,6 +57,8 @@ void main() {
     expect(find.text('Operación ejecutada'), findsOneWidget);
     expect(find.textContaining('MSFT:XNAS'), findsOneWidget);
     expect(find.textContaining('Fuente: user_portfolio'), findsOneWidget);
+    expect(find.bySemanticsLabel('Historial de cartera autenticado'), findsOneWidget);
+    expect(find.bySemanticsLabel('Historial de solo lectura. No ejecuta operaciones ni órdenes.'), findsOneWidget);
   });
 
   testWidgets('renders empty authenticated history without fabricating events', (tester) async {
@@ -77,6 +79,7 @@ void main() {
     await tester.pumpWidget(harness(service));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('portfolio-history-error')), findsOneWidget);
+    expect(find.bySemanticsLabel('Error al cargar el historial de la cuenta.'), findsOneWidget);
     expect(find.textContaining('No se pudo leer el historial de cartera.'), findsNothing);
     expect(find.byKey(const Key('portfolio-history-session-rejected')), findsNothing);
     expect(session.isAuthenticated, isTrue);
@@ -94,6 +97,7 @@ void main() {
     await tester.pumpWidget(harness(service));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('portfolio-history-session-rejected')), findsOneWidget);
+    expect(find.bySemanticsLabel('Sesión no válida. Inicia sesión de nuevo para consultar el historial de la cuenta.'), findsOneWidget);
     expect(find.byKey(const Key('portfolio-history-retry')), findsNothing);
     expect(find.byKey(const Key('portfolio-history-error')), findsNothing);
     expect(session.isAuthenticated, isFalse);
