@@ -32,9 +32,17 @@ void main() {
       ),
     ));
 
-    expect(find.text('Recuperar contraseña'), findsWidgets);
-    expect(find.text('Correo electrónico'), findsOneWidget);
+    expect(find.text('RECUPERAR ACCESO'), findsOneWidget);
+    expect(find.text('Recuperación segura'), findsOneWidget);
+    expect(find.byKey(const Key('recovery-email')), findsOneWidget);
     expect(find.byKey(const Key('recovery-request')), findsOneWidget);
+    expect(find.text('ENVIAR INSTRUCCIONES'), findsOneWidget);
+    expect(find.text('Volver al inicio de sesión'), findsOneWidget);
+
+    final emailField = tester.widget<TextField>(find.byKey(const Key('recovery-email')));
+    expect(emailField.keyboardType, TextInputType.emailAddress);
+    expect(emailField.textInputAction, TextInputAction.done);
+    expect(emailField.autofillHints, contains(AutofillHints.email));
 
     await tester.enterText(
       find.byKey(const Key('recovery-email')),
@@ -47,7 +55,7 @@ void main() {
     expect(find.byKey(const Key('recovery-generic-success')), findsOneWidget);
   });
 
-  testWidgets('password recovery validation is visible without issuing a request',
+  testWidgets('invalid recovery email fails closed without issuing a request',
       (tester) async {
     var requests = 0;
     await tester.pumpWidget(MaterialApp(
@@ -57,9 +65,13 @@ void main() {
     ));
 
     await tester.tap(find.byKey(const Key('recovery-request')));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(find.text('Introduce un correo válido.'), findsOneWidget);
+    expect(find.byKey(const Key('recovery-error')), findsOneWidget);
+    expect(
+      find.text('No se pudo procesar la solicitud de recuperación. Inténtalo de nuevo más tarde.'),
+      findsOneWidget,
+    );
     expect(requests, 0);
   });
 }
