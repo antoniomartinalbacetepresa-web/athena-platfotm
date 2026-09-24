@@ -26,6 +26,49 @@ void main() {
   AuthAccount account() => AuthAccount(id: 7, email: 'owner@example.com', displayName: 'Owner', isActive: true, createdAt: DateTime.parse('2026-09-10T10:00:00Z'), updatedAt: DateTime.parse('2026-09-10T10:00:00Z'));
   PortfolioPosition position() => PortfolioPosition(symbol: 'AAPL', companyName: 'Apple Inc.', shares: 3, averagePrice: 123.45, currentPrice: 150, priceCurrency: 'USD', exchange: 'NASDAQ', currentPriceSourceProvider: 'test-market-source');
 
+
+  testWidgets('portfolio exposes accessible heading and presentation-only authority boundary', (tester) async {
+    session.establish(accessToken: 'owner-token', account: account());
+    final controller = PortfolioCloudSyncController();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AuthenticatedPortfolioPage(
+            positionsLoader: () async => [position()],
+            syncController: controller,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('MI CARTERA'), findsOneWidget);
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text('MI CARTERA'),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(semantics.properties.header, isTrue);
+    expect(
+      find.textContaining('no ejecuta órdenes'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('no modifica automáticamente recomendaciones'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('pesos'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
+
   testWidgets('authenticated sync flows from UI through bearer transport without owner fields', (tester) async {
     session.establish(accessToken: 'owner-token', account: account());
     final requests = <http.Request>[];
