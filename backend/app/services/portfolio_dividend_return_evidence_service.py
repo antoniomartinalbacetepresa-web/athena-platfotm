@@ -15,6 +15,7 @@ class DividendFundamentalEvidence:
     """Optional PIT fundamentals supplied by a provenance-bound upstream observation."""
 
     price: float | None = None
+    trailing_dividend_per_share: float | None = None
     payout_ratio: float | None = None
     fcf_payout_ratio: float | None = None
     available_at: datetime | None = None
@@ -113,18 +114,20 @@ class PortfolioDividendReturnEvidenceService:
         return (ordered[-1].amount / ordered[0].amount) ** (1.0 / years) - 1.0
 
     @staticmethod
-    def _fundamentals(evidence: DividendFundamentalEvidence | None, *, as_of: datetime) -> tuple[float | None, float | None, float | None, str, tuple[str, ...]]:
+    def _fundamentals(evidence: DividendFundamentalEvidence | None, *, as_of: datetime) -> tuple[float | None, float | None, float | None, float | None, str, tuple[str, ...]]:
         if evidence is None:
-            return None, None, None, "insufficient_evidence", ()
+            return None, None, None, None, "insufficient_evidence", ()
         if evidence.available_at is None or evidence.available_at.tzinfo is None or evidence.available_at > as_of:
             raise ValueError("dividend fundamentals must be PIT-available at as_of")
         if not evidence.source or not evidence.source_ref:
             raise ValueError("dividend fundamentals require explicit provenance")
-        values = (evidence.price, evidence.payout_ratio, evidence.fcf_payout_ratio)
+        values = (evidence.price, evidence.trailing_dividend_per_share, evidence.payout_ratio, evidence.fcf_payout_ratio)
         if any(value is not None and not math.isfinite(float(value)) for value in values):
             raise ValueError("dividend fundamentals must be finite")
         if evidence.price is not None and evidence.price <= 0:
             raise ValueError("dividend fundamental price must be positive")
+        if evidence.trailing_dividend_per_share is not None and evidence.trailing_dividend_per_share < 0:
+            raise ValueError("trailing dividend per share cannot be negative")
         payout = evidence.payout_ratio
         fcf = evidence.fcf_payout_ratio
         available_ratios = [ratio for ratio in (payout, fcf) if ratio is not None]
@@ -136,7 +139,7 @@ class PortfolioDividendReturnEvidenceService:
             sustainability = "supported"
         else:
             sustainability = "watch"
-        return evidence.price, payout, fcf, sustainability, (f"{evidence.source}:{evidence.source_ref}",)
+        return evidence.price, evidence.trailing_dividend_per_share, payout, fcf, sustainability, (f"{evidence.source}:{evidence.source_ref}",)
 
     def build(
         self,
@@ -161,8 +164,11 @@ class PortfolioDividendReturnEvidenceService:
         gross_dividends = sum(item.amount for item in dividends)
         fee_total = sum(item.amount for item in fees)
         tax_total = sum(item.amount for item in taxes)
-        price, payout, fcf, sustainability, fundamental_refs = self._fundamentals(fundamentals, as_of=as_of)
-        trailing_yield = None if price is None else gross_dividends / price
+        price, trailing_dps, payout, fcf, sustainability, fundamental_refs = self._fundamentals(fundamentals, as_of=as_of)
+        # Ledger dividend amounts are portfolio cash totals, not per-share distributions.
+        # Dividing those totals by a share price is dimensionally wrong and varies with
+        # position size. Yield therefore requires explicit PIT trailing DPS evidence.
+        trailing_yield = None if price is None or trailing_dps is None else trailing_dps / price
         refs = tuple(sorted({f"{item.source}:{item.source_ref}" for item in events}.union(fundamental_refs)))
         return PortfolioDividendReturnEvidence(
             currency=reporting_currency.strip().upper(),
