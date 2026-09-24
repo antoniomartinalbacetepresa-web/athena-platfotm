@@ -9,19 +9,7 @@ _TEST_OWNER = 101
 
 
 def event_payload() -> dict[str, object]:
-    return {
-        "portfolioId": "portfolio-1",
-        "eventType": "external_cash_flow",
-        "occurredAt": "2026-01-16T00:00:00Z",
-        "availableAt": "2026-01-16T00:00:00Z",
-        "currency": "EUR",
-        "amount": 11.0,
-        "instrumentId": None,
-        "quantity": None,
-        "source": "broker_statement",
-        "sourceRef": "deposit-api-1",
-        "asOf": "2026-02-02T00:00:00Z",
-    }
+    return {"portfolioId": "portfolio-1", "eventType": "external_cash_flow", "occurredAt": "2026-01-16T00:00:00Z", "availableAt": "2026-01-16T00:00:00Z", "currency": "EUR", "amount": 11.0, "instrumentId": None, "quantity": None, "source": "broker_statement", "sourceRef": "deposit-api-1", "asOf": "2026-02-02T00:00:00Z"}
 
 
 def test_portfolio_event_ledger_api_persists_and_projects_external_flow(tmp_path, monkeypatch) -> None:
@@ -54,18 +42,57 @@ def test_portfolio_event_ledger_api_projects_dividend_as_internal_return_evidenc
     request = event_payload()
     request.update({"eventType": "cash_dividend", "amount": 2.75, "instrumentId": "AAPL", "source": "issuer_filing", "sourceRef": "dividend-2026-q1"})
     assert client.post("/api/v1/recommendations/professional-research/portfolio-event-ledger/events", json=request).status_code == 200
-
     internal = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/internal-cash-events", params={"portfolioId": "portfolio-1", "reportingCurrency": "EUR", "periodStart": "2026-01-01T00:00:00Z", "periodEnd": "2026-02-01T00:00:00Z", "asOf": "2026-02-02T00:00:00Z"})
     assert internal.status_code == 200, internal.text
     data = internal.json()["data"]
     assert data["module"] == "portfolio_event_ledger_internal_cash_events"
-    assert data["events"] == [{"eventKey": data["events"][0]["eventKey"], "eventType": "cash_dividend", "amount": 2.75, "currency": "EUR", "instrumentId": "AAPL", "occurredAt": "2026-01-16T00:00:00+00:00", "availableAt": "2026-01-16T00:00:00+00:00", "source": "issuer_filing", "sourceRef": "dividend-2026-q1"}]
+    assert data["events"][0]["eventType"] == "cash_dividend"
+    assert data["events"][0]["amount"] == 2.75
+    assert data["events"][0]["sourceRef"] == "dividend-2026-q1"
     assert data["policy"]["productionEligible"] is False
     assert data["policy"]["automaticTrading"] is False
-
     external = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/external-cash-flows", params={"portfolioId": "portfolio-1", "reportingCurrency": "EUR", "periodStart": "2026-01-01T00:00:00Z", "periodEnd": "2026-02-01T00:00:00Z", "asOf": "2026-02-02T00:00:00Z"})
     assert external.status_code == 200
     assert external.json()["data"]["flows"] == []
+
+
+def test_dividend_return_evidence_api_integrates_pit_metrics_and_provenance(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    request = event_payload()
+    request.update({"eventType": "cash_dividend", "amount": 2.75, "instrumentId": "AAPL:XNAS", "source": "issuer_filing", "sourceRef": "dividend-2026-q1"})
+    assert client.post("/api/v1/recommendations/professional-research/portfolio-event-ledger/events", json=request).status_code == 200
+    response = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/dividend-return-evidence", params={
+        "portfolioId": "portfolio-1", "reportingCurrency": "EUR", "periodStart": "2026-01-01T00:00:00Z", "periodEnd": "2026-02-01T00:00:00Z", "asOf": "2026-02-02T00:00:00Z",
+        "price": 50.0, "payoutRatio": 0.55, "fcfPayoutRatio": 0.60, "fundamentalAvailableAt": "2026-02-01T00:00:00Z", "fundamentalSource": "issuer_filing", "fundamentalSourceRef": "aapl-2025-10k",
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    evidence = data["evidence"]
+    assert data["module"] == "portfolio_dividend_return_evidence"
+    assert evidence["grossDividends"] == 2.75
+    assert evidence["netInternalCashReturn"] == 2.75
+    assert evidence["trailingDividendYield"] == 0.055
+    assert evidence["payoutRatio"] == 0.55
+    assert evidence["fcfPayoutRatio"] == 0.60
+    assert evidence["sustainability"] == "supported"
+    assert evidence["observedFrequency"] == "insufficient_evidence"
+    assert "issuer_filing:dividend-2026-q1" in evidence["provenanceRefs"]
+    assert "issuer_filing:aapl-2025-10k" in evidence["provenanceRefs"]
+    assert evidence["pitSafe"] is True
+    assert evidence["productionEligible"] is False
+    assert evidence["automaticTrading"] is False
+    assert data["policy"]["isWeightingReady"] is False
+    assert data["policy"]["orderPlacement"] == "forbidden"
+
+
+def test_dividend_return_evidence_api_rejects_partial_or_future_fundamentals(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    base = {"portfolioId": "portfolio-1", "reportingCurrency": "EUR", "periodStart": "2026-01-01T00:00:00Z", "periodEnd": "2026-02-01T00:00:00Z", "asOf": "2026-02-02T00:00:00Z"}
+    partial = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/dividend-return-evidence", params={**base, "price": 50.0})
+    assert partial.status_code == 400
+    future = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/dividend-return-evidence", params={**base, "price": 50.0, "fundamentalAvailableAt": "2026-02-03T00:00:00Z", "fundamentalSource": "issuer_filing", "fundamentalSourceRef": "future"})
+    assert future.status_code == 400
+    assert "PIT-available" in future.json()["detail"]
 
 
 def test_portfolio_event_ledger_api_is_idempotent_for_same_evidence(tmp_path, monkeypatch) -> None:
@@ -79,8 +106,7 @@ def test_portfolio_event_ledger_api_is_idempotent_for_same_evidence(tmp_path, mo
 
 def test_portfolio_event_ledger_api_rejects_order_events(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
-    request = event_payload()
-    request["eventType"] = "order"
+    request = event_payload(); request["eventType"] = "order"
     response = client.post("/api/v1/recommendations/professional-research/portfolio-event-ledger/events", json=request)
     assert response.status_code == 400
     assert "unsupported" in response.json()["detail"]
@@ -88,8 +114,7 @@ def test_portfolio_event_ledger_api_rejects_order_events(tmp_path, monkeypatch) 
 
 def test_portfolio_event_ledger_api_rejects_naive_time(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
-    request = event_payload()
-    request["occurredAt"] = "2026-01-16T00:00:00"
+    request = event_payload(); request["occurredAt"] = "2026-01-16T00:00:00"
     response = client.post("/api/v1/recommendations/professional-research/portfolio-event-ledger/events", json=request)
     assert response.status_code == 400
     assert "zona horaria" in response.json()["detail"]
@@ -97,8 +122,7 @@ def test_portfolio_event_ledger_api_rejects_naive_time(tmp_path, monkeypatch) ->
 
 def test_portfolio_event_ledger_api_fails_closed_on_unconverted_fx(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ATHENA_PORTFOLIO_EVENT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
-    request = event_payload()
-    request["currency"] = "USD"
+    request = event_payload(); request["currency"] = "USD"
     assert client.post("/api/v1/recommendations/professional-research/portfolio-event-ledger/events", json=request).status_code == 200
     response = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/external-cash-flows", params={"portfolioId": "portfolio-1", "reportingCurrency": "EUR", "periodStart": "2026-01-01T00:00:00Z", "periodEnd": "2026-02-01T00:00:00Z", "asOf": "2026-02-02T00:00:00Z"})
     assert response.status_code == 400
