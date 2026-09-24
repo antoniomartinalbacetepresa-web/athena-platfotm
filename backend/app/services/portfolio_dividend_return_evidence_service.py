@@ -130,14 +130,18 @@ class PortfolioDividendReturnEvidenceService:
         if not evidence.source or not evidence.source_ref:
             raise ValueError("dividend fundamentals require explicit provenance")
         values = (evidence.price, evidence.trailing_dividend_per_share, evidence.payout_ratio, evidence.fcf_payout_ratio)
-        if any(value is not None and not math.isfinite(float(value)) for value in values):
-            raise ValueError("dividend fundamentals must be finite")
+        try:
+            finite = all(value is None or math.isfinite(float(value)) for value in values)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("dividend fundamentals must be numeric and finite") from exc
+        if not finite:
+            raise ValueError("dividend fundamentals must be numeric and finite")
         if evidence.price is not None and evidence.price <= 0:
             raise ValueError("dividend fundamental price must be positive")
         if evidence.trailing_dividend_per_share is not None and evidence.trailing_dividend_per_share < 0:
             raise ValueError("trailing dividend per share cannot be negative")
-        payout = evidence.payout_ratio
-        fcf = evidence.fcf_payout_ratio
+        payout = None if evidence.payout_ratio is None else float(evidence.payout_ratio)
+        fcf = None if evidence.fcf_payout_ratio is None else float(evidence.fcf_payout_ratio)
         available_ratios = [ratio for ratio in (payout, fcf) if ratio is not None]
         if not available_ratios:
             sustainability = "insufficient_evidence"
@@ -147,7 +151,9 @@ class PortfolioDividendReturnEvidenceService:
             sustainability = "supported"
         else:
             sustainability = "watch"
-        return evidence.price, evidence.trailing_dividend_per_share, payout, fcf, sustainability, (f"{evidence.source}:{evidence.source_ref}",)
+        price = None if evidence.price is None else float(evidence.price)
+        trailing_dps = None if evidence.trailing_dividend_per_share is None else float(evidence.trailing_dividend_per_share)
+        return price, trailing_dps, payout, fcf, sustainability, (f"{evidence.source}:{evidence.source_ref}",)
 
     def build(
         self,
