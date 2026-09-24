@@ -33,17 +33,12 @@ void main() {
       find.byKey(const Key('account-closure-confirmation')),
       'ELIMINAR',
     );
-    // TextField.onChanged schedules the state rebuild that enables the
-    // destructive action. Advance one frame before observing or tapping it.
     await tester.pump();
   }
 
   Future<void> submit(WidgetTester tester, String password) async {
     await enterClosureConfirmation(tester, password);
     await tester.tap(find.byKey(const Key('account-closure-submit')));
-    // The focused EditableText owns a blinking cursor ticker, so
-    // pumpAndSettle is not a valid completion primitive here. Two frames are
-    // sufficient for the async close callback and its resulting setState.
     await tester.pump();
     await tester.pump();
   }
@@ -55,12 +50,42 @@ void main() {
 
     final submit = find.byKey(const Key('account-closure-submit'));
     expect(find.byKey(const Key('account-closure-retention-note')), findsOneWidget);
+    expect(find.byKey(const Key('account-closure-irreversible-note')), findsOneWidget);
     expect(
       tester.widget<TextField>(find.byKey(const Key('account-closure-password')))
           .obscureText,
       isTrue,
     );
     expect(tester.widget<ElevatedButton>(submit).onPressed, isNull);
+
+    final heading = tester.widget<Semantics>(
+      find
+          .ancestor(of: find.text('Cerrar cuenta'), matching: find.byType(Semantics))
+          .first,
+    );
+    expect(heading.properties.header, isTrue);
+    expect(heading.properties.label, 'Cerrar cuenta');
+    final irreversible = tester.widget<Semantics>(
+      find
+          .ancestor(
+            of: find.byKey(const Key('account-closure-irreversible-note')),
+            matching: find.byType(Semantics),
+          )
+          .first,
+    );
+    expect(
+      irreversible.properties.label,
+      contains('Acción irreversible'),
+    );
+    final retention = tester.widget<Semantics>(
+      find
+          .ancestor(
+            of: find.byKey(const Key('account-closure-retention-note')),
+            matching: find.byType(Semantics),
+          )
+          .first,
+    );
+    expect(retention.properties.label, contains('política de retención'));
 
     await tester.enterText(
       find.byKey(const Key('account-closure-password')),
@@ -113,13 +138,19 @@ void main() {
     await submit(tester, 'wrong-passphrase');
 
     expect(completed, 0);
-    expect(find.byKey(const Key('account-closure-error')), findsOneWidget);
+    final errorFinder = find.byKey(const Key('account-closure-error'));
+    expect(errorFinder, findsOneWidget);
     expect(
       find.text(
         'La contraseña actual no es correcta. La cuenta sigue abierta y la sesión se conserva.',
       ),
       findsOneWidget,
     );
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(of: errorFinder, matching: find.byType(Semantics)).first,
+    );
+    expect(semantics.properties.liveRegion, isTrue);
+    expect(semantics.properties.label, contains('La cuenta sigue abierta'));
   });
 
   testWidgets('service failure stays generic and does not expose backend detail',
@@ -140,7 +171,8 @@ void main() {
 
     expect(calls, 1);
     expect(completed, 0);
-    expect(find.byKey(const Key('account-closure-error')), findsOneWidget);
+    final errorFinder = find.byKey(const Key('account-closure-error'));
+    expect(errorFinder, findsOneWidget);
     expect(find.textContaining('sensitive backend detail'), findsNothing);
     expect(
       find.text(
@@ -148,6 +180,11 @@ void main() {
       ),
       findsOneWidget,
     );
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(of: errorFinder, matching: find.byType(Semantics)).first,
+    );
+    expect(semantics.properties.liveRegion, isTrue);
+    expect(semantics.properties.label, isNot(contains('sensitive backend detail')));
     expect(
       tester.widget<ElevatedButton>(
         find.byKey(const Key('account-closure-submit')),
