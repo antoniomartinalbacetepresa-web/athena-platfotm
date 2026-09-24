@@ -30,7 +30,11 @@ class UserPersonalizationPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Semantics(
+            container: true,
+            header: true,
+            label: 'Personalización de explicaciones',
+            child: const Row(
             children: [
               Icon(Icons.auto_awesome_outlined, color: AthenaColors.primary),
               SizedBox(width: 12),
@@ -45,9 +49,12 @@ class UserPersonalizationPanel extends StatelessWidget {
                 ),
               ),
             ],
-          ),
+          )),
           const SizedBox(height: 8),
-          const Text(
+          Semantics(
+            container: true,
+            label: 'Personalización solo de presentación. No modifica recomendaciones, ponderaciones, aprendizaje ni ejecuta operaciones.',
+            child: const Text(
             'Solo adapta la forma de presentar y explicar información. No modifica scores, recomendaciones, ponderaciones, aprendizaje ni activa operaciones.',
             key: Key('personalization-presentation-only-note'),
             style: TextStyle(
@@ -55,23 +62,29 @@ class UserPersonalizationPanel extends StatelessWidget {
               fontSize: 11,
               height: 1.35,
             ),
-          ),
+          )),
           const SizedBox(height: 14),
           if (busy)
             const Center(
-              child: Padding(
+              child: Semantics(
+                liveRegion: true,
+                label: 'Cargando personalización protegida',
+                child: Padding(
                 padding: EdgeInsets.all(12),
                 child: CircularProgressIndicator(
                   key: Key('personalization-loading'),
                 ),
-              ),
+              )),
             )
           else if (error != null) ...[
-            Text(
+            Semantics(
+              liveRegion: true,
+              label: 'No se pudo cargar la personalización protegida.',
+              child: Text(
               error!,
               key: const Key('personalization-error'),
               style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-            ),
+            )),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: onReload,
