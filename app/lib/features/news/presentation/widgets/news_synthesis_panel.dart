@@ -14,11 +14,11 @@ class NewsSynthesisPanel extends StatelessWidget {
       animation: controller,
       builder: (context, _) {
         if (controller.loading) {
-          return const Center(
+          return Center(
             child: Semantics(
               liveRegion: true,
               label: 'Cargando síntesis verificada de noticias',
-              child: ExcludeSemantics(child: CircularProgressIndicator()),
+              child: const ExcludeSemantics(child: CircularProgressIndicator()),
             ),
           );
         }
@@ -60,10 +60,10 @@ class NewsSynthesisPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            const Semantics(
+            Semantics(
               container: true,
               label: 'Síntesis informativa basada en evidencia point-in-time. No es una recomendación de inversión y no ejecuta operaciones.',
-              child: ExcludeSemantics(
+              child: const ExcludeSemantics(
                 child: Text(
                   'Resumen e impacto estimados por un modelo externo validado contra evidencia PIT. No es una recomendación de inversión.',
                 ),
