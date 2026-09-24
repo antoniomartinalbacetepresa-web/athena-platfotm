@@ -63,7 +63,7 @@ def test_dividend_return_evidence_api_integrates_pit_metrics_and_provenance(tmp_
     assert client.post("/api/v1/recommendations/professional-research/portfolio-event-ledger/events", json=request).status_code == 200
     response = client.get("/api/v1/recommendations/professional-research/portfolio-event-ledger/dividend-return-evidence", params={
         "portfolioId": "portfolio-1", "reportingCurrency": "EUR", "periodStart": "2026-01-01T00:00:00Z", "periodEnd": "2026-02-01T00:00:00Z", "asOf": "2026-02-02T00:00:00Z",
-        "price": 50.0, "payoutRatio": 0.55, "fcfPayoutRatio": 0.60, "fundamentalAvailableAt": "2026-02-01T00:00:00Z", "fundamentalSource": "issuer_filing", "fundamentalSourceRef": "aapl-2025-10k",
+        "price": 50.0, "trailingDividendPerShare": 2.75, "payoutRatio": 0.55, "fcfPayoutRatio": 0.60, "fundamentalAvailableAt": "2026-02-01T00:00:00Z", "fundamentalSource": "issuer_filing", "fundamentalSourceRef": "aapl-2025-10k",
     })
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -71,6 +71,7 @@ def test_dividend_return_evidence_api_integrates_pit_metrics_and_provenance(tmp_
     assert data["module"] == "portfolio_dividend_return_evidence"
     assert evidence["grossDividends"] == 2.75
     assert evidence["netInternalCashReturn"] == 2.75
+    assert evidence["trailingDividendPerShare"] == 2.75
     assert evidence["trailingDividendYield"] == 0.055
     assert evidence["payoutRatio"] == 0.55
     assert evidence["fcfPayoutRatio"] == 0.60
