@@ -32,6 +32,21 @@ def _event(event_type: str, amount: float, source_ref: str) -> PortfolioLedgerEv
     )
 
 
+def _dividend(at: datetime, source_ref: str) -> PortfolioLedgerEventInput:
+    return PortfolioLedgerEventInput(
+        portfolio_id="personal",
+        event_type="cash_dividend",
+        occurred_at=at,
+        available_at=at,
+        currency="EUR",
+        amount=1.0,
+        instrument_id="AAPL:XNAS",
+        quantity=None,
+        source="issuer_filing",
+        source_ref=source_ref,
+    )
+
+
 def test_dividend_return_evidence_keeps_gross_net_costs_and_provenance(tmp_path) -> None:
     ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
     ledger.append(as_of=AS_OF, item=_event("cash_dividend", 12.0, "aapl-div-2026q1"))
@@ -51,15 +66,48 @@ def test_dividend_return_evidence_keeps_gross_net_costs_and_provenance(tmp_path)
     assert result.taxes == -2.0
     assert result.net_internal_cash_return == 9.5
     assert result.dividend_event_count == 1
+    assert result.observed_frequency == "insufficient_evidence"
     assert result.provenance_refs == (
         "broker_statement:custody-fee-1",
         "broker_statement:withholding-tax-1",
         "issuer_filing:aapl-div-2026q1",
     )
     payload = result.to_dict()
+    assert payload["observedFrequency"] == "insufficient_evidence"
     assert payload["pitSafe"] is True
     assert payload["productionEligible"] is False
     assert payload["automaticTrading"] is False
+
+
+def test_dividend_return_evidence_classifies_observed_quarterly_cadence(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    cutoff = datetime(2026, 10, 2, tzinfo=UTC)
+    for index, at in enumerate((datetime(2026, 1, 15, tzinfo=UTC), datetime(2026, 4, 15, tzinfo=UTC), datetime(2026, 7, 15, tzinfo=UTC))):
+        ledger.append(as_of=cutoff, item=_dividend(at, f"quarterly-{index}"))
+    result = PortfolioDividendReturnEvidenceService(ledger).build(
+        portfolio_id="personal",
+        reporting_currency="EUR",
+        period_start=datetime(2026, 1, 1, tzinfo=UTC),
+        period_end=datetime(2026, 10, 1, tzinfo=UTC),
+        as_of=cutoff,
+    )
+    assert result.observed_frequency == "quarterly"
+    assert result.dividend_event_count == 3
+
+
+def test_dividend_return_evidence_marks_mixed_cadence_irregular(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    cutoff = datetime(2026, 10, 2, tzinfo=UTC)
+    for index, at in enumerate((datetime(2026, 1, 15, tzinfo=UTC), datetime(2026, 4, 15, tzinfo=UTC), datetime(2026, 5, 15, tzinfo=UTC))):
+        ledger.append(as_of=cutoff, item=_dividend(at, f"irregular-{index}"))
+    result = PortfolioDividendReturnEvidenceService(ledger).build(
+        portfolio_id="personal",
+        reporting_currency="EUR",
+        period_start=datetime(2026, 1, 1, tzinfo=UTC),
+        period_end=datetime(2026, 10, 1, tzinfo=UTC),
+        as_of=cutoff,
+    )
+    assert result.observed_frequency == "irregular"
 
 
 def test_dividend_return_evidence_rejects_silent_fx(tmp_path) -> None:
@@ -104,4 +152,5 @@ def test_dividend_return_evidence_excludes_information_unavailable_at_cutoff(tmp
     )
     assert result.gross_dividends == 0
     assert result.dividend_event_count == 0
+    assert result.observed_frequency == "insufficient_evidence"
     assert result.provenance_refs == ()
