@@ -133,9 +133,6 @@ class _ProfilePersonalizationShellState extends State<ProfilePersonalizationShel
       ),
     );
     if (sessionRejected == true && mounted) {
-      // A protected Profile request has authoritatively rejected this session.
-      // Use State.context after the async gap: mounted guards this State's
-      // context, not the BuildContext parameter captured before awaiting.
       Navigator.of(this.context).pushNamedAndRemoveUntil(
         AppRoutes.welcome,
         (route) => false,
@@ -230,24 +227,30 @@ class _ProfilePersonalizationSheetState
         child: SingleChildScrollView(
           child: _sessionRejected
               ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.lock_outline),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar la personalización protegida.',
-                        key: Key('personalization-session-rejected'),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton.tonalIcon(
-                        key: const Key('personalization-session-rejected-close'),
-                        onPressed: () => Navigator.of(context).pop(true),
-                        icon: const Icon(Icons.close),
-                        label: const Text('Cerrar'),
-                      ),
-                    ],
+                  child: Semantics(
+                    container: true,
+                    liveRegion: true,
+                    label:
+                        'Sesión no válida. Inicia sesión de nuevo para consultar la personalización protegida.',
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.lock_outline),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar la personalización protegida.',
+                          key: Key('personalization-session-rejected'),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.tonalIcon(
+                          key: const Key('personalization-session-rejected-close'),
+                          onPressed: () => Navigator.of(context).pop(true),
+                          icon: const Icon(Icons.close),
+                          label: const Text('Cerrar'),
+                        ),
+                      ],
+                    ),
                   ),
                 )
               : UserPersonalizationPanel(
