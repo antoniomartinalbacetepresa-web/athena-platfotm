@@ -92,7 +92,11 @@ class _AuthenticatedPortfolioHistoryPanelState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
+            Semantics(
+              container: true,
+              header: true,
+              label: 'Historial de cartera autenticado',
+              child: Row(
               children: [
                 Expanded(
                   child: Text(
@@ -106,10 +110,13 @@ class _AuthenticatedPortfolioHistoryPanelState
                   icon: const Icon(Icons.close),
                 ),
               ],
-            ),
-            Text(
+            )),
+            const Semantics(
+              container: true,
+              label: 'Historial de solo lectura. No ejecuta operaciones ni órdenes.',
+              child: Text(
               'Fuente: Event Ledger autenticado. Solo lectura; no envía órdenes.',
-              style: theme.textTheme.bodySmall,
+              ),
             ),
             const SizedBox(height: 12),
             Expanded(child: _buildBody(theme)),
@@ -122,8 +129,12 @@ class _AuthenticatedPortfolioHistoryPanelState
   Widget _buildBody(ThemeData theme) {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(
-          key: Key('portfolio-history-loading'),
+        child: Semantics(
+          liveRegion: true,
+          label: 'Cargando historial de cartera',
+          child: CircularProgressIndicator(
+            key: Key('portfolio-history-loading'),
+          ),
         ),
       );
     }
@@ -134,10 +145,14 @@ class _AuthenticatedPortfolioHistoryPanelState
           children: [
             const Icon(Icons.lock_outline),
             const SizedBox(height: 8),
-            const Text(
+            const Semantics(
+              liveRegion: true,
+              label: 'Sesión no válida. Inicia sesión de nuevo para consultar el historial de la cuenta.',
+              child: Text(
               'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar el historial de la cuenta.',
               key: Key('portfolio-history-session-rejected'),
               textAlign: TextAlign.center,
+              ),
             ),
             const SizedBox(height: 12),
             FilledButton.tonalIcon(
@@ -157,10 +172,15 @@ class _AuthenticatedPortfolioHistoryPanelState
           children: [
             const Icon(Icons.error_outline),
             const SizedBox(height: 8),
-            const Text(
+            const Semantics(
+              liveRegion: true,
+              label: 'Error al cargar el historial de la cuenta.',
+              child: Text(
               'No se pudo cargar el historial de la cuenta.',
               key: Key('portfolio-history-error'),
               textAlign: TextAlign.center,
+            ),
+              ),
             ),
             const SizedBox(height: 12),
             FilledButton.tonalIcon(
