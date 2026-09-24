@@ -65,8 +65,6 @@ class _AuthenticatedPortfolioHistoryPanelState
         _loading = false;
       });
     } on AuthSessionRejectedException catch (error) {
-      // The service has already revoked in-memory authority. Durable-token
-      // cleanup remains best-effort and must not block the rejected UI state.
       unawaited(_session.clearAfterRemoteInvalidation());
       if (!mounted) return;
       setState(() {
@@ -97,25 +95,26 @@ class _AuthenticatedPortfolioHistoryPanelState
               header: true,
               label: 'Historial de cartera autenticado',
               child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Historial de cartera',
-                    style: theme.textTheme.titleLarge,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Historial de cartera',
+                      style: theme.textTheme.titleLarge,
+                    ),
                   ),
-                ),
-                IconButton(
-                  tooltip: 'Cerrar historial',
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            )),
-            const Semantics(
+                  IconButton(
+                    tooltip: 'Cerrar historial',
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            Semantics(
               container: true,
               label: 'Historial de solo lectura. No ejecuta operaciones ni órdenes.',
-              child: Text(
-              'Fuente: Event Ledger autenticado. Solo lectura; no envía órdenes.',
+              child: const Text(
+                'Fuente: Event Ledger autenticado. Solo lectura; no envía órdenes.',
               ),
             ),
             const SizedBox(height: 12),
@@ -128,11 +127,11 @@ class _AuthenticatedPortfolioHistoryPanelState
 
   Widget _buildBody(ThemeData theme) {
     if (_loading) {
-      return const Center(
+      return Center(
         child: Semantics(
           liveRegion: true,
           label: 'Cargando historial de cartera',
-          child: CircularProgressIndicator(
+          child: const CircularProgressIndicator(
             key: Key('portfolio-history-loading'),
           ),
         ),
@@ -145,13 +144,13 @@ class _AuthenticatedPortfolioHistoryPanelState
           children: [
             const Icon(Icons.lock_outline),
             const SizedBox(height: 8),
-            const Semantics(
+            Semantics(
               liveRegion: true,
               label: 'Sesión no válida. Inicia sesión de nuevo para consultar el historial de la cuenta.',
-              child: Text(
-              'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar el historial de la cuenta.',
-              key: Key('portfolio-history-session-rejected'),
-              textAlign: TextAlign.center,
+              child: const Text(
+                'Tu sesión ya no es válida. Inicia sesión de nuevo para consultar el historial de la cuenta.',
+                key: Key('portfolio-history-session-rejected'),
+                textAlign: TextAlign.center,
               ),
             ),
             const SizedBox(height: 12),
@@ -172,14 +171,13 @@ class _AuthenticatedPortfolioHistoryPanelState
           children: [
             const Icon(Icons.error_outline),
             const SizedBox(height: 8),
-            const Semantics(
+            Semantics(
               liveRegion: true,
               label: 'Error al cargar el historial de la cuenta.',
-              child: Text(
-              'No se pudo cargar el historial de la cuenta.',
-              key: Key('portfolio-history-error'),
-              textAlign: TextAlign.center,
-            ),
+              child: const Text(
+                'No se pudo cargar el historial de la cuenta.',
+                key: Key('portfolio-history-error'),
+                textAlign: TextAlign.center,
               ),
             ),
             const SizedBox(height: 12),
