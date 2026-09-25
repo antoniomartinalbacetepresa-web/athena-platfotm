@@ -29,18 +29,9 @@ void main() {
 
   testWidgets('portfolio exposes accessible heading and presentation-only authority boundary', (tester) async {
     session.establish(accessToken: 'owner-token', account: account());
-    final controller = PortfolioCloudSyncController();
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: AuthenticatedPortfolioPage(
-            positionsLoader: () async => [position()],
-            syncController: controller,
-            child: const SizedBox.expand(),
-          ),
-        ),
-      ),
+      const MaterialApp(home: AuthenticatedPortfolioPage()),
     );
     await tester.pump();
 
@@ -52,21 +43,14 @@ void main() {
       ).first,
     );
     expect(semantics.properties.header, isTrue);
-    expect(
-      find.textContaining('no ejecuta órdenes'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('no ejecuta órdenes'), findsOneWidget);
     expect(
       find.textContaining('no modifica automáticamente recomendaciones'),
       findsOneWidget,
     );
-    expect(
-      find.textContaining('pesos'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('pesos'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
-    controller.dispose();
   });
 
   testWidgets('authenticated sync flows from UI through bearer transport without owner fields', (tester) async {
