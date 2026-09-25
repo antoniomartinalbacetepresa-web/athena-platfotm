@@ -45,7 +45,7 @@ void main() {
     expect(semantics.properties.header, isTrue);
     expect(find.textContaining('no ejecuta órdenes'), findsOneWidget);
     expect(
-      find.textContaining('no modifica automáticamente recomendaciones'),
+      find.textContaining('no ejecuta órdenes ni modifica recomendaciones o pesos automáticamente'),
       findsOneWidget,
     );
     expect(find.textContaining('pesos'), findsOneWidget);
