@@ -231,3 +231,104 @@ def test_governed_oos_rejects_retroactive_approval_of_historical_evidence(tmp_pa
     assert sufficiency["criteriaCheckCount"] == 7
     assert sufficiency["satisfiedCriteriaCount"] == 6
     assert result["productionLearningEligible"] is False
+
+
+def test_external_timesfm_challenger_is_pit_bound_and_has_no_automatic_authority(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+
+    result = service.bind_external_challenger(
+        provider="google",
+        model_name="timesfm",
+        model_version="research-pinned-version",
+        model_config={"contextLength": 512, "quantiles": [0.1, 0.5, 0.9]},
+        forecast_origin=origin,
+        input_observed_through=origin - timedelta(hours=2),
+        input_retrieved_at=origin - timedelta(hours=1),
+        horizon_seconds=86400,
+        forecast_value=101.25,
+        baseline_name="last_value",
+        baseline_value=100.0,
+        source_provenance=[{
+            "source": "market_history",
+            "observedAt": (origin - timedelta(hours=2)).isoformat(),
+            "retrievedAt": (origin - timedelta(hours=1)).isoformat(),
+        }],
+    )
+
+    assert result["provider"] == "google"
+    assert result["modelName"] == "timesfm"
+    assert result["evaluationMode"] == "prospective_oos_paired_with_baseline"
+    assert result["challengerOnly"] is True
+    assert result["productionLearningEligible"] is False
+    assert result["productionEligible"] is False
+    assert result["recommendationCandidateReady"] is False
+    assert result["isWeightingReady"] is False
+    assert result["automaticModelPromotion"] is False
+    assert result["automaticWeighting"] is False
+    assert result["automaticTrading"] is False
+    assert result["policy"]["authority"] == "research_diagnostic_only"
+
+
+def test_external_challenger_rejects_lookahead_input(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+
+    import pytest
+    with pytest.raises(ValueError, match="PIT ordering"):
+        service.bind_external_challenger(
+            provider="google",
+            model_name="timesfm",
+            model_version="research-pinned-version",
+            model_config={"contextLength": 512},
+            forecast_origin=origin,
+            input_observed_through=origin + timedelta(seconds=1),
+            input_retrieved_at=origin - timedelta(minutes=1),
+            horizon_seconds=86400,
+            forecast_value=101.25,
+            baseline_name="last_value",
+            baseline_value=100.0,
+            source_provenance=[{
+                "source": "market_history",
+                "observedAt": (origin - timedelta(hours=2)).isoformat(),
+                "retrievedAt": (origin - timedelta(hours=1)).isoformat(),
+            }],
+        )
+
+
+def test_external_challenger_rejects_provenance_retrieved_after_forecast_origin(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+
+    import pytest
+    with pytest.raises(ValueError, match="provenance violates"):
+        service.bind_external_challenger(
+            provider="google",
+            model_name="timesfm",
+            model_version="research-pinned-version",
+            model_config={"contextLength": 512},
+            forecast_origin=origin,
+            input_observed_through=origin - timedelta(hours=2),
+            input_retrieved_at=origin - timedelta(hours=1),
+            horizon_seconds=86400,
+            forecast_value=101.25,
+            baseline_name="last_value",
+            baseline_value=100.0,
+            source_provenance=[{
+                "source": "market_history",
+                "observedAt": (origin - timedelta(hours=2)).isoformat(),
+                "retrievedAt": (origin + timedelta(seconds=1)).isoformat(),
+            }],
+        )
