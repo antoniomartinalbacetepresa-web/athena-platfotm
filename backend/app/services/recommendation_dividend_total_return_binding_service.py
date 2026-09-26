@@ -68,6 +68,8 @@ class RecommendationDividendTotalReturnBindingService:
             raise ValueError("dividend_source_provider es obligatorio.")
         if observed > cutoff or price_retrieved > cutoff or dividend_retrieved > cutoff:
             raise ValueError("La evidencia de retorno total no puede ser posterior al knowledge_cutoff.")
+        if observed > price_retrieved:
+            raise ValueError("price_observed_at no puede ser posterior a price_retrieved_at.")
         total_return = self._total_return_service.calculate(
             start_price=start_price,
             end_price=end_price,
