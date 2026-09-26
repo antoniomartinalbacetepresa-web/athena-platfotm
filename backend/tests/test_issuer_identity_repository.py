@@ -1,0 +1,346 @@
+import math
+from pathlib import Path
+
+import pytest
+
+from app.database.athena_database import AthenaDatabase
+from app.repositories.instrument_repository import InstrumentRepository
+from app.repositories.issuer_identity_repository import IssuerIdentityRepository
+
+
+def _create_instrument(database: AthenaDatabase, symbol: str) -> int:
+    return InstrumentRepository(database=database).upsert(
+        {
+            "symbol": symbol,
+            "companyName": f"{symbol} Company",
+            "country": "United States",
+            "regionKey": "america",
+            "exchangeShortName": "NMS",
+            "marketCap": 100.0,
+        }
+    )
+
+
+def test_external_id_reuses_same_canonical_issuer(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    repository = IssuerIdentityRepository(database=database)
+
+    first = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Apple Inc.",
+        evidence_confidence=0.95,
+    )
+    second = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Apple Inc.",
+        evidence_confidence=0.98,
+        domicile_country="United States",
+        region_key="america",
+    )
+
+    assert first == second
+    external_ids = repository.list_external_ids(first)
+    assert external_ids == [
+        {
+            "source_provider": "sec_edgar",
+            "external_id": "0000320193",
+            "evidence_confidence": pytest.approx(0.98),
+        }
+    ]
+
+
+def test_weaker_external_evidence_cannot_degrade_canonical_issuer(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "AAPL")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Apple Inc.",
+        evidence_confidence=0.98,
+        domicile_country="United States",
+        region_key="america",
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="sec_company_tickers_exchange",
+        resolution_method="exact_ticker_unique_cik",
+        confidence=0.98,
+    )
+
+    same_issuer_id = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Incorrect weaker name",
+        evidence_confidence=0.40,
+        domicile_country="Incorrect country",
+        region_key="incorrect-region",
+    )
+
+    assert same_issuer_id == issuer_id
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["canonical_name"] == "Apple Inc."
+    assert resolved["domicile_country"] == "United States"
+    assert resolved["region_key"] == "america"
+    assert repository.list_external_ids(issuer_id)[0]["evidence_confidence"] == pytest.approx(
+        0.98
+    )
+
+
+def test_equal_external_confidence_does_not_replace_conflicting_identity(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "EQ")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="official_registry",
+        external_id="ISSUER-1",
+        canonical_name="Canonical Issuer",
+        evidence_confidence=0.90,
+        domicile_country="United States",
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="official_registry",
+        resolution_method="official_identifier",
+        confidence=0.90,
+    )
+
+    repository.upsert_external_issuer(
+        source_provider="official_registry",
+        external_id="ISSUER-1",
+        canonical_name="Conflicting Equal Name",
+        evidence_confidence=0.90,
+        domicile_country="Conflicting Country",
+        region_key="america",
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["canonical_name"] == "Canonical Issuer"
+    assert resolved["domicile_country"] == "United States"
+    assert resolved["region_key"] == "america"
+
+
+def test_instrument_link_keeps_identity_evidence(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "AAPL")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="sec_edgar",
+        external_id="0000320193",
+        canonical_name="Apple Inc.",
+        evidence_confidence=0.95,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="sec_company_tickers_exchange",
+        resolution_method="exact_ticker_unique_cik",
+        confidence=0.95,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["issuer_id"] == issuer_id
+    assert resolved["canonical_name"] == "Apple Inc."
+    assert resolved["evidence_source"] == "sec_company_tickers_exchange"
+    assert resolved["resolution_method"] == "exact_ticker_unique_cik"
+    assert resolved["confidence"] == pytest.approx(0.95)
+
+
+def test_link_can_be_replaced_by_stronger_evidence(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "TEST")
+    repository = IssuerIdentityRepository(database=database)
+    first_issuer = repository.upsert_external_issuer(
+        source_provider="source_a",
+        external_id="A",
+        canonical_name="First Issuer",
+        evidence_confidence=0.7,
+    )
+    second_issuer = repository.upsert_external_issuer(
+        source_provider="source_b",
+        external_id="B",
+        canonical_name="Second Issuer",
+        evidence_confidence=0.99,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=first_issuer,
+        evidence_source="source_a",
+        resolution_method="heuristic",
+        confidence=0.7,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=second_issuer,
+        evidence_source="source_b",
+        resolution_method="official_identifier",
+        confidence=0.99,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["issuer_id"] == second_issuer
+    assert resolved["confidence"] == pytest.approx(0.99)
+
+
+def test_weaker_evidence_cannot_replace_stronger_link(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "SAFE")
+    repository = IssuerIdentityRepository(database=database)
+    strong_issuer = repository.upsert_external_issuer(
+        source_provider="official",
+        external_id="STRONG",
+        canonical_name="Strong Issuer",
+        evidence_confidence=0.99,
+    )
+    weak_issuer = repository.upsert_external_issuer(
+        source_provider="heuristic",
+        external_id="WEAK",
+        canonical_name="Weak Issuer",
+        evidence_confidence=0.4,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=strong_issuer,
+        evidence_source="official",
+        resolution_method="official_identifier",
+        confidence=0.99,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=weak_issuer,
+        evidence_source="heuristic",
+        resolution_method="name_match",
+        confidence=0.4,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["issuer_id"] == strong_issuer
+    assert resolved["canonical_name"] == "Strong Issuer"
+    assert resolved["confidence"] == pytest.approx(0.99)
+
+
+def test_equal_confidence_cannot_replace_different_issuer(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "TIE")
+    repository = IssuerIdentityRepository(database=database)
+    first_issuer = repository.upsert_external_issuer(
+        source_provider="official_a",
+        external_id="FIRST",
+        canonical_name="First Issuer",
+        evidence_confidence=0.90,
+    )
+    second_issuer = repository.upsert_external_issuer(
+        source_provider="official_b",
+        external_id="SECOND",
+        canonical_name="Second Issuer",
+        evidence_confidence=0.90,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=first_issuer,
+        evidence_source="official_a",
+        resolution_method="official_identifier",
+        confidence=0.90,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=second_issuer,
+        evidence_source="official_b",
+        resolution_method="official_identifier",
+        confidence=0.90,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["issuer_id"] == first_issuer
+    assert resolved["canonical_name"] == "First Issuer"
+    assert resolved["confidence"] == pytest.approx(0.90)
+
+
+def test_same_issuer_link_cannot_be_downgraded(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "athena.db")
+    database.initialize()
+    instrument_id = _create_instrument(database, "MONO")
+    repository = IssuerIdentityRepository(database=database)
+    issuer_id = repository.upsert_external_issuer(
+        source_provider="official",
+        external_id="MONO-ISSUER",
+        canonical_name="Monotonic Issuer",
+        evidence_confidence=0.95,
+    )
+
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="official",
+        resolution_method="official_identifier",
+        confidence=0.95,
+    )
+    repository.link_instrument(
+        instrument_id=instrument_id,
+        issuer_id=issuer_id,
+        evidence_source="weaker_refresh",
+        resolution_method="heuristic",
+        confidence=0.50,
+    )
+
+    resolved = repository.get_issuer_for_instrument(instrument_id)
+    assert resolved is not None
+    assert resolved["confidence"] == pytest.approx(0.95)
+    assert resolved["evidence_source"] == "official"
+    assert resolved["resolution_method"] == "official_identifier"
+
+
+def test_repository_rejects_invalid_confidence(tmp_path: Path) -> None:
+    repository = IssuerIdentityRepository(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+
+    with pytest.raises(ValueError, match="confidence"):
+        repository.upsert_external_issuer(
+            source_provider="sec_edgar",
+            external_id="0000320193",
+            canonical_name="Apple Inc.",
+            evidence_confidence=1.1,
+        )
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_repository_rejects_non_finite_confidence(
+    tmp_path: Path,
+    value: float,
+) -> None:
+    repository = IssuerIdentityRepository(
+        database=AthenaDatabase(tmp_path / "athena.db")
+    )
+
+    with pytest.raises(ValueError, match="confidence debe ser finita"):
+        repository.upsert_external_issuer(
+            source_provider="sec_edgar",
+            external_id="0000320193",
+            canonical_name="Apple Inc.",
+            evidence_confidence=value,
+        )

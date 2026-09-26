@@ -1,0 +1,213 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/profile/models/user_preferences.dart';
+import 'package:app/features/profile/services/user_preferences_service.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+void main() {
+  final session = AuthSession.instance;
+
+  setUp(() => session.clear());
+  tearDown(() => session.clear());
+
+  AuthAccount account() => AuthAccount(
+        id: 9,
+        email: 'profile@example.com',
+        displayName: 'Profile User',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-10T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-10T10:00:00Z'),
+      );
+
+  test('guest session is rejected before profile network access', () async {
+    var called = false;
+    final client = MockClient((request) async {
+      called = true;
+      return http.Response('{}', 500);
+    });
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    await expectLater(service.load(), throwsStateError);
+    expect(called, isFalse);
+  });
+
+  test('load returns null when encrypted profile is not configured', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        '{"status":"not_configured","data":null,"policy":{"sensitivePreferencesEncrypted":true}}', 200);
+    });
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    final preferences = await service.load();
+    expect(preferences, isNull);
+    expect(captured.method, 'GET');
+    expect(captured.headers['Authorization'], 'Bearer profile.jwt');
+  });
+
+  test('load rejects not_configured response carrying stale preference data', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+      '{"status":"not_configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":999999}}}', 200));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+
+    await expectLater(service.load(), throwsA(isA<FormatException>()));
+  });
+
+  test('save sends only the validated preference contract', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":25000.5},"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}', 200);
+    });
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    const input = UserPreferences(
+      riskTolerance: 'balanced', investmentHorizonYears: 15,
+      baseCurrency: 'eur', objective: 'long_term_growth', availableCapital: 25000.5);
+    final stored = await service.save(input);
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(captured.method, 'PUT');
+    expect(captured.headers['Authorization'], 'Bearer profile.jwt');
+    expect(body, {
+      'riskTolerance': 'balanced', 'investmentHorizonYears': 15,
+      'baseCurrency': 'EUR', 'objective': 'long_term_growth',
+      'language': 'es', 'availableCapital': 25000.5,
+    });
+    expect(body.containsKey('ownerUserId'), isFalse);
+    expect(body.containsKey('userId'), isFalse);
+    expect(body.containsKey('automaticTrading'), isFalse);
+    expect(body.containsKey('productionEligible'), isFalse);
+    expect(stored.baseCurrency, 'EUR');
+    expect(stored.language, 'es');
+    expect(stored.availableCapital, 25000.5);
+  });
+
+  test('save rejects contradictory success status instead of trusting returned data', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+      '{"status":"not_configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":999999}}}', 200));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    await expectLater(
+      service.save(const UserPreferences(
+        riskTolerance: 'balanced', investmentHorizonYears: 15,
+        baseCurrency: 'EUR', objective: 'long_term_growth')),
+      throwsA(isA<FormatException>()));
+  });
+
+  test('legacy profile response defaults language to Spanish', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+      '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","availableCapital":75000}},"policy":{"sensitivePreferencesEncrypted":true}}', 200));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    final stored = await service.load();
+    expect(stored, isNotNull);
+    expect(stored!.language, UserPreferences.defaultLanguage);
+    expect(stored.availableCapital, 75000.0);
+    expect(stored.baseCurrency, 'USD');
+  });
+
+  test('unsupported server language fails closed in client parser', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    final client = MockClient((request) async => http.Response(
+      '{"status":"configured","data":{"preferences":{"riskTolerance":"growth","investmentHorizonYears":20,"baseCurrency":"USD","objective":"long_term_growth","language":"en"}}}', 200));
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    await expectLater(service.load(), throwsA(isA<FormatException>()));
+  });
+
+  test('delete is authenticated and accepts only 204', () async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local', client: client, session: session);
+    await service.delete();
+    expect(captured.method, 'DELETE');
+    expect(captured.url.path, '/api/v1/user/profile/preferences');
+    expect(captured.headers['Authorization'], 'Bearer profile.jwt');
+  });
+
+
+  test('successful stale preference response cannot cross an owner change', () async {
+    session.establish(accessToken: 'owner-a.jwt', account: account());
+    final pending = Completer<http.Response>();
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) {
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        return pending.future;
+      }),
+      session: session,
+    );
+
+    final load = service.load();
+    await Future<void>.delayed(Duration.zero);
+    session.establish(
+      accessToken: 'owner-b.jwt',
+      account: AuthAccount(
+        id: 23,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-21T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-21T10:00:00Z'),
+      ),
+    );
+    pending.complete(http.Response(
+      '{"status":"configured","data":{"preferences":{"riskTolerance":"balanced","investmentHorizonYears":15,"baseCurrency":"EUR","objective":"long_term_growth","language":"es","availableCapital":12500}}}',
+      200,
+      headers: {'content-type': 'application/json'},
+    ));
+
+    await expectLater(
+      load,
+      throwsA(isA<UserPreferencesAuthorityChangedException>()),
+    );
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 23);
+    expect(session.account?.email, 'replacement@example.com');
+  });
+
+  test('profile authorization rejection preserves status without backend detail', () async {
+    session.establish(accessToken: 'revoked.profile.jwt', account: account());
+    final service = UserPreferencesService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((request) async => http.Response(
+        '{"detail":"sensitive authorization diagnostic"}', 403)),
+      session: session);
+    Future<void> expectRejected(Future<void> Function() operation) async {
+      try {
+        await operation();
+        fail('Expected profile authorization rejection.');
+      } on UserPreferencesSessionRejectedException catch (error) {
+        expect(error.statusCode, 403);
+        expect(error.toString(), isNot(contains('sensitive authorization diagnostic')));
+      }
+    }
+    await expectRejected(() async { await service.load(); });
+    await expectRejected(() async { await service.loadPersonalization(); });
+    await expectRejected(() async {
+      await service.save(const UserPreferences(
+        riskTolerance: 'balanced', investmentHorizonYears: 15,
+        baseCurrency: 'EUR', objective: 'long_term_growth'));
+    });
+    await expectRejected(service.delete);
+  });
+}
