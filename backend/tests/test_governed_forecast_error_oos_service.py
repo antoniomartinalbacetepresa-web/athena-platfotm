@@ -332,3 +332,122 @@ def test_external_challenger_rejects_provenance_retrieved_after_forecast_origin(
                 "retrievedAt": (origin + timedelta(seconds=1)).isoformat(),
             }],
         )
+
+
+def _external_challenger(service: GovernedForecastErrorOosService, origin: datetime) -> dict:
+    return service.bind_external_challenger(
+        provider="google",
+        model_name="timesfm",
+        model_version="research-pinned-version",
+        model_config={"contextLength": 512},
+        forecast_origin=origin,
+        input_observed_through=origin - timedelta(hours=2),
+        input_retrieved_at=origin - timedelta(hours=1),
+        horizon_seconds=86400,
+        forecast_value=105.0,
+        baseline_name="last_value",
+        baseline_value=100.0,
+        source_provenance=[{
+            "source": "market_history",
+            "observedAt": (origin - timedelta(hours=2)).isoformat(),
+            "retrievedAt": (origin - timedelta(hours=1)).isoformat(),
+        }],
+    )
+
+
+def test_external_challenger_realized_error_is_paired_with_same_mature_outcome(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1, minutes=5)
+
+    result = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=10),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=2),
+    )
+
+    assert result["absoluteError"] == 1.0
+    assert result["baselineAbsoluteError"] == 4.0
+    assert result["absoluteErrorDeltaVsBaseline"] == -3.0
+    assert result["singleObservationSkillClaimed"] is False
+    assert result["longitudinalGateRequired"] is True
+    assert result["productionEligible"] is False
+    assert result["isWeightingReady"] is False
+    assert result["automaticModelPromotion"] is False
+    assert result["automaticWeighting"] is False
+    assert result["automaticTrading"] is False
+
+
+def test_external_challenger_realized_error_rejects_unmatured_outcome(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(hours=23)
+
+    with pytest.raises(ValueError, match="not mature"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=origin + timedelta(days=2),
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
+
+
+def test_external_challenger_realized_error_rejects_outcome_retrieved_after_as_of(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    cutoff = observed + timedelta(minutes=1)
+
+    with pytest.raises(ValueError, match="outcome PIT ordering"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=cutoff,
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=cutoff + timedelta(seconds=1),
+        )
+
+
+def test_external_challenger_realized_error_rejects_authority_escalation(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    challenger["automaticWeighting"] = True
+    observed = origin + timedelta(days=1)
+
+    with pytest.raises(ValueError, match="forbidden authority"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
