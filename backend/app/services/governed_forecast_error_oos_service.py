@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 from typing import Any
 
@@ -157,6 +157,80 @@ class GovernedForecastErrorOosService:
                 "longitudinalEvidence": "existing_human_governed_oos_gates_required",
                 "baseline": "paired_baseline_required",
             },
+        }
+
+    def measure_external_challenger_outcome(
+        self,
+        *,
+        challenger: dict[str, Any],
+        as_of: datetime,
+        outcome_value: float,
+        outcome_observed_at: datetime,
+        outcome_retrieved_at: datetime,
+    ) -> dict[str, Any]:
+        """Measure a matured challenger and its paired baseline on one realized outcome."""
+        cutoff = self._aware(as_of, "as_of")
+        if not isinstance(challenger, dict) or challenger.get("module") != "external_forecast_challenger_contract":
+            raise ValueError("challenger must be a governed external forecast contract.")
+        if challenger.get("challengerOnly") is not True:
+            raise ValueError("external challenger must remain challenger-only.")
+        for field in (
+            "productionLearningEligible",
+            "productionEligible",
+            "recommendationCandidateReady",
+            "isWeightingReady",
+            "automaticModelPromotion",
+            "automaticWeighting",
+            "automaticTrading",
+        ):
+            if challenger.get(field) is not False:
+                raise ValueError(f"external challenger escalated forbidden authority: {field}.")
+        origin = self._iso(challenger.get("forecastOrigin"), "challenger.forecastOrigin")
+        horizon = challenger.get("horizonSeconds")
+        if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
+            raise ValueError("challenger.horizonSeconds must be a positive integer.")
+        maturity = origin + timedelta(seconds=horizon)
+        observed = self._aware(outcome_observed_at, "outcome_observed_at")
+        retrieved = self._aware(outcome_retrieved_at, "outcome_retrieved_at")
+        if observed < maturity:
+            raise ValueError("realized outcome is not mature for the challenger horizon.")
+        if observed > retrieved or retrieved > cutoff:
+            raise ValueError("outcome PIT ordering must satisfy observed <= retrieved <= as_of.")
+        actual = self._finite(outcome_value, "outcome_value")
+        forecast = self._finite(challenger.get("forecastValue"), "challenger.forecastValue")
+        baseline = self._finite(challenger.get("baselineValue"), "challenger.baselineValue")
+        model_error = forecast - actual
+        baseline_error = baseline - actual
+        return {
+            "module": "external_forecast_challenger_realized_error",
+            "provider": self._text(challenger.get("provider"), "challenger.provider"),
+            "modelName": self._text(challenger.get("modelName"), "challenger.modelName"),
+            "modelVersion": self._text(challenger.get("modelVersion"), "challenger.modelVersion"),
+            "forecastOrigin": origin.isoformat(),
+            "horizonSeconds": horizon,
+            "maturityAt": maturity.isoformat(),
+            "outcomeObservedAt": observed.isoformat(),
+            "outcomeRetrievedAt": retrieved.isoformat(),
+            "asOf": cutoff.isoformat(),
+            "outcomeValue": actual,
+            "forecastValue": forecast,
+            "baselineName": self._text(challenger.get("baselineName"), "challenger.baselineName"),
+            "baselineValue": baseline,
+            "signedError": model_error,
+            "absoluteError": abs(model_error),
+            "squaredError": model_error * model_error,
+            "baselineSignedError": baseline_error,
+            "baselineAbsoluteError": abs(baseline_error),
+            "baselineSquaredError": baseline_error * baseline_error,
+            "absoluteErrorDeltaVsBaseline": abs(model_error) - abs(baseline_error),
+            "singleObservationSkillClaimed": False,
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "automaticModelPromotion": False,
+            "automaticWeighting": False,
+            "automaticTrading": False,
+            "longitudinalGateRequired": True,
         }
 
     @staticmethod
