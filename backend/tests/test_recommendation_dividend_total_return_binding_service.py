@@ -51,3 +51,26 @@ def test_binding_rejects_missing_component_provenance() -> None:
         _bind(price_source_provider=" ")
     with pytest.raises(ValueError, match="dividend_source_provider"):
         _bind(dividend_source_provider=" ")
+
+
+def test_binding_rejects_price_observed_after_price_retrieval() -> None:
+    with pytest.raises(ValueError, match="price_observed_at.*posterior.*price_retrieved_at"):
+        _bind(
+            price_observed_at=CUTOFF - timedelta(minutes=10),
+            price_retrieved_at=CUTOFF - timedelta(minutes=20),
+        )
+
+
+def test_binding_accepts_observation_at_exact_retrieval_boundary() -> None:
+    instant = CUTOFF - timedelta(minutes=20)
+    payload = _bind(price_observed_at=instant, price_retrieved_at=instant)
+    assert payload["priceObservedAt"] == instant.isoformat()
+    assert payload["priceRetrievedAt"] == instant.isoformat()
+
+
+def test_binding_compares_causal_order_after_timezone_normalization() -> None:
+    plus_two = timezone(timedelta(hours=2))
+    observed = (CUTOFF - timedelta(minutes=15)).astimezone(plus_two)
+    retrieved = CUTOFF - timedelta(minutes=20)
+    with pytest.raises(ValueError, match="price_observed_at.*posterior.*price_retrieved_at"):
+        _bind(price_observed_at=observed, price_retrieved_at=retrieved)
