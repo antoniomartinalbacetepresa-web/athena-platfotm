@@ -99,6 +99,50 @@ void main() {
     expect(requests, ['Bearer owner-a-token', 'Bearer owner-b-token']);
   });
 
+  test('Portfolio re-resolves Profile authority on direct authenticated owner replacement', () async {
+    final session = AuthSession.forTesting(_MemoryTokenStore());
+    session.establish(
+      accessToken: 'owner-a-token',
+      account: _account(1, 'owner-a@example.com'),
+    );
+
+    final requests = <String>[];
+    final service = UserPreferencesService(
+      session: session,
+      client: MockClient((request) async {
+        final authorization = request.headers['Authorization'];
+        requests.add(authorization ?? '');
+        if (authorization == 'Bearer owner-a-token') {
+          return _configured(12000, 'EUR');
+        }
+        if (authorization == 'Bearer owner-b-token') {
+          return _configured(3400, 'GBP');
+        }
+        return http.Response(jsonEncode({'detail': 'unauthorized'}), 401);
+      }),
+    );
+    final controller = AuthenticatedPortfolioCapitalController(
+      preferencesService: service,
+    );
+
+    await controller.load();
+    expect(controller.availableCapital, 12000);
+    expect(controller.currency, 'EUR');
+
+    session.establish(
+      accessToken: 'owner-b-token',
+      account: _account(2, 'owner-b@example.com'),
+    );
+    await controller.load();
+
+    expect(session.account?.id, 2);
+    expect(controller.availableCapital, 3400);
+    expect(controller.currency, 'GBP');
+    expect(controller.hasVerifiedCapital, isTrue);
+    expect(controller.hasVerifiedBaseCurrency, isTrue);
+    expect(requests, ['Bearer owner-a-token', 'Bearer owner-b-token']);
+  });
+
   test('Portfolio clears previous owner data when replacement session is rejected',
       () async {
     final session = AuthSession.forTesting(_MemoryTokenStore());
