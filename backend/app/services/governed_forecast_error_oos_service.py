@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from typing import Any
 
@@ -82,6 +82,113 @@ class GovernedForecastErrorOosService:
             policy["automaticTrading"] = False
             result["policy"] = policy
         return result
+
+    def bind_external_challenger(
+        self,
+        *,
+        provider: str,
+        model_name: str,
+        model_version: str,
+        model_config: dict[str, Any],
+        forecast_origin: datetime,
+        input_observed_through: datetime,
+        input_retrieved_at: datetime,
+        horizon_seconds: int,
+        forecast_value: float,
+        baseline_name: str,
+        baseline_value: float,
+        source_provenance: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Bind an external model to research-only PIT/OOS governance."""
+        origin = self._aware(forecast_origin, "forecast_origin")
+        observed = self._aware(input_observed_through, "input_observed_through")
+        retrieved = self._aware(input_retrieved_at, "input_retrieved_at")
+        if observed > retrieved or retrieved > origin:
+            raise ValueError(
+                "External challenger PIT ordering must satisfy observed <= retrieved <= origin."
+            )
+        if isinstance(horizon_seconds, bool) or not isinstance(horizon_seconds, int) or horizon_seconds <= 0:
+            raise ValueError("horizon_seconds must be a positive integer.")
+        forecast = self._finite(forecast_value, "forecast_value")
+        baseline = self._finite(baseline_value, "baseline_value")
+        if not isinstance(model_config, dict) or not model_config:
+            raise ValueError("model_config must be a non-empty mapping.")
+        if not isinstance(source_provenance, list) or not source_provenance:
+            raise ValueError("source_provenance must preserve at least one source.")
+        provenance: list[dict[str, str]] = []
+        for item in source_provenance:
+            if not isinstance(item, dict):
+                raise ValueError("source_provenance contains an invalid entry.")
+            source = self._text(item.get("source"), "source_provenance.source")
+            source_observed = self._iso(item.get("observedAt"), "source_provenance.observedAt")
+            source_retrieved = self._iso(item.get("retrievedAt"), "source_provenance.retrievedAt")
+            if source_observed > source_retrieved or source_retrieved > origin:
+                raise ValueError("External challenger provenance violates the PIT cutoff.")
+            provenance.append({
+                "source": source,
+                "observedAt": source_observed.isoformat(),
+                "retrievedAt": source_retrieved.isoformat(),
+            })
+        return {
+            "module": "external_forecast_challenger_contract",
+            "provider": self._text(provider, "provider"),
+            "modelName": self._text(model_name, "model_name"),
+            "modelVersion": self._text(model_version, "model_version"),
+            "modelConfig": dict(model_config),
+            "forecastOrigin": origin.isoformat(),
+            "inputObservedThrough": observed.isoformat(),
+            "inputRetrievedAt": retrieved.isoformat(),
+            "horizonSeconds": horizon_seconds,
+            "forecastValue": forecast,
+            "baselineName": self._text(baseline_name, "baseline_name"),
+            "baselineValue": baseline,
+            "sourceProvenance": provenance,
+            "evaluationMode": "prospective_oos_paired_with_baseline",
+            "challengerOnly": True,
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "recommendationCandidateReady": False,
+            "isWeightingReady": False,
+            "automaticModelPromotion": False,
+            "automaticWeighting": False,
+            "automaticTrading": False,
+            "policy": {
+                "authority": "research_diagnostic_only",
+                "longitudinalEvidence": "existing_human_governed_oos_gates_required",
+                "baseline": "paired_baseline_required",
+            },
+        }
+
+    @staticmethod
+    def _aware(value: datetime, field: str) -> datetime:
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field} must include timezone.")
+        return value.astimezone(timezone.utc)
+
+    def _iso(self, value: Any, field: str) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be ISO-8601.")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} must be ISO-8601.") from exc
+        return self._aware(parsed, field)
+
+    @staticmethod
+    def _finite(value: Any, field: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} must be finite.")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{field} must be finite.")
+        return number
+
+    @staticmethod
+    def _text(value: Any, field: str) -> str:
+        text = str(value).strip() if value is not None else ""
+        if not text:
+            raise ValueError(f"{field} is required.")
+        return text
 
     @classmethod
     def _validate_measurement_contract(cls, measurement: dict[str, Any]) -> None:
