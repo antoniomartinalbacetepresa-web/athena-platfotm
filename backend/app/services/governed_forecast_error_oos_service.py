@@ -280,6 +280,7 @@ class GovernedForecastErrorOosService:
             raise ValueError("error_records must contain at least one realized outcome.")
 
         identity: tuple[str, str, str, int, str] | None = None
+        canonical_model_config: dict[str, Any] | None = None
         model_abs: list[float] = []
         model_sq: list[float] = []
         model_signed: list[float] = []
@@ -291,6 +292,22 @@ class GovernedForecastErrorOosService:
         for record in error_records:
             if not isinstance(record, dict) or record.get("module") != "external_forecast_challenger_realized_error":
                 raise ValueError("error_records must contain governed realized challenger errors.")
+            for field in (
+                "singleObservationSkillClaimed",
+                "productionLearningEligible",
+                "productionEligible",
+                "isWeightingReady",
+                "automaticModelPromotion",
+                "automaticWeighting",
+                "automaticTrading",
+            ):
+                if record.get(field) is not False:
+                    raise ValueError(f"realized challenger escalated forbidden authority: {field}.")
+            if record.get("longitudinalGateRequired") is not True:
+                raise ValueError("realized challenger must preserve the longitudinal human gate.")
+            model_config = record.get("modelConfig")
+            if not isinstance(model_config, dict) or not model_config:
+                raise ValueError("error.modelConfig must remain a non-empty mapping.")
             provider = self._text(record.get("provider"), "error.provider")
             model_name = self._text(record.get("modelName"), "error.modelName")
             model_version = self._text(record.get("modelVersion"), "error.modelVersion")
@@ -301,8 +318,11 @@ class GovernedForecastErrorOosService:
             current = (provider, model_name, model_version, horizon, baseline_name)
             if identity is None:
                 identity = current
+                canonical_model_config = dict(model_config)
             elif current != identity:
                 raise ValueError("error_records must share provider/model/version/horizon/baseline.")
+            elif model_config != canonical_model_config:
+                raise ValueError("error_records must share the same modelConfig.")
 
             actual = self._finite(record.get("outcomeValue"), "error.outcomeValue")
             forecast = self._finite(record.get("forecastValue"), "error.forecastValue")
