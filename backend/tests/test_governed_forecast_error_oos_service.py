@@ -641,3 +641,76 @@ def test_external_challenger_longitudinal_diagnostic_rejects_tampered_metric(tmp
 
     with pytest.raises(ValueError, match="metric reconciliation"):
         service.summarize_external_challenger_outcomes(error_records=[error])
+
+
+def test_external_challenger_longitudinal_diagnostic_rejects_authority_escalation(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    error = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    error["automaticWeighting"] = True
+
+    with pytest.raises(ValueError, match="forbidden authority: automaticWeighting"):
+        service.summarize_external_challenger_outcomes(error_records=[error])
+
+
+def test_external_challenger_longitudinal_diagnostic_rejects_mixed_model_config(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    first = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    second = dict(first)
+    second["modelConfig"] = {"contextLength": 256}
+
+    with pytest.raises(ValueError, match="same modelConfig"):
+        service.summarize_external_challenger_outcomes(error_records=[first, second])
+
+
+def test_external_challenger_longitudinal_diagnostic_requires_human_gate(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    error = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    error["longitudinalGateRequired"] = False
+
+    with pytest.raises(ValueError, match="longitudinal human gate"):
+        service.summarize_external_challenger_outcomes(error_records=[error])
