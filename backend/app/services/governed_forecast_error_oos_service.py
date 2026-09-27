@@ -186,6 +186,38 @@ class GovernedForecastErrorOosService:
             if challenger.get(field) is not False:
                 raise ValueError(f"external challenger escalated forbidden authority: {field}.")
         origin = self._iso(challenger.get("forecastOrigin"), "challenger.forecastOrigin")
+        input_observed = self._iso(
+            challenger.get("inputObservedThrough"), "challenger.inputObservedThrough"
+        )
+        input_retrieved = self._iso(
+            challenger.get("inputRetrievedAt"), "challenger.inputRetrievedAt"
+        )
+        if input_observed > input_retrieved or input_retrieved > origin:
+            raise ValueError("external challenger input PIT ordering was corrupted after binding.")
+        model_config = challenger.get("modelConfig")
+        if not isinstance(model_config, dict) or not model_config:
+            raise ValueError("challenger.modelConfig must remain a non-empty mapping.")
+        source_provenance = challenger.get("sourceProvenance")
+        if not isinstance(source_provenance, list) or not source_provenance:
+            raise ValueError("challenger.sourceProvenance must preserve at least one source.")
+        provenance: list[dict[str, str]] = []
+        for item in source_provenance:
+            if not isinstance(item, dict):
+                raise ValueError("challenger.sourceProvenance contains an invalid entry.")
+            source = self._text(item.get("source"), "challenger.sourceProvenance.source")
+            source_observed = self._iso(
+                item.get("observedAt"), "challenger.sourceProvenance.observedAt"
+            )
+            source_retrieved = self._iso(
+                item.get("retrievedAt"), "challenger.sourceProvenance.retrievedAt"
+            )
+            if source_observed > source_retrieved or source_retrieved > origin:
+                raise ValueError("external challenger provenance PIT cutoff was corrupted after binding.")
+            provenance.append({
+                "source": source,
+                "observedAt": source_observed.isoformat(),
+                "retrievedAt": source_retrieved.isoformat(),
+            })
         horizon = challenger.get("horizonSeconds")
         if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
             raise ValueError("challenger.horizonSeconds must be a positive integer.")
@@ -206,7 +238,11 @@ class GovernedForecastErrorOosService:
             "provider": self._text(challenger.get("provider"), "challenger.provider"),
             "modelName": self._text(challenger.get("modelName"), "challenger.modelName"),
             "modelVersion": self._text(challenger.get("modelVersion"), "challenger.modelVersion"),
+            "modelConfig": dict(model_config),
             "forecastOrigin": origin.isoformat(),
+            "inputObservedThrough": input_observed.isoformat(),
+            "inputRetrievedAt": input_retrieved.isoformat(),
+            "sourceProvenance": provenance,
             "horizonSeconds": horizon,
             "maturityAt": maturity.isoformat(),
             "outcomeObservedAt": observed.isoformat(),
