@@ -269,6 +269,108 @@ class GovernedForecastErrorOosService:
             "longitudinalGateRequired": True,
         }
 
+
+    def summarize_external_challenger_outcomes(
+        self,
+        *,
+        error_records: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        """Summarize homogeneous realized challenger errors without claiming skill."""
+        if not error_records:
+            raise ValueError("error_records must contain at least one realized outcome.")
+
+        identity: tuple[str, str, str, int, str] | None = None
+        model_abs: list[float] = []
+        model_sq: list[float] = []
+        model_signed: list[float] = []
+        baseline_abs: list[float] = []
+        baseline_sq: list[float] = []
+        baseline_signed: list[float] = []
+        wins = ties = losses = 0
+
+        for record in error_records:
+            if not isinstance(record, dict) or record.get("module") != "external_forecast_challenger_realized_error":
+                raise ValueError("error_records must contain governed realized challenger errors.")
+            provider = self._text(record.get("provider"), "error.provider")
+            model_name = self._text(record.get("modelName"), "error.modelName")
+            model_version = self._text(record.get("modelVersion"), "error.modelVersion")
+            horizon = record.get("horizonSeconds")
+            if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
+                raise ValueError("error.horizonSeconds must be a positive integer.")
+            baseline_name = self._text(record.get("baselineName"), "error.baselineName")
+            current = (provider, model_name, model_version, horizon, baseline_name)
+            if identity is None:
+                identity = current
+            elif current != identity:
+                raise ValueError("error_records must share provider/model/version/horizon/baseline.")
+
+            actual = self._finite(record.get("outcomeValue"), "error.outcomeValue")
+            forecast = self._finite(record.get("forecastValue"), "error.forecastValue")
+            baseline = self._finite(record.get("baselineValue"), "error.baselineValue")
+            signed = forecast - actual
+            baseline_err = baseline - actual
+            expected = {
+                "signedError": signed,
+                "absoluteError": abs(signed),
+                "squaredError": signed * signed,
+                "baselineSignedError": baseline_err,
+                "baselineAbsoluteError": abs(baseline_err),
+                "baselineSquaredError": baseline_err * baseline_err,
+                "absoluteErrorDeltaVsBaseline": abs(signed) - abs(baseline_err),
+            }
+            for field, value in expected.items():
+                stored = self._finite(record.get(field), f"error.{field}")
+                if not math.isclose(stored, value, rel_tol=1e-12, abs_tol=1e-12):
+                    raise ValueError(f"error record failed metric reconciliation: {field}.")
+
+            model_signed.append(signed)
+            model_abs.append(abs(signed))
+            model_sq.append(signed * signed)
+            baseline_signed.append(baseline_err)
+            baseline_abs.append(abs(baseline_err))
+            baseline_sq.append(baseline_err * baseline_err)
+            if abs(signed) < abs(baseline_err):
+                wins += 1
+            elif math.isclose(abs(signed), abs(baseline_err), rel_tol=1e-12, abs_tol=1e-12):
+                ties += 1
+            else:
+                losses += 1
+
+        assert identity is not None
+        count = len(model_abs)
+        mae = sum(model_abs) / count
+        baseline_mae = sum(baseline_abs) / count
+        return {
+            "module": "external_forecast_challenger_longitudinal_diagnostic",
+            "provider": identity[0],
+            "modelName": identity[1],
+            "modelVersion": identity[2],
+            "horizonSeconds": identity[3],
+            "baselineName": identity[4],
+            "observationCount": count,
+            "meanAbsoluteError": mae,
+            "rootMeanSquaredError": math.sqrt(sum(model_sq) / count),
+            "meanSignedError": sum(model_signed) / count,
+            "baselineMeanAbsoluteError": baseline_mae,
+            "baselineRootMeanSquaredError": math.sqrt(sum(baseline_sq) / count),
+            "baselineMeanSignedError": sum(baseline_signed) / count,
+            "meanAbsoluteErrorDeltaVsBaseline": mae - baseline_mae,
+            "wins": wins,
+            "ties": ties,
+            "losses": losses,
+            "winRate": wins / count,
+            "skillClaimed": False,
+            "calibrationClaimed": False,
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "automaticModelPromotion": False,
+            "automaticWeighting": False,
+            "automaticTrading": False,
+            "longitudinalGateRequired": True,
+        }
+
+
     @staticmethod
     def _aware(value: datetime, field: str) -> datetime:
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
