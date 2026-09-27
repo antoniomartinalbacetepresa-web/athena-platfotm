@@ -288,6 +288,7 @@ class GovernedForecastErrorOosService:
         baseline_sq: list[float] = []
         baseline_signed: list[float] = []
         wins = ties = losses = 0
+        forecast_origins: set[str] = set()
 
         for record in error_records:
             if not isinstance(record, dict) or record.get("module") != "external_forecast_challenger_realized_error":
@@ -308,6 +309,11 @@ class GovernedForecastErrorOosService:
             model_config = record.get("modelConfig")
             if not isinstance(model_config, dict) or not model_config:
                 raise ValueError("error.modelConfig must remain a non-empty mapping.")
+            forecast_origin = self._iso(record.get("forecastOrigin"), "error.forecastOrigin")
+            forecast_origin_key = forecast_origin.isoformat()
+            if forecast_origin_key in forecast_origins:
+                raise ValueError("error_records must contain distinct forecast origins.")
+            forecast_origins.add(forecast_origin_key)
             provider = self._text(record.get("provider"), "error.provider")
             model_name = self._text(record.get("modelName"), "error.modelName")
             model_version = self._text(record.get("modelVersion"), "error.modelVersion")
@@ -368,6 +374,7 @@ class GovernedForecastErrorOosService:
             "horizonSeconds": identity[3],
             "baselineName": identity[4],
             "observationCount": count,
+            "distinctForecastOriginCount": len(forecast_origins),
             "meanAbsoluteError": mae,
             "rootMeanSquaredError": math.sqrt(sum(model_sq) / count),
             "meanSignedError": sum(model_signed) / count,
