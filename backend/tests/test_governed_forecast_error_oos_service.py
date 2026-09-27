@@ -544,3 +544,100 @@ def test_external_challenger_realized_error_rejects_missing_model_config_after_b
             outcome_observed_at=observed,
             outcome_retrieved_at=observed + timedelta(minutes=1),
         )
+
+
+def test_external_challenger_longitudinal_diagnostic_reconciles_paired_errors(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    first_observed = origin + timedelta(days=1)
+    first = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=first_observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=first_observed,
+        outcome_retrieved_at=first_observed + timedelta(minutes=1),
+    )
+    second_challenger = dict(challenger)
+    second_challenger["forecastValue"] = 98.0
+    second_challenger["baselineValue"] = 100.0
+    second_observed = origin + timedelta(days=2)
+    second = service.measure_external_challenger_outcome(
+        challenger=second_challenger,
+        as_of=second_observed + timedelta(minutes=2),
+        outcome_value=100.0,
+        outcome_observed_at=second_observed,
+        outcome_retrieved_at=second_observed + timedelta(minutes=1),
+    )
+
+    result = service.summarize_external_challenger_outcomes(
+        error_records=[first, second]
+    )
+
+    assert result["observationCount"] == 2
+    assert result["meanAbsoluteError"] == 1.5
+    assert result["baselineMeanAbsoluteError"] == 2.0
+    assert result["meanAbsoluteErrorDeltaVsBaseline"] == -0.5
+    assert result["wins"] == 1
+    assert result["ties"] == 0
+    assert result["losses"] == 1
+    assert result["winRate"] == 0.5
+    assert result["skillClaimed"] is False
+    assert result["calibrationClaimed"] is False
+    assert result["productionEligible"] is False
+    assert result["automaticModelPromotion"] is False
+    assert result["automaticWeighting"] is False
+    assert result["automaticTrading"] is False
+
+
+def test_external_challenger_longitudinal_diagnostic_rejects_mixed_horizons(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    first = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    second = dict(first)
+    second["horizonSeconds"] = 172800
+
+    with pytest.raises(ValueError, match="share provider/model/version/horizon/baseline"):
+        service.summarize_external_challenger_outcomes(error_records=[first, second])
+
+
+def test_external_challenger_longitudinal_diagnostic_rejects_tampered_metric(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    error = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    error["absoluteError"] = 999.0
+
+    with pytest.raises(ValueError, match="metric reconciliation"):
+        service.summarize_external_challenger_outcomes(error_records=[error])
