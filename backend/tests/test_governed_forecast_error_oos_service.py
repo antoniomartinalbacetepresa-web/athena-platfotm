@@ -451,3 +451,96 @@ def test_external_challenger_realized_error_rejects_authority_escalation(tmp_pat
             outcome_observed_at=observed,
             outcome_retrieved_at=observed + timedelta(minutes=1),
         )
+
+
+def test_external_challenger_realized_error_preserves_revalidated_pit_metadata(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+
+    result = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+
+    assert result["modelConfig"] == {"contextLength": 512}
+    assert result["inputObservedThrough"] == (origin - timedelta(hours=2)).isoformat()
+    assert result["inputRetrievedAt"] == (origin - timedelta(hours=1)).isoformat()
+    assert result["sourceProvenance"] == challenger["sourceProvenance"]
+
+
+def test_external_challenger_realized_error_rejects_corrupted_input_pit_after_binding(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    challenger["inputRetrievedAt"] = (origin + timedelta(seconds=1)).isoformat()
+    observed = origin + timedelta(days=1)
+
+    with pytest.raises(ValueError, match="input PIT ordering was corrupted"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
+
+
+def test_external_challenger_realized_error_rejects_corrupted_provenance_after_binding(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    challenger["sourceProvenance"][0]["retrievedAt"] = (origin + timedelta(seconds=1)).isoformat()
+    observed = origin + timedelta(days=1)
+
+    with pytest.raises(ValueError, match="provenance PIT cutoff was corrupted"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
+
+
+def test_external_challenger_realized_error_rejects_missing_model_config_after_binding(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    challenger["modelConfig"] = {}
+    observed = origin + timedelta(days=1)
+
+    with pytest.raises(ValueError, match="modelConfig"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
