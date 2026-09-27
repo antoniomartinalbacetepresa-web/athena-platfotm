@@ -562,10 +562,11 @@ def test_external_challenger_longitudinal_diagnostic_reconciles_paired_errors(tm
         outcome_observed_at=first_observed,
         outcome_retrieved_at=first_observed + timedelta(minutes=1),
     )
-    second_challenger = dict(challenger)
+    second_origin = origin + timedelta(days=1)
+    second_challenger = _external_challenger(service, second_origin)
     second_challenger["forecastValue"] = 98.0
     second_challenger["baselineValue"] = 100.0
-    second_observed = origin + timedelta(days=2)
+    second_observed = second_origin + timedelta(days=1)
     second = service.measure_external_challenger_outcome(
         challenger=second_challenger,
         as_of=second_observed + timedelta(minutes=2),
@@ -579,6 +580,7 @@ def test_external_challenger_longitudinal_diagnostic_reconciles_paired_errors(tm
     )
 
     assert result["observationCount"] == 2
+    assert result["distinctForecastOriginCount"] == 2
     assert result["meanAbsoluteError"] == 1.5
     assert result["baselineMeanAbsoluteError"] == 2.0
     assert result["meanAbsoluteErrorDeltaVsBaseline"] == -0.5
@@ -714,3 +716,28 @@ def test_external_challenger_longitudinal_diagnostic_requires_human_gate(tmp_pat
 
     with pytest.raises(ValueError, match="longitudinal human gate"):
         service.summarize_external_challenger_outcomes(error_records=[error])
+
+
+def test_external_challenger_longitudinal_diagnostic_rejects_duplicate_forecast_origin(tmp_path) -> None:
+    import pytest
+
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    error = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+
+    with pytest.raises(ValueError, match="distinct forecast origins"):
+        service.summarize_external_challenger_outcomes(
+            error_records=[error, dict(error)]
+        )
