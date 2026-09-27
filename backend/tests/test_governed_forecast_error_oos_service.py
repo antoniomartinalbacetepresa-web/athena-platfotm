@@ -615,6 +615,7 @@ def test_external_challenger_longitudinal_diagnostic_rejects_mixed_horizons(tmp_
         outcome_retrieved_at=observed + timedelta(minutes=1),
     )
     second = dict(first)
+    second["forecastOrigin"] = (origin + timedelta(hours=1)).isoformat()
     second["horizonSeconds"] = 172800
 
     with pytest.raises(ValueError, match="share provider/model/version/horizon/baseline"):
@@ -688,6 +689,7 @@ def test_external_challenger_longitudinal_diagnostic_rejects_mixed_model_config(
         outcome_retrieved_at=observed + timedelta(minutes=1),
     )
     second = dict(first)
+    second["forecastOrigin"] = (origin + timedelta(hours=1)).isoformat()
     second["modelConfig"] = {"contextLength": 256}
 
     with pytest.raises(ValueError, match="same modelConfig"):
