@@ -87,7 +87,7 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Semantics(
+                    Semantics(
                       header: true,
                       child: Text(
                         'ATHENA TYCHE',
