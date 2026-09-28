@@ -100,7 +100,7 @@ class _RegisterPageState extends State<RegisterPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Semantics(
+                    Semantics(
                       header: true,
                       child: Text(
                         'Cuenta ATHENA TYCHE',
