@@ -87,13 +87,18 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'ATHENA TYCHE',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AthenaColors.primary, fontSize: 22, fontWeight: FontWeight.w800),
+                    const Semantics(
+                      header: true,
+                      child: Text(
+                        'ATHENA TYCHE',
+                        key: Key('login-heading'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AthenaColors.primary, fontSize: 22, fontWeight: FontWeight.w800),
+                      ),
                     ),
                     const SizedBox(height: 24),
                     TextField(
+                      key: const Key('login-email'),
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
@@ -102,6 +107,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 14),
                     TextField(
+                      key: const Key('login-password'),
                       controller: _passwordController,
                       obscureText: true,
                       textInputAction: TextInputAction.done,
@@ -122,6 +128,7 @@ class _LoginPageState extends State<LoginPage> {
                     SizedBox(
                       height: 50,
                       child: ElevatedButton(
+                        key: const Key('login-submit'),
                         onPressed: _loading ? null : _login,
                         child: _loading
                             ? Semantics(
@@ -138,11 +145,13 @@ class _LoginPageState extends State<LoginPage> {
                       child: const Text('¿Has olvidado tu contraseña?'),
                     ),
                     TextButton(
+                      key: const Key('login-register'),
                       onPressed: _loading ? null : () => Navigator.pushNamed(context, AppRoutes.register),
                       child: const Text('Crear una cuenta'),
                     ),
                     const SizedBox(height: 4),
                     TextButton(
+                      key: const Key('login-guest'),
                       onPressed: _loading
                           ? null
                           : () => Navigator.pushNamedAndRemoveUntil(context, AppRoutes.dashboard, (route) => false),
