@@ -27,8 +27,13 @@ void main() {
     expect(password.autofillHints, contains(AutofillHints.password));
     expect(password.obscureText, isTrue);
 
-    final headingSemantics = tester.getSemantics(find.byKey(const Key('login-heading')));
-    expect(headingSemantics.flagsCollection.isHeader, isTrue);
+    final headingSemantics = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.byKey(const Key('login-heading')),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(headingSemantics.properties.header, isTrue);
 
     semantics.dispose();
   });
@@ -66,9 +71,13 @@ void main() {
     expect(confirmation.autofillHints, contains(AutofillHints.newPassword));
     expect(confirmation.obscureText, isTrue);
 
-    final headingSemantics =
-        tester.getSemantics(find.byKey(const Key('register-heading')));
-    expect(headingSemantics.flagsCollection.isHeader, isTrue);
+    final headingSemantics = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.byKey(const Key('register-heading')),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(headingSemantics.properties.header, isTrue);
 
     semantics.dispose();
   });
