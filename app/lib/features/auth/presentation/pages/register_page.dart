@@ -100,13 +100,17 @@ class _RegisterPageState extends State<RegisterPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Cuenta ATHENA TYCHE',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AthenaColors.primary,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
+                    const Semantics(
+                      header: true,
+                      child: Text(
+                        'Cuenta ATHENA TYCHE',
+                        key: Key('register-heading'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AthenaColors.primary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -121,6 +125,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                     const SizedBox(height: 22),
                     TextField(
+                      key: const Key('register-name'),
                       controller: _nameController,
                       textInputAction: TextInputAction.next,
                       autofillHints: const [AutofillHints.name],
@@ -130,6 +135,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                     const SizedBox(height: 14),
                     TextField(
+                      key: const Key('register-email'),
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
@@ -138,6 +144,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                     const SizedBox(height: 14),
                     TextField(
+                      key: const Key('register-password'),
                       controller: _passwordController,
                       obscureText: true,
                       textInputAction: TextInputAction.next,
@@ -149,9 +156,11 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                     const SizedBox(height: 14),
                     TextField(
+                      key: const Key('register-confirm-password'),
                       controller: _confirmController,
                       obscureText: true,
                       textInputAction: TextInputAction.done,
+                      autofillHints: const [AutofillHints.newPassword],
                       onSubmitted: (_) => _register(),
                       decoration: const InputDecoration(
                         labelText: 'Repetir contraseña',
@@ -170,6 +179,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     SizedBox(
                       height: 50,
                       child: ElevatedButton(
+                        key: const Key('register-submit'),
                         onPressed: _loading ? null : _register,
                         child: _loading
                             ? Semantics(
@@ -187,6 +197,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                     const SizedBox(height: 10),
                     TextButton(
+                      key: const Key('register-login'),
                       onPressed: _loading ? null : () => Navigator.pop(context),
                       child: const Text('Ya tengo una cuenta'),
                     ),
