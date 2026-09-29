@@ -13,16 +13,23 @@ class AthenaSynthesisPanel extends StatelessWidget {
       animation: controller,
       builder: (context, _) {
         if (controller.isLoading) {
-          return const Center(
-            key: Key('athena-synthesis-loading'),
-            child: CircularProgressIndicator(),
+          return Center(
+            key: const Key('athena-synthesis-loading'),
+            child: Semantics(
+              liveRegion: true,
+              label: 'Cargando síntesis ATHENA verificada',
+              child: const ExcludeSemantics(child: CircularProgressIndicator()),
+            ),
           );
         }
         final error = controller.error;
         if (error != null) {
           return Center(
             key: const Key('athena-synthesis-error'),
-            child: Column(
+            child: Semantics(
+              liveRegion: true,
+              label: 'Error: no se pudo verificar la síntesis ATHENA.',
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text('No se pudo verificar la síntesis ATHENA.'),
@@ -33,6 +40,7 @@ class AthenaSynthesisPanel extends StatelessWidget {
                   child: const Text('Reintentar'),
                 ),
               ],
+              ),
             ),
           );
         }
@@ -48,7 +56,13 @@ class AthenaSynthesisPanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('ATHENA AI', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Semantics(
+                header: true,
+                child: const Text(
+                  'ATHENA AI',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
               const SizedBox(height: 12),
               Text(synthesis.summary, key: const Key('athena-synthesis-summary')),
               const SizedBox(height: 16),
@@ -75,9 +89,16 @@ class AthenaSynthesisPanel extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Síntesis informativa: no ejecuta operaciones ni modifica automáticamente recomendaciones.',
-                key: Key('athena-synthesis-advisory-notice'),
+              Semantics(
+                container: true,
+                label:
+                    'Síntesis informativa basada en evidencia verificada. Expone incertidumbres; no garantiza resultados, no ejecuta operaciones y no modifica automáticamente recomendaciones.',
+                child: const ExcludeSemantics(
+                  child: Text(
+                    'Síntesis informativa: expone incertidumbres y no garantiza resultados; no ejecuta operaciones ni modifica automáticamente recomendaciones.',
+                    key: Key('athena-synthesis-advisory-notice'),
+                  ),
+                ),
               ),
             ],
           ),
