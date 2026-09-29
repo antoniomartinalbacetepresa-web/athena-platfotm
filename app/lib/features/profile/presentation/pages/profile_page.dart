@@ -437,12 +437,15 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Preferencias protegidas',
-            style: TextStyle(
-              color: AthenaColors.text,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
+          Semantics(
+            header: true,
+            child: const Text(
+              'Preferencias protegidas',
+              style: TextStyle(
+                color: AthenaColors.text,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           const SizedBox(height: 6),
@@ -451,10 +454,16 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
             style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Estas preferencias adaptan la presentación; no autorizan operaciones ni modifican automáticamente el scoring o el weighting canónico.',
-            key: Key('personalization-safety-note'),
-            style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
+          Semantics(
+            container: true,
+            label: 'Personalización protegida de presentación. No autoriza operaciones, no modifica automáticamente el scoring y no cambia el weighting canónico.',
+            child: const ExcludeSemantics(
+              child: Text(
+                'Estas preferencias adaptan la presentación; no autorizan operaciones ni modifican automáticamente el scoring o el weighting canónico.',
+                key: Key('personalization-safety-note'),
+                style: TextStyle(color: AthenaColors.textSecondary, height: 1.35),
+              ),
+            ),
           ),
           const SizedBox(height: 14),
           if (widget.error != null) ...[
