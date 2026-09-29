@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:app/core/routing/app_routes.dart';
+import 'package:app/features/dashboard/presentation/widgets/dashboard_header.dart';
 import 'package:app/features/market/controllers/global_market_context_controller.dart';
 import 'package:app/features/market/models/global_market_context.dart';
 import 'package:app/features/market/models/market_region.dart';
@@ -117,6 +119,46 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
+  });
+
+  testWidgets('Dashboard to Market reaches the real controlled informational surface', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final controlled = _ControlledMarketService([
+      _context('Contexto E2E verificado'),
+    ]);
+    final controller = GlobalMarketContextController(service: controlled);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: const Scaffold(body: DashboardHeader()),
+        onGenerateRoute: (settings) {
+          if (settings.name == AppRoutes.market) {
+            return MaterialPageRoute<void>(
+              settings: settings,
+              builder: (_) => MarketPage(controller: controller),
+            );
+          }
+          return null;
+        },
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Mercado'));
+    await tester.pumpAndSettle();
+
+    expect(
+      ModalRoute.of(tester.element(find.text('MERCADO')))!.settings.name,
+      AppRoutes.market,
+    );
+    expect(find.text('Contexto E2E verificado'), findsOneWidget);
+    expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+    expect(find.textContaining('no constituye una recomendación'), findsOneWidget);
+    expect(controlled.calls, 1);
   });
 
   testWidgets('Market page hides stale snapshot while refresh is pending', (tester) async {
