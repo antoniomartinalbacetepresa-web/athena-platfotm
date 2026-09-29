@@ -177,6 +177,19 @@ void main() {
 
     expect(find.text('Preferencias protegidas'), findsOneWidget);
     expect(find.byKey(const Key('personalization-safety-note')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Personalización protegida de presentación. No autoriza operaciones, no modifica automáticamente el scoring y no cambia el weighting canónico.',
+      ),
+      findsOneWidget,
+    );
+    final preferencesHeading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text('Preferencias protegidas'),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(preferencesHeading.properties.header, isTrue);
     expect(find.text('Preferencias cargadas desde almacenamiento cifrado.'),
         findsOneWidget);
 
