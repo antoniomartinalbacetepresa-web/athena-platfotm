@@ -97,6 +97,28 @@ Future<GlobalMarketContext> _context(String summary) async {
 }
 
 void main() {
+  testWidgets('Market page exposes the informational contract before data resolves', (tester) async {
+    final pending = Completer<GlobalMarketContext>();
+    final service = _ControlledMarketService([pending.future]);
+    final controller = GlobalMarketContextController(service: service);
+
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
+    await tester.pump();
+
+    expect(find.text('MERCADO'), findsOneWidget);
+    expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Contexto de mercado informativo. Los datos pueden cambiar y no constituyen una recomendación ni ejecutan operaciones.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   testWidgets('Market page hides stale snapshot while refresh is pending', (tester) async {
     final pending = Completer<GlobalMarketContext>();
     final initial = await _context('Snapshot inicial');
