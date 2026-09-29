@@ -49,6 +49,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('pesos'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Cartera personal informativa y protegida. No ejecuta órdenes, no modifica recomendaciones y no cambia pesos automáticamente.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.pumpWidget(const SizedBox());
   });
