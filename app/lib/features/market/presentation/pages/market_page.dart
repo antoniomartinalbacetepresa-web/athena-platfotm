@@ -17,12 +17,33 @@ class MarketPage extends StatelessWidget {
         backgroundColor: AthenaColors.background,
         foregroundColor: AthenaColors.text,
         elevation: 0,
-        title: const Text('MERCADO'),
+        title: Semantics(
+          header: true,
+          child: const Text('MERCADO'),
+        ),
       ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: GlobalMarketPanel(controller: controller),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Semantics(
+                container: true,
+                label:
+                    'Contexto de mercado informativo. Los datos pueden cambiar y no constituyen una recomendación ni ejecutan operaciones.',
+                child: const ExcludeSemantics(
+                  child: Text(
+                    'Contexto informativo: los datos pueden cambiar; no constituye una recomendación ni ejecuta operaciones.',
+                    key: Key('market-information-boundary'),
+                    style: TextStyle(color: AthenaColors.textSecondary),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(child: GlobalMarketPanel(controller: controller)),
+            ],
+          ),
         ),
       ),
     );
