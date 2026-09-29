@@ -44,6 +44,18 @@ void main() {
     expect(find.text('Resumen canónico'), findsOneWidget);
     expect(find.text('News verificada'), findsOneWidget);
     expect(find.text('Investors verificado'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Provenance de la síntesis ATHENA: News verificada; Investors verificado; 2 evidencias vinculadas.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel(
+        'Síntesis informativa basada en evidencia verificada. Expone incertidumbres; no garantiza resultados, no ejecuta operaciones y no modifica automáticamente recomendaciones.',
+      ),
+      findsOneWidget,
+    );
 
     dependencies.dispose();
   });
