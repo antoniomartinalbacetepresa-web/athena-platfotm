@@ -99,8 +99,10 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
         children: [
           Row(
             children: [
-              const Expanded(
-                child: Text(
+              Expanded(
+                child: Semantics(
+                  header: true,
+                  child: const Text(
                   'ACTIVIDAD DE INVERSORES RELEVANTES',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -109,6 +111,7 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
+                ),
                 ),
               ),
               IconButton(
@@ -122,6 +125,21 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 4),
+          const Semantics(
+            container: true,
+            label:
+                'Evidencia institucional point-in-time de SEC 13F. Es informativa y separada: no altera el score ATHENA, no genera recomendaciones y no ejecuta órdenes.',
+            child: ExcludeSemantics(
+              child: Text(
+                'Evidencia SEC 13F separada · sin autoridad sobre score, recomendaciones u órdenes.',
+                style: TextStyle(
+                  color: AthenaColors.textSecondary,
+                  fontSize: 10,
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 8),
           Expanded(
