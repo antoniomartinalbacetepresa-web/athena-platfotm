@@ -79,6 +79,19 @@ void main() {
     expect(find.text('Investors verificado'), findsOneWidget);
     expect(find.text('2 evidencias'), findsOneWidget);
     expect(find.byKey(const Key('athena-synthesis-advisory-notice')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Síntesis informativa basada en evidencia verificada. Expone incertidumbres; no garantiza resultados, no ejecuta operaciones y no modifica automáticamente recomendaciones.',
+      ),
+      findsOneWidget,
+    );
+    final heading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text('ATHENA AI'),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(heading.properties.header, isTrue);
   });
 
   testWidgets('un fallo de verificación oculta contenido y ofrece retry', (tester) async {
