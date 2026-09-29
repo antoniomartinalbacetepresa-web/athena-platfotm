@@ -110,6 +110,20 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
     await tester.pumpAndSettle();
     expect(find.text('Snapshot inicial'), findsOneWidget);
+    expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Contexto de mercado informativo. Los datos pueden cambiar y no constituyen una recomendación ni ejecutan operaciones.',
+      ),
+      findsOneWidget,
+    );
+    final heading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text('MERCADO'),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(heading.properties.header, isTrue);
 
     await tester.tap(find.byTooltip('Actualizar mercado'));
     await tester.pump();
