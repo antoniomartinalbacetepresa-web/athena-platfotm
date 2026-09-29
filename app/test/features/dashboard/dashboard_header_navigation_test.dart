@@ -1,6 +1,7 @@
 import 'package:app/core/routing/app_routes.dart';
 import 'package:app/features/dashboard/presentation/widgets/dashboard_header.dart';
 import 'package:app/features/news/presentation/news_synthesis_controller.dart';
+import 'package:app/features/market/presentation/pages/market_page.dart';
 import 'package:app/features/news/presentation/pages/news_page.dart';
 import 'package:app/features/news/services/athena_backend_news_synthesis_service.dart';
 import 'package:http/http.dart' as http;
@@ -123,6 +124,41 @@ void main() {
       await tester.pumpAndSettle();
     }
   });
+
+  testWidgets(
+    'dashboard to Market reaches the real informational surface',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: const Scaffold(body: DashboardHeader()),
+          onGenerateRoute: (settings) {
+            if (settings.name == AppRoutes.market) {
+              return MaterialPageRoute<void>(
+                settings: settings,
+                builder: (_) => const MarketPage(),
+              );
+            }
+            return null;
+          },
+        ),
+      );
+
+      await tester.tap(find.byTooltip('Mercado'));
+      await tester.pump();
+
+      expect(
+        ModalRoute.of(tester.element(find.text('MERCADO')))!.settings.name,
+        AppRoutes.market,
+      );
+      expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+      expect(find.textContaining('no constituye una recomendación'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'dashboard to News is a real cross-surface route with fail-closed synthesis',
