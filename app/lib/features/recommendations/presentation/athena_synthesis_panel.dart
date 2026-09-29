@@ -78,15 +78,22 @@ class AthenaSynthesisPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Wrap(
-                key: const Key('athena-synthesis-provenance'),
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (synthesis.provenance.hasNews) const Chip(label: Text('News verificada')),
-                  if (synthesis.provenance.hasInvestors) const Chip(label: Text('Investors verificado')),
-                  Chip(label: Text('${synthesis.evidenceIds.length} evidencias')),
-                ],
+              Semantics(
+                container: true,
+                label:
+                    'Provenance de la síntesis ATHENA: ${synthesis.provenance.hasNews ? 'News verificada; ' : ''}${synthesis.provenance.hasInvestors ? 'Investors verificado; ' : ''}${synthesis.evidenceIds.length} evidencias vinculadas.',
+                child: ExcludeSemantics(
+                  child: Wrap(
+                    key: const Key('athena-synthesis-provenance'),
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (synthesis.provenance.hasNews) const Chip(label: Text('News verificada')),
+                      if (synthesis.provenance.hasInvestors) const Chip(label: Text('Investors verificado')),
+                      Chip(label: Text('${synthesis.evidenceIds.length} evidencias')),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               Semantics(
