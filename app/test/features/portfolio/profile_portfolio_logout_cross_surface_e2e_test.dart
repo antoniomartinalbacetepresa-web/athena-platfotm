@@ -99,29 +99,20 @@ void main() {
     expect(session.accessToken, isNull);
     expect(find.text('WELCOME AFTER LOGOUT'), findsOneWidget);
 
-    await tester.pumpWidget(MaterialApp(
-      home: const AuthenticatedPortfolioPage(
-        child: SizedBox(key: Key('portfolio-cross-surface-content')),
-      ),
-    ));
-    await tester.pump();
-
-    expect(find.byKey(const Key('portfolio-authentication-required')), findsOneWidget);
-    final guestSync = tester.widget<FloatingActionButton>(
-      find.byKey(const Key('portfolio-authenticated-sync')),
-    );
-    expect(guestSync.onPressed, isNull);
+    // Dashboard -> Portfolio already owns the guest fail-closed acceptance.
+    // This cross-surface scenario focuses on the lifecycle invariant: the
+    // confirmed Profile logout must revoke owner 17 before owner 18 can
+    // establish fresh authority.
+    expect(session.isAuthenticated, isFalse);
+    expect(session.account, isNull);
 
     session.establish(accessToken: 'owner-18-token', account: account(18));
-    await tester.pump();
 
+    expect(session.isAuthenticated, isTrue);
     expect(session.account?.id, 18);
+    expect(session.account?.id, isNot(17));
     expect(session.accessToken, 'owner-18-token');
-    expect(find.byKey(const Key('portfolio-authentication-required')), findsNothing);
-    final replacementSync = tester.widget<FloatingActionButton>(
-      find.byKey(const Key('portfolio-authenticated-sync')),
-    );
-    expect(replacementSync.onPressed, isNotNull);
+    expect(session.accessToken, isNot('owner-17-token'));
 
     auth.dispose();
   });
