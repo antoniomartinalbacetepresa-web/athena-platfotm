@@ -92,6 +92,33 @@ void main() {
     expect(find.textContaining('AAPL'), findsNothing);
   });
 
+  testWidgets('exposes accessible PIT and no-authority boundary', (tester) async {
+    final handle = tester.ensureSemantics();
+    addTearDown(handle.dispose);
+
+    await tester.pumpWidget(
+      host(
+        RelevantInvestorsPanel(
+          configuredCiks: const ['123456'],
+          loader: (cik) async => activityFor(cik),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.bySemanticsLabel(
+        'Evidencia institucional point-in-time de SEC 13F. Es informativa y separada: no altera el score ATHENA, no genera recomendaciones y no ejecuta órdenes.',
+      ),
+      findsOneWidget,
+    );
+
+    final heading = tester.getSemantics(
+      find.text('ACTIVIDAD DE INVERSORES RELEVANTES'),
+    );
+    expect(heading.flagsCollection.isHeader, isTrue);
+  });
+
   testWidgets('deduplicates configured CIKs before loading', (tester) async {
     var calls = 0;
     await tester.pumpWidget(
