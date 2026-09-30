@@ -7,10 +7,9 @@ import '../../../auth/services/athena_auth_service.dart';
 import '../../../auth/services/auth_session.dart';
 
 class WelcomePage extends StatefulWidget {
-  const WelcomePage({super.key, AuthSession? authSession})
-      : _authSession = authSession;
+  const WelcomePage({super.key, this.authSession});
 
-  final AuthSession? _authSession;
+  final AuthSession? authSession;
 
   @override
   State<WelcomePage> createState() => _WelcomePageState();
@@ -34,7 +33,7 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 
   Future<void> _restoreSession() async {
-    final result = await (widget._authSession ?? AuthSession.instance).restore(
+    final result = await (widget.authSession ?? AuthSession.instance).restore(
       validateToken: _authService.getMe,
       shouldDiscardToken: (error) => error is AuthSessionRejectedException,
     );
