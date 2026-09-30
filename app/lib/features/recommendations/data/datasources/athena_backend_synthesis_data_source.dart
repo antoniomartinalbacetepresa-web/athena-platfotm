@@ -6,11 +6,13 @@ class AthenaSynthesisProvenance {
   final String inputFingerprint;
   final bool hasNews;
   final bool hasInvestors;
+  final List<String> sourceRefs;
 
   const AthenaSynthesisProvenance({
     required this.inputFingerprint,
     required this.hasNews,
     required this.hasInvestors,
+    required this.sourceRefs,
   });
 }
 
@@ -109,8 +111,10 @@ class AthenaBackendSynthesisDataSource {
       throw const FormatException('ATHENA synthesis contiene evidenceIds duplicados.');
     }
     final uncertainties = _strings(synthesis['uncertainties'], 'uncertainties');
-    final newsEvidenceIds = _artifactEvidenceIds(provenance['news'], 'news');
-    final investorEvidenceIds = _artifactEvidenceIds(provenance['investors'], 'investors');
+    final newsBindings = _artifactBindings(provenance['news'], 'news');
+    final investorBindings = _artifactBindings(provenance['investors'], 'investors');
+    final newsEvidenceIds = newsBindings.evidenceIds;
+    final investorEvidenceIds = investorBindings.evidenceIds;
     final boundEvidenceIds = <String>{...newsEvidenceIds, ...investorEvidenceIds};
     if (boundEvidenceIds.length != newsEvidenceIds.length + investorEvidenceIds.length) {
       throw const FormatException('ATHENA provenance repite evidenceIds entre familias.');
@@ -132,12 +136,16 @@ class AthenaBackendSynthesisDataSource {
         inputFingerprint: inputFingerprint,
         hasNews: newsEvidenceIds.isNotEmpty,
         hasInvestors: investorEvidenceIds.isNotEmpty,
+        sourceRefs: List.unmodifiable({
+          ...newsBindings.sourceRefs,
+          ...investorBindings.sourceRefs,
+        }),
       ),
     );
   }
 
-  Set<String> _artifactEvidenceIds(dynamic value, String field) {
-    if (value == null) return const <String>{};
+  _ArtifactBindings _artifactBindings(dynamic value, String field) {
+    if (value == null) return const _ArtifactBindings(<String>{}, <String>{});
     if (value is! Map) throw FormatException('provenance.$field debe ser un objeto.');
     final artifact = Map<String, dynamic>.from(value);
     final hash = _string(artifact['artifactHash'], 'provenance.$field.artifactHash').toLowerCase();
@@ -152,17 +160,27 @@ class AthenaBackendSynthesisDataSource {
       throw FormatException('provenance.$field carece de assessmentBindings.');
     }
     final seen = <String>{};
+    final sourceRefs = <String>{};
     for (final raw in bindings) {
       if (raw is! Map) throw FormatException('provenance.$field contiene un binding inválido.');
       final binding = Map<String, dynamic>.from(raw);
       final evidenceId = _string(binding['evidenceId'], 'provenance.$field.evidenceId');
       final fingerprint = _string(binding['assessmentFingerprint'], 'provenance.$field.assessmentFingerprint').toLowerCase();
       final sourceRef = _string(binding['sourceRef'], 'provenance.$field.sourceRef');
-      if (!seen.add(evidenceId) || !_sha256(fingerprint) || !sourceRef.startsWith('https://')) {
+      final sourceUri = Uri.tryParse(sourceRef);
+      if (!seen.add(evidenceId) ||
+          !_sha256(fingerprint) ||
+          sourceUri == null ||
+          sourceUri.scheme != 'https' ||
+          sourceUri.host.isEmpty) {
         throw FormatException('provenance.$field contiene un binding no verificable.');
       }
+      sourceRefs.add(sourceUri.toString());
     }
-    return Set.unmodifiable(seen);
+    return _ArtifactBindings(
+      Set.unmodifiable(seen),
+      Set.unmodifiable(sourceRefs),
+    );
   }
 
   List<String> _strings(dynamic value, String field) {
@@ -184,4 +202,11 @@ class AthenaBackendSynthesisDataSource {
   bool _sha256(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
 
   void dispose() => client.close();
+}
+
+class _ArtifactBindings {
+  final Set<String> evidenceIds;
+  final Set<String> sourceRefs;
+
+  const _ArtifactBindings(this.evidenceIds, this.sourceRefs);
 }
