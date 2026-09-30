@@ -99,20 +99,50 @@ void main() {
     expect(session.accessToken, isNull);
     expect(find.text('WELCOME AFTER LOGOUT'), findsOneWidget);
 
-    // Dashboard -> Portfolio already owns the guest fail-closed acceptance.
-    // This cross-surface scenario focuses on the lifecycle invariant: the
-    // confirmed Profile logout must revoke owner 17 before owner 18 can
-    // establish fresh authority.
+    // Exercise the protected Portfolio boundary in the same lifecycle instead
+    // of relying on a separate navigation acceptance. A confirmed Profile
+    // logout must leave no usable owner authority behind.
+    Navigator.of(tester.element(find.text('WELCOME AFTER LOGOUT')))
+        .pushNamed(AppRoutes.portfolio);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('portfolio-cross-surface-content')), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-authentication-required')), findsOneWidget);
+    final guestHistory = tester.widget<FloatingActionButton>(
+      find.byKey(const Key('portfolio-authenticated-history')),
+    );
+    final guestSync = tester.widget<FloatingActionButton>(
+      find.byKey(const Key('portfolio-authenticated-sync')),
+    );
+    expect(guestHistory.onPressed, isNull);
+    expect(guestSync.onPressed, isNull);
     expect(session.isAuthenticated, isFalse);
     expect(session.account, isNull);
 
+    // A different owner can establish fresh authority, but the previous
+    // owner's token/account must never be resurrected by the mounted surface.
     session.establish(accessToken: 'owner-18-token', account: account(18));
+    await tester.pumpWidget(MaterialApp(
+      home: const AuthenticatedPortfolioPage(
+        child: SizedBox(key: Key('portfolio-cross-surface-content')),
+      ),
+    ));
+    await tester.pump();
 
     expect(session.isAuthenticated, isTrue);
     expect(session.account?.id, 18);
     expect(session.account?.id, isNot(17));
     expect(session.accessToken, 'owner-18-token');
     expect(session.accessToken, isNot('owner-17-token'));
+    expect(find.byKey(const Key('portfolio-authentication-required')), findsNothing);
+    final owner18History = tester.widget<FloatingActionButton>(
+      find.byKey(const Key('portfolio-authenticated-history')),
+    );
+    final owner18Sync = tester.widget<FloatingActionButton>(
+      find.byKey(const Key('portfolio-authenticated-sync')),
+    );
+    expect(owner18History.onPressed, isNotNull);
+    expect(owner18Sync.onPressed, isNotNull);
 
     auth.dispose();
   });
