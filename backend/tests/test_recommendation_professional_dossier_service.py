@@ -7,6 +7,33 @@ import pytest
 from app.services.recommendation_professional_dossier_service import RecommendationProfessionalDossierService
 
 
+class FakeDividendEvidenceService:
+    def evaluate(self, *, symbol, as_of, sustainability_provider=None):
+        assert symbol == "AAPL"
+        return type(
+            "DividendContract",
+            (),
+            {
+                "to_api_dict": lambda self: {
+                    "signal": {
+                        "dividend": {
+                            "frequency": "quarterly",
+                            "trailingYield": 0.015,
+                            "dividendGrowthRate": 0.06,
+                            "paymentStabilityScore": 0.98,
+                        },
+                        "earningsPayoutRatio": 0.25,
+                        "fcfPayoutRatio": 0.22,
+                        "totalReturn60d": 0.08,
+                    },
+                    "knowledgeCutoff": as_of.isoformat(),
+                    "productionEligible": False,
+                    "automaticTrading": False,
+                }
+            },
+        )()
+
+
 class FakeProductionReadService:
     def __init__(self, state):
         self.state = state
@@ -45,7 +72,10 @@ def _state(*, recommendation=True, allocation=False):
 
 
 def _service(state):
-    return RecommendationProfessionalDossierService(production_read_service=FakeProductionReadService(state))
+    return RecommendationProfessionalDossierService(
+        production_read_service=FakeProductionReadService(state),
+        dividend_evidence_service=FakeDividendEvidenceService(),
+    )
 
 
 def test_no_production_recommendation_stays_no_advice_and_marks_gaps() -> None:
@@ -101,3 +131,27 @@ def test_rejects_unsafe_or_internally_inconsistent_state() -> None:
 def test_requires_timezone_aware_cutoff() -> None:
     with pytest.raises(ValueError, match="zona horaria"):
         _service(_state()).build(as_of=datetime(2026, 9, 1, 12))
+
+
+def test_professional_dossier_exposes_dividend_total_return_as_pit_diagnostic_only() -> None:
+    result = _service(_state()).build(
+        as_of=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+        symbol="AAPL",
+    )
+
+    module = result["professionalModules"]["dividendTotalReturn"]
+    assert module["status"] == "diagnostic_evidence_available"
+    assert module["productionEligible"] is False
+    assert module["recommendationInfluence"] is False
+    assert module["automaticTrading"] is False
+    assert module["evidence"]["knowledgeCutoff"] == "2026-09-01T12:00:00+00:00"
+    assert module["evidence"]["signal"]["dividend"]["frequency"] == "quarterly"
+    assert module["evidence"]["signal"]["dividend"]["trailingYield"] == 0.015
+    assert module["evidence"]["signal"]["dividend"]["dividendGrowthRate"] == 0.06
+    assert module["evidence"]["signal"]["dividend"]["paymentStabilityScore"] == 0.98
+    assert module["evidence"]["signal"]["earningsPayoutRatio"] == 0.25
+    assert module["evidence"]["signal"]["fcfPayoutRatio"] == 0.22
+    assert module["evidence"]["signal"]["totalReturn60d"] == 0.08
+    assert result["executionEligible"] is False
+    assert result["orderRoutingEligible"] is False
+    assert result["automaticTrading"] is False
