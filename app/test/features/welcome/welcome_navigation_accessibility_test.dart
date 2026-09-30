@@ -22,17 +22,22 @@ void main() {
         ),
       );
 
-      await tester.pumpAndSettle();
+      // Welcome starts session restoration asynchronously. A single frame is
+      // sufficient to validate the public entry surface and avoids coupling
+      // this navigation acceptance test to storage/network completion.
+      await tester.pump();
 
       expect(find.text('ENTRAR CON CUENTA'), findsOneWidget);
       expect(find.text('Continuar como invitado'), findsOneWidget);
       expect(
-        find.textContaining('Las funciones de perfil protegido requieren una cuenta autenticada.'),
+        find.textContaining(
+          'Las funciones de perfil protegido requieren una cuenta autenticada.',
+        ),
         findsOneWidget,
       );
 
       await tester.tap(find.text('ENTRAR CON CUENTA'));
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(visited.last, AppRoutes.login);
       expect(find.text('route:${AppRoutes.login}'), findsOneWidget);
     },
