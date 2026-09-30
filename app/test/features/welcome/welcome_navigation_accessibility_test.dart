@@ -50,7 +50,9 @@ void main() {
       );
 
       await tester.tap(find.text('ENTRAR CON CUENTA'));
-      await tester.pump();
+      // Session restoration is complete at this point; settle only the finite
+      // Material route transition so the destination is actually rendered.
+      await tester.pumpAndSettle();
       expect(visited.last, AppRoutes.login);
       expect(find.text('route:${AppRoutes.login}'), findsOneWidget);
     },
