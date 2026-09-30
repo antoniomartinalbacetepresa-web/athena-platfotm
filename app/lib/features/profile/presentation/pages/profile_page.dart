@@ -238,12 +238,16 @@ class _GuestProfileState extends StatelessWidget {
                   size: 44,
                 ),
                 const SizedBox(height: 14),
-                const Text(
-                  'Perfil protegido',
-                  style: TextStyle(
-                    color: AthenaColors.text,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
+                Semantics(
+                  header: true,
+                  child: const Text(
+                    'Perfil protegido',
+                    key: Key('profile-guest-heading'),
+                    style: TextStyle(
+                      color: AthenaColors.text,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
