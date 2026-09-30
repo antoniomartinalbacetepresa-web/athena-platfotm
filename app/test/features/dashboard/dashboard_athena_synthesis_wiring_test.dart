@@ -44,6 +44,19 @@ void main() {
     expect(find.text('Resumen canónico'), findsOneWidget);
     expect(find.text('News verificada'), findsOneWidget);
     expect(find.text('Investors verificado'), findsOneWidget);
+    expect(find.text('Fuentes verificadas'), findsOneWidget);
+    expect(find.text('https://news.example/item'), findsOneWidget);
+    expect(find.text('https://investors.example/filing'), findsOneWidget);
+    expect(
+      find.byKey(const Key('athena-synthesis-source-refs')),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel(
+        '2 fuentes HTTPS verificadas vinculadas a la síntesis ATHENA.',
+      ),
+      findsOneWidget,
+    );
     expect(
       find.bySemanticsLabel(
         'Provenance de la síntesis ATHENA: News verificada; Investors verificado; 2 evidencias vinculadas.',
