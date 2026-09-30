@@ -4,11 +4,16 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from app.services.recommendation_dividend_evidence_contract_service import RecommendationDividendEvidenceContractService
 from app.services.recommendation_production_read_service import RecommendationProductionReadService
 
 
 class _ProductionReadService(Protocol):
     def resolve_latest(self, *, as_of: datetime, symbol: str | None = None, instrument_id: int | None = None) -> dict[str, Any]: ...
+
+
+class _DividendEvidenceService(Protocol):
+    def evaluate(self, *, symbol: str, as_of: datetime, sustainability_provider: str | None = None) -> object: ...
 
 
 class RecommendationProfessionalDossierService:
@@ -25,10 +30,17 @@ class RecommendationProfessionalDossierService:
         "investmentJournal",
         "devilsAdvocate",
         "athenaRadar",
+        "dividendTotalReturn",
     )
 
-    def __init__(self, *, production_read_service: _ProductionReadService | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        production_read_service: _ProductionReadService | None = None,
+        dividend_evidence_service: _DividendEvidenceService | None = None,
+    ) -> None:
         self._production_read_service = production_read_service or RecommendationProductionReadService()
+        self._dividend_evidence_service = dividend_evidence_service or RecommendationDividendEvidenceContractService()
 
     def build(self, *, as_of: datetime, symbol: str | None = None, instrument_id: int | None = None) -> dict[str, Any]:
         cutoff = self._aware(as_of, "as_of")
@@ -44,6 +56,32 @@ class RecommendationProfessionalDossierService:
             }
             for name in self.PROFESSIONAL_MODULES
         }
+        resolved_symbol = str(
+            (recommendation or {}).get("symbol") if isinstance(recommendation, dict) else state.get("symbol") or symbol or ""
+        ).strip().upper()
+        if resolved_symbol:
+            dividend_contract = self._dividend_evidence_service.evaluate(
+                symbol=resolved_symbol,
+                as_of=cutoff,
+            )
+            to_api_dict = getattr(dividend_contract, "to_api_dict", None)
+            if not callable(to_api_dict):
+                raise ValueError("La evidencia de dividendos no respeta el contrato canónico.")
+            dividend_payload = to_api_dict()
+            if not isinstance(dividend_payload, dict):
+                raise ValueError("La evidencia de dividendos no es un objeto válido.")
+            if dividend_payload.get("productionEligible") is not False or dividend_payload.get("automaticTrading") is not False:
+                raise ValueError("La evidencia de dividendos intentó elevar autoridad de producción.")
+            if dividend_payload.get("knowledgeCutoff") != cutoff.isoformat():
+                raise ValueError("La evidencia de dividendos no comparte el corte PIT del dossier.")
+            modules["dividendTotalReturn"] = {
+                "status": "diagnostic_evidence_available",
+                "productionEligible": False,
+                "recommendationInfluence": False,
+                "automaticTrading": False,
+                "evidence": dividend_payload,
+                "reason": "Dividendos y retorno total se muestran como evidencia PIT diagnóstica; no autorizan compra, venta, weighting ni ejecución.",
+            }
         if recommendation is None:
             return {
                 "status": "professional_dossier_no_production_recommendation",
