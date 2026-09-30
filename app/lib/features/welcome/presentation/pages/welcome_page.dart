@@ -7,7 +7,10 @@ import '../../../auth/services/athena_auth_service.dart';
 import '../../../auth/services/auth_session.dart';
 
 class WelcomePage extends StatefulWidget {
-  const WelcomePage({super.key, AuthSession? authSession})\n      : _authSession = authSession;\n\n  final AuthSession? _authSession;
+  const WelcomePage({super.key, AuthSession? authSession})
+      : _authSession = authSession;
+
+  final AuthSession? _authSession;
 
   @override
   State<WelcomePage> createState() => _WelcomePageState();
