@@ -96,6 +96,28 @@ class AthenaSynthesisPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
+              if (synthesis.provenance.sourceRefs.isNotEmpty) ...[
+                const Text(
+                  'Fuentes verificadas',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                Semantics(
+                  container: true,
+                  label:
+                      '${synthesis.provenance.sourceRefs.length} fuentes HTTPS verificadas vinculadas a la síntesis ATHENA.',
+                  child: ExcludeSemantics(
+                    child: Column(
+                      key: const Key('athena-synthesis-source-refs'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: synthesis.provenance.sourceRefs
+                          .map((sourceRef) => SelectableText(sourceRef))
+                          .toList(growable: false),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Semantics(
                 container: true,
                 label:
