@@ -22,10 +22,12 @@ void main() {
         ),
       );
 
-      // Welcome starts session restoration asynchronously. A single frame is
-      // sufficient to validate the public entry surface and avoids coupling
-      // this navigation acceptance test to storage/network completion.
-      await tester.pump();
+      // Welcome restores a durable session before exposing either public route.
+      // Advance bounded frames instead of pumpAndSettle: this lets the async
+      // secure-storage validation complete without waiting on unrelated animations.
+      for (var i = 0; i < 20 && find.text('ENTRAR CON CUENTA').evaluate().isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
 
       expect(find.text('ENTRAR CON CUENTA'), findsOneWidget);
       expect(find.text('Continuar como invitado'), findsOneWidget);
