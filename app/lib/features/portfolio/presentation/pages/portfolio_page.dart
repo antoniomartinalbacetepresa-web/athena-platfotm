@@ -432,12 +432,15 @@ class _PortfolioPageState extends State<PortfolioPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'MI CARTERA',
-              style: TextStyle(
-                color: AthenaColors.text,
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
+            Semantics(
+              header: true,
+              child: Text(
+                'MI CARTERA',
+                style: TextStyle(
+                  color: AthenaColors.text,
+                  fontSize: 30,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             SizedBox(height: 4),
