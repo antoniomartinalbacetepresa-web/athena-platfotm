@@ -6,11 +6,17 @@ class ProfessionalModuleState {
   final String status;
   final bool productionEligible;
   final String reason;
+  final bool recommendationInfluence;
+  final bool automaticTrading;
+  final Map<String, dynamic>? evidence;
 
   const ProfessionalModuleState({
     required this.status,
     required this.productionEligible,
     required this.reason,
+    this.recommendationInfluence = false,
+    this.automaticTrading = false,
+    this.evidence,
   });
 }
 
@@ -26,6 +32,7 @@ class ProfessionalDossier {
     'investmentJournal',
     'devilsAdvocate',
     'athenaRadar',
+    'dividendTotalReturn',
   };
 
   final DateTime asOf;
@@ -59,7 +66,9 @@ class ProfessionalDossier {
       modules.entries.every(
         (entry) =>
             moduleNames.contains(entry.key) &&
-            !entry.value.productionEligible,
+            !entry.value.productionEligible &&
+            !entry.value.recommendationInfluence &&
+            !entry.value.automaticTrading,
       );
 }
 
@@ -157,10 +166,63 @@ class AthenaBackendProfessionalDossierDataSource {
           'El módulo $name no puede marcarse productivo sin evidencia sellada.',
         );
       }
+      final recommendationInfluence = module.containsKey('recommendationInfluence')
+          ? _bool(
+              module['recommendationInfluence'],
+              '$name.recommendationInfluence',
+            )
+          : false;
+      final moduleAutomaticTrading = module.containsKey('automaticTrading')
+          ? _bool(module['automaticTrading'], '$name.automaticTrading')
+          : false;
+      if (recommendationInfluence || moduleAutomaticTrading) {
+        throw FormatException(
+          'El módulo $name no puede elevar autoridad de recomendación o trading.',
+        );
+      }
+
+      Map<String, dynamic>? evidence;
+      if (module['evidence'] != null) {
+        if (module['evidence'] is! Map) {
+          throw FormatException('$name.evidence debe ser un objeto.');
+        }
+        evidence = Map<String, dynamic>.unmodifiable(
+          Map<String, dynamic>.from(module['evidence'] as Map),
+        );
+      }
+      if (name == 'dividendTotalReturn' &&
+          module['status'] == 'diagnostic_evidence_available') {
+        if (!module.containsKey('recommendationInfluence') ||
+            !module.containsKey('automaticTrading') ||
+            evidence == null) {
+          throw const FormatException(
+            'La evidencia diagnóstica de dividendos debe declarar límites de autoridad y provenance PIT.',
+          );
+        }
+        final knowledgeCutoff = _utc(
+          evidence['knowledgeCutoff'],
+          'dividendTotalReturn.evidence.knowledgeCutoff',
+        );
+        if (!knowledgeCutoff.isAtSameMomentAs(cutoff)) {
+          throw const FormatException(
+            'La evidencia de dividendos no comparte el corte PIT del dossier.',
+          );
+        }
+        if (evidence['productionEligible'] != false ||
+            evidence['automaticTrading'] != false) {
+          throw const FormatException(
+            'La evidencia de dividendos intentó elevar autoridad de producción.',
+          );
+        }
+      }
+
       modules[name] = ProfessionalModuleState(
         status: _string(module['status'], '$name.status'),
         productionEligible: false,
         reason: _string(module['reason'], '$name.reason'),
+        recommendationInfluence: recommendationInfluence,
+        automaticTrading: moduleAutomaticTrading,
+        evidence: evidence,
       );
     }
 
