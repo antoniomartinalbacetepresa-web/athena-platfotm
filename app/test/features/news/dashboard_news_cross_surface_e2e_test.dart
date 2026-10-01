@@ -69,6 +69,15 @@ void main() {
     expect(semantics.label, contains('No es una recomendación'));
     expect(semantics.label, contains('no ejecuta operaciones'));
 
+    final itemSemantics = tester.getSemantics(
+      find.bySemanticsLabel(
+        'Impacto estimado positive, magnitud 70 por ciento y confianza 80 por ciento. Es información diagnóstica; no autoriza recomendaciones ni operaciones.',
+      ),
+    );
+    expect(itemSemantics.label, contains('magnitud 70 por ciento'));
+    expect(itemSemantics.label, contains('confianza 80 por ciento'));
+    expect(itemSemantics.label, contains('no autoriza recomendaciones ni operaciones'));
+
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
     service.dispose();
