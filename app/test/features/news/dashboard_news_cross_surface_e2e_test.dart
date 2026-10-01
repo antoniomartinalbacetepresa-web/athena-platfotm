@@ -71,7 +71,7 @@ void main() {
 
     final itemSemantics = tester.getSemantics(
       find.bySemanticsLabel(
-        'Impacto estimado positive, magnitud 70 por ciento y confianza 80 por ciento. Es información diagnóstica; no autoriza recomendaciones ni operaciones.',
+        'Estimación incierta para AAPL: impacto positive, magnitud 70 por ciento y confianza 80 por ciento. Es información diagnóstica; no autoriza recomendaciones ni operaciones.',
       ),
     );
     expect(itemSemantics.label, contains('magnitud 70 por ciento'));
