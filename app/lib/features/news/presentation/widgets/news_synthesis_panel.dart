@@ -84,10 +84,20 @@ class NewsSynthesisPanel extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(item.summary),
                       const SizedBox(height: 8),
-                      Text(
-                        'Impacto estimado: ${item.impactDirection} · '
-                        'magnitud ${(item.impactMagnitude * 100).round()}% · '
-                        'confianza ${(item.confidence * 100).round()}%',
+                      Semantics(
+                        container: true,
+                        label:
+                            'Estimación incierta para ${item.symbol}: impacto ${item.impactDirection}, '
+                            'magnitud ${(item.impactMagnitude * 100).round()} por ciento y '
+                            'confianza ${(item.confidence * 100).round()} por ciento. '
+                            'Es información diagnóstica; no autoriza recomendaciones ni operaciones.',
+                        child: ExcludeSemantics(
+                          child: Text(
+                            'Impacto estimado: ${item.impactDirection} · '
+                            'magnitud ${(item.impactMagnitude * 100).round()}% · '
+                            'confianza ${(item.confidence * 100).round()}%',
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 6),
                       Text(
