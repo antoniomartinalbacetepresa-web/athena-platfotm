@@ -432,7 +432,7 @@ class _PortfolioPageState extends State<PortfolioPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Semantics(
+            const Semantics(
               header: true,
               child: Text(
                 'MI CARTERA',
