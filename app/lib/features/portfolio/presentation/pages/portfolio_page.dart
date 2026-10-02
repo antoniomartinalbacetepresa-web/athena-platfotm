@@ -428,11 +428,11 @@ class _PortfolioPageState extends State<PortfolioPage> {
             icon: const Icon(Icons.arrow_back_rounded, color: AthenaColors.text),
           ),
         ),
-        const Column(
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Semantics(
+            Semantics(
               header: true,
               child: Text(
                 'MI CARTERA',
