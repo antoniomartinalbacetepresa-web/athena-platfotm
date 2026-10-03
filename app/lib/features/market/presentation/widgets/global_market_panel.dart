@@ -61,12 +61,15 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
         Row(
           children: [
             const Expanded(
-              child: Text(
-                'MERCADO GLOBAL',
-                style: TextStyle(
-                  color: AthenaColors.text,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+              child: Semantics(
+                header: true,
+                child: Text(
+                  'MERCADO GLOBAL',
+                  style: TextStyle(
+                    color: AthenaColors.text,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
@@ -90,23 +93,35 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
 
   Widget _marketContextView(GlobalMarketContext? globalContext) {
     if (_contextController.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Semantics(
+        liveRegion: true,
+        label: 'Actualizando contexto global del mercado.',
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
     if (_contextController.error != null) {
-      return Align(
-        alignment: Alignment.topLeft,
-        child: Text(
-          _contextController.error!,
-          style: const TextStyle(color: AthenaColors.danger, fontSize: 12),
+      return Semantics(
+        liveRegion: true,
+        label: 'No se pudo actualizar el contexto global del mercado.',
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Text(
+            _contextController.error!,
+            style: const TextStyle(color: AthenaColors.danger, fontSize: 12),
+          ),
         ),
       );
     }
     if (globalContext == null) {
-      return const Align(
-        alignment: Alignment.topLeft,
-        child: Text(
-          'Sin contexto global del mercado.',
-          style: TextStyle(color: AthenaColors.text),
+      return const Semantics(
+        liveRegion: true,
+        label: 'Sin contexto global del mercado.',
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Text(
+            'Sin contexto global del mercado.',
+            style: TextStyle(color: AthenaColors.text),
+          ),
         ),
       );
     }
