@@ -116,6 +116,17 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Actualizando contexto global del mercado.'),
+      findsOneWidget,
+    );
+    final globalHeading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text('MERCADO GLOBAL'),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(globalHeading.properties.header, isTrue);
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
