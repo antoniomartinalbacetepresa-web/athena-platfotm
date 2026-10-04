@@ -492,11 +492,11 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
             const SizedBox(height: 10),
           ],
           if (widget.busy) ...[
-            const Semantics(
+            Semantics(
               container: true,
               liveRegion: true,
               label: 'Actualizando preferencias protegidas.',
-              child: ExcludeSemantics(child: LinearProgressIndicator()),
+              child: const ExcludeSemantics(child: LinearProgressIndicator()),
             ),
             const SizedBox(height: 12),
           ],
