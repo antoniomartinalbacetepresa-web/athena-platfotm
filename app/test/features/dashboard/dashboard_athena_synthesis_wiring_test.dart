@@ -73,6 +73,31 @@ void main() {
     dependencies.dispose();
   });
 
+  testWidgets('Dashboard rejects ATHENA synthesis that escalates operational authority', (tester) async {
+    final payload = _validPayload();
+    (payload['data'] as Map<String, dynamic>)['automaticTrading'] = true;
+    final client = MockClient((request) async => http.Response(
+          jsonEncode(payload),
+          200,
+          headers: {'content-type': 'application/json'},
+        ));
+    final synthesisDataSource = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: client,
+    );
+    final dependencies = _dependencies(synthesisDataSource);
+
+    await tester.pumpWidget(synthesisDashboard(dependencies));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('athena-synthesis-content')), findsNothing);
+    expect(find.text('Resumen canónico'), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+    expect(find.byKey(const Key('athena-synthesis-retry')), findsOneWidget);
+
+    dependencies.dispose();
+  });
+
   testWidgets('Dashboard fails closed when latest ATHENA synthesis is unavailable', (tester) async {
     final client = MockClient((request) async => http.Response(
           jsonEncode({'detail': 'No existe ninguna ATHENA synthesis persistida.'}),
