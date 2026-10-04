@@ -201,7 +201,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     final controller = _authenticatedController, capitalController = _capitalController;
     if (controller == null || capitalController == null) return const Scaffold(body: SafeArea(child: Center(child: Text('No se pudo inicializar la cartera autenticada.'))));
     final verifiedBaseCurrency = capitalController.hasVerifiedBaseCurrency ? capitalController.currency : null;
-    return Scaffold(body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.all(20), child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1200), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return Scaffold(key: const Key('portfolio-authoritative-boundary'), body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.all(20), child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1200), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [IconButton(tooltip: 'Volver', onPressed: () => Navigator.of(context).maybePop(), icon: const Icon(Icons.arrow_back_rounded)), const SizedBox(width: 8), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Semantics(header: true, child: const Text('MI CARTERA', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold))), const Text('Posiciones personales protegidas por tu cuenta ATHENA'), const SizedBox(height: 4), Semantics(
   container: true,
   label: 'Cartera personal informativa y protegida. No ejecuta órdenes, no modifica recomendaciones y no cambia pesos automáticamente.',
