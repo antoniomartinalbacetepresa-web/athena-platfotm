@@ -191,7 +191,14 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
       body: SafeArea(
         child: _checking
-            ? const Center(child: CircularProgressIndicator())
+            ? Semantics(
+                container: true,
+                liveRegion: true,
+                label: 'Validando la sesión protegida.',
+                child: const Center(
+                  child: ExcludeSemantics(child: CircularProgressIndicator()),
+                ),
+              )
             : account == null
                 ? _GuestProfileState(error: _error)
                 : _AuthenticatedProfile(
