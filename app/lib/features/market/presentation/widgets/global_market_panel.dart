@@ -60,7 +60,7 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Semantics(
                 header: true,
                 child: Text(
@@ -93,10 +93,10 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
 
   Widget _marketContextView(GlobalMarketContext? globalContext) {
     if (_contextController.isLoading) {
-      return const Semantics(
+      return Semantics(
         liveRegion: true,
         label: 'Actualizando contexto global del mercado.',
-        child: Center(child: CircularProgressIndicator()),
+        child: const Center(child: CircularProgressIndicator()),
       );
     }
     if (_contextController.error != null) {
@@ -113,10 +113,10 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
       );
     }
     if (globalContext == null) {
-      return const Semantics(
+      return Semantics(
         liveRegion: true,
         label: 'Sin contexto global del mercado.',
-        child: Align(
+        child: const Align(
           alignment: Alignment.topLeft,
           child: Text(
             'Sin contexto global del mercado.',
