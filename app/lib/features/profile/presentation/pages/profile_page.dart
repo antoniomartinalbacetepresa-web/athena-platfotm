@@ -305,7 +305,11 @@ class _AuthenticatedProfile extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       children: [
         if (sessionValidationError != null) ...[
-          Container(
+          Semantics(
+            container: true,
+            liveRegion: true,
+            label: 'No se pudo validar temporalmente la sesión. La sesión existente se conserva hasta una respuesta autoritativa.',
+            child: Container(
             key: const Key('profile-session-validation-error'),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -313,12 +317,15 @@ class _AuthenticatedProfile extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.orangeAccent),
             ),
-            child: Text(
-              sessionValidationError!,
-              style: const TextStyle(
-                color: AthenaColors.textSecondary,
-                height: 1.35,
+            child: ExcludeSemantics(
+              child: Text(
+                sessionValidationError!,
+                style: const TextStyle(
+                  color: AthenaColors.textSecondary,
+                  height: 1.35,
+                ),
               ),
+            ),
             ),
           ),
           const SizedBox(height: 16),
@@ -471,14 +478,26 @@ class _ProfilePreferencesFormState extends State<ProfilePreferencesForm> {
           ),
           const SizedBox(height: 14),
           if (widget.error != null) ...[
-            Text(
-              widget.error!,
-              style: const TextStyle(color: Colors.orangeAccent),
+            Semantics(
+              container: true,
+              liveRegion: true,
+              label: 'No se pudieron actualizar las preferencias protegidas. ${widget.error!}',
+              child: ExcludeSemantics(
+                child: Text(
+                  widget.error!,
+                  style: const TextStyle(color: Colors.orangeAccent),
+                ),
+              ),
             ),
             const SizedBox(height: 10),
           ],
           if (widget.busy) ...[
-            const LinearProgressIndicator(),
+            const Semantics(
+              container: true,
+              liveRegion: true,
+              label: 'Actualizando preferencias protegidas.',
+              child: ExcludeSemantics(child: LinearProgressIndicator()),
+            ),
             const SizedBox(height: 12),
           ],
           DropdownButtonFormField<String>(
