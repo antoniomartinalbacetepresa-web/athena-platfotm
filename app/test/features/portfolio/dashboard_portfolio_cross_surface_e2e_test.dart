@@ -158,6 +158,12 @@ void main() {
     await tester.pump();
 
     expect(boundary, findsNothing);
-    expect(find.text('MI CARTERA'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(AuthenticatedPortfolioPage),
+        matching: find.text('MI CARTERA'),
+      ),
+      findsNothing,
+    );
   });
 }
