@@ -156,8 +156,26 @@ def get_history(
             ),
         ) from exc
 
+    providers = sorted({
+        str(item.get("sourceProvider")).strip()
+        for item in history
+        if isinstance(item, dict) and item.get("sourceProvider")
+    })
+    retrieval_times = sorted({
+        str(item.get("retrievedAt")).strip()
+        for item in history
+        if isinstance(item, dict) and item.get("retrievedAt")
+    })
+
     return {
         "data": history,
+        "provenance": {
+            "retrievalMode": "current_provider_history",
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "sourceProviders": providers,
+            "retrievedAt": retrieval_times[0] if len(retrieval_times) == 1 else None,
+        },
     }
 
 
