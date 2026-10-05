@@ -79,6 +79,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 32419200.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
             {
                 "symbol": "AAPL",
@@ -91,6 +93,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 38609800.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
         ],
         "provenance": {
