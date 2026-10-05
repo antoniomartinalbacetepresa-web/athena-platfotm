@@ -95,7 +95,7 @@ void main() {
     expect(sync.onPressed, isNull);
   });
 
-  testWidgets('real Portfolio destroys authoritative owner boundary on session revocation', (tester) async {
+  testWidgets('real Portfolio rebuilds and destroys owner boundary as session authority changes', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -103,18 +103,6 @@ void main() {
     AuthSession.instance.clear();
     addTearDown(AuthSession.instance.clear);
     FlutterSecureStorage.setMockInitialValues({});
-
-    final now = DateTime.utc(2026, 10, 5);
-    await AuthSession.instance.establishPersisted(
-      accessToken: 'portfolio-authoritative-e2e',
-      account: AuthAccount(
-        id: 19,
-        email: 'portfolio-authoritative@example.invalid',
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
 
     await tester.pumpWidget(MaterialApp(
       home: const Scaffold(body: DashboardHeader()),
@@ -128,6 +116,21 @@ void main() {
     ));
 
     await tester.tap(find.byTooltip('Cartera'));
+    await tester.pump();
+
+    expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsNothing);
+
+    final now = DateTime.utc(2026, 10, 5);
+    await AuthSession.instance.establishPersisted(
+      accessToken: 'portfolio-authoritative-e2e',
+      account: AuthAccount(
+        id: 19,
+        email: 'portfolio-authoritative@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
     await tester.pump();
 
     final boundary = find.byKey(const Key('portfolio-authoritative-boundary'));
