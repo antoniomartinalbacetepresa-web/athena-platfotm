@@ -105,7 +105,7 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
 
     final now = DateTime.utc(2026, 10, 5);
-    AuthSession.instance.establish(
+    await AuthSession.instance.establishPersisted(
       accessToken: 'portfolio-authoritative-e2e',
       account: AuthAccount(
         id: 19,
