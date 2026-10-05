@@ -4,6 +4,7 @@ import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/dashboard/presentation/widgets/dashboard_header.dart';
 import 'package:app/features/portfolio/presentation/pages/authenticated_portfolio_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -101,6 +102,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     AuthSession.instance.clear();
     addTearDown(AuthSession.instance.clear);
+    FlutterSecureStorage.setMockInitialValues({});
 
     final now = DateTime.utc(2026, 10, 5);
     AuthSession.instance.establish(
