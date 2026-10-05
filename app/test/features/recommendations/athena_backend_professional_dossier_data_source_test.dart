@@ -37,7 +37,7 @@ Map<String, dynamic> _dossier() => {
 
 void main() {
   group('AthenaBackendProfessionalDossierDataSource', () {
-    test('mapea los diez módulos como no productivos y mantiene no_advice',
+    test('mapea los once módulos como no productivos y mantiene no_advice',
         () async {
       final client = MockClient((request) async {
         expect(
@@ -65,6 +65,8 @@ void main() {
       expect(result.productionEligible, isFalse);
       expect(result.allocationEligible, isFalse);
       expect(result.modules.keys.toSet(), ProfessionalDossier.moduleNames);
+      expect(result.modules, contains('dividendTotalReturn'));
+      expect(ProfessionalDossier.moduleNames.length, 11);
       expect(
         result.modules.values.every((module) => !module.productionEligible),
         isTrue,
