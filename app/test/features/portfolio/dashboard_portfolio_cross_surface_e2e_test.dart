@@ -142,13 +142,17 @@ void main() {
       AppRoutes.portfolio,
     );
     expect(find.text('MI CARTERA'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel(
-        'Cartera personal informativa y protegida. No ejecuta órdenes, '
-        'no modifica recomendaciones y no cambia pesos automáticamente.',
+    final authoritySemantics = find.descendant(
+      of: boundary,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.label ==
+                'Cartera personal informativa y protegida. No ejecuta órdenes, '
+                    'no modifica recomendaciones y no cambia pesos automáticamente.',
       ),
-      findsOneWidget,
     );
+    expect(authoritySemantics, findsOneWidget);
 
     AuthSession.instance.clear();
     await tester.pump();
