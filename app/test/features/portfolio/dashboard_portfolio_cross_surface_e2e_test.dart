@@ -93,4 +93,60 @@ void main() {
     );
     expect(sync.onPressed, isNull);
   });
+
+  testWidgets('real Portfolio destroys authoritative owner boundary on session revocation', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    AuthSession.instance.clear();
+    addTearDown(AuthSession.instance.clear);
+
+    final now = DateTime.utc(2026, 10, 5);
+    AuthSession.instance.establish(
+      accessToken: 'portfolio-authoritative-e2e',
+      account: AuthAccount(
+        id: 19,
+        email: 'portfolio-authoritative@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: const Scaffold(body: DashboardHeader()),
+      onGenerateRoute: (settings) {
+        if (settings.name != AppRoutes.portfolio) return null;
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => const AuthenticatedPortfolioPage(),
+        );
+      },
+    ));
+
+    await tester.tap(find.byTooltip('Cartera'));
+    await tester.pump();
+
+    final boundary = find.byKey(const Key('portfolio-authoritative-boundary'));
+    expect(boundary, findsOneWidget);
+    expect(
+      ModalRoute.of(tester.element(boundary))!.settings.name,
+      AppRoutes.portfolio,
+    );
+    expect(find.text('MI CARTERA'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Cartera personal informativa y protegida. No ejecuta órdenes, '
+        'no modifica recomendaciones y no cambia pesos automáticamente.',
+      ),
+      findsOneWidget,
+    );
+
+    AuthSession.instance.clear();
+    await tester.pump();
+
+    expect(boundary, findsNothing);
+    expect(find.text('MI CARTERA'), findsNothing);
+  });
 }
