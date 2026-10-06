@@ -11,6 +11,7 @@ void main() {
       AppRoutes.register,
       AppRoutes.dashboard,
       AppRoutes.market,
+      AppRoutes.stockResearch,
       AppRoutes.news,
       AppRoutes.portfolio,
       AppRoutes.profile,
@@ -18,6 +19,13 @@ void main() {
       final route = AppRouter.generate(RouteSettings(name: name));
       expect(route.settings.name, name, reason: 'route identity lost for $name');
     }
+  });
+
+  test('stock research deep link preserves symbol and route identity', () {
+    const name = '${AppRoutes.stockResearch}?symbol=aapl';
+    final route = AppRouter.generate(const RouteSettings(name: name));
+
+    expect(route.settings.name, name);
   });
 
   test('recovery deep link preserves the complete named route identity', () {
