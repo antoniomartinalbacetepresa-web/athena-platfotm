@@ -231,7 +231,12 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
     final selectedPolicy = policyController.selectedPolicy;
     final shadow = _shadowSnapshot?.candidate;
 
-    return Container(
+    return Semantics(
+      key: const Key('portfolio-authoritative-boundary'),
+      container: true,
+      label:
+          'Planificación ATHENA informativa y no operativa. No ejecuta órdenes, no habilita trading automático y no convierte evidencia shadow en consejo.',
+      child: Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AthenaSpacing.lg),
       decoration: BoxDecoration(
@@ -487,6 +492,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
