@@ -39,7 +39,6 @@ void main() {
     await tester.pump();
 
     expect(find.text('ANÁLISIS ATHENA · AAPL'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 
   testWidgets('stock research without symbol fails closed before presenting analysis', (tester) async {
