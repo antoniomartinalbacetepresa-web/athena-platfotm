@@ -159,10 +159,7 @@ void main() {
 
     expect(boundary, findsNothing);
     expect(
-      find.descendant(
-        of: find.byType(AuthenticatedPortfolioPage),
-        matching: find.text('MI CARTERA'),
-      ),
+      find.byKey(const Key('portfolio-authenticated-history')),
       findsNothing,
     );
   });
