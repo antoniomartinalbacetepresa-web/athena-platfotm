@@ -96,8 +96,6 @@ void main() {
   });
 
   testWidgets('real Portfolio rebuilds and destroys owner boundary as session authority changes', (tester) async {
-    final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
