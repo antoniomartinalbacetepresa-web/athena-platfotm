@@ -66,6 +66,9 @@ void main() {
       expect(result.allocationEligible, isFalse);
       expect(result.modules.keys.toSet(), ProfessionalDossier.moduleNames);
       expect(result.modules, contains('dividendTotalReturn'));
+      expect(result.modules['dividendTotalReturn']!.productionEligible, isFalse);
+      expect(result.modules['dividendTotalReturn']!.recommendationInfluence, isFalse);
+      expect(result.modules['dividendTotalReturn']!.automaticTrading, isFalse);
       expect(ProfessionalDossier.moduleNames.length, 11);
       expect(
         result.modules.values.every((module) => !module.productionEligible),
