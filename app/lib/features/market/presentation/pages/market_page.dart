@@ -81,10 +81,16 @@ class _MarketPageState extends State<MarketPage> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    FilledButton(
-                      key: const Key('market-open-professional-research'),
-                      onPressed: _openResearch,
-                      child: const Text('ANALIZAR'),
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _symbolController,
+                      builder: (context, value, _) {
+                        final canAnalyze = value.text.trim().isNotEmpty;
+                        return FilledButton(
+                          key: const Key('market-open-professional-research'),
+                          onPressed: canAnalyze ? _openResearch : null,
+                          child: const Text('ANALIZAR'),
+                        );
+                      },
                     ),
                   ],
                 ),
