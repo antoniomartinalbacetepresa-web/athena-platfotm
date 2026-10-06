@@ -10,11 +10,16 @@ import 'package:flutter_test/flutter_test.dart';
 class _IdleMarketService extends GlobalMarketDataService {
   _IdleMarketService(MarketDependencies dependencies)
       : super(
-          regionalMarketContextService: dependencies.regionalMarketContextService,
-          globalMarketContextService: dependencies.globalMarketContextService,
-          marketUniverseRepository: dependencies.marketUniverseRepository,
-          regionalMarketWeightService: dependencies.regionalMarketWeightService,
-          marketUniverseStatusProvider: dependencies.marketUniverseStatusProvider,
+          regionalMarketContextService:
+              dependencies.globalMarketDataService.regionalMarketContextService,
+          globalMarketContextService:
+              dependencies.globalMarketDataService.globalMarketContextService,
+          marketUniverseRepository:
+              dependencies.globalMarketDataService.marketUniverseRepository,
+          regionalMarketWeightService:
+              dependencies.globalMarketDataService.regionalMarketWeightService,
+          marketUniverseStatusProvider:
+              dependencies.globalMarketDataService.marketUniverseStatusProvider,
         );
 
   @override
