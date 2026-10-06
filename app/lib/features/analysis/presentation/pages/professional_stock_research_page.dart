@@ -137,16 +137,45 @@ class _ResearchBody extends StatelessWidget {
         const SizedBox(height: 20),
         ...modules.map((name) {
           final module = dossier.modules[name]!;
+          final provenance = module.evidence == null
+              ? null
+              : _provenanceSummary(module.evidence!);
           return Card(
+            key: Key('professional-research-module-$name'),
             child: ListTile(
               title: Text(_label(name)),
-              subtitle: Text(module.reason),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(module.reason),
+                  if (provenance != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      provenance,
+                      key: Key('professional-research-provenance-$name'),
+                    ),
+                  ],
+                ],
+              ),
               trailing: Text(module.status),
             ),
           );
         }),
       ],
     );
+  }
+
+  String? _provenanceSummary(Map<String, dynamic> evidence) {
+    final cutoff = evidence['knowledgeCutoff']?.toString().trim();
+    final provider = evidence['sourceProvider']?.toString().trim();
+    final parts = <String>[];
+    if (provider != null && provider.isNotEmpty) {
+      parts.add('Fuente: $provider');
+    }
+    if (cutoff != null && cutoff.isNotEmpty) {
+      parts.add('PIT: $cutoff');
+    }
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   String _label(String name) {
