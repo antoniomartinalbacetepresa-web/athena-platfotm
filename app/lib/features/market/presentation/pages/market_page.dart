@@ -1,13 +1,35 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../controllers/global_market_context_controller.dart';
 import '../widgets/global_market_panel.dart';
 
-class MarketPage extends StatelessWidget {
+class MarketPage extends StatefulWidget {
   final GlobalMarketContextController? controller;
 
   const MarketPage({super.key, this.controller});
+
+  @override
+  State<MarketPage> createState() => _MarketPageState();
+}
+
+class _MarketPageState extends State<MarketPage> {
+  final _symbolController = TextEditingController();
+
+  @override
+  void dispose() {
+    _symbolController.dispose();
+    super.dispose();
+  }
+
+  void _openResearch() {
+    final symbol = _symbolController.text.trim().toUpperCase();
+    if (symbol.isEmpty) return;
+    Navigator.of(context).pushNamed(
+      '${AppRoutes.stockResearch}?symbol=${Uri.encodeQueryComponent(symbol)}',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +63,34 @@ class MarketPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Expanded(child: GlobalMarketPanel(controller: controller)),
+              Semantics(
+                container: true,
+                label: 'Abrir análisis profesional de una empresa por símbolo bursátil.',
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _symbolController,
+                        textCapitalization: TextCapitalization.characters,
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (_) => _openResearch(),
+                        decoration: const InputDecoration(
+                          labelText: 'Símbolo',
+                          hintText: 'Ej. AAPL',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      key: const Key('market-open-professional-research'),
+                      onPressed: _openResearch,
+                      child: const Text('ANALIZAR'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(child: GlobalMarketPanel(controller: widget.controller)),
             ],
           ),
         ),
