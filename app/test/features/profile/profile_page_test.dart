@@ -39,6 +39,13 @@ void main() {
 
     expect(find.byType(ProfilePage), findsOneWidget);
     expect(find.text('PERFIL'), findsOneWidget);
+    final guestHeading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text('PERFIL'),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(guestHeading.properties.header, isTrue);
     expect(find.text('Perfil protegido'), findsOneWidget);
     expect(find.text('INICIAR SESIÓN'), findsOneWidget);
     expect(find.text('Preferencias protegidas'), findsNothing);
