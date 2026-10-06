@@ -57,7 +57,10 @@ class _NewsPageState extends State<NewsPage> {
         backgroundColor: AthenaColors.background,
         foregroundColor: AthenaColors.text,
         elevation: 0,
-        title: const Text('NOTICIAS'),
+        title: const Semantics(
+          header: true,
+          child: Text('NOTICIAS', key: Key('news-page-heading')),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
