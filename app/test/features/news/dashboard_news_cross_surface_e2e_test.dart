@@ -56,6 +56,13 @@ void main() {
       requested.single.path,
       '/api/v1/recommendations/professional-research/news-synthesis/latest',
     );
+    final pageHeading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.byKey(const Key('news-page-heading')),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(pageHeading.properties.header, isTrue);
     expect(find.text('ANÁLISIS ATHENA DE NOTICIAS'), findsOneWidget);
     expect(find.textContaining('Resultados auditables'), findsOneWidget);
     expect(find.textContaining('Example Publisher'), findsOneWidget);
