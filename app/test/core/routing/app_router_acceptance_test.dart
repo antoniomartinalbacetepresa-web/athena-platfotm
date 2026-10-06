@@ -28,6 +28,35 @@ void main() {
     expect(route.settings.name, name);
   });
 
+  testWidgets('stock research deep link materializes normalized professional surface', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        onGenerateRoute: AppRouter.generate,
+        initialRoute: '${AppRoutes.stockResearch}?symbol=aapl',
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('ANÁLISIS ATHENA · AAPL'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('stock research without symbol fails closed before presenting analysis', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        onGenerateRoute: AppRouter.generate,
+        initialRoute: AppRoutes.stockResearch,
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('professional-research-content')), findsNothing);
+    expect(find.byKey(const Key('professional-research-error')), findsOneWidget);
+  });
+
   test('recovery deep link preserves the complete named route identity', () {
     const name = '${AppRoutes.recovery}?token=opaque-token';
     final route = AppRouter.generate(const RouteSettings(name: name));
