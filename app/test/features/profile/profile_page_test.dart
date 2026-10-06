@@ -47,6 +47,13 @@ void main() {
     );
     expect(guestHeading.properties.header, isTrue);
     expect(find.text('Perfil protegido'), findsOneWidget);
+    final protectedGuestHeading = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.byKey(const Key('profile-guest-heading')),
+        matching: find.byType(Semantics),
+      ).first,
+    );
+    expect(protectedGuestHeading.properties.header, isTrue);
     expect(find.text('INICIAR SESIÓN'), findsOneWidget);
     expect(find.text('Preferencias protegidas'), findsNothing);
   });
