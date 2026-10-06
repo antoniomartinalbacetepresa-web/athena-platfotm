@@ -59,7 +59,7 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
           future: _future,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(
+              return Center(
                 child: Semantics(
                   liveRegion: true,
                   label: 'Cargando dossier profesional de ATHENA.',
