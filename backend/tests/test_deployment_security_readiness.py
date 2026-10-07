@@ -135,6 +135,19 @@ def test_backup_configuration_rejects_live_database_directory_and_bad_retention(
     assert "backup_retention_invalid" in report["blockers"]
 
 
+def test_backup_configuration_rejects_descendant_of_live_database_tree(tmp_path, monkeypatch) -> None:
+    _clear(monkeypatch)
+    _secure_configuration(monkeypatch)
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    unsafe_destination = database.database_path.parent / "backups" / "daily"
+    monkeypatch.setenv("ATHENA_BACKUP_DIRECTORY", str(unsafe_destination))
+
+    report = DeploymentSecurityReadinessService(database).evaluate().to_api_dict()
+
+    assert _check(report, "backup_destination")["passed"] is False
+    assert "backup_destination_missing_or_unsafe" in report["blockers"]
+
+
 def test_secure_configuration_passes_without_claiming_operations(monkeypatch) -> None:
     _clear(monkeypatch)
     auth_secret, smtp_password = _secure_configuration(monkeypatch)
