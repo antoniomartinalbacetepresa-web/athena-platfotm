@@ -92,8 +92,8 @@ class DividendAnalysisService:
         if currency is not None and forward_currency_ok: forward_currency_ok=next(iter(future_currencies))==currency
         forward_cash=sum(float(r["cash_amount"]) for r in future) if forward_currency_ok else None
         forward_yield=forward_cash/pit_price if forward_cash is not None and pit_price is not None else None
-        forward_providers=tuple(sorted({str(r["source_provider"]) for r in future}))
-        forward_latest=max((str(r["retrieved_at"]) for r in future),default=None)
+        forward_providers=tuple(sorted({str(r["source_provider"]) for r in future_rows}))
+        forward_latest=max((str(r["retrieved_at"]) for r in future_rows),default=None)
 
         def build(*args: Any) -> DividendAnalysis:
             return DividendAnalysis(*args, confirmed_forward_payment_count=len(future), confirmed_forward_cash_per_share=forward_cash,
