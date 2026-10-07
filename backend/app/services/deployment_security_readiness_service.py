@@ -119,7 +119,7 @@ class DeploymentSecurityReadinessService:
         # tree can remove both SQLite/WAL state and the supposed backup.
         # Configuration still does not prove off-site use.
         live_tree = database_path.parent
-        return destination != database_path and live_tree not in destination.parents
+        return destination != database_path and destination != live_tree and live_tree not in destination.parents
 
     @staticmethod
     def _check(identifier: str, passed: bool, blocker: str, *, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
