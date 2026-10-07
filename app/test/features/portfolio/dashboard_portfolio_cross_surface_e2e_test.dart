@@ -118,7 +118,7 @@ void main() {
     await tester.tap(find.byTooltip('Cartera'));
     await tester.pump();
 
-    expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsNothing);
 
     final now = DateTime.utc(2026, 10, 5);
     await AuthSession.instance.establishPersisted(
