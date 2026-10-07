@@ -155,7 +155,19 @@ void main() {
     AuthSession.instance.clear();
     await tester.pump();
 
-    expect(boundary, findsNothing);
+    // Revoking authority must remove owner-only capabilities and data.
+    // The public Portfolio surface may remain mounted after logout.
+    expect(find.text('MI CARTERA'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.label ==
+                'Cartera personal informativa y protegida. No ejecuta órdenes, '
+                    'no modifica recomendaciones y no cambia pesos automáticamente.',
+      ),
+      findsNothing,
+    );
     expect(
       find.byKey(const Key('portfolio-authenticated-history')),
       findsNothing,
