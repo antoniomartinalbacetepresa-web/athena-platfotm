@@ -192,3 +192,24 @@ def test_one_complete_comparable_year_without_cut_is_reported_without_extrapolat
     assert result.cut_detected is False
     assert result.consecutive_full_years_without_cut == 1
     assert result.to_api_dict()["consecutiveFullYearsWithoutCut"] == 1
+
+
+def test_confirmed_forward_dividend_deduplicates_cash_but_preserves_provider_provenance(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    cutoff = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    effective = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    _save(database, instrument_id, "primary", datetime(2026, 5, 1, tzinfo=timezone.utc), [effective])
+    _save(database, instrument_id, "secondary", datetime(2026, 5, 15, tzinfo=timezone.utc), [effective])
+
+    result = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff, pit_price=20.0
+    )
+
+    assert result.confirmed_forward_payment_count == 1
+    assert result.confirmed_forward_cash_per_share == pytest.approx(0.25)
+    assert result.confirmed_forward_yield == pytest.approx(0.0125)
+    assert result.confirmed_forward_source_providers == ("primary", "secondary")
+    assert result.confirmed_forward_latest_retrieved_at == datetime(
+        2026, 5, 15, tzinfo=timezone.utc
+    ).isoformat()
