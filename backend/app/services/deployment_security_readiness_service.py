@@ -114,9 +114,12 @@ class DeploymentSecurityReadinessService:
             database_path = self._database.database_path.expanduser().resolve()
         except (OSError, RuntimeError):
             return False
-        # A backup alongside the live SQLite/WAL files is not an independent
-        # recovery destination. Configuration still does not prove off-site use.
-        return destination != database_path.parent and destination != database_path
+        # A backup inside the live database directory tree is not an
+        # independent recovery destination: a failure or cleanup affecting that
+        # tree can remove both SQLite/WAL state and the supposed backup.
+        # Configuration still does not prove off-site use.
+        live_tree = database_path.parent
+        return destination != database_path and live_tree not in destination.parents
 
     @staticmethod
     def _check(identifier: str, passed: bool, blocker: str, *, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
