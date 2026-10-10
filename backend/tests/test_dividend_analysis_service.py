@@ -213,3 +213,29 @@ def test_confirmed_forward_dividend_deduplicates_cash_but_preserves_provider_pro
     assert result.confirmed_forward_latest_retrieved_at == datetime(
         2026, 5, 15, tzinfo=timezone.utc
     ).isoformat()
+
+
+@pytest.mark.parametrize(
+    ("cadence", "dates"),
+    [
+        ("monthly", [(2026, month, 1) for month in range(1, 9)]),
+        ("semiannual", [(2024, 8, 1), (2025, 2, 1), (2025, 8, 1), (2026, 2, 1), (2026, 8, 1)]),
+        ("annual", [(2023, 8, 1), (2024, 8, 1), (2025, 8, 1), (2026, 8, 1)]),
+    ],
+)
+def test_regular_pit_dividend_cadences_are_classified(
+    tmp_path: Path, cadence: str, dates: list[tuple[int, int, int]],
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    payments = [datetime(year, month, day, tzinfo=timezone.utc) for year, month, day in dates]
+    _save(database, instrument_id, "primary", cutoff, payments)
+    result = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff, lookback_days=1200,
+        pit_price=20.0,
+    )
+    assert result.frequency == cadence
+    assert result.payment_count == len(payments)
+    assert result.currency_consistent is True
+    assert result.regularity_score is not None and result.regularity_score > 0.90
