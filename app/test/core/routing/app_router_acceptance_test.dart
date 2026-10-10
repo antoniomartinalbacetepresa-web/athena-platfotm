@@ -1,0 +1,72 @@
+import 'package:app/core/routing/app_router.dart';
+import 'package:app/core/routing/app_routes.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('AppRouter preserves identity for every primary named route', () {
+    for (final name in const [
+      AppRoutes.welcome,
+      AppRoutes.login,
+      AppRoutes.register,
+      AppRoutes.dashboard,
+      AppRoutes.market,
+      AppRoutes.stockResearch,
+      AppRoutes.news,
+      AppRoutes.portfolio,
+      AppRoutes.profile,
+    ]) {
+      final route = AppRouter.generate(RouteSettings(name: name));
+      expect(route.settings.name, name, reason: 'route identity lost for $name');
+    }
+  });
+
+  test('stock research deep link preserves symbol and route identity', () {
+    const name = '${AppRoutes.stockResearch}?symbol=aapl';
+    final route = AppRouter.generate(const RouteSettings(name: name));
+
+    expect(route.settings.name, name);
+  });
+
+  testWidgets('stock research deep link materializes normalized professional surface', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        onGenerateRoute: AppRouter.generate,
+        initialRoute: '${AppRoutes.stockResearch}?symbol=aapl',
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('ANÁLISIS ATHENA · AAPL'), findsOneWidget);
+  });
+
+  testWidgets('stock research without symbol fails closed before presenting analysis', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        onGenerateRoute: AppRouter.generate,
+        initialRoute: AppRoutes.stockResearch,
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('professional-research-content')), findsNothing);
+    expect(find.byKey(const Key('professional-research-error')), findsOneWidget);
+  });
+
+  test('recovery deep link preserves the complete named route identity', () {
+    const name = '${AppRoutes.recovery}?token=opaque-token';
+    final route = AppRouter.generate(const RouteSettings(name: name));
+
+    expect(route.settings.name, name);
+  });
+
+  test('unknown route preserves requested identity while using safe fallback', () {
+    const name = '/not-a-real-athena-route';
+    final route = AppRouter.generate(const RouteSettings(name: name));
+
+    expect(route.settings.name, name);
+  });
+}

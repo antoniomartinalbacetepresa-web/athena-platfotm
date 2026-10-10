@@ -6,17 +6,7 @@ import '../services/global_market_data_service.dart';
 /// Controlador del contexto global del mercado.
 ///
 /// Coordina la obtención del contexto global mediante
-/// GlobalMarketDataService.
-///
-/// No conoce:
-/// - el universo de activos;
-/// - los pesos regionales;
-/// - los benchmarks;
-/// - la fuente de datos;
-/// - las reglas de cálculo.
-///
-/// Su responsabilidad es únicamente gestionar el estado
-/// que necesita la interfaz.
+/// GlobalMarketDataService y mantiene una frontera fail-closed para la UI.
 class GlobalMarketContextController extends ChangeNotifier {
   final GlobalMarketDataService service;
 
@@ -27,9 +17,7 @@ class GlobalMarketContextController extends ChangeNotifier {
   GlobalMarketContextController({required this.service});
 
   GlobalMarketContext? get context => _context;
-
   bool get isLoading => _isLoading;
-
   String? get error => _error;
 
   Future<void> loadGlobalContext() async {
@@ -37,9 +25,12 @@ class GlobalMarketContextController extends ChangeNotifier {
       return;
     }
 
+    // A refresh must never keep presenting an old market snapshot as current.
+    // Clear it before the asynchronous request starts, matching the fail-closed
+    // behaviour of the canonical ATHENA synthesis surface.
     _isLoading = true;
     _error = null;
-
+    _context = null;
     notifyListeners();
 
     try {
@@ -48,10 +39,7 @@ class GlobalMarketContextController extends ChangeNotifier {
       debugPrint('ERROR AL OBTENER EL CONTEXTO GLOBAL DEL MERCADO:');
       debugPrint(error.toString());
       debugPrint(stackTrace.toString());
-
       _context = null;
-
-      // Durante desarrollo mostramos el error real.
       _error = 'Error: ${error.toString()}';
     } finally {
       _isLoading = false;
@@ -63,7 +51,6 @@ class GlobalMarketContextController extends ChangeNotifier {
     _context = null;
     _error = null;
     _isLoading = false;
-
     notifyListeners();
   }
 }

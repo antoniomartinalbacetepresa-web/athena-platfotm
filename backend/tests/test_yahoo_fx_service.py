@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from app.services.yahoo_fx_service import (
     FxRate,
@@ -76,6 +76,79 @@ def test_get_usd_rate_uses_inverse_pair(
     assert result.source_symbol == "JPY=X"
 
 
+def test_get_usd_rate_uses_generic_direct_pair(
+    monkeypatch,
+) -> None:
+    service = YahooFxService()
+    seen: list[str] = []
+
+    def fake_price(symbol: str) -> float:
+        seen.append(symbol)
+        return 1.25
+
+    monkeypatch.setattr(
+        service,
+        "_get_positive_last_price",
+        fake_price,
+    )
+
+    result = service.get_usd_rate("GBP")
+
+    assert seen == ["GBPUSD=X"]
+    assert result == FxRate(
+        currency="GBP",
+        usd_rate=1.25,
+        source_symbol="GBPUSD=X",
+    )
+
+
+def test_get_usd_rate_falls_back_to_generic_inverse_pair(
+    monkeypatch,
+) -> None:
+    service = YahooFxService()
+    seen: list[str] = []
+
+    def fake_price(symbol: str) -> float:
+        seen.append(symbol)
+        if symbol == "CADUSD=X":
+            raise RuntimeError("direct unavailable")
+        return 1.35
+
+    monkeypatch.setattr(
+        service,
+        "_get_positive_last_price",
+        fake_price,
+    )
+
+    result = service.get_usd_rate("CAD")
+
+    assert seen == ["CADUSD=X", "USDCAD=X"]
+    assert result.currency == "CAD"
+    assert result.usd_rate == pytest.approx(1.0 / 1.35)
+    assert result.source_symbol == "USDCAD=X"
+
+
+def test_get_usd_rate_rejects_currency_when_both_pairs_fail(
+    monkeypatch,
+) -> None:
+    service = YahooFxService()
+
+    monkeypatch.setattr(
+        service,
+        "_get_positive_last_price",
+        lambda symbol: (_ for _ in ()).throw(RuntimeError("missing")),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "No se pudo obtener una conversión a USD válida "
+            "para la moneda XYZ."
+        ),
+    ):
+        service.get_usd_rate("XYZ")
+
+
 def test_convert_to_usd_for_eur(
     monkeypatch,
 ) -> None:
@@ -120,21 +193,6 @@ def test_convert_to_usd_for_jpy(
     )
 
     assert result == 100.0
-
-
-def test_get_usd_rate_rejects_unsupported_currency() -> None:
-    service = YahooFxService()
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            "No existe una conversión a USD configurada "
-            "para la moneda GBP."
-        ),
-    ):
-        service.get_usd_rate(
-            "GBP"
-        )
 
 
 def test_normalize_currency_rejects_empty_value() -> None:
