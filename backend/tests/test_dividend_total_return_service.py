@@ -106,3 +106,19 @@ def test_total_return_rejects_blank_component_provenance(field: str) -> None:
     }
     with pytest.raises(ValueError):
         DividendTotalReturnService().calculate(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("start_price", "end_price", "dividend_cash_per_share"),
+    [(1e-308, 1e308, 0.0), (1e-308, 1.0, 1e308), (1.0, 1e308, 1e308)],
+)
+def test_finite_inputs_cannot_overflow_total_return_to_infinity(
+    start_price: float, end_price: float, dividend_cash_per_share: float,
+) -> None:
+    with pytest.raises(ValueError, match="retornos calculados"):
+        DividendTotalReturnService().calculate(
+            start_price=start_price, end_price=end_price,
+            dividend_cash_per_share=dividend_cash_per_share,
+            currency="EUR", source_provider="verified-source",
+            knowledge_cutoff=datetime(2026, 9, 23, tzinfo=timezone.utc),
+        )
