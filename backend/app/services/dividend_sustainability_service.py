@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -124,6 +125,9 @@ class DividendSustainabilityService:
             evidence_valid = False
         if evidence_valid and source is not None and (source > retrieved or source > cutoff):
             evidence_valid = False
+        for name, value in (("dividends_paid", dividends_paid), ("net_income", net_income), ("free_cash_flow", free_cash_flow)):
+            if value is not None and not isfinite(value):
+                raise ValueError(f"{name} debe ser finito.")
         if dividends_paid is not None and dividends_paid < 0:
             raise ValueError("dividends_paid no puede ser negativo.")
 
@@ -131,8 +135,12 @@ class DividendSustainabilityService:
         if evidence_valid and dividends_paid is not None:
             if net_income is not None and net_income > 0:
                 earnings_ratio = dividends_paid / net_income
+                if not isfinite(earnings_ratio):
+                    raise ValueError('earnings_payout_ratio no es finito.')
             if free_cash_flow is not None and free_cash_flow > 0:
                 fcf_ratio = dividends_paid / free_cash_flow
+                if not isfinite(fcf_ratio):
+                    raise ValueError('fcf_payout_ratio no es finito.')
 
         earnings_covered = earnings_ratio <= 1.0 if earnings_ratio is not None else None
         fcf_covered = fcf_ratio <= 1.0 if fcf_ratio is not None else None
