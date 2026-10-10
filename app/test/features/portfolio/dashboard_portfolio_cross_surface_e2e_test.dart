@@ -158,13 +158,10 @@ void main() {
     // Revoking authority must remove owner-only capabilities and data.
     // The public Portfolio surface may remain mounted after logout.
     expect(
-      find.byKey(const Key('portfolio-authentication-required')),
-      findsOneWidget,
+      find.byKey(const Key('portfolio-authoritative-boundary')),
+      findsNothing,
     );
-    final revokedSync = tester.widget<FloatingActionButton>(
-      find.byKey(const Key('portfolio-authenticated-sync')),
-    );
-    expect(revokedSync.onPressed, isNull);
+    expect(find.text('MI CARTERA'), findsNothing);
     expect(
       find.byKey(const Key('portfolio-authenticated-history')),
       findsNothing,
