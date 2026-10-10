@@ -86,6 +86,8 @@ class DividendTotalReturnService:
         price_return = end / start - 1.0
         dividend_return = cash / start
         total_return = (end + cash) / start - 1.0
+        if not all(math.isfinite(value) for value in (price_return, dividend_return, total_return)):
+            raise ValueError("Los retornos calculados deben ser finitos.")
         return DividendTotalReturn(
             price_return=price_return,
             dividend_return=dividend_return,
