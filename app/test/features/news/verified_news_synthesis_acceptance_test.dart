@@ -86,6 +86,43 @@ void main() {
     expect(() => VerifiedNewsSynthesis.fromMap(fmp), throwsFormatException);
   });
 
+  test('PIT timestamp requires an explicit UTC offset', () {
+    final missingTimezone = payload();
+    final synthesis = (missingTimezone['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>;
+    synthesis['asOf'] = '2026-09-17T17:00:00';
+    expect(
+      () => VerifiedNewsSynthesis.fromMap(missingTimezone),
+      throwsFormatException,
+    );
+
+    final explicitOffset = payload();
+    final validSynthesis = (explicitOffset['data'] as Map<String, dynamic>)
+        ['synthesis'] as Map<String, dynamic>;
+    validSynthesis['asOf'] = '2026-09-17T19:00:00+02:00';
+    expect(
+      VerifiedNewsSynthesis.fromMap(explicitOffset).items,
+      hasLength(1),
+    );
+  });
+
+  test('unknown importance filter fails closed', () {
+    final unsafe = payload();
+    final synthesis =
+        (unsafe['data'] as Map<String, dynamic>)['synthesis'] as Map<String, dynamic>;
+    synthesis['minimumImportance'] = 'unfiltered';
+    expect(() => VerifiedNewsSynthesis.fromMap(unsafe), throwsFormatException);
+  });
+
+  test('HTTPS provenance cannot embed misleading URL credentials', () {
+    final unsafe = payload();
+    final synthesis =
+        (unsafe['data'] as Map<String, dynamic>)['synthesis'] as Map<String, dynamic>;
+    final item = (synthesis['items'] as List).single as Map<String, dynamic>;
+    item['sourceRef'] = 'https://publisher.example@attacker.example/news';
+    expect(() => VerifiedNewsSynthesis.fromMap(unsafe), throwsFormatException);
+  });
+
   test('transport uses only canonical latest endpoint', () async {
     late Uri requested;
     final service = AthenaBackendNewsSynthesisService(

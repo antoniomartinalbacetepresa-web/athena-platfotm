@@ -51,7 +51,10 @@ class VerifiedNewsSynthesisItem {
     final evidenceId = text('evidenceId');
     final sourceRef = text('sourceRef');
     final uri = Uri.tryParse(sourceRef);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
       throw const FormatException('News synthesis: sourceRef debe ser HTTPS.');
     }
     final provider = text('evidenceProvider').toLowerCase();
@@ -192,8 +195,11 @@ class VerifiedNewsSynthesis {
 
     final asOf = synthesis['asOf'];
     final threshold = synthesis['minimumImportance'];
-    if (asOf is! String || DateTime.tryParse(asOf) == null || threshold is! String) {
-      throw const FormatException('News synthesis: metadatos temporales inválidos.');
+    if (asOf is! String ||
+        DateTime.tryParse(asOf)?.isUtc != true ||
+        threshold is! String ||
+        !const {'low', 'medium', 'high', 'critical'}.contains(threshold)) {
+      throw const FormatException('News synthesis: metadatos temporales o filtro inválidos.');
     }
     return VerifiedNewsSynthesis(
       cycleHash: sha('cycleHash', map),
