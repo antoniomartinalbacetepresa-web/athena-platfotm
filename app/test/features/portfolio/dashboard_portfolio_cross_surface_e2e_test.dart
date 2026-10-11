@@ -161,10 +161,23 @@ void main() {
       find.byKey(const Key('portfolio-authoritative-boundary')),
       findsNothing,
     );
-    expect(find.text('MI CARTERA'), findsNothing);
+    // The public Portfolio heading remains; owner data and controls disappear.
+    expect(find.text('MI CARTERA'), findsOneWidget);
+    expect(
+      find.text('Posiciones personales protegidas por tu cuenta ATHENA'),
+      findsNothing,
+    );
     expect(
       find.byKey(const Key('portfolio-authenticated-history')),
       findsNothing,
+    );
+    expect(
+      find.byKey(const Key('portfolio-authenticated-sync')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('portfolio-allocation-informational-boundary')),
+      findsOneWidget,
     );
   });
 }

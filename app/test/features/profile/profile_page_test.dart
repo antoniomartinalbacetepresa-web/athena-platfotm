@@ -364,4 +364,41 @@ void main() {
     );
     expect(saved, isNull);
   });
+
+  testWidgets('stale 401 from prior owner never revokes replacement session',
+      (tester) async {
+    session.establish(accessToken: 'owner-a.jwt', account: account());
+    final response = Completer<http.Response>();
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/auth/me');
+        expect(request.headers['Authorization'], 'Bearer owner-a.jwt');
+        return response.future;
+      }),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: ProfilePage(authService: auth)));
+    await tester.pump();
+
+    final replacement = AuthAccount(
+      id: 23,
+      email: 'replacement@example.com',
+      displayName: 'Replacement Owner',
+      isActive: true,
+      createdAt: DateTime.utc(2026, 9, 21),
+      updatedAt: DateTime.utc(2026, 9, 21),
+    );
+    session.clear();
+    session.establish(accessToken: 'owner-b.jwt', account: replacement);
+    response.complete(http.Response('{}', 401));
+    await tester.pumpAndSettle();
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'owner-b.jwt');
+    expect(session.account?.id, 23);
+    expect(find.textContaining('ha caducado'), findsNothing);
+    auth.dispose();
+  });
+
 }

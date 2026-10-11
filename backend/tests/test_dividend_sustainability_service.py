@@ -111,3 +111,58 @@ def test_over_100_percent_payout_is_explicitly_uncovered() -> None:
     assert result.fcf_payout_ratio == pytest.approx(1.5)
     assert result.earnings_covered is False and result.fcf_covered is False
     assert result.sustainability_score == 0.0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("dividends_paid", float("nan")),
+        ("dividends_paid", float("inf")),
+        ("dividends_paid", float("-inf")),
+        ("net_income", float("nan")),
+        ("net_income", float("inf")),
+        ("net_income", float("-inf")),
+        ("free_cash_flow", float("nan")),
+        ("free_cash_flow", float("inf")),
+        ("free_cash_flow", float("-inf")),
+    ],
+)
+def test_sustainability_rejects_non_finite_financial_inputs(
+    field: str, value: float,
+) -> None:
+    kwargs = {
+        "dividends_paid": 40.0,
+        "net_income": 100.0,
+        "free_cash_flow": 80.0,
+        "knowledge_cutoff": _cutoff(),
+        "source_provider": "filing",
+        "retrieved_at": _cutoff(),
+        "comparable_window": True,
+        "currency_consistent": True,
+    }
+    kwargs[field] = value
+    with pytest.raises(ValueError, match=field):
+        DividendSustainabilityService.analyze(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("dividends_paid", "net_income", "free_cash_flow", "expected"),
+    [
+        (1e308, 1e-308, 80.0, "earnings_payout_ratio"),
+        (1e308, 100.0, 1e-308, "fcf_payout_ratio"),
+    ],
+)
+def test_sustainability_rejects_overflowed_payout_ratios(
+    dividends_paid: float, net_income: float, free_cash_flow: float, expected: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected):
+        DividendSustainabilityService.analyze(
+            dividends_paid=dividends_paid,
+            net_income=net_income,
+            free_cash_flow=free_cash_flow,
+            knowledge_cutoff=_cutoff(),
+            source_provider="filing",
+            retrieved_at=_cutoff(),
+            comparable_window=True,
+            currency_consistent=True,
+        )

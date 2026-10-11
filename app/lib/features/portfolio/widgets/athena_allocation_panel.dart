@@ -232,7 +232,7 @@ class _AthenaAllocationPanelState extends State<AthenaAllocationPanel> {
     final shadow = _shadowSnapshot?.candidate;
 
     return Semantics(
-      key: const Key('portfolio-authoritative-boundary'),
+      key: const Key('portfolio-allocation-informational-boundary'),
       container: true,
       label:
           'Planificación ATHENA informativa y no operativa. No ejecuta órdenes, no habilita trading automático y no convierte evidencia shadow en consejo.',

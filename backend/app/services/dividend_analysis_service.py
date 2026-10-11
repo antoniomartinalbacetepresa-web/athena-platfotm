@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 from statistics import median
 from typing import Any
 
@@ -71,7 +72,7 @@ class DividendAnalysisService:
         if instrument_id <= 0: raise ValueError("instrument_id debe ser positivo.")
         if knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None: raise ValueError("knowledge_cutoff debe incluir zona horaria.")
         if lookback_days < 365: raise ValueError("lookback_days debe ser al menos 365 para inferir frecuencia.")
-        if pit_price is not None and pit_price <= 0: raise ValueError("pit_price debe ser positivo cuando se proporciona.")
+        if pit_price is not None and (not isfinite(pit_price) or pit_price <= 0): raise ValueError("pit_price debe ser finito y positivo cuando se proporciona.")
         cutoff = knowledge_cutoff.astimezone(timezone.utc)
         actions = self._repository.list_for_instrument(instrument_id, knowledge_cutoff=cutoff)
         dividends = [row for row in actions if row["action_type"] == "dividend"]

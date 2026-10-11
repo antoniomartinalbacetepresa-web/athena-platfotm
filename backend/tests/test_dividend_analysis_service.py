@@ -239,3 +239,21 @@ def test_regular_pit_dividend_cadences_are_classified(
     assert result.payment_count == len(payments)
     assert result.currency_consistent is True
     assert result.regularity_score is not None and result.regularity_score > 0.90
+
+
+@pytest.mark.parametrize("bad_price", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_pit_price_is_rejected_before_yield_computation(
+    tmp_path: Path, bad_price: float,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    known = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    _save(database, instrument_id, "primary", known, [
+        datetime(2026, 5, 1, tzinfo=timezone.utc),
+    ])
+    with pytest.raises(ValueError, match="pit_price"):
+        DividendAnalysisService(database=database).analyze(
+            instrument_id=instrument_id,
+            knowledge_cutoff=known,
+            pit_price=bad_price,
+        )

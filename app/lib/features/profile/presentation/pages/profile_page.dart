@@ -69,7 +69,9 @@ class _ProfilePageState extends State<ProfilePage> {
     } on AuthSessionRejectedException {
       // clearAfterRemoteInvalidation revokes in-memory authority before its
       // first await. Do not keep the protected UI blocked on secure-storage I/O.
-      unawaited(AuthSession.instance.clearAfterRemoteInvalidation());
+      // A delayed rejection for a previous owner must not revoke the replacement.
+      if (AuthSession.instance.accessToken != token) return;
+      unawaited(AuthSession.instance.clearAfterRemoteInvalidationIfCurrent(token));
       _preferences = null;
       _preferencesError = null;
       _sessionValidationError = null;
