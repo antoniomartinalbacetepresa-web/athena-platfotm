@@ -49,6 +49,25 @@ class DividendTotalReturnService:
     return cannot be presented as if every component came from one provider.
     """
 
+    @staticmethod
+    def _currency(value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("currency debe ser un código de tres letras ASCII.")
+        normalized = value.strip().upper()
+        if len(normalized) != 3 or not normalized.isascii() or not normalized.isalpha():
+            raise ValueError("currency debe ser un código de tres letras ASCII.")
+        return normalized
+
+    @staticmethod
+    def _provider(value: str | None, field: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field} es obligatorio para provenance.")
+        normalized = value.strip()
+        provider_key = "".join(c for c in normalized.casefold() if c.isalnum())
+        if provider_key.startswith("fmp") or "financialmodelingprep" in provider_key:
+            raise ValueError(f"{field} no puede utilizar FMP.")
+        return normalized
+
     def calculate(
         self,
         *,
@@ -69,17 +88,10 @@ class DividendTotalReturnService:
             raise ValueError("start_price debe ser positivo y end_price no negativo.")
         if cash < 0:
             raise ValueError("dividend_cash_per_share no puede ser negativo.")
-        if not currency.strip():
-            raise ValueError("currency es obligatoria.")
-        provider = source_provider.strip()
-        if not provider:
-            raise ValueError("source_provider es obligatorio para provenance.")
-        price_provider = provider if price_source_provider is None else price_source_provider.strip()
-        dividend_provider = provider if dividend_source_provider is None else dividend_source_provider.strip()
-        if not price_provider:
-            raise ValueError("price_source_provider no puede estar vacío.")
-        if not dividend_provider:
-            raise ValueError("dividend_source_provider no puede estar vacío.")
+        normalized_currency = self._currency(currency)
+        provider = self._provider(source_provider, "source_provider")
+        price_provider = provider if price_source_provider is None else self._provider(price_source_provider, "price_source_provider")
+        dividend_provider = provider if dividend_source_provider is None else self._provider(dividend_source_provider, "dividend_source_provider")
         if knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None:
             raise ValueError("knowledge_cutoff debe incluir zona horaria.")
 
@@ -95,7 +107,7 @@ class DividendTotalReturnService:
             dividend_cash_per_share=cash,
             start_price=start,
             end_price=end,
-            currency=currency.strip().upper(),
+            currency=normalized_currency,
             source_provider=provider,
             price_source_provider=price_provider,
             dividend_source_provider=dividend_provider,
