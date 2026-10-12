@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
+import unicodedata
 from typing import Any
 
 
@@ -70,10 +71,27 @@ class DividendTotalReturnService:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} es obligatorio para provenance.")
         normalized = value.strip()
-        provider_key = "".join(c for c in normalized.casefold() if c.isalnum())
-        if provider_key.startswith("fmp") or "financialmodelingprep" in provider_key:
+        provider_key = "".join(
+            c for c in unicodedata.normalize("NFKC", normalized).casefold()
+            if c.isalnum()
+        )
+        if "fmp" in provider_key or "financialmodelingprep" in provider_key:
             raise ValueError(f"{field} no puede utilizar FMP.")
         return normalized
+
+    @staticmethod
+    def _finite_amount(value: Any) -> float:
+        # Reject bool and numeric strings instead of silently casting them
+        # into valid-looking market observations.
+        if isinstance(value, (bool, str, bytes)):
+            raise ValueError("Los precios y dividendos deben ser finitos.")
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Los precios y dividendos deben ser finitos.") from exc
+        if not math.isfinite(result):
+            raise ValueError("Los precios y dividendos deben ser finitos.")
+        return result
 
     def calculate(
         self,
@@ -90,9 +108,7 @@ class DividendTotalReturnService:
         end_observed_at: datetime | None = None,
         dividend_observed_at: datetime | None = None,
     ) -> DividendTotalReturn:
-        values = (float(start_price), float(end_price), float(dividend_cash_per_share))
-        if not all(math.isfinite(value) for value in values):
-            raise ValueError("Los precios y dividendos deben ser finitos.")
+        values = tuple(self._finite_amount(value) for value in (start_price, end_price, dividend_cash_per_share))
         start, end, cash = values
         if start <= 0 or end < 0:
             raise ValueError("start_price debe ser positivo y end_price no negativo.")
