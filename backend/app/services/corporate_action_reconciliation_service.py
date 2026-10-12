@@ -153,12 +153,22 @@ class CorporateActionReconciliationService:
                 effective_at = effective_dt.astimezone(timezone.utc).isoformat()
                 # Revalidate every snapshot, including superseded observations.
                 # A missing economic unit or nonfinite value must never be agreed.
-                self._public_value(row)
+                public_value = self._public_value(row)
                 key = (action_type, effective_at)
                 previous_retrieved_dt = latest_retrieved_at.get(key)
                 if previous_retrieved_dt is None or retrieved_dt > previous_retrieved_dt:
                     latest[key] = dict(row)
                     latest_retrieved_at[key] = retrieved_dt
+                elif retrieved_dt == previous_retrieved_dt and not self._value_equal(
+                    self._public_value(latest[key]), public_value
+                ):
+                    # Distinct same-time events cannot be mapped one-to-one by
+                    # this diagnostic's (type, effective instant) event key.
+                    raise RuntimeError(
+                        "Corporate action persistida con evidencia ambigua: "
+                        "un proveedor informa valores distintos para el mismo "
+                        "tipo, fecha efectiva e instante PIT."
+                    )
                 all_keys.add(key)
             latest_by_provider[provider] = latest
 

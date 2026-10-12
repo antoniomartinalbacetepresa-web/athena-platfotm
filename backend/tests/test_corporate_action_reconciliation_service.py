@@ -163,3 +163,56 @@ def test_numeric_tolerance_must_be_finite_and_non_negative():
         CorporateActionReconciliationService(repository=FakeRepository({}), numeric_tolerance=-1)
     with pytest.raises(ValueError):
         CorporateActionReconciliationService(repository=FakeRepository({}), numeric_tolerance=float("nan"))
+
+
+
+def test_same_provider_distinct_same_pit_instant_fails_closed() -> None:
+    repository = FakeRepository({
+        "yahoo_finance": [
+            _dividend("yahoo_finance", amount=0.25),
+            _dividend("yahoo_finance", amount=0.10),
+        ],
+        "secondary": [_dividend("secondary", amount=0.25)],
+    })
+    with pytest.raises(RuntimeError, match="evidencia ambigua"):
+        CorporateActionReconciliationService(repository=repository).reconcile(
+            instrument_id=19,
+            source_providers=["yahoo_finance", "secondary"],
+            knowledge_cutoff=CUTOFF,
+        )
+
+
+def test_same_provider_different_offset_same_instant_is_ambiguous() -> None:
+    repository = FakeRepository({
+        "yahoo_finance": [
+            _dividend("yahoo_finance", amount=0.25),
+            _dividend(
+                "yahoo_finance", amount=0.10,
+                retrieved_at="2026-09-10T12:00:00+02:00",
+            ),
+        ],
+        "secondary": [_dividend("secondary", amount=0.25)],
+    })
+    with pytest.raises(RuntimeError, match="evidencia ambigua"):
+        CorporateActionReconciliationService(repository=repository).reconcile(
+            instrument_id=19,
+            source_providers=["yahoo_finance", "secondary"],
+            knowledge_cutoff=CUTOFF,
+        )
+
+
+def test_identical_same_instant_replays_remain_reconciled() -> None:
+    repository = FakeRepository({
+        "yahoo_finance": [
+            _dividend("yahoo_finance", amount=0.25),
+            _dividend("yahoo_finance", amount=0.25),
+        ],
+        "secondary": [_dividend("secondary", amount=0.25)],
+    })
+    report = CorporateActionReconciliationService(repository=repository).reconcile(
+        instrument_id=19,
+        source_providers=["yahoo_finance", "secondary"],
+        knowledge_cutoff=CUTOFF,
+    )
+    assert report.reconciled is True
+    assert report.agreed_event_count == 1

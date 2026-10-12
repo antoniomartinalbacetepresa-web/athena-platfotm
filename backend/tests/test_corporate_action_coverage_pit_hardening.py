@@ -79,3 +79,63 @@ def test_aggregate_coverage_rejects_invalid_retrieved_at(tmp_path, retrieved_at)
     service = _service(tmp_path, [_row("yahoo", amount=0.25, retrieved_at=retrieved_at)])
     with pytest.raises(RuntimeError, match="retrieved_at"):
         service.get_report(as_of=AS_OF)
+
+
+
+def test_distinct_same_time_dividends_persist_but_never_claim_ready(tmp_path) -> None:
+    from app.repositories.corporate_action_repository import CorporateActionRepository
+
+    database = _database(tmp_path)
+    repository = CorporateActionRepository(database)
+    retrieved = datetime(2026, 9, 11, 8, tzinfo=timezone.utc)
+    actions = [
+        {
+            "type": "dividend",
+            "effectiveAt": "2026-08-15T00:00:00+00:00",
+            "cashAmount": amount,
+            "currency": "USD",
+        }
+        for amount in (0.25, 0.10)
+    ]
+    stats = repository.save_many(
+        instrument_id=1, source_provider="yahoo",
+        retrieved_at=retrieved, actions=actions,
+    )
+    assert stats.inserted == 2
+    repository.save_many(
+        instrument_id=1, source_provider="exchange_notice",
+        retrieved_at=retrieved, actions=[actions[0]],
+    )
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={"yahoo": "yahoo", "exchange_notice": "exchange"},
+    ).get_report(as_of=AS_OF)
+    assert report.event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 1
+    assert report.cross_provider_reconciliation_ready is False
+
+
+def test_same_pit_instant_different_offsets_cannot_hide_ambiguity(tmp_path) -> None:
+    service = _service(tmp_path, [
+        _row("yahoo", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+        _row("yahoo", amount=0.10, retrieved_at="2026-09-11T10:00:00+02:00"),
+        _row("exchange_notice", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+    ])
+    report = service.get_report(as_of=AS_OF)
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 1
+    assert report.cross_provider_reconciliation_ready is False
+
+
+def test_superseded_ambiguous_snapshot_does_not_override_newer_evidence(tmp_path) -> None:
+    service = _service(tmp_path, [
+        _row("yahoo", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+        _row("yahoo", amount=0.10, retrieved_at="2026-09-11T08:00:00+00:00"),
+        _row("yahoo", amount=0.25, retrieved_at="2026-09-11T09:00:00+00:00"),
+        _row("exchange_notice", amount=0.25, retrieved_at="2026-09-11T09:00:00+00:00"),
+    ])
+    report = service.get_report(as_of=AS_OF)
+    assert report.agreed_event_count == 1
+    assert report.conflict_event_count == 0
+    assert report.cross_provider_reconciliation_ready is True

@@ -96,6 +96,9 @@ class CorporateActionCoverageService:
             bearing += 1
             events: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
             latest: dict[tuple[tuple[str, str], str], datetime] = {}
+            # A single provider may persist multiple distinct same-time actions.
+            # Never silently select one and manufacture cross-family agreement.
+            ambiguous_snapshots: set[tuple[tuple[str, str], str]] = set()
             for row in actions:
                 provider = str(row.get("source_provider") or "").strip()
                 if not provider:
@@ -118,8 +121,25 @@ class CorporateActionCoverageService:
                 if snapshot_key not in latest or retrieved > latest[snapshot_key]:
                     events.setdefault(key, {})[provider] = dict(row)
                     latest[snapshot_key] = retrieved
+                    ambiguous_snapshots.discard(snapshot_key)
+                elif retrieved == latest[snapshot_key]:
+                    selected = events[key][provider]
+                    # Equal PIT instants can have different textual timezone offsets.
+                    # A different economic payload at the same instant is ambiguous.
+                    if not (
+                        self._has_complete_economic_value(selected)
+                        and self._has_complete_economic_value(row)
+                        and self._value_equal(
+                            self._public_value(selected), self._public_value(row)
+                        )
+                    ):
+                        ambiguous_snapshots.add(snapshot_key)
 
-            for by_provider in events.values():
+            ambiguous_event_keys = {snapshot_key[0] for snapshot_key in ambiguous_snapshots}
+            for event_key, by_provider in events.items():
+                if event_key in ambiguous_event_keys:
+                    conflicts += 1
+                    continue
                 # Agreement on a number without its economic unit is not usable
                 # reconciliation evidence. In particular, equal dividend amounts with
                 # unknown currency must remain incomplete rather than becoming "ready".
