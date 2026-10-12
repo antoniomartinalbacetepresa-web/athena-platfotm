@@ -92,8 +92,11 @@ class DividendTotalReturnService:
         provider = self._provider(source_provider, "source_provider")
         price_provider = provider if price_source_provider is None else self._provider(price_source_provider, "price_source_provider")
         dividend_provider = provider if dividend_source_provider is None else self._provider(dividend_source_provider, "dividend_source_provider")
-        if knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None:
-            raise ValueError("knowledge_cutoff debe incluir zona horaria.")
+        if not isinstance(knowledge_cutoff, datetime) or knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None:
+            raise ValueError("knowledge_cutoff debe ser un datetime con zona horaria.")
+        cutoff_utc = knowledge_cutoff.astimezone(timezone.utc)
+        if cutoff_utc > datetime.now(timezone.utc):
+            raise ValueError("knowledge_cutoff no puede ser una fecha futura.")
 
         price_return = end / start - 1.0
         dividend_return = cash / start
@@ -111,5 +114,5 @@ class DividendTotalReturnService:
             source_provider=provider,
             price_source_provider=price_provider,
             dividend_source_provider=dividend_provider,
-            knowledge_cutoff=knowledge_cutoff.astimezone(timezone.utc).isoformat(),
+            knowledge_cutoff=cutoff_utc.isoformat(),
         )
