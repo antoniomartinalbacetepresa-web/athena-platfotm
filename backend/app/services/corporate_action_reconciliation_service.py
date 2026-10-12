@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from typing import Any, Iterable
 
@@ -142,6 +142,18 @@ class CorporateActionReconciliationService:
                         "Corporate action persistida viola el knowledge cutoff PIT: "
                         f"retrieved_at={retrieved_at!r}."
                     )
+                # Match economically identical instants, even when providers use
+                # different timezone offsets. Revalidate effective PIT cutoff.
+                effective_dt = self._parse_aware_datetime(effective_at, field="effective_at")
+                if effective_dt > knowledge_cutoff:
+                    raise RuntimeError(
+                        "Corporate action persistida viola el knowledge cutoff PIT: "
+                        f"effective_at={effective_at!r}."
+                    )
+                effective_at = effective_dt.astimezone(timezone.utc).isoformat()
+                # Revalidate every snapshot, including superseded observations.
+                # A missing economic unit or nonfinite value must never be agreed.
+                self._public_value(row)
                 key = (action_type, effective_at)
                 previous_retrieved_dt = latest_retrieved_at.get(key)
                 if previous_retrieved_dt is None or retrieved_dt > previous_retrieved_dt:
@@ -211,18 +223,43 @@ class CorporateActionReconciliationService:
             )
         return parsed
 
+    def _positive_finite(self, value: Any, *, field: str) -> float:
+        if isinstance(value, bool):
+            raise RuntimeError(f"Corporate action persistida con {field} inválido.")
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(
+                f"Corporate action persistida con {field} inválido."
+            ) from exc
+        if not math.isfinite(number) or number <= 0:
+            raise RuntimeError(
+                f"Corporate action persistida con {field} no positivo o no finito."
+            )
+        return number
+
     def _public_value(self, row: dict[str, Any]) -> dict[str, Any]:
         action_type = str(row["action_type"]).lower()
         if action_type == "dividend":
-            return {
-                "cashAmount": float(row["cash_amount"]),
-                "currency": (
-                    str(row["currency"]).strip().upper()
-                    if row.get("currency") is not None
-                    else None
-                ),
-            }
-        return {"splitRatio": float(row["split_ratio"])}
+            amount = self._positive_finite(row.get("cash_amount"), field="cash_amount")
+            currency = row.get("currency")
+            if not isinstance(currency, str):
+                raise RuntimeError(
+                    "Corporate action persistida con currency ausente o inválida."
+                )
+            normalized_currency = currency.strip().upper()
+            if len(normalized_currency) != 3 or any(
+                not ("A" <= char <= "Z") for char in normalized_currency
+            ):
+                raise RuntimeError(
+                    "Corporate action persistida con currency ausente o inválida."
+                )
+            return {"cashAmount": amount, "currency": normalized_currency}
+        return {
+            "splitRatio": self._positive_finite(
+                row.get("split_ratio"), field="split_ratio"
+            )
+        }
 
     def _all_equal(self, values: tuple[dict[str, Any], ...]) -> bool:
         if not values:
