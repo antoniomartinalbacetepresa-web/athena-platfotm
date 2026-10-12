@@ -75,6 +75,39 @@ def test_production_mapping_does_not_trust_arbitrary_secondary_label(tmp_path) -
     assert report.cross_provider_reconciliation_ready is False
 
 
+def test_explicit_empty_family_mapping_does_not_silently_restore_defaults(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="yahoo", amount=0.25)
+    _save_dividend(database, provider="alpha_vantage", amount=0.25)
+
+    report = CorporateActionCoverageService(
+        database=database, provider_families={}
+    ).get_report(as_of=AS_OF)
+
+    assert report.event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.incomplete_event_count == 1
+    assert report.independent_provider_families == ()
+    assert report.unclassified_source_providers == ("alpha_vantage", "yahoo")
+    assert report.cross_provider_reconciliation_ready is False
+    assert report.to_api_dict()["productionIndependenceClaimed"] is False
+
+
+def test_omitted_family_mapping_retains_declared_default_families(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="yahoo", amount=0.25)
+    _save_dividend(database, provider="alpha_vantage", amount=0.25)
+
+    report = CorporateActionCoverageService(database=database).get_report(
+        as_of=AS_OF
+    )
+
+    assert report.independent_provider_families == ("alpha_vantage", "yahoo")
+    assert report.unclassified_source_providers == ()
+    assert report.agreed_event_count == 1
+    assert report.to_api_dict()["productionIndependenceClaimed"] is False
+
+
 def test_two_configured_independent_families_with_full_agreement_are_ready(tmp_path) -> None:
     database = _database(tmp_path)
     _save_dividend(database, provider="yahoo", amount=0.25)

@@ -75,7 +75,9 @@ class CorporateActionCoverageService:
             raise ValueError("numeric_tolerance debe ser finito y no negativo.")
         self._database = database if database is not None else AthenaDatabase()
         self._repository = CorporateActionRepository(database=self._database)
-        self._provider_families = self._normalize_provider_families(provider_families or self.DEFAULT_PROVIDER_FAMILIES)
+        self._provider_families = self._normalize_provider_families(
+            self.DEFAULT_PROVIDER_FAMILIES if provider_families is None else provider_families
+        )
         self._numeric_tolerance = float(numeric_tolerance)
 
     def get_report(self, *, as_of: datetime) -> CorporateActionCoverageReport:
