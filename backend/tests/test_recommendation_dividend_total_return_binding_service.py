@@ -35,7 +35,7 @@ def test_binding_preserves_component_provenance_and_total_return() -> None:
     assert total_return["priceSourceProvider"] == "market_history"
     assert total_return["dividendSourceProvider"] == "issuer_filing"
     assert total_return["knowledgeCutoff"] == CUTOFF.isoformat()
-    assert total_return["pitSafe"] is True
+    assert total_return["pitSafe"] is False
     assert total_return["dividendsReinvested"] is False
     assert payload["productionEligible"] is False
     assert payload["automaticTrading"] is False

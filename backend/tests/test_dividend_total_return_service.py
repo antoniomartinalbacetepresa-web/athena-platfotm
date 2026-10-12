@@ -23,7 +23,7 @@ def test_total_return_includes_observed_dividend_cash_and_provenance() -> None:
     assert payload["sourceProvider"] == "issuer-filing"
     assert payload["priceSourceProvider"] == "issuer-filing"
     assert payload["dividendSourceProvider"] == "issuer-filing"
-    assert payload["pitSafe"] is True
+    assert payload["pitSafe"] is False
     assert payload["dividendsReinvested"] is False
     assert payload["productionEligible"] is False
     assert payload["automaticTrading"] is False
@@ -44,7 +44,7 @@ def test_total_return_preserves_distinct_price_and_dividend_provenance() -> None
     assert payload["priceSourceProvider"] == "market-history-primary"
     assert payload["dividendSourceProvider"] == "issuer-filing"
     assert payload["totalReturn"] == pytest.approx(0.07)
-    assert payload["pitSafe"] is True
+    assert payload["pitSafe"] is False
     assert payload["productionEligible"] is False
     assert payload["automaticTrading"] is False
 

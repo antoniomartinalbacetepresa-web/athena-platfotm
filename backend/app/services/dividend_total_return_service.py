@@ -19,6 +19,10 @@ class DividendTotalReturn:
     price_source_provider: str
     dividend_source_provider: str
     knowledge_cutoff: str
+    start_observed_at: str | None
+    end_observed_at: str | None
+    dividend_observed_at: str | None
+    pit_safe: bool
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -33,7 +37,10 @@ class DividendTotalReturn:
             "priceSourceProvider": self.price_source_provider,
             "dividendSourceProvider": self.dividend_source_provider,
             "knowledgeCutoff": self.knowledge_cutoff,
-            "pitSafe": True,
+            "startObservedAt": self.start_observed_at,
+            "endObservedAt": self.end_observed_at,
+            "dividendObservedAt": self.dividend_observed_at,
+            "pitSafe": self.pit_safe,
             "dividendsReinvested": False,
             "productionEligible": False,
             "automaticTrading": False,
@@ -41,7 +48,7 @@ class DividendTotalReturn:
 
 
 class DividendTotalReturnService:
-    """PIT total-return decomposition using only observed cash distributions.
+    """Research-only total-return decomposition with conservative PIT evidence.
 
     This deliberately does not project future dividends and does not assume
     reinvestment. Price and dividend cash must be expressed in the same currency.
@@ -79,6 +86,9 @@ class DividendTotalReturnService:
         knowledge_cutoff: datetime,
         price_source_provider: str | None = None,
         dividend_source_provider: str | None = None,
+        start_observed_at: datetime | None = None,
+        end_observed_at: datetime | None = None,
+        dividend_observed_at: datetime | None = None,
     ) -> DividendTotalReturn:
         values = (float(start_price), float(end_price), float(dividend_cash_per_share))
         if not all(math.isfinite(value) for value in values):
@@ -98,6 +108,31 @@ class DividendTotalReturnService:
         if cutoff_utc > datetime.now(timezone.utc):
             raise ValueError("knowledge_cutoff no puede ser una fecha futura.")
 
+        # A cutoff alone cannot establish when each input became knowable.
+        # Caller-provided timestamps are not independent production provenance.
+        observed: dict[str, str | None] = {}
+        for name, value in (
+            ("start_observed_at", start_observed_at),
+            ("end_observed_at", end_observed_at),
+            ("dividend_observed_at", dividend_observed_at),
+        ):
+            if value is None:
+                observed[name] = None
+                continue
+            if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"{name} debe ser un datetime con zona horaria.")
+            timestamp = value.astimezone(timezone.utc)
+            if timestamp > cutoff_utc:
+                raise ValueError(f"{name} no puede superar knowledge_cutoff.")
+            observed[name] = timestamp.isoformat()
+        if (
+            observed["start_observed_at"] is not None
+            and observed["end_observed_at"] is not None
+            and observed["start_observed_at"] > observed["end_observed_at"]
+        ):
+            raise ValueError("start_observed_at no puede ser posterior a end_observed_at.")
+        pit_safe = all(value is not None for value in observed.values())
+
         price_return = end / start - 1.0
         dividend_return = cash / start
         total_return = (end + cash) / start - 1.0
@@ -115,4 +150,8 @@ class DividendTotalReturnService:
             price_source_provider=price_provider,
             dividend_source_provider=dividend_provider,
             knowledge_cutoff=cutoff_utc.isoformat(),
+            start_observed_at=observed["start_observed_at"],
+            end_observed_at=observed["end_observed_at"],
+            dividend_observed_at=observed["dividend_observed_at"],
+            pit_safe=pit_safe,
         )
