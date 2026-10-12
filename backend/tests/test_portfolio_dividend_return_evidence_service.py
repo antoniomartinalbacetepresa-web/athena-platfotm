@@ -69,8 +69,9 @@ def test_dividend_metrics_use_only_explicit_pit_fundamentals(tmp_path) -> None:
     fundamentals = DividendFundamentalEvidence(price=40.0, trailing_dividend_per_share=2.1, payout_ratio=0.55, fcf_payout_ratio=0.60, available_at=datetime(2026, 3, 20, tzinfo=UTC), source="issuer_filing", source_ref="aapl-2025-10k")
     result = PortfolioDividendReturnEvidenceService(ledger).build(portfolio_id="personal", reporting_currency="EUR", period_start=datetime(2024, 12, 31, tzinfo=UTC), period_end=datetime(2026, 4, 1, tzinfo=UTC), as_of=cutoff, fundamentals=fundamentals)
     assert result.trailing_dividend_yield == pytest.approx(2.1 / 40.0)
-    assert result.annualized_dividend_growth == pytest.approx(0.10, abs=0.001)
-    assert result.payment_stability > 0.95
+    # A single PIT trailing-DPS observation cannot establish historical growth.
+    assert result.annualized_dividend_growth is None
+    assert result.payment_stability is None
     assert result.payout_ratio == 0.55
     assert result.fcf_payout_ratio == 0.60
     assert result.sustainability == "supported"
@@ -165,3 +166,31 @@ def test_dividend_fundamentals_fail_closed_on_nonnumeric_values(tmp_path) -> Non
                 as_of=AS_OF,
                 fundamentals=evidence,
             )
+
+
+def test_portfolio_cash_changes_never_infer_dividend_per_share_growth(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    cutoff = datetime(2026, 4, 2, tzinfo=UTC)
+    ledger.append(as_of=cutoff, item=_dividend(datetime(2025, 1, 1, tzinfo=UTC), "cash-2025", 1.0))
+    ledger.append(as_of=cutoff, item=_dividend(datetime(2026, 1, 1, tzinfo=UTC), "cash-2026", 100.0))
+    result = PortfolioDividendReturnEvidenceService(ledger).build(
+        portfolio_id="personal",
+        reporting_currency="EUR",
+        period_start=datetime(2024, 12, 31, tzinfo=UTC),
+        period_end=datetime(2026, 4, 1, tzinfo=UTC),
+        as_of=cutoff,
+    )
+    assert result.gross_dividends == pytest.approx(101.0)
+    assert result.annualized_dividend_growth is None
+    assert result.payment_stability is None
+    assert result.to_dict()["automaticTrading"] is False
+
+
+def test_dividend_series_requires_complete_instrument_identity() -> None:
+    from types import SimpleNamespace
+    check = PortfolioDividendReturnEvidenceService._single_instrument
+    assert check(()) is False
+    assert check((SimpleNamespace(instrument_id="AAPL:XNAS"),)) is True
+    assert check((SimpleNamespace(instrument_id="AAPL:XNAS"), SimpleNamespace(instrument_id=None))) is False
+    assert check((SimpleNamespace(instrument_id="AAPL:XNAS"), SimpleNamespace(instrument_id=" "))) is False
+    assert check((SimpleNamespace(instrument_id="AAPL:XNAS"), SimpleNamespace(instrument_id="MSFT:XNAS"))) is False

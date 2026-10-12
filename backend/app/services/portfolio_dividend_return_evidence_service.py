@@ -98,8 +98,12 @@ class PortfolioDividendReturnEvidenceService:
     @staticmethod
     def _single_instrument(dividends) -> bool:
         """Return True only when observed dividend events belong to one instrument."""
-        instruments = {item.instrument_id for item in dividends if item.instrument_id}
-        return len(instruments) <= 1
+        # A dividend series requires complete identity for every observation.
+        identities = [item.instrument_id for item in dividends]
+        return bool(identities) and all(
+            isinstance(identity, str) and bool(identity.strip())
+            for identity in identities
+        ) and len(set(identities)) == 1
 
     @staticmethod
     def _stability(dividends) -> float | None:
@@ -194,11 +198,17 @@ class PortfolioDividendReturnEvidenceService:
             # Cadence/growth/stability are per-security concepts. Combining cash
             # distributions from different instruments can manufacture a plausible
             # cadence or growth rate that no holding actually has.
-            observed_frequency=(self._observed_frequency(dividends) if self._single_instrument(dividends) else "mixed_instruments"),
+            observed_frequency=(
+                "insufficient_evidence" if not dividends
+                else self._observed_frequency(dividends) if self._single_instrument(dividends)
+                else "mixed_instruments"
+            ),
             trailing_dividend_per_share=trailing_dps,
             trailing_dividend_yield=trailing_yield,
-            annualized_dividend_growth=(self._annualized_growth(dividends) if self._single_instrument(dividends) else None),
-            payment_stability=(self._stability(dividends) if self._single_instrument(dividends) else None),
+            # Cash received depends on shares held; it is not a per-share dividend series.
+            # Do not infer per-share growth or payout stability from portfolio cash.
+            annualized_dividend_growth=None,
+            payment_stability=None,
             payout_ratio=payout,
             fcf_payout_ratio=fcf,
             sustainability=sustainability,
