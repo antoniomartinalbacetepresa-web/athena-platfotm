@@ -114,7 +114,9 @@ class CorporateActionCoverageService:
                     raise RuntimeError("Corporate action persistida con contrato inválido.")
                 effective = self._parse_aware_datetime(row.get("effective_at"), field="effective_at")
                 retrieved = self._parse_aware_datetime(row.get("retrieved_at"), field="retrieved_at")
-                if retrieved > cutoff:
+                if retrieved > cutoff or effective > cutoff:
+                    # Recheck both timestamps independently of repository filtering:
+                    # a leaky adapter cannot turn future events into PIT evidence.
                     raise RuntimeError("Corporate action persistida viola el knowledge cutoff PIT.")
                 key = (action_type, effective.isoformat())
                 snapshot_key = (key, provider)

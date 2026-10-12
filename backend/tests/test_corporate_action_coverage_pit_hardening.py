@@ -139,3 +139,31 @@ def test_superseded_ambiguous_snapshot_does_not_override_newer_evidence(tmp_path
     assert report.agreed_event_count == 1
     assert report.conflict_event_count == 0
     assert report.cross_provider_reconciliation_ready is True
+
+
+
+def test_aggregate_coverage_rejects_future_effective_event_leaked_by_repository(tmp_path) -> None:
+    future = _row(
+        "yahoo", amount=0.25,
+        retrieved_at="2026-09-11T08:00:00+00:00",
+    )
+    future["effective_at"] = "2026-09-13T00:00:00+00:00"
+    service = _service(tmp_path, [future])
+    with pytest.raises(RuntimeError, match="knowledge cutoff PIT"):
+        service.get_report(as_of=AS_OF)
+
+
+def test_aggregate_coverage_accepts_effective_instant_exactly_at_cutoff(tmp_path) -> None:
+    yahoo = _row(
+        "yahoo", amount=0.25,
+        retrieved_at="2026-09-11T08:00:00+00:00",
+    )
+    yahoo["effective_at"] = "2026-09-12T12:00:00+02:00"
+    exchange = _row(
+        "exchange_notice", amount=0.25,
+        retrieved_at="2026-09-11T08:00:00+00:00",
+    )
+    exchange["effective_at"] = "2026-09-12T10:00:00+00:00"
+    report = _service(tmp_path, [yahoo, exchange]).get_report(as_of=AS_OF)
+    assert report.agreed_event_count == 1
+    assert report.cross_provider_reconciliation_ready is True
