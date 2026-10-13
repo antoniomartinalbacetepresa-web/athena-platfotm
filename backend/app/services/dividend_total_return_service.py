@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import math
 import unicodedata
 from typing import Any
+from urllib.parse import unquote
 
 
 @dataclass(frozen=True)
@@ -71,12 +72,18 @@ class DividendTotalReturnService:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} es obligatorio para provenance.")
         normalized = value.strip()
-        provider_key = "".join(
-            c for c in unicodedata.normalize("NFKC", normalized).casefold()
-            if c.isalnum()
-        )
-        if "fmp" in provider_key or "financialmodelingprep" in provider_key:
-            raise ValueError(f"{field} no puede utilizar FMP.")
+        # Reject URL-encoded aliases at every decoding layer, not just plain text.
+        decoded = unicodedata.normalize("NFKC", normalized).casefold()
+        for _ in range(8):
+            provider_key = "".join(char for char in decoded if char.isalnum())
+            if "fmp" in provider_key or "financialmodelingprep" in provider_key:
+                raise ValueError(f"{field} no puede utilizar FMP.")
+            next_value = unquote(decoded)
+            if next_value == decoded:
+                break
+            decoded = unicodedata.normalize("NFKC", next_value).casefold()
+        else:
+            raise ValueError(f"{field} tiene codificación ambigua.")
         return normalized
 
     @staticmethod
