@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import math
+import unicodedata
+from urllib.parse import unquote
 from statistics import mean, median, pstdev
 
 from app.services.recommendation_portfolio_event_ledger_service import (
@@ -131,9 +133,26 @@ class PortfolioDividendReturnEvidenceService:
             return None, None, None, None, "insufficient_evidence", ()
         if evidence.available_at is None or evidence.available_at.tzinfo is None or evidence.available_at > as_of:
             raise ValueError("dividend fundamentals must be PIT-available at as_of")
-        if not evidence.source or not evidence.source_ref:
+        if (not isinstance(evidence.source, str) or not evidence.source.strip()
+                or not isinstance(evidence.source_ref, str) or not evidence.source_ref.strip()):
             raise ValueError("dividend fundamentals require explicit provenance")
+        # NFKC normalizes compatibility spellings; provenance must still be
+        # independently verified upstream. Decode nested percent-escapes.
+        for provider_identity in (evidence.source, evidence.source_ref):
+            normalized = unicodedata.normalize("NFKC", provider_identity).casefold()
+            for _ in range(8):
+                compact = "".join(ch for ch in normalized if ch.isalnum())
+                if "fmp" in compact or "financialmodelingprep" in compact:
+                    raise ValueError("FMP cannot be used as dividend fundamentals provenance")
+                decoded = unquote(normalized)
+                if decoded == normalized:
+                    break
+                normalized = unicodedata.normalize("NFKC", decoded).casefold()
+            else:
+                raise ValueError("dividend fundamentals provenance encoding is ambiguous")
         values = (evidence.price, evidence.trailing_dividend_per_share, evidence.payout_ratio, evidence.fcf_payout_ratio)
+        if any(value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))) for value in values):
+            raise ValueError("dividend fundamentals must be numeric and finite")
         try:
             finite = all(value is None or math.isfinite(float(value)) for value in values)
         except (TypeError, ValueError, OverflowError) as exc:
