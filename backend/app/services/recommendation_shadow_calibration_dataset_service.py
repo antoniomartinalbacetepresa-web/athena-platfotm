@@ -1,0 +1,446 @@
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_shadow_repository import RecommendationShadowRepository
+from app.services.recommendation_shadow_capture_service import (
+    RecommendationShadowCaptureService,
+)
+
+
+@dataclass(frozen=True)
+class ShadowCalibrationRow:
+    snapshot_id: int
+    instrument_id: int
+    symbol: str
+    data_cutoff_at: str
+    horizon_days: int
+    outcome_due_at: str
+    outcome_evaluated_at: str
+    realized_return: float
+    benchmark_return: float | None
+    excess_return: float | None
+    technical_score: float | None
+    risk_score: float | None
+    return_20d: float | None
+    return_60d: float | None
+    annualized_volatility: float | None
+    max_drawdown_60d: float | None
+    fundamental_coverage_ratio: float | None
+    revenue_growth: float | None
+    net_margin: float | None
+    liabilities_to_assets: float | None
+    reported_annual_pe: float | None
+    macro_observations: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "snapshotId": self.snapshot_id,
+            "instrumentId": self.instrument_id,
+            "symbol": self.symbol,
+            "dataCutoffAt": self.data_cutoff_at,
+            "horizonDays": self.horizon_days,
+            "outcomeDueAt": self.outcome_due_at,
+            "outcomeEvaluatedAt": self.outcome_evaluated_at,
+            "target": {
+                "realizedReturn": self.realized_return,
+                "benchmarkReturn": self.benchmark_return,
+                "excessReturn": self.excess_return,
+            },
+            "features": {
+                "technicalScore": self.technical_score,
+                "riskScore": self.risk_score,
+                "return20d": self.return_20d,
+                "return60d": self.return_60d,
+                "annualizedVolatility": self.annualized_volatility,
+                "maxDrawdown60d": self.max_drawdown_60d,
+                "fundamentalCoverageRatio": self.fundamental_coverage_ratio,
+                "revenueGrowth": self.revenue_growth,
+                "netMargin": self.net_margin,
+                "liabilitiesToAssets": self.liabilities_to_assets,
+                "reportedAnnualPe": self.reported_annual_pe,
+            },
+            "macroObservations": self.macro_observations,
+        }
+
+
+class RecommendationShadowCalibrationDatasetService:
+    """Build an immutable supervised dataset from matured shadow evidence.
+
+    The service intentionally emits continuous realized/excess returns, not
+    BUY/HOLD/REDUCE/SELL labels. Action thresholds and feature weights must be
+    learned and validated out of sample rather than encoded by intuition.
+
+    Benchmark-adjusted targets are accepted only when the exact benchmark
+    observations used to compute them were persisted. Legacy rows that contain
+    only a scalar benchmark return can still contribute their realized asset
+    return, but their benchmark/excess targets are suppressed rather than
+    silently trusted.
+
+    Macro observations are exposed as frozen, provenance-preserving research
+    evidence. They are deliberately not flattened into a directional score or
+    weighted feature until out-of-sample evidence justifies that transformation.
+    """
+
+    FEATURE_SCHEMA_VERSION = RecommendationShadowCaptureService.FEATURE_SCHEMA_VERSION
+
+    def __init__(self, *, database: AthenaDatabase | None = None) -> None:
+        self._database = database if database is not None else AthenaDatabase()
+        self._shadow_repository = RecommendationShadowRepository(database=self._database)
+
+    def build(
+        self,
+        *,
+        as_of: datetime,
+        horizon_days: int | None = None,
+        require_benchmark: bool = False,
+    ) -> dict[str, Any]:
+        cutoff = self._aware_utc(as_of)
+        if horizon_days is not None and horizon_days <= 0:
+            raise ValueError("horizon_days debe ser positivo.")
+        self._shadow_repository.initialize()
+
+        query = """
+            SELECT
+                s.id AS snapshot_id,
+                s.instrument_id,
+                s.symbol,
+                s.data_cutoff_at,
+                s.benchmark_symbol,
+                s.feature_schema_version,
+                s.evidence_snapshot_json,
+                o.horizon_days,
+                o.due_at,
+                o.evaluated_at,
+                o.realized_return,
+                o.benchmark_return,
+                o.excess_return,
+                o.benchmark_evidence_json
+            FROM athena_recommendation_shadow_snapshots s
+            JOIN athena_recommendation_shadow_outcomes o
+              ON o.snapshot_id = s.id
+            WHERE s.feature_schema_version = ?
+              AND o.evaluated_at <= ?
+        """
+        parameters: list[Any] = [self.FEATURE_SCHEMA_VERSION, cutoff.isoformat()]
+        if horizon_days is not None:
+            query += " AND o.horizon_days = ?"
+            parameters.append(int(horizon_days))
+        if require_benchmark:
+            query += " AND o.benchmark_return IS NOT NULL AND o.excess_return IS NOT NULL"
+        query += " ORDER BY s.data_cutoff_at ASC, s.id ASC, o.horizon_days ASC"
+
+        try:
+            with self._database.connect() as connection:
+                rows = connection.execute(query, parameters).fetchall()
+        except Exception as exc:
+            if "no such table: athena_recommendation_shadow" in str(exc).lower():
+                rows = []
+            else:
+                raise
+
+        dataset: list[dict[str, Any]] = []
+        rejected_invalid_snapshot = 0
+        rejected_non_finite_target = 0
+        rejected_unprovenanced_benchmark = 0
+        suppressed_unprovenanced_benchmark = 0
+        for raw in rows:
+            row = dict(raw)
+            try:
+                snapshot = json.loads(str(row["evidence_snapshot_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                rejected_invalid_snapshot += 1
+                continue
+            if not isinstance(snapshot, dict):
+                rejected_invalid_snapshot += 1
+                continue
+            if snapshot.get("productionEligible") is not False:
+                rejected_invalid_snapshot += 1
+                continue
+            if snapshot.get("recommendationCandidateReady") is not False:
+                rejected_invalid_snapshot += 1
+                continue
+
+            market = snapshot.get("market")
+            fundamentals = snapshot.get("fundamentals")
+            valuation = snapshot.get("valuation")
+            if not all(isinstance(item, dict) for item in (market, fundamentals, valuation)):
+                rejected_invalid_snapshot += 1
+                continue
+
+            ratios = fundamentals.get("ratios") if isinstance(fundamentals, dict) else None
+            if ratios is None:
+                ratios = {}
+            if not isinstance(ratios, dict):
+                rejected_invalid_snapshot += 1
+                continue
+
+            macro_observations, macro_valid = self._extract_macro_observations(
+                snapshot=snapshot,
+                data_cutoff_at=row.get("data_cutoff_at"),
+            )
+            if not macro_valid:
+                rejected_invalid_snapshot += 1
+                continue
+
+            realized_return = self._required_finite_float(row.get("realized_return"))
+            if realized_return is None:
+                rejected_non_finite_target += 1
+                continue
+            benchmark_return = self._optional_float(row.get("benchmark_return"))
+            excess_return = self._optional_float(row.get("excess_return"))
+            has_benchmark_target = benchmark_return is not None or excess_return is not None
+            benchmark_provenanced = self._benchmark_evidence_matches(row)
+
+            if has_benchmark_target and not benchmark_provenanced:
+                if require_benchmark:
+                    rejected_unprovenanced_benchmark += 1
+                    continue
+                benchmark_return = None
+                excess_return = None
+                suppressed_unprovenanced_benchmark += 1
+
+            if require_benchmark and (
+                benchmark_return is None or excess_return is None
+            ):
+                rejected_non_finite_target += 1
+                continue
+
+            calibration_row = ShadowCalibrationRow(
+                snapshot_id=int(row["snapshot_id"]),
+                instrument_id=int(row["instrument_id"]),
+                symbol=str(row["symbol"]),
+                data_cutoff_at=str(row["data_cutoff_at"]),
+                horizon_days=int(row["horizon_days"]),
+                outcome_due_at=str(row["due_at"]),
+                outcome_evaluated_at=str(row["evaluated_at"]),
+                realized_return=realized_return,
+                benchmark_return=benchmark_return,
+                excess_return=excess_return,
+                technical_score=self._optional_float(market.get("technicalScore")),
+                risk_score=self._optional_float(market.get("riskScore")),
+                return_20d=self._optional_float(market.get("return20d")),
+                return_60d=self._optional_float(market.get("return60d")),
+                annualized_volatility=self._optional_float(
+                    market.get("annualizedVolatility")
+                ),
+                max_drawdown_60d=self._optional_float(market.get("maxDrawdown60d")),
+                fundamental_coverage_ratio=self._optional_float(
+                    fundamentals.get("coverageRatio")
+                ),
+                revenue_growth=self._optional_float(ratios.get("revenueGrowth")),
+                net_margin=self._optional_float(ratios.get("netMargin")),
+                liabilities_to_assets=self._optional_float(
+                    ratios.get("liabilitiesToAssets")
+                ),
+                reported_annual_pe=self._optional_float(
+                    valuation.get("reportedAnnualPe")
+                ),
+                macro_observations=macro_observations,
+            )
+            dataset.append(calibration_row.to_dict())
+
+        return {
+            "status": "shadow_calibration_dataset",
+            "asOf": cutoff.isoformat(),
+            "featureSchemaVersion": self.FEATURE_SCHEMA_VERSION,
+            "horizonDays": horizon_days,
+            "requireBenchmark": require_benchmark,
+            "rowCount": len(dataset),
+            "rejectedInvalidSnapshotCount": rejected_invalid_snapshot,
+            "rejectedNonFiniteTargetCount": rejected_non_finite_target,
+            "rejectedUnprovenancedBenchmarkCount": rejected_unprovenanced_benchmark,
+            "suppressedUnprovenancedBenchmarkCount": suppressed_unprovenanced_benchmark,
+            "rows": dataset,
+            "advisoryStatus": "no_advice",
+            "policy": {
+                "targets": "continuous_realized_and_excess_returns_only",
+                "actions": "not_assigned",
+                "featureWeights": "not_assigned",
+                "futureOutcomes": "evaluated_at_not_after_as_of",
+                "outcomeTimingMetadata": "included_for_purged_chronological_splits",
+                "benchmarkTargets": "exact_persisted_observation_provenance_required",
+                "legacyBenchmarkScalars": "suppressed_from_calibration",
+                "macroEvidence": "frozen_provenanced_observations_only_no_score_or_weight",
+                "numericIntegrity": "non_finite_values_never_enter_calibration",
+                "schema": "exact_feature_schema_version_required",
+                "trainingUse": "out_of_sample_validation_required_before_advice",
+            },
+        }
+
+    def _extract_macro_observations(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        data_cutoff_at: object,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        raw_macro = snapshot.get("macro")
+        if raw_macro is None:
+            return [], True
+        if not isinstance(raw_macro, dict):
+            return [], False
+
+        raw_observations = raw_macro.get("observations")
+        ready = raw_macro.get("ready") is True
+        if raw_observations is None:
+            return ([], not ready)
+        if not isinstance(raw_observations, list):
+            return [], False
+
+        cutoff = self._parse_aware_datetime(data_cutoff_at)
+        if cutoff is None:
+            return [], False
+
+        normalized: list[dict[str, Any]] = []
+        for raw in raw_observations:
+            if not isinstance(raw, dict):
+                return [], False
+            metric = str(raw.get("metric") or "").strip()
+            entity = str(raw.get("entity") or "").strip()
+            unit = str(raw.get("unit") or "").strip()
+            source = str(raw.get("source") or "").strip()
+            source_url = str(raw.get("sourceUrl") or "").strip()
+            value = self._required_finite_float(raw.get("value"))
+            observed_at = self._parse_aware_datetime(raw.get("observedAt"))
+            available_at = self._parse_aware_datetime(raw.get("availableAt"))
+            retrieved_at = self._parse_aware_datetime(raw.get("retrievedAt"))
+            quality_score = self._optional_bounded_score(raw.get("qualityScore"))
+            confidence = self._optional_bounded_score(raw.get("confidence"))
+
+            if (
+                not metric.startswith("macro.")
+                or not entity
+                or not unit
+                or not source
+                or not source_url
+                or value is None
+                or observed_at is None
+                or available_at is None
+                or retrieved_at is None
+                or available_at > cutoff
+                or retrieved_at > cutoff
+                or observed_at > available_at
+            ):
+                return [], False
+            if raw.get("qualityScore") is not None and quality_score is None:
+                return [], False
+            if raw.get("confidence") is not None and confidence is None:
+                return [], False
+
+            normalized.append(
+                {
+                    "metric": metric,
+                    "entity": entity,
+                    "value": value,
+                    "unit": unit,
+                    "source": source,
+                    "observedAt": observed_at.isoformat(),
+                    "availableAt": available_at.isoformat(),
+                    "retrievedAt": retrieved_at.isoformat(),
+                    "sourceUrl": source_url,
+                    "qualityScore": quality_score,
+                    "confidence": confidence,
+                }
+            )
+
+        if ready and not normalized:
+            return [], False
+        return normalized, True
+
+    def _benchmark_evidence_matches(self, row: dict[str, Any]) -> bool:
+        benchmark_return = self._optional_float(row.get("benchmark_return"))
+        excess_return = self._optional_float(row.get("excess_return"))
+        if benchmark_return is None and excess_return is None:
+            return False
+        raw = row.get("benchmark_evidence_json")
+        if raw is None:
+            return False
+        try:
+            evidence = json.loads(str(raw))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(evidence, dict) or evidence.get("status") != "resolved":
+            return False
+        frozen_symbol = str(row.get("benchmark_symbol") or "").strip().upper()
+        evidence_symbol = str(evidence.get("benchmarkSymbol") or "").strip().upper()
+        if not frozen_symbol or evidence_symbol != frozen_symbol:
+            return False
+        entry_price = self._required_finite_float(evidence.get("entryPrice"))
+        exit_price = self._required_finite_float(evidence.get("exitPrice"))
+        evidence_return = self._required_finite_float(evidence.get("benchmarkReturn"))
+        if (
+            entry_price is None
+            or exit_price is None
+            or entry_price <= 0
+            or exit_price <= 0
+            or evidence_return is None
+            or benchmark_return is None
+        ):
+            return False
+        recomputed = (exit_price / entry_price) - 1.0
+        if not math.isclose(
+            recomputed, evidence_return, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            return False
+        if not math.isclose(
+            benchmark_return, evidence_return, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            return False
+        return all(
+            str(evidence.get(field) or "").strip()
+            for field in (
+                "entryObservedAt",
+                "exitObservedAt",
+                "entryRetrievedAt",
+                "exitRetrievedAt",
+                "entrySourceProvider",
+                "exitSourceProvider",
+            )
+        )
+
+    def _required_finite_float(self, value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+
+    def _optional_float(self, value: object) -> float | None:
+        if value is None:
+            return None
+        return self._required_finite_float(value)
+
+    def _optional_bounded_score(self, value: object) -> float | None:
+        if value is None:
+            return None
+        parsed = self._required_finite_float(value)
+        if parsed is None or parsed < 0.0 or parsed > 100.0:
+            return None
+        return parsed
+
+    def _parse_aware_datetime(self, value: object) -> datetime | None:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    def _aware_utc(self, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("as_of debe incluir zona horaria.")
+        return value.astimezone(timezone.utc)
