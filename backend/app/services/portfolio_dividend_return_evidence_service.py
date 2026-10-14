@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import math
+from html import unescape as html_unescape
 import unicodedata
 from urllib.parse import unquote
 from statistics import mean, median, pstdev
@@ -144,7 +145,7 @@ class PortfolioDividendReturnEvidenceService:
                 compact = "".join(ch for ch in normalized if ch.isalnum())
                 if "fmp" in compact or "financialmodelingprep" in compact:
                     raise ValueError("FMP cannot be used as dividend fundamentals provenance")
-                decoded = unquote(normalized)
+                decoded = html_unescape(unquote(normalized))
                 if decoded == normalized:
                     break
                 normalized = unicodedata.normalize("NFKC", decoded).casefold()

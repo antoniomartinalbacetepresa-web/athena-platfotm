@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+from html import unescape as html_unescape
 import json
 import math
+import unicodedata
+from urllib.parse import unquote
 from pathlib import Path
 import re
 from threading import Lock
@@ -155,6 +158,25 @@ class RecommendationPortfolioEventLedgerService:
             raise ValueError(f"{field} is required")
         return cleaned
 
+    @staticmethod
+    def _provenance(value: str, field: str) -> str:
+        """Fail closed on forbidden provenance, including nested HTML and URL escapes."""
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field} is required")
+        cleaned = value.strip()
+        decoded = unicodedata.normalize("NFKC", cleaned).casefold()
+        for _ in range(8):
+            compact = "".join(ch for ch in decoded if ch.isalnum())
+            if "fmp" in compact or "financialmodelingprep" in compact:
+                raise ValueError(f"{field} cannot use FMP provenance")
+            next_value = unicodedata.normalize(
+                "NFKC", html_unescape(unquote(decoded))
+            ).casefold()
+            if next_value == decoded:
+                return cleaned
+            decoded = next_value
+        raise ValueError(f"{field} provenance encoding is ambiguous")
+
     @classmethod
     def _currency(cls, value: str) -> str:
         currency = cls._text(value, "currency").upper()
@@ -166,7 +188,12 @@ class RecommendationPortfolioEventLedgerService:
     def _finite_optional(value: float | None, field: str) -> float | None:
         if value is None:
             return None
-        numeric = float(value)
+        if isinstance(value, (bool, str, bytes)):
+            raise ValueError(f"{field} must be finite numeric data")
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{field} must be finite numeric data") from exc
         if not math.isfinite(numeric):
             raise ValueError(f"{field} must be finite")
         return numeric
@@ -211,8 +238,8 @@ class RecommendationPortfolioEventLedgerService:
         if event_type not in _ALLOWED_EVENT_TYPES:
             raise ValueError("unsupported portfolio ledger event_type")
         currency = self._currency(item.currency)
-        source = self._text(item.source, "source")
-        source_ref = self._text(item.source_ref, "source_ref")
+        source = self._provenance(item.source, "source")
+        source_ref = self._provenance(item.source_ref, "source_ref")
         amount = self._finite_optional(item.amount, "amount")
         quantity = self._finite_optional(item.quantity, "quantity")
         instrument_id = None if item.instrument_id is None else self._text(item.instrument_id, "instrument_id")
@@ -278,8 +305,8 @@ class RecommendationPortfolioEventLedgerService:
         body = json.dumps(event.canonical_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(f"portfolio_ledger_record_v1|{sequence}|{previous_hash}|{body}".encode("utf-8")).hexdigest()
 
-    @staticmethod
-    def _event_from_dict(payload: dict[str, object]) -> PortfolioLedgerEvent:
+    @classmethod
+    def _event_from_dict(cls, payload: dict[str, object]) -> PortfolioLedgerEvent:
         event_key = str(payload.get("eventKey", ""))
         if _SHA256_RE.fullmatch(event_key) is None:
             raise ValueError("portfolio ledger contains invalid event key")
@@ -292,11 +319,11 @@ class RecommendationPortfolioEventLedgerService:
             occurred_at=occurred_at,
             available_at=available_at,
             currency=str(payload["currency"]),
-            amount=None if payload.get("amount") is None else float(payload["amount"]),
+            amount=cls._finite_optional(payload.get("amount"), "amount"),
             instrument_id=None if payload.get("instrumentId") is None else str(payload["instrumentId"]),
-            quantity=None if payload.get("quantity") is None else float(payload["quantity"]),
-            source=str(payload["source"]),
-            source_ref=str(payload["sourceRef"]),
+            quantity=cls._finite_optional(payload.get("quantity"), "quantity"),
+            source=cls._provenance(payload["source"], "source"),
+            source_ref=cls._provenance(payload["sourceRef"], "source_ref"),
         )
 
     def _load_unlocked(self) -> tuple[PortfolioLedgerRecord, ...]:

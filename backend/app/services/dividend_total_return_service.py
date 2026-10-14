@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
+from html import unescape as html_unescape
 import unicodedata
 from typing import Any
 from urllib.parse import unquote
@@ -78,7 +79,7 @@ class DividendTotalReturnService:
             provider_key = "".join(char for char in decoded if char.isalnum())
             if "fmp" in provider_key or "financialmodelingprep" in provider_key:
                 raise ValueError(f"{field} no puede utilizar FMP.")
-            next_value = unquote(decoded)
+            next_value = html_unescape(unquote(decoded))
             if next_value == decoded:
                 break
             decoded = unicodedata.normalize("NFKC", next_value).casefold()
