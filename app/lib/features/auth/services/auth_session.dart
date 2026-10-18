@@ -159,8 +159,10 @@ class AuthSession extends ChangeNotifier {
     final changed = _accessToken != null || _account != null;
     _accessToken = null;
     _account = null;
+    // A clear is an authority transition even if memory was already empty.
+    // Otherwise a pending restore can resurrect a session after logout.
+    _authorityVersion += 1;
     if (changed) {
-      _authorityVersion += 1;
       notifyListeners();
     }
   }
