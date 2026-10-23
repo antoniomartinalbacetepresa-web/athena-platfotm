@@ -264,3 +264,27 @@ def test_reconciliation_must_cover_exact_market_pit_instant(knowledge_cutoff):
     assert report.corporate_action_gate_passed is False
     assert report.history_acceptance_passed is False
     assert report.to_api_dict()["productionAuthorization"] is False
+
+
+@pytest.mark.parametrize("invalid_instrument_id", [0, -1])
+def test_reconciliation_rejects_invalid_instrument_identity(invalid_instrument_id):
+    from dataclasses import replace
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(_reconciliation(), instrument_id=invalid_instrument_id)],
+        independent_secondary_source_verified=True,
+    )
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+
+
+def test_reconciliation_rejects_duplicate_instrument_evidence():
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[_reconciliation(), _reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert report.agreed_event_count == 2
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
