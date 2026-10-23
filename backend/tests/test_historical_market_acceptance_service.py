@@ -141,3 +141,35 @@ def test_no_measured_agreed_event_does_not_claim_secondary_agreement():
 def test_cannot_lower_final_history_threshold_below_365_days():
     with pytest.raises(ValueError, match="365"):
         HistoricalMarketAcceptanceService(required_history_days=364)
+
+
+@pytest.mark.parametrize(
+    "unverified",
+    ["false", "true", "yes", 1, 0, None, [], {}],
+)
+def test_secondary_source_acceptance_rejects_truthy_non_boolean_flags(
+    unverified,
+):
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=unverified,
+    )
+    assert report.independent_secondary_source_verified is False
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+    assert report.to_api_dict()["independentSecondarySourceVerified"] is False
+
+
+def test_direct_report_construction_cannot_bypass_explicit_secondary_verification():
+    from dataclasses import replace
+
+    verified = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert verified.corporate_action_gate_passed is True
+    unverified = replace(verified, independent_secondary_source_verified="false")
+    assert unverified.corporate_action_gate_passed is False
+    assert unverified.history_acceptance_passed is False
