@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
@@ -45,6 +46,114 @@ void main() {
         session: session,
         client: MockClient((request) async => response),
       );
+
+  http.Response historyResponse(String portfolioId, int sequence) => http.Response(
+        jsonEncode({
+          'data': {
+            'portfolioId': portfolioId,
+            'asOf': '2026-09-12T06:00:00Z',
+            'events': [
+              {
+                'sequence': sequence,
+                'recordHash': _hashA,
+                'eventKey': _hashB,
+                'portfolioId': portfolioId,
+                'eventType': 'cash_dividend',
+                'occurredAt': '2026-09-12T05:00:00Z',
+                'availableAt': '2026-09-12T05:01:00Z',
+                'currency': 'EUR',
+                'amount': 10,
+                'source': 'user_portfolio',
+                'sourceRef': 'dividend-$sequence',
+              }
+            ],
+            'eventCount': 1,
+            'hasMore': false,
+          },
+        }),
+        200,
+      );
+
+  testWidgets('late 401 from previous owner cannot clear replacement session',
+      (tester) async {
+    final oldResponse = Completer<http.Response>();
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      session: session,
+      client: MockClient((request) async {
+        if (request.headers['Authorization'] == 'Bearer signed.jwt.token') {
+          return oldResponse.future;
+        }
+        return historyResponse('primary', 22);
+      }),
+    );
+    await tester.pumpWidget(harness(service));
+    await tester.pump();
+    session.establish(
+      accessToken: 'replacement.jwt.token',
+      account: AuthAccount(
+        id: 8,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.parse('2026-09-10T10:00:00Z'),
+        updatedAt: DateTime.parse('2026-09-10T10:00:00Z'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('portfolio-history-event-22')), findsOneWidget);
+    oldResponse.complete(http.Response('{"detail":"Sesión caducada"}', 401));
+    await tester.pumpAndSettle();
+    expect(session.accessToken, 'replacement.jwt.token');
+    expect(session.account?.id, 8);
+    expect(find.byKey(const Key('portfolio-history-event-22')), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-history-session-rejected')),
+        findsNothing);
+  });
+
+  testWidgets('changing portfolioId ignores stale history and reloads',
+      (tester) async {
+    final primaryResponse = Completer<http.Response>();
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      session: session,
+      client: MockClient((request) async {
+        final id = request.url.queryParameters['portfolioId'];
+        if (id == 'primary') return primaryResponse.future;
+        return historyResponse('secondary', 33);
+      }),
+    );
+    Widget withId(String id) => MaterialApp(
+          home: Scaffold(
+            body: AuthenticatedPortfolioHistoryPanel(
+              service: service,
+              portfolioId: id,
+            ),
+          ),
+        );
+    await tester.pumpWidget(withId('primary'));
+    await tester.pump();
+    await tester.pumpWidget(withId('secondary'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('portfolio-history-event-33')), findsOneWidget);
+    primaryResponse.complete(historyResponse('primary', 11));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('portfolio-history-event-33')), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-history-event-11')), findsNothing);
+  });
+
+  testWidgets('logout immediately removes visible owner history',
+      (tester) async {
+    final service = serviceFor(historyResponse('primary', 44));
+    await tester.pumpWidget(harness(service));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('portfolio-history-event-44')), findsOneWidget);
+    session.clear();
+    await tester.pump();
+    expect(find.byKey(const Key('portfolio-history-event-44')), findsNothing);
+    expect(find.byKey(const Key('portfolio-history-session-rejected')),
+        findsOneWidget);
+  });
 
   testWidgets('renders authenticated ledger event and read-only disclosure',
       (tester) async {
