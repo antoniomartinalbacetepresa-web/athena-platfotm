@@ -139,6 +139,40 @@ void main() {
     expect(result.items.single.evidenceId, 'news-1');
   });
 
+  testWidgets('canonical News timeout fails closed and retry restores verified evidence',
+      (tester) async {
+    var calls = 0;
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'http://127.0.0.1:8000',
+      requestTimeout: const Duration(milliseconds: 25),
+      client: MockClient((_) {
+        calls++;
+        if (calls == 1) return Completer<http.Response>().future;
+        return Future.value(http.Response(jsonEncode(payload()), 200));
+      }),
+    );
+    final controller = NewsSynthesisController(service: service);
+    await controller.load();
+    expect(controller.error, isA<TimeoutException>());
+    expect(controller.synthesis, isNull);
+    expect(controller.loading, isFalse);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: NewsSynthesisPanel(controller: controller)),
+    ));
+    expect(find.text('Reintentar'), findsOneWidget);
+    expect(find.textContaining('Resultados mejores'), findsNothing);
+
+    await controller.retry();
+    await tester.pump();
+    expect(calls, 2);
+    expect(controller.error, isNull);
+    expect(find.textContaining('Resultados mejores'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+    service.dispose();
+  });
+
   testWidgets('vertical UI exposes synthesis and clears stale data on retry failure',
       (tester) async {
     var calls = 0;
