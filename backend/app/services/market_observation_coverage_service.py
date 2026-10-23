@@ -152,8 +152,9 @@ class MarketObservationCoverageService:
                 WHERE i.is_active = 1
                   AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                   AND julianday(mo.observed_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) <= julianday(?)
                 """,
-                (cutoff_iso,),
+                (cutoff_iso, cutoff_iso),
             ).fetchone()
 
             deep_row = connection.execute(
@@ -170,6 +171,7 @@ class MarketObservationCoverageService:
                     WHERE i.is_active = 1
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                       AND julianday(mo.observed_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) <= julianday(?)
                 ),
                 ordered_history AS (
                     SELECT instrument_id,
@@ -225,6 +227,7 @@ class MarketObservationCoverageService:
                 """,
                 (
                     cutoff_iso,
+                    cutoff_iso,
                     self._maximum_source_gap_days,
                     self._minimum_history_days,
                     self._minimum_history_days,
@@ -247,6 +250,7 @@ class MarketObservationCoverageService:
                     WHERE i.is_active = 1
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                       AND julianday(mo.observed_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) <= julianday(?)
                 )
                 SELECT source_provider,
                        COUNT(*) AS observation_count,
@@ -257,7 +261,7 @@ class MarketObservationCoverageService:
                 GROUP BY source_provider
                 ORDER BY source_provider
                 """,
-                (cutoff_iso,),
+                (cutoff_iso, cutoff_iso),
             ).fetchall()
 
         by_source: dict[str, dict[str, int | str | None]] = {}
