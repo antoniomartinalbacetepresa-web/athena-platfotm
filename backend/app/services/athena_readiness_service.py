@@ -102,10 +102,10 @@ def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
 def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
     """Require measured cross-family agreement, not a manual verification flag."""
 
-    event_count = _finite_number(corporate_actions.get("eventCount"))
-    agreed = _finite_number(corporate_actions.get("agreedEventCount"))
-    conflicts = _finite_number(corporate_actions.get("conflictEventCount"))
-    incomplete = _finite_number(corporate_actions.get("incompleteEventCount"))
+    event_count = _nonnegative_integral_count(corporate_actions.get("eventCount"))
+    agreed = _nonnegative_integral_count(corporate_actions.get("agreedEventCount"))
+    conflicts = _nonnegative_integral_count(corporate_actions.get("conflictEventCount"))
+    incomplete = _nonnegative_integral_count(corporate_actions.get("incompleteEventCount"))
     coverage = _finite_number(corporate_actions.get("agreementCoverage"))
     families = corporate_actions.get("independentProviderFamilies")
 
@@ -114,7 +114,8 @@ def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
         and corporate_actions.get("automaticCanonicalization") is False
         and corporate_actions.get("productionIndependenceClaimed") is False
         and isinstance(families, list)
-        and len({str(item).strip() for item in families if str(item).strip()}) >= 2
+        and all(isinstance(item, str) and bool(item.strip()) for item in families)
+        and len({item.strip().casefold() for item in families}) >= 2
         and event_count is not None
         and event_count > 0
         and agreed is not None
@@ -122,7 +123,7 @@ def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
         and conflicts == 0
         and incomplete == 0
         and coverage is not None
-        and coverage >= 1.0
+        and math.isclose(coverage, 1.0, rel_tol=0.0, abs_tol=1e-12)
     )
 
 
@@ -132,11 +133,11 @@ def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
     if forecast_error.get("status") != "forecast_error_oos_evidence_available":
         return False
 
-    eligible = _finite_number(forecast_error.get("eligibleOutcomeCount"))
-    measured = _finite_number(forecast_error.get("forecastErrorCount"))
-    missing = _finite_number(forecast_error.get("missingForecastErrorCount"))
+    eligible = _nonnegative_integral_count(forecast_error.get("eligibleOutcomeCount"))
+    measured = _nonnegative_integral_count(forecast_error.get("forecastErrorCount"))
+    missing = _nonnegative_integral_count(forecast_error.get("missingForecastErrorCount"))
     coverage = _finite_number(forecast_error.get("measurementCoverage"))
-    horizon_count = _finite_number(forecast_error.get("horizonCount"))
+    horizon_count = _nonnegative_integral_count(forecast_error.get("horizonCount"))
     horizons = forecast_error.get("horizons")
 
     if (
@@ -150,7 +151,7 @@ def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
         or horizon_count is None
         or horizon_count <= 0
         or not isinstance(horizons, dict)
-        or len(horizons) != int(horizon_count)
+        or len(horizons) != horizon_count
     ):
         return False
 
@@ -159,9 +160,9 @@ def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
     for horizon in horizons.values():
         if not isinstance(horizon, dict):
             return False
-        horizon_eligible = _finite_number(horizon.get("eligibleOutcomeCount"))
-        horizon_measured = _finite_number(horizon.get("forecastErrorCount"))
-        horizon_missing = _finite_number(horizon.get("missingForecastErrorCount"))
+        horizon_eligible = _nonnegative_integral_count(horizon.get("eligibleOutcomeCount"))
+        horizon_measured = _nonnegative_integral_count(horizon.get("forecastErrorCount"))
+        horizon_missing = _nonnegative_integral_count(horizon.get("missingForecastErrorCount"))
         horizon_coverage = _finite_number(horizon.get("measurementCoverage"))
         if (
             horizon_eligible is None
