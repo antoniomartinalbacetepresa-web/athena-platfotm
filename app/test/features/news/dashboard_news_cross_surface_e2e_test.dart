@@ -89,6 +89,82 @@ void main() {
     controller.dispose();
     service.dispose();
   });
+
+  testWidgets(
+      'Dashboard News re-entry fails closed after 503 and recovers only on verified retry',
+      (tester) async {
+    var calls = 0;
+    final recoveredPayload = _payload();
+    final recoveredSynthesis =
+        (recoveredPayload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>;
+    ((recoveredSynthesis['items'] as List).single
+        as Map<String, dynamic>)['summary'] =
+        'Nueva evidencia validada tras reintentar.';
+
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((request) async {
+        calls++;
+        expect(
+          request.url.path,
+          '/api/v1/recommendations/professional-research/news-synthesis/latest',
+        );
+        if (calls == 2) {
+          return http.Response('{"detail":"unavailable"}', 503);
+        }
+        return http.Response(
+          jsonEncode(calls == 1 ? _payload() : recoveredPayload),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final controller = NewsSynthesisController(service: service);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: const Scaffold(body: SizedBox(width: 900, child: DashboardHeader())),
+        onGenerateRoute: (settings) {
+          if (settings.name == AppRoutes.news) {
+            return MaterialPageRoute<void>(
+              settings: settings,
+              builder: (_) => NewsPage(
+                synthesisController: controller,
+                newsFeed: const SizedBox.shrink(),
+              ),
+            );
+          }
+          return null;
+        },
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.textContaining('Resultados auditables'), findsOneWidget);
+
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pumpAndSettle();
+
+    expect(calls, 2);
+    expect(find.textContaining('Resultados auditables'), findsNothing);
+    expect(find.text('Reintentar'), findsOneWidget);
+    expect(find.text('ANÁLISIS ATHENA DE NOTICIAS'), findsNothing);
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(calls, 3);
+    expect(find.text('Nueva evidencia validada tras reintentar.'), findsOneWidget);
+    expect(find.textContaining('Resultados auditables'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+    service.dispose();
+  });
+
 }
 
 Map<String, dynamic> _payload() => {
