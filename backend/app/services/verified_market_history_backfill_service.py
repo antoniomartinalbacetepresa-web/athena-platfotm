@@ -113,7 +113,7 @@ class VerifiedMarketHistoryBackfillService:
 
         self._database.initialize()
         verification_cutoff = datetime.combine(self._today_provider(), time.max, tzinfo=timezone.utc)
-        blockers_before = self._blocking_count()
+        blockers_before = self._blocking_count(verification_cutoff)
         current_blockers_before = self._current_blocking_count(verification_cutoff)
         backfill = self._backfill.run(
             limit=limit,
@@ -122,7 +122,7 @@ class VerifiedMarketHistoryBackfillService:
             to_date=to_date,
             blocking_only=True,
         )
-        blockers_after = self._blocking_count()
+        blockers_after = self._blocking_count(verification_cutoff)
         coverage_after = MarketObservationCoverageService(database=self._database).get_report(
             as_of=verification_cutoff,
         )
@@ -141,8 +141,10 @@ class VerifiedMarketHistoryBackfillService:
             eligible_instrument_count=coverage_after.history_eligible_instrument_count,
         )
 
-    def _blocking_count(self) -> int:
-        return MarketHistoryGapService(database=self._database).get_report(limit=1, offset=0).total_blocking_count
+    def _blocking_count(self, cutoff: datetime) -> int:
+        return MarketHistoryGapService(database=self._database).get_report(
+            limit=1, offset=0, as_of=cutoff
+        ).total_blocking_count
 
     def _current_blocking_count(self, cutoff: datetime) -> int:
         report = MarketObservationCoverageService(database=self._database).get_report(as_of=cutoff)
