@@ -85,6 +85,12 @@ def test_plan_turns_only_unresolved_gaps_into_400_day_yahoo_requests(tmp_path: P
     payload = plan.to_api_dict()
     assert payload["status"] == "backfill_plan_only"
     assert payload["selectedCount"] == 2
+    assert payload["blockingByReason"] == {
+        "no_observations": 1,
+        "insufficient_span": 1,
+        "discontinuous_source": 0,
+        "stale_source": 0,
+    }
     assert payload["hasMore"] is False
     assert payload["minimumHistoryDays"] == 365
     assert payload["requestedHistoryDays"] == 400
@@ -223,5 +229,7 @@ def test_plan_includes_stale_365_day_history_without_claiming_backfill_execution
     assert stale.requests[0].instrument_id == instrument_id
     assert stale.requests[0].reason == "stale_source"
     assert stale.requests[0].source_provider == "yahoo"
+    assert stale.to_api_dict()["blockingByReason"]["stale_source"] == 1
+    assert sum(stale.to_api_dict()["blockingByReason"].values()) == stale.total_blocking_count
     assert stale.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
     assert stale.to_api_dict()["policy"]["automaticReadinessPromotion"] is False
