@@ -66,6 +66,40 @@ void main() {
     );
   });
 
+  test('verified feed rejects deceptive HTTPS article and publisher URLs', () {
+    for (final field in ['articleUrl', 'publisherUrl']) {
+      final payload = validPayload();
+      ((payload['items'] as List).single as Map<String, dynamic>)[field] =
+          'https://trusted.example@attacker.example/story';
+      expect(
+        () => VerifiedNewsFeed.fromMap(payload),
+        throwsFormatException,
+        reason: '$field must not contain URL credentials',
+      );
+    }
+  });
+
+  test('verified feed rejects FMP at feed and item provenance boundaries', () {
+    for (final provider in ['FMP', 'Financial Modeling Prep', 'financial-modeling-prep']) {
+      final topLevel = validPayload();
+      topLevel['sourceProvider'] = provider;
+      expect(
+        () => VerifiedNewsFeed.fromMap(topLevel),
+        throwsFormatException,
+        reason: 'top-level provider $provider',
+      );
+
+      final itemLevel = validPayload();
+      ((itemLevel['items'] as List).single as Map<String, dynamic>)[
+          'sourceProvider'] = provider;
+      expect(
+        () => VerifiedNewsFeed.fromMap(itemLevel),
+        throwsFormatException,
+        reason: 'item provider $provider',
+      );
+    }
+  });
+
   test('verified feed rejects future publication relative to retrieval', () {
     final payload = validPayload();
     ((payload['items'] as List).single as Map<String, dynamic>)[
