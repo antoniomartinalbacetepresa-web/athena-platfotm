@@ -121,19 +121,19 @@ class MarketObservationRepository:
         cutoff_iso: str | None = None
         if knowledge_cutoff is not None:
             cutoff_iso = self._utc_iso(knowledge_cutoff, "knowledge_cutoff")
-            clauses.append("retrieved_at <= ?")
+            clauses.append("julianday(retrieved_at) <= julianday(?)")
             params.append(cutoff_iso)
-            clauses.append("observed_at <= ?")
+            clauses.append("julianday(observed_at) <= julianday(?)")
             params.append(cutoff_iso)
 
         if observed_from is not None:
             observed_from_iso = self._utc_iso(observed_from, "observed_from")
-            clauses.append("observed_at >= ?")
+            clauses.append("julianday(observed_at) >= julianday(?)")
             params.append(observed_from_iso)
 
         if observed_to is not None:
             observed_to_iso = self._utc_iso(observed_to, "observed_to")
-            clauses.append("observed_at <= ?")
+            clauses.append("julianday(observed_at) <= julianday(?)")
             params.append(observed_to_iso)
 
         if observed_from is not None and observed_to is not None:
@@ -146,7 +146,7 @@ class MarketObservationRepository:
                 SELECT *
                 FROM market_observations
                 WHERE {' AND '.join(clauses)}
-                ORDER BY observed_at ASC, id ASC
+                ORDER BY julianday(observed_at) ASC, id ASC
                 """,
                 tuple(params),
             ).fetchall()
@@ -154,7 +154,8 @@ class MarketObservationRepository:
         result = [dict(row) for row in rows]
         if cutoff_iso is not None:
             for row in result:
-                if row["retrieved_at"] > cutoff_iso or row["observed_at"] > cutoff_iso:
+                if (datetime.fromisoformat(row["retrieved_at"]) > datetime.fromisoformat(cutoff_iso)
+                or datetime.fromisoformat(row["observed_at"]) > datetime.fromisoformat(cutoff_iso)):
                     raise RuntimeError(
                         "Una observación posterior al knowledge_cutoff atravesó el filtro PIT."
                     )
