@@ -116,8 +116,9 @@ def test_deep_but_stale_persisted_history_cannot_claim_verified_readiness(tmp_pa
         today_provider=lambda: date(2026, 1, 15),
     ).run(limit=10)
 
-    assert report.blockers_before == 0
-    assert report.blockers_after == 0
+    assert report.blockers_before == 1
+    assert report.blockers_after == 1
+    assert report.backfill.selected_count == 1
     assert report.current_blockers_before == 1
     assert report.current_blockers_after == 1
     assert report.history_ready is False
