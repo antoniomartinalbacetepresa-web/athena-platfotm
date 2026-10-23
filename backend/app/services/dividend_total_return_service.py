@@ -72,11 +72,22 @@ class DividendTotalReturnService:
     def _provider(value: str | None, field: str) -> str:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} es obligatorio para provenance.")
+        # Raw provider identifiers are protocol keys: Unicode lookalikes and
+        # control characters must not be normalized into trusted provenance.
+        if (not value.isascii()
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            raise ValueError(f"{field} no puede utilizar FMP ni caracteres ambiguos.")
         normalized = value.strip()
         # Reject URL-encoded aliases at every decoding layer, not just plain text.
         decoded = unicodedata.normalize("NFKC", normalized).casefold()
         for _ in range(8):
+            if (not decoded.isascii()
+                    or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
+                    or "\\\\" in decoded or "%u" in decoded):
+                raise ValueError(f"{field} no puede utilizar FMP ni codificaciones ambiguas.")
             provider_key = "".join(char for char in decoded if char.isalnum())
+            if not provider_key:
+                raise ValueError(f"{field} no puede utilizar FMP ni provenance vacía.")
             if "fmp" in provider_key or "financialmodelingprep" in provider_key:
                 raise ValueError(f"{field} no puede utilizar FMP.")
             next_value = html_unescape(unquote(decoded))
