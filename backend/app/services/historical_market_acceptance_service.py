@@ -48,9 +48,9 @@ class HistoricalMarketAcceptanceReport:
             return False
         if not self.reconciliation_reports or self.agreed_event_count <= 0:
             return False
-        # Corporate-action evidence must be visible at the same PIT cutoff as
-        # the market coverage being accepted; a later reconciliation leaks future
-        # knowledge into an otherwise historical report.
+        # Corporate-action reconciliation must cover the exact PIT instant
+        # evaluated for market history. A later cutoff leaks future knowledge;
+        # an earlier cutoff can silently omit subsequent corporate actions.
         if not self.coverage.as_of:
             return False
         try:
@@ -67,7 +67,7 @@ class HistoricalMarketAcceptanceReport:
                 return False
             if report.knowledge_cutoff.tzinfo is None or report.knowledge_cutoff.utcoffset() is None:
                 return False
-            if report.knowledge_cutoff.astimezone(timezone.utc) > cutoff.astimezone(timezone.utc):
+            if report.knowledge_cutoff.astimezone(timezone.utc) != cutoff.astimezone(timezone.utc):
                 return False
             if report.conflict_event_count > 0 or report.incomplete_event_count > 0:
                 return False
