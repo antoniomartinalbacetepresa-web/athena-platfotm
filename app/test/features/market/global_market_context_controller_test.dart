@@ -117,5 +117,51 @@ void main() {
       expect(controller.isLoading, isFalse);
       expect(controller.context, same(initial));
     });
+
+    test('clear invalidates an in-flight market response before a new load', () async {
+      final initial = await createService().getGlobalContext();
+      final pending = Completer<GlobalMarketContext>();
+      final service = SequencedGlobalMarketDataService(
+        first: initial,
+        second: pending.future,
+      );
+      final controller = GlobalMarketContextController(service: service);
+      await controller.loadGlobalContext();
+
+      final staleRequest = controller.loadGlobalContext();
+      expect(controller.isLoading, isTrue);
+      controller.clear();
+      expect(controller.context, isNull);
+      expect(controller.isLoading, isFalse);
+
+      pending.complete(initial);
+      await staleRequest;
+      expect(controller.context, isNull);
+      expect(controller.error, isNull);
+      expect(controller.isLoading, isFalse);
+
+      await controller.loadGlobalContext();
+      expect(service.calls, 3);
+      expect(controller.context, same(initial));
+      controller.dispose();
+    });
+
+    test('disposed controller ignores a late market response', () async {
+      final initial = await createService().getGlobalContext();
+      final replacement = await createService().getGlobalContext();
+      final pending = Completer<GlobalMarketContext>();
+      final service = SequencedGlobalMarketDataService(
+        first: initial,
+        second: pending.future,
+      );
+      final controller = GlobalMarketContextController(service: service);
+      await controller.loadGlobalContext();
+      final staleRequest = controller.loadGlobalContext();
+      controller.dispose();
+
+      pending.complete(replacement);
+      await staleRequest;
+      expect(controller.context, same(initial));
+    });
   });
 }
