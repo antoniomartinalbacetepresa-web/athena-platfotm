@@ -374,3 +374,80 @@ def test_expected_provider_accepts_matching_empty_action_history(
     assert stats.history_observations == 1
     assert stats.actions_received == 0
     assert stats.inserted == 0
+
+
+@pytest.mark.parametrize("has_dividend", [False, True])
+def test_ingestion_rejects_mismatched_instrument_id_before_provider_call(
+    tmp_path: Path, has_dividend: bool
+) -> None:
+    database = _database(tmp_path)
+    aapl_id = _instrument_id(database, "AAPL")
+    repository = CorporateActionRepository(database)
+    # The provider would correctly return MSFT, but the caller passed AAPL's ID.
+    provider = FakeHistoryProvider(
+        [_observation(
+            timestamp="2026-08-01T00:00:00+00:00",
+            retrieved_at="2026-09-11T08:00:00+00:00",
+            symbol="MSFT",
+            dividend=0.25 if has_dividend else None,
+        )]
+    )
+    service = CorporateActionIngestionService(
+        market_provider=provider, repository=repository
+    )
+
+    with pytest.raises(ValueError, match="instrument_id y symbol"):
+        service.ingest_history(
+            instrument_id=aapl_id,
+            symbol="MSFT",
+            dividend_currency="USD",
+            expected_source_provider="yahoo",
+        )
+
+    assert provider.calls == []
+    assert repository.list_for_instrument(aapl_id) == []
+
+
+def test_ingestion_rejects_unknown_instrument_before_provider_call(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    repository = CorporateActionRepository(database)
+    provider = FakeHistoryProvider([])
+    service = CorporateActionIngestionService(
+        market_provider=provider, repository=repository
+    )
+
+    with pytest.raises(ValueError, match="instrument_id no corresponde"):
+        service.ingest_history(instrument_id=999, symbol="AAPL")
+
+    assert provider.calls == []
+    assert repository.list_for_instrument(999) == []
+
+
+def test_ingestion_accepts_case_insensitive_stored_instrument_symbol(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database, "aapl")
+    repository = CorporateActionRepository(database)
+    provider = FakeHistoryProvider(
+        [_observation(
+            timestamp="2026-08-01T00:00:00+00:00",
+            retrieved_at="2026-09-11T08:00:00+00:00",
+            dividend=0.25,
+        )]
+    )
+    service = CorporateActionIngestionService(
+        market_provider=provider, repository=repository
+    )
+
+    stats = service.ingest_history(
+        instrument_id=instrument_id,
+        symbol="AAPL",
+        dividend_currency="USD",
+    )
+
+    assert stats.inserted == 1
+    assert provider.calls == [("AAPL", None, None)]
+    assert len(repository.list_for_instrument(instrument_id)) == 1
