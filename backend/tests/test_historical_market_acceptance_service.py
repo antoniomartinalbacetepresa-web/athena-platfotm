@@ -243,3 +243,24 @@ def test_reconciliation_same_instant_with_offset_remains_pit_valid():
     )
     assert report.corporate_action_gate_passed is True
     assert report.history_acceptance_passed is True
+
+
+@pytest.mark.parametrize(
+    "knowledge_cutoff",
+    [
+        datetime(2026, 9, 10, tzinfo=timezone.utc),
+        datetime(2026, 9, 11, 1, tzinfo=timezone.utc),
+    ],
+)
+def test_reconciliation_must_cover_exact_market_pit_instant(knowledge_cutoff):
+    from dataclasses import replace
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(_reconciliation(), knowledge_cutoff=knowledge_cutoff)],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is True
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+    assert report.to_api_dict()["productionAuthorization"] is False
