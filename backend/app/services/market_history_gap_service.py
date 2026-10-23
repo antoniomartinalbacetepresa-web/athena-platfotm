@@ -41,6 +41,7 @@ class MarketHistoryGapReport:
     offset: int
     items: tuple[MarketHistoryGap, ...]
     as_of: str | None = None
+    stale_source_count: int = 0
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +51,7 @@ class MarketHistoryGapReport:
                 "no_observations": self.no_observations_count,
                 "insufficient_span": self.insufficient_span_count,
                 "discontinuous_source": self.discontinuous_source_count,
+                "stale_source": self.stale_source_count,
             },
             "minimumHistoryDays": self.minimum_history_days,
             "maximumSourceGapDays": self.maximum_source_gap_days,
@@ -62,8 +64,9 @@ class MarketHistoryGapReport:
             "warning": (
                 "Este informe prioriza huecos del histórico persistido; no ejecuta "
                 "backfill, no mezcla proveedores y no convierte fixtures o cobertura "
-                "parcial en evidencia de producción. La vigencia hasta el corte actual "
-                "se verifica por separado mediante MarketObservationCoverageService. "
+                "parcial en evidencia de producción. La vigencia del tramo profundo "
+                "hasta el corte PIT se comprueba aquí y se contrasta con "
+                "MarketObservationCoverageService. "
                 "Solo se consideran observaciones ocurridas y recuperadas hasta asOf; "
                 "el universo elegible sigue siendo el catálogo activo actual, no una "
                 "reconstrucción histórica de altas y bajas."
@@ -119,6 +122,9 @@ class MarketHistoryGapService:
             self._maximum_source_gap_days,
             self._minimum_history_days,
             self._minimum_history_days,
+            cutoff_iso,
+            self._maximum_source_gap_days,
+            self._minimum_history_days,
             self._minimum_history_days,
         )
         ctes = """
@@ -155,7 +161,8 @@ class MarketHistoryGapService:
             ),
             source_segments AS (
                 SELECT instrument_id, source_provider, segment_id,
-                       MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS continuous_span_days
+                       MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS continuous_span_days,
+                       MAX(julianday(observed_at)) AS segment_end_jd
                 FROM segmented_history GROUP BY instrument_id, source_provider, segment_id
             ),
             source_stats AS (
@@ -167,19 +174,24 @@ class MarketHistoryGapService:
             source_quality AS (
                 SELECT ss.instrument_id, ss.source_provider, ss.history_span_days, ss.maximum_gap_days,
                        COALESCE(MAX(seg.continuous_span_days), 0.0) AS best_continuous_span_days,
-                       MAX(CASE WHEN seg.continuous_span_days >= ? THEN 1 ELSE 0 END) AS has_deep_segment
+                       MAX(CASE WHEN seg.continuous_span_days >= ? THEN 1 ELSE 0 END) AS has_deep_segment,
+                       MAX(CASE WHEN seg.continuous_span_days >= ?
+                                 AND julianday(?) - seg.segment_end_jd BETWEEN 0 AND ?
+                                THEN 1 ELSE 0 END) AS has_current_deep_segment
                 FROM source_stats ss LEFT JOIN source_segments seg
                   ON seg.instrument_id = ss.instrument_id AND seg.source_provider = ss.source_provider
                 GROUP BY ss.instrument_id, ss.source_provider, ss.history_span_days, ss.maximum_gap_days
             ),
             summary AS (
                 SELECT instrument_id, COUNT(*) AS source_count, MAX(has_deep_segment) AS has_deep_source,
+                       MAX(has_current_deep_segment) AS has_current_deep_source,
                        MAX(CASE WHEN history_span_days >= ? THEN 1 ELSE 0 END) AS has_long_source
                 FROM source_quality GROUP BY instrument_id
             ),
             ranked AS (
                 SELECT instrument_id, source_provider, history_span_days, maximum_gap_days,
-                       ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY has_deep_segment DESC,
+                       ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY has_current_deep_segment DESC,
+                         has_deep_segment DESC,
                          CASE WHEN history_span_days >= ? THEN 0 ELSE 1 END, best_continuous_span_days DESC,
                          history_span_days DESC, source_provider ASC) AS source_rank
                 FROM source_quality
@@ -187,7 +199,8 @@ class MarketHistoryGapService:
             blockers AS (
                 SELECT e.instrument_id, e.symbol,
                        CASE WHEN s.instrument_id IS NULL THEN 'no_observations'
-                            WHEN s.has_deep_source = 1 THEN NULL
+                            WHEN s.has_current_deep_source = 1 THEN NULL
+                            WHEN s.has_deep_source = 1 THEN 'stale_source'
                             WHEN s.has_long_source = 0 THEN 'insufficient_span'
                             ELSE 'discontinuous_source' END AS reason,
                        COALESCE(s.source_count, 0) AS source_count,
@@ -202,14 +215,16 @@ class MarketHistoryGapService:
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN reason = 'no_observations' THEN 1 ELSE 0 END) AS no_observations,
                        SUM(CASE WHEN reason = 'insufficient_span' THEN 1 ELSE 0 END) AS insufficient_span,
-                       SUM(CASE WHEN reason = 'discontinuous_source' THEN 1 ELSE 0 END) AS discontinuous_source
+                       SUM(CASE WHEN reason = 'discontinuous_source' THEN 1 ELSE 0 END) AS discontinuous_source,
+                       SUM(CASE WHEN reason = 'stale_source' THEN 1 ELSE 0 END) AS stale_source
                 FROM blockers WHERE reason IS NOT NULL
             """, params).fetchone()
             rows = connection.execute(ctes + """
                 SELECT instrument_id, symbol, reason, source_count, best_source_provider,
                        best_history_span_days, best_maximum_gap_days
                 FROM blockers WHERE reason IS NOT NULL
-                ORDER BY CASE reason WHEN 'no_observations' THEN 0 WHEN 'insufficient_span' THEN 1 ELSE 2 END,
+                ORDER BY CASE reason WHEN 'no_observations' THEN 0 WHEN 'insufficient_span' THEN 1
+                         WHEN 'discontinuous_source' THEN 2 ELSE 3 END,
                          symbol ASC, instrument_id ASC LIMIT ? OFFSET ?
             """, (*params, limit, offset)).fetchall()
 
@@ -225,6 +240,7 @@ class MarketHistoryGapService:
             no_observations_count=int(counts["no_observations"] or 0) if counts else 0,
             insufficient_span_count=int(counts["insufficient_span"] or 0) if counts else 0,
             discontinuous_source_count=int(counts["discontinuous_source"] or 0) if counts else 0,
+            stale_source_count=int(counts["stale_source"] or 0) if counts else 0,
             minimum_history_days=self._minimum_history_days,
             maximum_source_gap_days=self._maximum_source_gap_days,
             limit=limit, offset=offset, items=items, as_of=cutoff_iso,
