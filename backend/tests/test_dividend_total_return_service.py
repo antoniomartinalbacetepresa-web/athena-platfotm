@@ -122,3 +122,34 @@ def test_finite_inputs_cannot_overflow_total_return_to_infinity(
             currency="EUR", source_provider="verified-source",
             knowledge_cutoff=datetime(2026, 9, 23, tzinfo=timezone.utc),
         )
+
+
+@pytest.mark.parametrize("field", ["source_provider", "price_source_provider", "dividend_source_provider"])
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "ＦＭＰ",  # Unicode compatibility lookalike
+        "fｍp",
+        "fmp\n",  # Raw control character must not disappear after strip()
+        "issuer%0Afiling",  # Decoded control character
+        "%66mp",  # URL-encoded forbidden provider
+        "&#x66;mp",  # HTML-encoded forbidden provider
+        "%u0066mp",  # Ambiguous legacy escape syntax
+        r"f\mp",  # Ambiguous escaped provider identifier
+        "\u00a0issuer",  # Unicode whitespace is not a trusted protocol key
+    ],
+)
+def test_total_return_rejects_ambiguous_provider_identifiers(
+    field: str, provider: str,
+) -> None:
+    kwargs = {
+        "start_price": 100.0,
+        "end_price": 102.0,
+        "dividend_cash_per_share": 2.0,
+        "currency": "EUR",
+        "source_provider": "verified-source",
+        "knowledge_cutoff": datetime(2026, 9, 23, tzinfo=timezone.utc),
+        field: provider,
+    }
+    with pytest.raises(ValueError):
+        DividendTotalReturnService().calculate(**kwargs)
