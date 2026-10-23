@@ -59,7 +59,11 @@ class HistoricalMarketAcceptanceReport:
             return False
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
             return False
+        seen_instrument_ids: set[int] = set()
         for report in self.reconciliation_reports:
+            if report.instrument_id <= 0 or report.instrument_id in seen_instrument_ids:
+                return False
+            seen_instrument_ids.add(report.instrument_id)
             providers = tuple(provider.strip().lower() for provider in report.source_providers)
             if len(providers) < 2 or any(not provider for provider in providers):
                 return False
