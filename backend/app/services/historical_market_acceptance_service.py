@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from app.services.corporate_action_reconciliation_service import (
@@ -47,8 +48,26 @@ class HistoricalMarketAcceptanceReport:
             return False
         if not self.reconciliation_reports or self.agreed_event_count <= 0:
             return False
+        # Corporate-action evidence must be visible at the same PIT cutoff as
+        # the market coverage being accepted; a later reconciliation leaks future
+        # knowledge into an otherwise historical report.
+        if not self.coverage.as_of:
+            return False
+        try:
+            cutoff = datetime.fromisoformat(self.coverage.as_of.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return False
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            return False
         for report in self.reconciliation_reports:
-            if len(report.source_providers) < 2:
+            providers = tuple(provider.strip().lower() for provider in report.source_providers)
+            if len(providers) < 2 or any(not provider for provider in providers):
+                return False
+            if len(set(providers)) != len(providers):
+                return False
+            if report.knowledge_cutoff.tzinfo is None or report.knowledge_cutoff.utcoffset() is None:
+                return False
+            if report.knowledge_cutoff.astimezone(timezone.utc) > cutoff.astimezone(timezone.utc):
                 return False
             if report.conflict_event_count > 0 or report.incomplete_event_count > 0:
                 return False
