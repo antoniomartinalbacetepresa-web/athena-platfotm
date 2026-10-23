@@ -70,6 +70,29 @@ class CorporateActionIngestionService:
         if not history:
             return CorporateActionIngestionStats(0, 0, 0, 0, 0)
 
+        # Validate the complete provider response, not just rows with actions.
+        # Otherwise an unrelated symbol/provider with no dividend or split can
+        # silently masquerade as a legitimate empty retrieval.
+        for observation in history:
+            if not isinstance(observation, dict):
+                raise ValueError("La historia contiene una observación no estructurada.")
+            observation_symbol = self._required_text(
+                observation.get("symbol"), "symbol"
+            ).upper()
+            if observation_symbol != normalized_symbol:
+                raise ValueError(
+                    "El proveedor devolvió historia de un símbolo distinto."
+                )
+            if normalized_expected_provider is not None:
+                observation_provider = self._required_text(
+                    observation.get("sourceProvider"), "sourceProvider"
+                ).lower()
+                if observation_provider != normalized_expected_provider:
+                    raise ValueError(
+                        "Corporate action provenance mismatch: "
+                        f"expected {normalized_expected_provider}, got {observation_provider}."
+                    )
+
         actions = self._action_service.extract_from_history(history)
         if not actions:
             return CorporateActionIngestionStats(len(history), 0, 0, 0, 0)
