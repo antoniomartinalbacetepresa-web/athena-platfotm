@@ -29,6 +29,26 @@ class CorporateActionRepository:
     def __init__(self, database: AthenaDatabase | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
 
+    def require_instrument_symbol(self, *, instrument_id: int, symbol: str) -> None:
+        """Fail closed if a provider symbol is not the instrument's stored identity.
+
+        A correct provider response must not be persisted under an unrelated
+        instrument_id, even when the provider returns no corporate actions.
+        """
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise ValueError("instrument_id debe ser un entero positivo.")
+        expected_symbol = self._required_text(symbol, "symbol").upper()
+        self._database.initialize()
+        with self._database.connect() as connection:
+            row = connection.execute(
+                "SELECT symbol FROM instruments WHERE id = ?", (instrument_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError("instrument_id no corresponde a un instrumento existente.")
+        actual_symbol = self._required_text(row["symbol"], "instrument.symbol").upper()
+        if actual_symbol != expected_symbol:
+            raise ValueError("instrument_id y symbol no corresponden al mismo instrumento.")
+
     def save_many(self, *, instrument_id: int, actions: Iterable[dict[str, Any]], source_provider: str, retrieved_at: datetime) -> CorporateActionSaveStats:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
