@@ -316,3 +316,57 @@ def test_athena_readiness_exposes_read_only_pit_gap_drilldown(tmp_path: Path) ->
     assert drilldown["readOnly"] is True
     assert drilldown["productionEvidenceClaimed"] is False
     assert report["operationalReadiness"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("eligibleOutcomeCount", 2.5),
+        ("forecastErrorCount", 2.5),
+        ("missingForecastErrorCount", 0.5),
+        ("horizonCount", 1.5),
+    ],
+)
+def test_oos_gate_rejects_fractional_global_counts(field, value) -> None:
+    learning = _complete_learning()
+    learning["researchForecastErrorOos"][field] = value
+    report = _readiness(learning=learning)
+    assert report["ready"] is False
+    assert "forecast_error_oos_measurement_incomplete" in report["blockers"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("eligibleOutcomeCount", 2.5),
+        ("forecastErrorCount", 2.5),
+        ("missingForecastErrorCount", 0.5),
+    ],
+)
+def test_oos_gate_rejects_fractional_horizon_counts(field, value) -> None:
+    learning = _complete_learning()
+    learning["researchForecastErrorOos"]["horizons"]["604800"][field] = value
+    report = _readiness(learning=learning)
+    assert report["ready"] is False
+    assert "forecast_error_oos_measurement_incomplete" in report["blockers"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("eventCount", 2.5),
+        ("agreedEventCount", 2.5),
+        ("conflictEventCount", 0.5),
+        ("incompleteEventCount", 0.5),
+        ("agreementCoverage", 1.01),
+        ("independentProviderFamilies", ["Yahoo", " yahoo "]),
+        ("independentProviderFamilies", ["yahoo", 123]),
+        ("independentProviderFamilies", ["yahoo", " "]),
+    ],
+)
+def test_corporate_action_gate_rejects_invalid_measured_evidence(field, value) -> None:
+    evidence = _complete_corporate_actions()
+    evidence[field] = value
+    report = _readiness(corporate_actions=evidence)
+    assert report["ready"] is False
+    assert "corporate_actions_independent_reconciliation_pending" in report["blockers"]
