@@ -15,7 +15,10 @@ def _complete_market_history() -> dict[str, object]:
         "sourceContinuityRequired": True,
         "pointInTimeCutoffApplied": True,
         "asOf": "2026-09-01T21:00:00+00:00",
+        "activeInstrumentCount": 10,
         "historyEligibleInstrumentCount": 10,
+        "coveredInstrumentCount": 10,
+        "maximumSourceGapDays": 7,
         "deepHistoryInstrumentCount": 10,
         "deepHistoryCoverage": 1.0,
         "currentDeepHistoryInstrumentCount": 10,
@@ -271,3 +274,45 @@ def test_athena_readiness_report_requires_timezone_aware_as_of(tmp_path: Path) -
     database = AthenaDatabase(tmp_path / "athena.db")
     with pytest.raises(ValueError, match="zona horaria"):
         build_report(database=database, as_of=datetime(2026, 9, 1, 21, 0))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"activeInstrumentCount": 9},
+        {"coveredInstrumentCount": 9},
+        {"coveredInstrumentCount": 11},
+        {"deepHistoryInstrumentCount": 11},
+        {"currentDeepHistoryInstrumentCount": 11},
+        {"historyEligibleInstrumentCount": 0},
+        {"historyEligibleInstrumentCount": 10.5},
+        {"maximumSourceGapDays": 8},
+        {"maximumSourceGapDays": 0},
+        {"asOf": "not-a-timestamp"},
+        {"asOf": "2026-09-01T21:00:00"},
+        {"asOf": ""},
+    ],
+)
+def test_operational_readiness_rejects_inconsistent_or_unbounded_history_evidence(
+    overrides,
+) -> None:
+    history = {**_complete_market_history(), **overrides}
+    report = _readiness(market_history=history)
+    assert report["ready"] is False
+    assert "market_history_depth_insufficient" in report["blockers"]
+    assert report["policy"]["productionEligibilityClaimed"] is False
+
+
+def test_athena_readiness_exposes_read_only_pit_gap_drilldown(tmp_path: Path) -> None:
+    from app.services.athena_readiness_service import build_readiness_report
+
+    report = build_readiness_report(
+        database=AthenaDatabase(tmp_path / "athena.db"),
+        as_of=datetime(2026, 9, 1, 21, 0, tzinfo=timezone.utc),
+    )
+    drilldown = report["marketHistoryGapDiagnostics"]
+    assert drilldown["endpoint"] == "/api/v1/readiness/market-history/gaps"
+    assert drilldown["asOfParameter"] == "asOf"
+    assert drilldown["readOnly"] is True
+    assert drilldown["productionEvidenceClaimed"] is False
+    assert report["operationalReadiness"]["ready"] is False
