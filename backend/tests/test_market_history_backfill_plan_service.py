@@ -132,3 +132,65 @@ def test_plan_refuses_weaker_than_required_history_and_naive_cutoffs(tmp_path: P
     service = MarketHistoryBackfillPlanService(database=database)
     with pytest.raises(ValueError, match="zona horaria"):
         service.get_plan(as_of=datetime(2026, 9, 13, 19, 45))
+
+
+def test_plan_uses_requested_pit_cutoff_for_gap_selection_not_wall_clock(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _instrument(instruments, "AAA")
+    late_id = _instrument(instruments, "BBB")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=late_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=AS_OF + timedelta(days=1),
+    )
+    service = MarketHistoryBackfillPlanService(database=database)
+
+    before = service.get_plan(as_of=AS_OF)
+    assert before.total_blocking_count == 2
+    assert [(request.symbol, request.reason) for request in before.requests] == [
+        ("AAA", "no_observations"),
+        ("BBB", "no_observations"),
+    ]
+    assert before.to_api_dict()["asOf"] == AS_OF.isoformat()
+    assert {request.to_date for request in before.requests} == {"2026-09-13"}
+
+    after = service.get_plan(as_of=AS_OF + timedelta(days=2))
+    assert after.total_blocking_count == 1
+    assert [(request.symbol, request.reason) for request in after.requests] == [
+        ("AAA", "no_observations"),
+    ]
+    assert after.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
+
+
+def test_plan_pagination_uses_the_same_pit_cutoff_as_its_total(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _instrument(instruments, "AAA")
+    late_id = _instrument(instruments, "BBB")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=late_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=AS_OF + timedelta(days=1),
+    )
+    service = MarketHistoryBackfillPlanService(database=database)
+
+    before = service.get_plan(as_of=AS_OF, limit=1, offset=1)
+    assert before.total_blocking_count == 2
+    assert [request.symbol for request in before.requests] == ["BBB"]
+    assert before.to_api_dict()["hasMore"] is False
+
+    after = service.get_plan(
+        as_of=AS_OF + timedelta(days=2), limit=1, offset=1
+    )
+    assert after.total_blocking_count == 1
+    assert after.requests == ()
+    assert after.to_api_dict()["hasMore"] is False
