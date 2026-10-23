@@ -173,3 +173,26 @@ def test_direct_report_construction_cannot_bypass_explicit_secondary_verificatio
     unverified = replace(verified, independent_secondary_source_verified="false")
     assert unverified.corporate_action_gate_passed is False
     assert unverified.history_acceptance_passed is False
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"active_instrument_count": 1},
+        {"covered_instrument_count": 1},
+        {"deep_history_instrument_count": 1},
+        {"current_deep_history_instrument_count": 1},
+    ],
+)
+def test_inconsistent_universe_counts_cannot_pass_history_acceptance(overrides):
+    from dataclasses import replace
+
+    coverage = replace(_coverage(), **overrides)
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=coverage,
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is False
+    assert report.history_acceptance_passed is False
+    assert report.to_api_dict()["productionAuthorization"] is False
