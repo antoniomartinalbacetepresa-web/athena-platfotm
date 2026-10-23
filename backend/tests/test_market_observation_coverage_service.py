@@ -249,3 +249,79 @@ def test_history_depth_rejects_non_positive_gap_threshold(tmp_path: Path) -> Non
     database = _database(tmp_path)
     with pytest.raises(ValueError, match="maximum_source_gap_days"):
         MarketObservationCoverageService(database=database, maximum_source_gap_days=0)
+
+
+def test_coverage_as_of_excludes_late_discovered_observations_everywhere(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    known_id = _insert_instrument(instruments, "KNOWN")
+    late_id = _insert_instrument(instruments, "LATE")
+    observations = MarketObservationRepository(database=database)
+    observed_at = datetime(2026, 1, 1, 21, 0, tzinfo=timezone.utc)
+    cutoff = observed_at + timedelta(days=2)
+
+    observations.save_many(
+        instrument_id=known_id,
+        observations=[{"timestamp": observed_at.isoformat(), "close": 100.0}],
+        source_provider="source_known",
+        retrieved_at=observed_at + timedelta(days=1),
+    )
+    observations.save_many(
+        instrument_id=late_id,
+        observations=[{"timestamp": observed_at.isoformat(), "close": 50.0}],
+        source_provider="source_late",
+        retrieved_at=observed_at + timedelta(days=3),
+    )
+
+    report = MarketObservationCoverageService(database=database).get_report(
+        as_of=cutoff
+    )
+
+    assert report.active_instrument_count == 2
+    assert report.history_eligible_instrument_count == 2
+    assert report.observation_count == 1
+    assert report.covered_instrument_count == 1
+    assert report.earliest_observed_at == observed_at.isoformat()
+    assert report.latest_observed_at == observed_at.isoformat()
+    assert "source_known" in report.by_source
+    assert "source_late" not in report.by_source
+    assert report.to_api_dict()["pointInTimeCutoffApplied"] is True
+    assert report.to_api_dict()["productionCoverageClaimed"] is False
+
+
+def test_deep_coverage_cannot_use_history_retrieved_after_pit_cutoff(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(
+        InstrumentRepository(database=database), "AAA"
+    )
+    observations = MarketObservationRepository(database=database)
+    start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    last_observation = start + timedelta(days=365)
+    retrieved_at = last_observation + timedelta(days=1)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(start),
+        source_provider="yahoo",
+        retrieved_at=retrieved_at,
+    )
+    service = MarketObservationCoverageService(database=database)
+
+    before = service.get_report(as_of=last_observation + timedelta(hours=2))
+    assert before.observation_count == 0
+    assert before.covered_instrument_count == 0
+    assert before.deep_history_instrument_count == 0
+    assert before.current_deep_history_instrument_count == 0
+    assert before.history_depth_ready is False
+    assert before.current_history_depth_ready is False
+    assert before.by_source == {}
+
+    after = service.get_report(as_of=last_observation + timedelta(days=2))
+    assert after.covered_instrument_count == 1
+    assert after.deep_history_instrument_count == 1
+    assert after.current_deep_history_instrument_count == 1
+    assert after.history_depth_ready is True
+    assert after.current_history_depth_ready is True
