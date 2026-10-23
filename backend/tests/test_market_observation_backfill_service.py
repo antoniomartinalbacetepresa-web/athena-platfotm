@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
@@ -344,3 +346,68 @@ def test_blocking_backfill_never_overrides_explicit_from_date(tmp_path: Path) ->
 
     assert provider.date_calls == [("BLOCKED", "2020-01-01", "2026-06-30")]
     assert report.history_window_auto_expanded is False
+
+
+@pytest.mark.parametrize("invalid_symbol", ["BBB", "  "])
+def test_backfill_rejects_mismatched_declared_symbol_before_any_write(
+    tmp_path: Path, invalid_symbol: str
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({
+        "AAA": [
+            {
+                "symbol": "AAA",
+                "sourceProvider": "yahoo",
+                "timestamp": "2026-01-01T21:00:00+00:00",
+                "close": 100.0,
+            },
+            {
+                "symbol": invalid_symbol,
+                "sourceProvider": "yahoo",
+                "timestamp": "2026-01-02T21:00:00+00:00",
+                "close": 101.0,
+            },
+        ]
+    })
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=1)
+
+    assert report.failed_count == 1
+    assert report.persisted_instrument_count == 0
+    assert report.observations_inserted == 0
+    assert "símbolo declarado" in report.failures[0]["error"]
+    assert MarketObservationRepository(database=database).list_for_instrument(stock_id) == []
+
+
+def test_backfill_accepts_matching_declared_symbol_case_insensitively(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({
+        "AAA": [{
+            "symbol": "aaa",
+            "sourceProvider": "yahoo",
+            "timestamp": "2026-01-02T21:00:00+00:00",
+            "close": 100.0,
+        }]
+    })
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=1)
+
+    assert report.failed_count == 0
+    assert report.observations_inserted == 1
+    assert len(MarketObservationRepository(database=database).list_for_instrument(stock_id)) == 1
