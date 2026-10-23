@@ -116,7 +116,7 @@ class MarketHistoryBackfillPlanService:
             database=self._database,
             minimum_history_days=self._minimum_history_days,
             maximum_source_gap_days=self._maximum_source_gap_days,
-        ).get_report(limit=limit, offset=offset)
+        ).get_report(limit=limit, offset=offset, as_of=effective_as_of)
 
         requested_days = self._minimum_history_days + self._safety_margin_days
         to_date = effective_as_of.date()
