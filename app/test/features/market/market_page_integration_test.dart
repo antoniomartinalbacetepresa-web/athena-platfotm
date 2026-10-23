@@ -213,4 +213,33 @@ void main() {
 
     controller.dispose();
   });
+
+  testWidgets('Market page replaces injected controller without retaining prior snapshot', (tester) async {
+    final initial = await _context('Contexto anterior');
+    final pending = Completer<GlobalMarketContext>();
+    final firstService = _ControlledMarketService([Future.value(initial)]);
+    final secondService = _ControlledMarketService([pending.future]);
+    final firstController = GlobalMarketContextController(service: firstService);
+    final secondController = GlobalMarketContextController(service: secondService);
+
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: firstController)));
+    await tester.pumpAndSettle();
+    expect(find.text('Contexto anterior'), findsOneWidget);
+
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: secondController)));
+    await tester.pump();
+    expect(find.text('Contexto anterior'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(firstService.calls, 1);
+    expect(secondService.calls, 1);
+
+    pending.complete(await _context('Contexto actualizado'));
+    await tester.pumpAndSettle();
+    expect(find.text('Contexto actualizado'), findsOneWidget);
+    expect(find.text('Contexto anterior'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    firstController.dispose();
+    secondController.dispose();
+  });
 }
