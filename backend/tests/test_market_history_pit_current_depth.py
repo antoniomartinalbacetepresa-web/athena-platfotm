@@ -57,8 +57,11 @@ def test_market_history_excludes_observations_after_pit_cutoff(tmp_path: Path) -
 
     report = MarketObservationCoverageService(database=database).get_report(as_of=cutoff)
 
-    assert report.observation_count == 1
-    assert report.latest_observed_at == before.isoformat()
+    # Both rows were retrieved after the historical cutoff. Their market
+    # timestamps alone cannot make them available to a PIT consumer.
+    assert report.observation_count == 0
+    assert report.latest_observed_at is None
+    assert report.by_source == {}
     assert report.to_api_dict()["pointInTimeCutoffApplied"] is True
     assert report.to_api_dict()["asOf"] == cutoff.isoformat()
 
