@@ -66,7 +66,9 @@ class AthenaSynthesisController extends ChangeNotifier {
     try {
       final result = await dataSource.getForResearchCycle(requestedCycle);
       if (_disposed || requestVersion != _requestVersion ||
-          _cycleHash != requestedCycle || _latestRequested) return;
+          _cycleHash != requestedCycle || _latestRequested) {
+        return;
+      }
       _synthesis = result;
     } catch (error, stackTrace) {
       debugPrint('ERROR AL OBTENER LA SÍNTESIS CANÓNICA DE ATHENA:');
