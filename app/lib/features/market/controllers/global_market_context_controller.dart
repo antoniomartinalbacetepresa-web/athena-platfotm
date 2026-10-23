@@ -13,6 +13,8 @@ class GlobalMarketContextController extends ChangeNotifier {
   GlobalMarketContext? _context;
   bool _isLoading = false;
   String? _error;
+  int _requestVersion = 0;
+  bool _disposed = false;
 
   GlobalMarketContextController({required this.service});
 
@@ -21,9 +23,10 @@ class GlobalMarketContextController extends ChangeNotifier {
   String? get error => _error;
 
   Future<void> loadGlobalContext() async {
-    if (_isLoading) {
+    if (_disposed || _isLoading) {
       return;
     }
+    final requestVersion = ++_requestVersion;
 
     // A refresh must never keep presenting an old market snapshot as current.
     // Clear it before the asynchronous request starts, matching the fail-closed
@@ -34,23 +37,40 @@ class GlobalMarketContextController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _context = await service.getGlobalContext();
+      final nextContext = await service.getGlobalContext();
+      if (!_disposed && requestVersion == _requestVersion) {
+        _context = nextContext;
+      }
     } catch (error, stackTrace) {
       debugPrint('ERROR AL OBTENER EL CONTEXTO GLOBAL DEL MERCADO:');
       debugPrint(error.toString());
       debugPrint(stackTrace.toString());
-      _context = null;
-      _error = 'Error: ${error.toString()}';
+      if (!_disposed && requestVersion == _requestVersion) {
+        _context = null;
+        _error = 'Error: ${error.toString()}';
+      }
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (!_disposed && requestVersion == _requestVersion) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
   void clear() {
+    if (_disposed) return;
+    // Invalidate in-flight responses before another market snapshot can load.
+    _requestVersion++;
     _context = null;
     _error = null;
     _isLoading = false;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _requestVersion++;
+    super.dispose();
   }
 }
