@@ -125,3 +125,63 @@ def test_history_gap_report_rejects_invalid_pagination_and_thresholds(tmp_path: 
         service.get_report(limit=1001)
     with pytest.raises(ValueError, match="offset"):
         service.get_report(offset=-1)
+
+
+def test_gap_report_rejects_history_retrieved_after_pit_cutoff(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    final_observation = base + timedelta(days=365)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=final_observation + timedelta(days=1),
+    )
+    service = MarketHistoryGapService(database=database)
+
+    before = service.get_report(as_of=final_observation + timedelta(hours=2))
+    assert before.total_blocking_count == 1
+    assert before.no_observations_count == 1
+    assert before.items[0].reason == "no_observations"
+    assert before.items[0].source_count == 0
+    assert before.to_api_dict()["pointInTimeCutoffApplied"] is True
+    assert before.to_api_dict()["productionEvidenceClaimed"] is False
+
+    after = service.get_report(as_of=final_observation + timedelta(days=2))
+    assert after.total_blocking_count == 0
+    assert after.items == ()
+    assert after.as_of != before.as_of
+
+
+def test_gap_report_pit_excludes_future_observations_and_naive_cutoff(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    observations = MarketObservationRepository(database=database)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": base.isoformat(), "close": 100.0}],
+        source_provider="yahoo_finance",
+        retrieved_at=base + timedelta(days=1),
+    )
+    future = base + timedelta(days=365)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": future.isoformat(), "close": 120.0}],
+        source_provider="yahoo",
+        retrieved_at=future + timedelta(days=1),
+    )
+    service = MarketHistoryGapService(database=database)
+    cutoff = base + timedelta(days=2)
+    report = service.get_report(as_of=cutoff.astimezone(timezone(timedelta(hours=2))))
+    assert report.total_blocking_count == 1
+    assert report.insufficient_span_count == 1
+    assert report.discontinuous_source_count == 0
+    assert report.items[0].best_source_provider == "yahoo"
+    assert report.items[0].best_history_span_days == pytest.approx(0.0)
+    assert report.to_api_dict()["asOf"] == cutoff.isoformat()
+    with pytest.raises(ValueError, match="as_of"):
+        service.get_report(as_of=cutoff.replace(tzinfo=None))
