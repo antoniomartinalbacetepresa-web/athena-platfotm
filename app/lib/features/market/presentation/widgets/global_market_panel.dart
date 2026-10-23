@@ -17,12 +17,37 @@ class GlobalMarketPanel extends StatefulWidget {
 
 class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
   MarketDependencies? _dependencies;
-  late final GlobalMarketContextController _contextController;
-  late final bool _ownsController;
+  late GlobalMarketContextController _contextController;
+  late bool _ownsController;
 
   @override
   void initState() {
     super.initState();
+    _ownsController = widget.controller == null;
+    if (_ownsController) {
+      _dependencies = MarketDependencies.create();
+      _contextController = GlobalMarketContextController(
+        service: _dependencies!.globalMarketDataService,
+      );
+    } else {
+      _contextController = widget.controller!;
+    }
+    _contextController.addListener(_onControllerChanged);
+    _contextController.loadGlobalContext();
+  }
+
+  @override
+  void didUpdateWidget(covariant GlobalMarketPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.controller, widget.controller)) return;
+
+    _contextController.removeListener(_onControllerChanged);
+    if (_ownsController) {
+      _contextController.dispose();
+      _dependencies?.dispose();
+      _dependencies = null;
+    }
+
     _ownsController = widget.controller == null;
     if (_ownsController) {
       _dependencies = MarketDependencies.create();
