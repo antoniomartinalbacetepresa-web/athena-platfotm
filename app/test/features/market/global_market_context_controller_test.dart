@@ -161,7 +161,9 @@ void main() {
 
       pending.complete(replacement);
       await staleRequest;
-      expect(controller.context, same(initial));
+      // A refresh clears the prior snapshot before awaiting the response.
+      // Disposal must not publish the late replacement.
+      expect(controller.context, isNull);
     });
   });
 }
