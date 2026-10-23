@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.services.corporate_action_ingestion_service import CorporateActionIngestionService
@@ -300,3 +302,75 @@ def test_ingestion_rejects_provider_symbol_mismatch_before_persistence(
         raise AssertionError("Se esperaba rechazo del símbolo incoherente.")
 
     assert repository.list_for_instrument(instrument_id) == []
+
+
+@pytest.mark.parametrize("invalid_row", ["wrong_symbol", "wrong_provider"])
+@pytest.mark.parametrize("include_valid_action", [False, True])
+def test_ingestion_rejects_invalid_history_rows_even_without_actions(
+    tmp_path: Path, invalid_row: str, include_valid_action: bool
+) -> None:
+    """No-action rows must not hide a wrong symbol or provider family."""
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = CorporateActionRepository(database)
+    observations = []
+    if include_valid_action:
+        observations.append(
+            _observation(
+                timestamp="2026-08-01T00:00:00+00:00",
+                retrieved_at="2026-09-11T08:00:00+00:00",
+                dividend=0.25,
+            )
+        )
+    observations.append(
+        _observation(
+            timestamp="2026-08-02T00:00:00+00:00",
+            retrieved_at="2026-09-11T08:00:00+00:00",
+            symbol="MSFT" if invalid_row == "wrong_symbol" else "AAPL",
+            provider="other_provider" if invalid_row == "wrong_provider" else "yahoo",
+        )
+    )
+    service = CorporateActionIngestionService(
+        market_provider=FakeHistoryProvider(observations),
+        repository=repository,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="símbolo distinto" if invalid_row == "wrong_symbol"
+        else "provenance mismatch",
+    ):
+        service.ingest_history(
+            instrument_id=instrument_id,
+            symbol="AAPL",
+            dividend_currency="USD",
+            expected_source_provider="yahoo",
+        )
+    # Validate all history rows before saving any batch.
+    assert repository.list_for_instrument(instrument_id) == []
+
+
+def test_expected_provider_accepts_matching_empty_action_history(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    service = CorporateActionIngestionService(
+        market_provider=FakeHistoryProvider(
+            [_observation(
+                timestamp="2026-08-02T00:00:00+00:00",
+                retrieved_at="2026-09-11T08:00:00+00:00",
+                provider="YAHOO",
+                symbol="aapl",
+            )]
+        ),
+        repository=CorporateActionRepository(database),
+    )
+    stats = service.ingest_history(
+        instrument_id=instrument_id,
+        symbol="AAPL",
+        expected_source_provider="Yahoo",
+    )
+    assert stats.history_observations == 1
+    assert stats.actions_received == 0
+    assert stats.inserted == 0
