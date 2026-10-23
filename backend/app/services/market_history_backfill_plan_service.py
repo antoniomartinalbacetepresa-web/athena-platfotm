@@ -42,6 +42,7 @@ class MarketHistoryBackfillPlan:
     limit: int
     offset: int
     requests: tuple[MarketHistoryBackfillRequest, ...]
+    blocking_by_reason: dict[str, int]
 
     @property
     def requested_history_days(self) -> int:
@@ -53,6 +54,7 @@ class MarketHistoryBackfillPlan:
             "status": "backfill_plan_only",
             "asOf": self.as_of.astimezone(timezone.utc).isoformat(),
             "totalBlockingCount": self.total_blocking_count,
+            "blockingByReason": dict(self.blocking_by_reason),
             "selectedCount": selected,
             "hasMore": self.offset + selected < self.total_blocking_count,
             "minimumHistoryDays": self.minimum_history_days,
@@ -72,7 +74,8 @@ class MarketHistoryBackfillPlan:
             "warning": (
                 "Este plan transforma huecos persistidos en solicitudes deterministas de "
                 "backfill. No ejecuta red, no mezcla proveedores, no borra observaciones "
-                "existentes y no convierte una solicitud o fixture en evidencia de cobertura."
+                "existentes y no convierte una solicitud o fixture en evidencia de cobertura. "
+                "Incluye historiales profundos caducados respecto al corte PIT."
             ),
         }
 
@@ -143,6 +146,12 @@ class MarketHistoryBackfillPlanService:
             limit=limit,
             offset=offset,
             requests=requests,
+            blocking_by_reason={
+                "no_observations": gap_report.no_observations_count,
+                "insufficient_span": gap_report.insufficient_span_count,
+                "discontinuous_source": gap_report.discontinuous_source_count,
+                "stale_source": gap_report.stale_source_count,
+            },
         )
 
     def _aware_utc(self, value: datetime) -> datetime:
