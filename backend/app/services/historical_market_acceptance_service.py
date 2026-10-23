@@ -23,6 +23,10 @@ class HistoricalMarketAcceptanceReport:
     def depth_gate_passed(self) -> bool:
         return (
             self.coverage.history_eligible_instrument_count > 0
+            and self.coverage.history_eligible_instrument_count <= self.coverage.active_instrument_count
+            and self.coverage.covered_instrument_count >= self.coverage.history_eligible_instrument_count
+            and self.coverage.deep_history_instrument_count >= self.coverage.history_eligible_instrument_count
+            and self.coverage.current_deep_history_instrument_count >= self.coverage.history_eligible_instrument_count
             and self.coverage.observation_count > 0
             and self.coverage.minimum_history_days >= self.required_history_days
             and self.coverage.deep_history_coverage
