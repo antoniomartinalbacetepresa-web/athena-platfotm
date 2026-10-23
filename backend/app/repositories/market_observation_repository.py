@@ -153,9 +153,12 @@ class MarketObservationRepository:
 
         result = [dict(row) for row in rows]
         if cutoff_iso is not None:
+            cutoff_dt = datetime.fromisoformat(cutoff_iso)
             for row in result:
-                if (datetime.fromisoformat(row["retrieved_at"]) > datetime.fromisoformat(cutoff_iso)
-                or datetime.fromisoformat(row["observed_at"]) > datetime.fromisoformat(cutoff_iso)):
+                if (
+                    datetime.fromisoformat(row["retrieved_at"]) > cutoff_dt
+                    or datetime.fromisoformat(row["observed_at"]) > cutoff_dt
+                ):
                     raise RuntimeError(
                         "Una observación posterior al knowledge_cutoff atravesó el filtro PIT."
                     )
