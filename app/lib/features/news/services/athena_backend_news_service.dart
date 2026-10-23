@@ -12,11 +12,14 @@ class AthenaBackendNewsService {
 
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
   AthenaBackendNewsService({
     this.baseUrl = defaultBackendUrl,
     http.Client? client,
-  }) : client = client ?? http.Client();
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   Future<VerifiedNewsFeed> getFeed({
     String? query,
@@ -48,7 +51,7 @@ class AthenaBackendNewsService {
       queryParameters: params,
     );
 
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'El backend de ATHENA TYCHE respondió con código HTTP '
