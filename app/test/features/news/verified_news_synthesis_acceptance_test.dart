@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/news/models/verified_news_synthesis.dart';
@@ -198,6 +199,124 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
     service.dispose();
+  });
+
+
+  test('News clear invalidates a pending failure without replacing newer evidence',
+      () async {
+    final firstResponse = Completer<http.Response>();
+    final secondResponse = Completer<http.Response>();
+    var calls = 0;
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: MockClient((_) {
+        calls++;
+        return calls == 1 ? firstResponse.future : secondResponse.future;
+      }),
+    );
+    final controller = NewsSynthesisController(service: service);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    final staleLoad = controller.load();
+    expect(controller.loading, isTrue);
+    controller.clear();
+    expect(controller.loading, isFalse);
+    expect(controller.synthesis, isNull);
+    final currentLoad = controller.load();
+    expect(calls, 2);
+
+    secondResponse.complete(http.Response(jsonEncode(payload()), 200));
+    await currentLoad;
+    expect(controller.synthesis?.items.single.evidenceId, 'news-1');
+    expect(controller.error, isNull);
+    final notificationsAfterCurrent = notifications;
+
+    firstResponse.complete(http.Response('{"detail":"old failure"}', 503));
+    await staleLoad;
+    expect(controller.synthesis?.items.single.evidenceId, 'news-1');
+    expect(controller.error, isNull);
+    expect(controller.loading, isFalse);
+    expect(notifications, notificationsAfterCurrent);
+
+    controller.dispose();
+    service.dispose();
+  });
+
+  test('News disposal ignores a late response without notifying listeners',
+      () async {
+    final response = Completer<http.Response>();
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: MockClient((_) => response.future),
+    );
+    final controller = NewsSynthesisController(service: service);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    final pending = controller.load();
+    final notificationsBeforeDispose = notifications;
+    controller.dispose();
+    response.complete(http.Response(jsonEncode(payload()), 200));
+    await pending;
+
+    expect(controller.synthesis, isNull);
+    expect(notifications, notificationsBeforeDispose);
+    service.dispose();
+  });
+
+  testWidgets('News page rebinds an injected controller without stale synthesis',
+      (tester) async {
+    final firstPayload = payload();
+    final firstSynthesis =
+        (firstPayload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>;
+    (firstSynthesis['items'] as List).single['summary'] =
+        'Síntesis del controlador anterior.';
+    final secondPayload = payload();
+    final secondSynthesis =
+        (secondPayload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>;
+    (secondSynthesis['items'] as List).single['summary'] =
+        'Síntesis del nuevo controlador.';
+
+    final firstService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: MockClient((_) async =>
+          http.Response(jsonEncode(firstPayload), 200)),
+    );
+    final secondService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: MockClient((_) async =>
+          http.Response(jsonEncode(secondPayload), 200)),
+    );
+    final firstController = NewsSynthesisController(service: firstService);
+    final secondController = NewsSynthesisController(service: secondService);
+
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        synthesisController: firstController,
+        newsFeed: const SizedBox.shrink(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Síntesis del controlador anterior.'), findsOneWidget);
+
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        synthesisController: secondController,
+        newsFeed: const SizedBox.shrink(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Síntesis del controlador anterior.'), findsNothing);
+    expect(find.text('Síntesis del nuevo controlador.'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    firstController.dispose();
+    secondController.dispose();
+    firstService.dispose();
+    secondService.dispose();
   });
 
   testWidgets('404 produces verified empty/error state without fabricated synthesis',

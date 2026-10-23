@@ -11,23 +11,50 @@ class NewsSynthesisController extends ChangeNotifier {
   VerifiedNewsSynthesis? synthesis;
   Object? error;
   bool loading = false;
+  int _requestVersion = 0;
+  bool _disposed = false;
 
   Future<void> load() async {
-    if (loading) return;
+    if (_disposed || loading) return;
+    final requestVersion = ++_requestVersion;
     loading = true;
     error = null;
     synthesis = null;
     notifyListeners();
     try {
-      synthesis = await service.getLatest();
+      final nextSynthesis = await service.getLatest();
+      if (!_disposed && requestVersion == _requestVersion) {
+        synthesis = nextSynthesis;
+      }
     } catch (caught) {
-      synthesis = null;
-      error = caught;
+      if (!_disposed && requestVersion == _requestVersion) {
+        synthesis = null;
+        error = caught;
+      }
     } finally {
-      loading = false;
-      notifyListeners();
+      if (!_disposed && requestVersion == _requestVersion) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> retry() => load();
+
+  /// Invalidate outstanding requests before changing the News data boundary.
+  void clear() {
+    if (_disposed) return;
+    _requestVersion++;
+    synthesis = null;
+    error = null;
+    loading = false;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _requestVersion++;
+    super.dispose();
+  }
 }

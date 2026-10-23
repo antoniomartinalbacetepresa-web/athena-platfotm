@@ -22,8 +22,8 @@ class NewsPage extends StatefulWidget {
 
 class _NewsPageState extends State<NewsPage> {
   AthenaBackendNewsSynthesisService? _ownedSynthesisService;
-  late final NewsSynthesisController _synthesisController;
-  late final bool _ownsSynthesisController;
+  late NewsSynthesisController _synthesisController;
+  late bool _ownsSynthesisController;
 
   @override
   void initState() {
@@ -38,6 +38,34 @@ class _NewsPageState extends State<NewsPage> {
       _synthesisController = widget.synthesisController!;
     }
     _synthesisController.load();
+  }
+
+  @override
+  void didUpdateWidget(covariant NewsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.synthesisController == widget.synthesisController) return;
+
+    final previousController = _synthesisController;
+    final previousService = _ownedSynthesisService;
+    final previouslyOwned = _ownsSynthesisController;
+
+    _ownsSynthesisController = widget.synthesisController == null;
+    if (_ownsSynthesisController) {
+      _ownedSynthesisService = AthenaBackendNewsSynthesisService();
+      _synthesisController = NewsSynthesisController(
+        service: _ownedSynthesisService!,
+      );
+    } else {
+      _ownedSynthesisService = null;
+      _synthesisController = widget.synthesisController!;
+    }
+
+    // Rebind immediately: never render the former controller's synthesis.
+    _synthesisController.load();
+    if (previouslyOwned) {
+      previousController.dispose();
+      previousService?.dispose();
+    }
   }
 
   @override
