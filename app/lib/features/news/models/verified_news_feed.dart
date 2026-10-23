@@ -25,6 +25,7 @@ class VerifiedNewsItem {
     final publishedAt = _requiredUtcDateTime(map['publishedAt'], 'publishedAt');
     final retrievedAt = _requiredUtcDateTime(map['retrievedAt'], 'retrievedAt');
     final sourceProvider = _requiredString(map['sourceProvider'], 'sourceProvider');
+    _rejectRestrictedNewsProvider(sourceProvider);
 
     if (publishedAt.isAfter(retrievedAt)) {
       throw const FormatException(
@@ -79,6 +80,7 @@ class VerifiedNewsFeed {
       map['sourceProvider'],
       'sourceProvider',
     );
+    _rejectRestrictedNewsProvider(sourceProvider);
     final retrievedAt = _requiredUtcDateTime(map['retrievedAt'], 'retrievedAt');
     final rawItems = map['items'];
     if (rawItems is! List) {
@@ -123,7 +125,10 @@ String _requiredString(Object? value, String field) {
 String _requiredHttpsUrl(Object? value, String field) {
   final url = _requiredString(value, field);
   final uri = Uri.tryParse(url);
-  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
     throw FormatException('$field debe ser una URL HTTPS válida.');
   }
   return url;
@@ -143,4 +148,12 @@ DateTime _requiredUtcDateTime(Object? value, String field) {
     throw FormatException('$field debe ser una fecha UTC válida.');
   }
   return parsed;
+}
+
+// Provider identifiers are untrusted provenance, including spelling variants.
+void _rejectRestrictedNewsProvider(String provider) {
+  final compact = provider.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  if (compact.contains('financialmodelingprep') || compact.contains('fmp')) {
+    throw const FormatException('El proveedor FMP no está permitido.');
+  }
 }
