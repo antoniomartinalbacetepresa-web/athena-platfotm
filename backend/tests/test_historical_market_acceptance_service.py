@@ -196,3 +196,50 @@ def test_inconsistent_universe_counts_cannot_pass_history_acceptance(overrides):
     assert report.depth_gate_passed is False
     assert report.history_acceptance_passed is False
     assert report.to_api_dict()["productionAuthorization"] is False
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [("primary", "primary"), ("primary", " PRIMARY "), ("primary", "")],
+)
+def test_acceptance_rejects_duplicate_or_blank_provider_evidence(providers):
+    from dataclasses import replace
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(_reconciliation(), source_providers=providers)],
+        independent_secondary_source_verified=True,
+    )
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+
+
+@pytest.mark.parametrize(
+    "knowledge_cutoff",
+    [datetime(2026, 9, 12, tzinfo=timezone.utc), datetime(2026, 9, 11)],
+)
+def test_reconciliation_cannot_use_future_or_naive_pit_evidence(knowledge_cutoff):
+    from dataclasses import replace
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(_reconciliation(), knowledge_cutoff=knowledge_cutoff)],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is True
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+
+
+def test_reconciliation_same_instant_with_offset_remains_pit_valid():
+    from dataclasses import replace
+    from datetime import timedelta
+
+    offset_cutoff = datetime(2026, 9, 11, 2, tzinfo=timezone(timedelta(hours=2)))
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(_reconciliation(), knowledge_cutoff=offset_cutoff)],
+        independent_secondary_source_verified=True,
+    )
+    assert report.corporate_action_gate_passed is True
+    assert report.history_acceptance_passed is True
