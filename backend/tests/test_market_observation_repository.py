@@ -237,6 +237,53 @@ def test_market_observation_repository_applies_knowledge_cutoff_and_observation_
     assert rows[0]["retrieved_at"] <= cutoff.isoformat()
 
 
+def test_market_observation_repository_compares_pit_instants_across_iso_offsets(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed_at = datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc)
+    retrieved_at = observed_at + timedelta(hours=1)
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed_at.isoformat(), "close": 100.0}],
+        source_provider="yahoo_finance",
+        retrieved_at=retrieved_at,
+    )
+
+    # Simulate legacy ISO encodings of the same instants. Lexical string
+    # comparisons would wrongly reject the +01:00 retrieval at the UTC cutoff.
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE market_observations
+            SET observed_at = ?, retrieved_at = ?
+            WHERE instrument_id = ?
+            """,
+            (
+                observed_at.isoformat().replace("+00:00", "Z"),
+                retrieved_at.astimezone(timezone(timedelta(hours=1))).isoformat(),
+                instrument_id,
+            ),
+        )
+
+    at_cutoff = repository.list_for_instrument(
+        instrument_id,
+        knowledge_cutoff=retrieved_at,
+        observed_from=observed_at,
+        observed_to=observed_at,
+    )
+    assert len(at_cutoff) == 1
+    assert at_cutoff[0]["close"] == pytest.approx(100.0)
+
+    before_cutoff = repository.list_for_instrument(
+        instrument_id,
+        knowledge_cutoff=retrieved_at - timedelta(seconds=1),
+    )
+    assert before_cutoff == []
+
+
 def test_market_observation_repository_rejects_invalid_pit_ranges(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instrument_id = _instrument_id(database)
