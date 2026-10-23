@@ -33,6 +33,7 @@ class _AuthenticatedPortfolioHistoryPanelState
   Object? _error;
   bool _loading = true;
   bool _sessionRejected = false;
+  int _requestVersion = 0;
 
   @override
   void initState() {
@@ -40,41 +41,109 @@ class _AuthenticatedPortfolioHistoryPanelState
     _ownsService = widget.service == null;
     _service = widget.service ?? AuthenticatedPortfolioService();
     _session = widget.session ?? AuthSession.instance;
+    _session.addListener(_onSessionChanged);
     _load();
   }
 
   @override
+  void didUpdateWidget(covariant AuthenticatedPortfolioHistoryPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session) {
+      _session.removeListener(_onSessionChanged);
+      _session = widget.session ?? AuthSession.instance;
+      _session.addListener(_onSessionChanged);
+    }
+    if (oldWidget.service != widget.service) {
+      if (_ownsService) _service.dispose();
+      _ownsService = widget.service == null;
+      _service = widget.service ??
+          AuthenticatedPortfolioService(session: _session);
+    } else if (oldWidget.session != widget.session && _ownsService) {
+      _service.dispose();
+      _service = AuthenticatedPortfolioService(session: _session);
+    }
+    if (oldWidget.portfolioId != widget.portfolioId ||
+        oldWidget.session != widget.session ||
+        oldWidget.service != widget.service) {
+      _load();
+    }
+  }
+
+  @override
   void dispose() {
+    _requestVersion++;
+    _session.removeListener(_onSessionChanged);
     if (_ownsService) _service.dispose();
     super.dispose();
   }
 
+  void _onSessionChanged() {
+    if (mounted) unawaited(_load());
+  }
+
   Future<void> _load() async {
-    if (mounted) {
+    final requestVersion = ++_requestVersion;
+    final requestToken = _session.accessToken;
+    final requestOwnerId = _session.account?.id;
+    final requestPortfolioId = widget.portfolioId;
+
+    if (!_session.isAuthenticated ||
+        requestToken == null ||
+        requestOwnerId == null) {
       setState(() {
-        _loading = true;
+        _history = null;
         _error = null;
-        _sessionRejected = false;
+        _loading = false;
+        _sessionRejected = true;
       });
+      return;
     }
+
+    setState(() {
+      // Never render one owner's or portfolio's events while a new request
+      // is pending, including after logout, login or portfolioId changes.
+      _history = null;
+      _loading = true;
+      _error = null;
+      _sessionRejected = false;
+    });
+
+    bool isCurrent() =>
+        mounted &&
+        requestVersion == _requestVersion &&
+        _session.isAuthenticated &&
+        _session.accessToken == requestToken &&
+        _session.account?.id == requestOwnerId &&
+        widget.portfolioId == requestPortfolioId;
+
     try {
-      final history = await _service.loadHistory(portfolioId: widget.portfolioId);
-      if (!mounted) return;
+      final history = await _service.loadHistory(
+        portfolioId: requestPortfolioId,
+      );
+      if (!isCurrent()) return;
+      if (history.portfolioId != requestPortfolioId) {
+        throw const FormatException(
+          'El historial recibido pertenece a otra cartera.',
+        );
+      }
       setState(() {
         _history = history;
         _loading = false;
       });
     } on AuthSessionRejectedException catch (error) {
-      unawaited(_session.clearAfterRemoteInvalidation());
-      if (!mounted) return;
+      // The authenticated service invalidates only the token that received
+      // the rejection. A stale 401 must never clear a replacement session.
+      if (!isCurrent()) return;
       setState(() {
+        _history = null;
         _error = error;
         _sessionRejected = true;
         _loading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!isCurrent()) return;
       setState(() {
+        _history = null;
         _error = error;
         _loading = false;
       });
