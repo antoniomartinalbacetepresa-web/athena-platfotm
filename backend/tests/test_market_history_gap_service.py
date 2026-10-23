@@ -7,6 +7,7 @@ from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
 from app.services.market_history_gap_service import MarketHistoryGapService
+from app.services.market_observation_coverage_service import MarketObservationCoverageService
 
 
 def _database(tmp_path: Path) -> AthenaDatabase:
@@ -277,3 +278,28 @@ def test_stale_primary_does_not_block_current_independent_deep_source(tmp_path: 
     assert report.total_blocking_count == 0
     assert report.stale_source_count == 0
     assert report.items == ()
+
+
+@pytest.mark.parametrize("age_days,expected_blockers", [(372, 0), (373, 1)])
+def test_gap_and_coverage_agree_on_current_pit_depth(
+    tmp_path: Path, age_days: int, expected_blockers: int
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "CONSISTENT")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    cutoff = base + timedelta(days=age_days)
+    coverage = MarketObservationCoverageService(database=database).get_report(as_of=cutoff)
+    gaps = MarketHistoryGapService(database=database).get_report(as_of=cutoff)
+
+    assert coverage.history_eligible_instrument_count == 1
+    assert coverage.deep_history_instrument_count == 1
+    assert gaps.total_blocking_count == expected_blockers
+    assert gaps.stale_source_count == expected_blockers
+    assert coverage.current_deep_history_instrument_count == 1 - expected_blockers
+    assert coverage.current_deep_history_instrument_count + gaps.total_blocking_count == 1
