@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/dashboard/presentation/pages/dashboard_page.dart';
@@ -71,6 +72,69 @@ void main() {
     );
 
     dependencies.dispose();
+  });
+
+
+  testWidgets('Dashboard rebinds ATHENA synthesis when injected dependencies change', (tester) async {
+    final oldPayload = _validPayload();
+    ((oldPayload['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis anterior';
+    final newPayload = _validPayload();
+    ((newPayload['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis actual';
+
+    final oldDependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(jsonEncode(oldPayload), 200)),
+    ));
+    final newDependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(jsonEncode(newPayload), 200)),
+    ));
+
+    await tester.pumpWidget(synthesisDashboard(oldDependencies));
+    await tester.pumpAndSettle();
+    expect(find.text('Síntesis anterior'), findsOneWidget);
+
+    await tester.pumpWidget(synthesisDashboard(newDependencies));
+    await tester.pumpAndSettle();
+    expect(find.text('Síntesis actual'), findsOneWidget);
+    expect(find.text('Síntesis anterior'), findsNothing);
+
+    oldDependencies.dispose();
+    newDependencies.dispose();
+  });
+
+  testWidgets('Dashboard does not display an old pending synthesis after source swap', (tester) async {
+    final pending = Completer<http.Response>();
+    final oldDependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) => pending.future),
+    ));
+    final newPayload = _validPayload();
+    ((newPayload['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis nueva';
+    final newDependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(jsonEncode(newPayload), 200)),
+    ));
+
+    await tester.pumpWidget(synthesisDashboard(oldDependencies));
+    await tester.pump();
+    await tester.pumpWidget(synthesisDashboard(newDependencies));
+    await tester.pumpAndSettle();
+    expect(find.text('Síntesis nueva'), findsOneWidget);
+
+    final oldPayload = _validPayload();
+    ((oldPayload['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Respuesta obsoleta';
+    pending.complete(http.Response(jsonEncode(oldPayload), 200));
+    await tester.pump();
+    expect(find.text('Síntesis nueva'), findsOneWidget);
+    expect(find.text('Respuesta obsoleta'), findsNothing);
+
+    oldDependencies.dispose();
+    newDependencies.dispose();
   });
 
   testWidgets('Dashboard rejects ATHENA synthesis that escalates operational authority', (tester) async {
