@@ -370,3 +370,25 @@ def test_corporate_action_gate_rejects_invalid_measured_evidence(field, value) -
     report = _readiness(corporate_actions=evidence)
     assert report["ready"] is False
     assert "corporate_actions_independent_reconciliation_pending" in report["blockers"]
+
+
+def test_oos_gate_rejects_self_consistent_fractional_outcome_evidence() -> None:
+    learning = _complete_learning()
+    forecast = learning["researchForecastErrorOos"]
+    forecast["eligibleOutcomeCount"] = 2.5
+    forecast["forecastErrorCount"] = 2.5
+    horizon = forecast["horizons"]["604800"]
+    horizon["eligibleOutcomeCount"] = 2.5
+    horizon["forecastErrorCount"] = 2.5
+    report = _readiness(learning=learning)
+    assert report["ready"] is False
+    assert "forecast_error_oos_measurement_incomplete" in report["blockers"]
+
+
+def test_corporate_action_gate_rejects_self_consistent_fractional_event_evidence() -> None:
+    evidence = _complete_corporate_actions()
+    evidence["eventCount"] = 2.5
+    evidence["agreedEventCount"] = 2.5
+    report = _readiness(corporate_actions=evidence)
+    assert report["ready"] is False
+    assert "corporate_actions_independent_reconciliation_pending" in report["blockers"]
