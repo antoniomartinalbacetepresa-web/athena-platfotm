@@ -83,7 +83,7 @@ class DividendTotalReturnService:
         for _ in range(8):
             if (not decoded.isascii()
                     or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
-                    or "\\\\" in decoded or "%u" in decoded):
+                    or "\\" in decoded or "%u" in decoded):
                 raise ValueError(f"{field} no puede utilizar FMP ni codificaciones ambiguas.")
             provider_key = "".join(char for char in decoded if char.isalnum())
             if not provider_key:
