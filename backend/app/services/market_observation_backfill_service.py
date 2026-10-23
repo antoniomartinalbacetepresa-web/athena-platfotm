@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
@@ -309,6 +309,7 @@ class MarketObservationBackfillService:
         report = MarketHistoryGapService(database=self._database).get_report(
             limit=limit,
             offset=offset,
+            as_of=datetime.combine(self._today_provider(), time.max, tzinfo=timezone.utc),
         )
         rows: list[dict[str, Any]] = []
         for blocker in report.items:
