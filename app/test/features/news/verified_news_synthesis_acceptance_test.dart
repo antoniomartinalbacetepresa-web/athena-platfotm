@@ -224,6 +224,9 @@ void main() {
     expect(controller.loading, isFalse);
     expect(controller.synthesis, isNull);
     final currentLoad = controller.load();
+    // http.Client.get dispatches through an asynchronous send boundary.
+    // Let both requests reach the mock before checking their order.
+    await Future<void>.delayed(Duration.zero);
     expect(calls, 2);
 
     secondResponse.complete(http.Response(jsonEncode(payload()), 200));
