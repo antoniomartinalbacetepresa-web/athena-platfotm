@@ -8,17 +8,20 @@ import 'athena_backend_news_service.dart';
 class AthenaBackendNewsSynthesisService {
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
   AthenaBackendNewsSynthesisService({
     this.baseUrl = AthenaBackendNewsService.defaultBackendUrl,
     http.Client? client,
-  }) : client = client ?? http.Client();
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   Future<VerifiedNewsSynthesis> getLatest() async {
     final uri = Uri.parse(
       '$baseUrl/api/v1/recommendations/professional-research/news-synthesis/latest',
     );
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'El backend de ATHENA TYCHE respondió con código HTTP '
