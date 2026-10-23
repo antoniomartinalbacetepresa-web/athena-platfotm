@@ -143,16 +143,22 @@ class MarketObservationCoverageService:
             ).fetchone()
             overall = connection.execute(
                 """
+                WITH eligible_observations AS (
+                    SELECT mo.instrument_id, mo.observed_at
+                    FROM market_observations mo
+                    JOIN instruments i ON i.id = mo.instrument_id
+                    WHERE i.is_active = 1
+                      AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
+                      AND julianday(mo.observed_at) <= julianday(?)
+                      AND julianday(mo.retrieved_at) <= julianday(?)
+                )
                 SELECT COUNT(*) AS observation_count,
-                       COUNT(DISTINCT mo.instrument_id) AS covered_instrument_count,
-                       MIN(mo.observed_at) AS earliest_observed_at,
-                       MAX(mo.observed_at) AS latest_observed_at
-                FROM market_observations mo
-                JOIN instruments i ON i.id = mo.instrument_id
-                WHERE i.is_active = 1
-                  AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
-                  AND julianday(mo.observed_at) <= julianday(?)
-                  AND julianday(mo.retrieved_at) <= julianday(?)
+                       COUNT(DISTINCT instrument_id) AS covered_instrument_count,
+                       (SELECT observed_at FROM eligible_observations
+                        ORDER BY julianday(observed_at), observed_at LIMIT 1) AS earliest_observed_at,
+                       (SELECT observed_at FROM eligible_observations
+                        ORDER BY julianday(observed_at) DESC, observed_at DESC LIMIT 1) AS latest_observed_at
+                FROM eligible_observations
                 """,
                 (cutoff_iso, cutoff_iso),
             ).fetchone()
@@ -252,14 +258,18 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
                 )
-                SELECT source_provider,
+                SELECT grouped.source_provider,
                        COUNT(*) AS observation_count,
-                       COUNT(DISTINCT instrument_id) AS covered_instrument_count,
-                       MIN(observed_at) AS earliest_observed_at,
-                       MAX(observed_at) AS latest_observed_at
-                FROM normalized_history
-                GROUP BY source_provider
-                ORDER BY source_provider
+                       COUNT(DISTINCT grouped.instrument_id) AS covered_instrument_count,
+                       (SELECT nh.observed_at FROM normalized_history nh
+                        WHERE nh.source_provider = grouped.source_provider
+                        ORDER BY julianday(nh.observed_at), nh.observed_at LIMIT 1) AS earliest_observed_at,
+                       (SELECT nh.observed_at FROM normalized_history nh
+                        WHERE nh.source_provider = grouped.source_provider
+                        ORDER BY julianday(nh.observed_at) DESC, nh.observed_at DESC LIMIT 1) AS latest_observed_at
+                FROM normalized_history grouped
+                GROUP BY grouped.source_provider
+                ORDER BY grouped.source_provider
                 """,
                 (cutoff_iso, cutoff_iso),
             ).fetchall()
