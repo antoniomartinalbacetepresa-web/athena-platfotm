@@ -62,6 +62,14 @@ class CorporateActionIngestionService:
             else None
         )
 
+        # Bind the provider request to the canonical stored instrument before
+        # any external retrieval or write. Provider-symbol validation alone is
+        # insufficient when a caller supplies the wrong instrument_id.
+        self._repository.require_instrument_symbol(
+            instrument_id=instrument_id,
+            symbol=normalized_symbol,
+        )
+
         history = self._market_provider.get_history(
             normalized_symbol,
             from_date=from_date,
