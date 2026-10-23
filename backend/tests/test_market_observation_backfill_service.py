@@ -411,3 +411,122 @@ def test_backfill_accepts_matching_declared_symbol_case_insensitively(
     assert report.failed_count == 0
     assert report.observations_inserted == 1
     assert len(MarketObservationRepository(database=database).list_for_instrument(stock_id)) == 1
+
+
+@pytest.mark.parametrize(
+    "invalid_provenance",
+    [
+        {"sourceProvider": "yahoo", "source_provider": "other_provider"},
+        {"sourceProvider": None, "source_provider": "yahoo"},
+        {"source_provider": "other_provider"},
+        {"sourceProvider": "yahoo", "source_provider": "   "},
+    ],
+)
+def test_backfill_rejects_conflicting_provenance_aliases_atomically(
+    tmp_path: Path, invalid_provenance: dict[str, object]
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({
+        "AAA": [
+            {
+                "symbol": "AAA",
+                "sourceProvider": "yahoo",
+                "timestamp": "2026-01-01T21:00:00+00:00",
+                "close": 100.0,
+            },
+            {
+                "symbol": "AAA",
+                "timestamp": "2026-01-02T21:00:00+00:00",
+                "close": 101.0,
+                **invalid_provenance,
+            },
+        ]
+    })
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=1)
+
+    assert report.failed_count == 1
+    assert report.observations_inserted == 0
+    assert report.persisted_instrument_count == 0
+    assert MarketObservationRepository(database=database).list_for_instrument(stock_id) == []
+
+
+def test_backfill_requires_explicit_provenance_for_secondary_provider(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({
+        "AAA": [{
+            "timestamp": "2026-01-02T21:00:00+00:00",
+            "close": 100.0,
+        }]
+    })
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=1, source_provider="independent_secondary")
+
+    assert report.failed_count == 1
+    assert "procedencia" in report.failures[0]["error"]
+    assert report.observations_inserted == 0
+    assert MarketObservationRepository(database=database).list_for_instrument(stock_id) == []
+
+
+def test_backfill_rejects_adapter_relabel_before_fetch(tmp_path: Path) -> None:
+    class NamedProvider(FakeHistoryProvider):
+        PROVIDER_ID = "yahoo"
+
+    database = _database(tmp_path)
+    _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = NamedProvider({"AAA": []})
+    service = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    )
+
+    with pytest.raises(ValueError, match="identidad del proveedor"):
+        service.run(limit=1, source_provider="independent_secondary")
+    assert provider.calls == []
+
+
+def test_backfill_accepts_matching_dual_provenance_aliases(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({
+        "AAA": [{
+            "symbol": "AAA",
+            "sourceProvider": "yahoo",
+            "source_provider": "yahoo",
+            "timestamp": "2026-01-02T21:00:00+00:00",
+            "close": 100.0,
+        }]
+    })
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=1)
+
+    assert report.failed_count == 0
+    assert report.observations_inserted == 1
+    assert len(MarketObservationRepository(database=database).list_for_instrument(stock_id)) == 1
