@@ -39,7 +39,7 @@ class HistoricalMarketAcceptanceReport:
 
     @property
     def corporate_action_gate_passed(self) -> bool:
-        if not self.independent_secondary_source_verified:
+        if self.independent_secondary_source_verified is not True:
             return False
         if not self.reconciliation_reports or self.agreed_event_count <= 0:
             return False
@@ -113,7 +113,7 @@ class HistoricalMarketAcceptanceService:
             reconciliation_reports=reports,
             required_history_days=self._required_history_days,
             required_deep_history_coverage=self._required_deep_history_coverage,
-            independent_secondary_source_verified=bool(
-                independent_secondary_source_verified
+            independent_secondary_source_verified=(
+                independent_secondary_source_verified is True
             ),
         )
