@@ -63,9 +63,9 @@ def test_plan_turns_only_unresolved_gaps_into_400_day_yahoo_requests(tmp_path: P
     )
     observations.save_many(
         instrument_id=deep_history,
-        observations=_continuous_history(base),
+        observations=_continuous_history(AS_OF - timedelta(days=366)),
         source_provider="source_b",
-        retrieved_at=base + timedelta(days=366),
+        retrieved_at=AS_OF,
     )
 
     plan = MarketHistoryBackfillPlanService(database=database).get_plan(as_of=AS_OF)
@@ -160,9 +160,10 @@ def test_plan_uses_requested_pit_cutoff_for_gap_selection_not_wall_clock(
     assert {request.to_date for request in before.requests} == {"2026-09-13"}
 
     after = service.get_plan(as_of=AS_OF + timedelta(days=2))
-    assert after.total_blocking_count == 1
+    assert after.total_blocking_count == 2
     assert [(request.symbol, request.reason) for request in after.requests] == [
         ("AAA", "no_observations"),
+        ("BBB", "stale_source"),
     ]
     assert after.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
 
@@ -191,6 +192,36 @@ def test_plan_pagination_uses_the_same_pit_cutoff_as_its_total(
     after = service.get_plan(
         as_of=AS_OF + timedelta(days=2), limit=1, offset=1
     )
-    assert after.total_blocking_count == 1
-    assert after.requests == ()
+    assert after.total_blocking_count == 2
+    assert [(request.symbol, request.reason) for request in after.requests] == [
+        ("BBB", "stale_source"),
+    ]
     assert after.to_api_dict()["hasMore"] is False
+
+
+def test_plan_includes_stale_365_day_history_without_claiming_backfill_execution(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(InstrumentRepository(database=database), "STALE")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    service = MarketHistoryBackfillPlanService(database=database)
+
+    current = service.get_plan(as_of=base + timedelta(days=372))
+    assert current.total_blocking_count == 0
+    assert current.requests == ()
+
+    stale = service.get_plan(as_of=base + timedelta(days=373))
+    assert stale.total_blocking_count == 1
+    assert len(stale.requests) == 1
+    assert stale.requests[0].instrument_id == instrument_id
+    assert stale.requests[0].reason == "stale_source"
+    assert stale.requests[0].source_provider == "yahoo"
+    assert stale.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
+    assert stale.to_api_dict()["policy"]["automaticReadinessPromotion"] is False
