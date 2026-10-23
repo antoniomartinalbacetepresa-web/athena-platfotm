@@ -33,8 +33,8 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  late final RecommendationDependencies _recommendationDependencies;
-  late final bool _ownsRecommendationDependencies;
+  late RecommendationDependencies _recommendationDependencies;
+  late bool _ownsRecommendationDependencies;
 
   AthenaSynthesisController get _synthesisController =>
       _recommendationDependencies.synthesisController;
@@ -46,6 +46,28 @@ class _DashboardPageState extends State<DashboardPage> {
     _recommendationDependencies = widget.recommendationDependencies ??
         RecommendationDependencies.create();
     _synthesisController.loadLatest();
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.recommendationDependencies ==
+        widget.recommendationDependencies) {
+      return;
+    }
+
+    final previousDependencies = _recommendationDependencies;
+    final previouslyOwned = _ownsRecommendationDependencies;
+    _ownsRecommendationDependencies = widget.recommendationDependencies == null;
+    _recommendationDependencies = widget.recommendationDependencies ??
+        RecommendationDependencies.create();
+
+    // The Dashboard must immediately bind to the new canonical source.
+    // An old synthesis must never remain visible after dependencies change.
+    _synthesisController.loadLatest();
+    if (previouslyOwned) {
+      previousDependencies.dispose();
+    }
   }
 
   @override
