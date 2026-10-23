@@ -111,6 +111,13 @@ class MarketObservationBackfillService:
         provider = str(source_provider or "").strip()
         if not provider:
             raise ValueError("source_provider es obligatorio.")
+        # A configured adapter must not be relabelled as another source,
+        # even if its observations omit sourceProvider metadata.
+        adapter_provider = getattr(self._history_provider, "PROVIDER_ID", None)
+        if adapter_provider is not None and str(adapter_provider).strip() != provider:
+            raise ValueError(
+                "La identidad del proveedor histórico no coincide con source_provider."
+            )
 
         effective_from_date, effective_to_date, auto_expanded = self._resolve_history_window(
             from_date=from_date,
@@ -242,20 +249,32 @@ class MarketObservationBackfillService:
                     raise ValueError(
                         "El símbolo declarado del histórico no coincide con el instrumento."
                     )
-            declared_raw = observation.get(
-                "sourceProvider",
-                observation.get("source_provider"),
-            )
-            if declared_raw is None:
+            # Both aliases are untrusted input: validating only the first
+            # allows a conflicting second declaration to be silently ignored.
+            declared_values = [
+                observation[key]
+                for key in ("sourceProvider", "source_provider")
+                if key in observation
+            ]
+            if not declared_values:
+                # Legacy Yahoo adapters may omit the field; an independent
+                # secondary source must provide explicit provenance.
+                if expected_provider != YahooMarketService.PROVIDER_ID:
+                    raise ValueError(
+                        "La procedencia del histórico secundario debe declararse."
+                    )
                 continue
-            declared = str(declared_raw).strip()
-            if not declared:
-                raise ValueError("sourceProvider no puede estar vacío cuando está presente.")
-            if declared != expected_provider:
-                raise ValueError(
-                    "La procedencia del histórico no coincide con source_provider; "
-                    "se rechaza la persistencia para evitar provenance incorrecto."
-                )
+            for declared_raw in declared_values:
+                declared = str(declared_raw or "").strip()
+                if not declared:
+                    raise ValueError(
+                        "sourceProvider no puede estar vacío cuando está presente."
+                    )
+                if declared != expected_provider:
+                    raise ValueError(
+                        "La procedencia del histórico no coincide con source_provider; "
+                        "se rechaza la persistencia para evitar provenance incorrecto."
+                    )
 
     def _resolve_history_window(
         self,
