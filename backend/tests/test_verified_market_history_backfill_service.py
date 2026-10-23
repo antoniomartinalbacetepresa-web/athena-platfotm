@@ -38,10 +38,17 @@ def _history(start: datetime, *, span_days: int, step_days: int = 5) -> list[dic
 def test_verified_backfill_only_claims_criterion_after_persisted_current_365_day_history(tmp_path: Path) -> None:
     database = _database(tmp_path)
     _insert(InstrumentRepository(database=database), "AAA")
-    start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    # Anchor the positive readiness case to the actual retrieval day.
+    # Historical simulated dates cannot make a newly fetched batch PIT-known.
+    today = datetime.now(timezone.utc).date()
+    start = datetime.combine(
+        today - timedelta(days=366), datetime.min.time(), tzinfo=timezone.utc
+    ) + timedelta(hours=21)
     provider = FakeHistoryProvider({"AAA": _history(start, span_days=365)})
 
-    report = VerifiedMarketHistoryBackfillService(database=database, history_provider=provider, today_provider=lambda: date(2026, 1, 2)).run(limit=10)
+    report = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider, today_provider=lambda: today
+    ).run(limit=10)
 
     assert report.blockers_before == 1
     assert report.blockers_after == 0
@@ -51,7 +58,9 @@ def test_verified_backfill_only_claims_criterion_after_persisted_current_365_day
     assert report.net_blockers_resolved == 1
     assert report.net_current_blockers_resolved == 1
     assert report.history_ready is True
-    assert provider.calls == [("AAA", "2024-11-28", "2026-01-02")]
+    assert provider.calls == [(
+        "AAA", (today - timedelta(days=400)).isoformat(), today.isoformat()
+    )]
 
     verification = report.to_api_dict()["verification"]
     assert verification["deepHistoryCriterionSatisfied"] is True
@@ -134,9 +143,14 @@ def test_partial_batch_reports_remaining_unprocessed_blockers(tmp_path: Path) ->
     instruments = InstrumentRepository(database=database)
     _insert(instruments, "AAA")
     _insert(instruments, "BBB")
-    start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    today = datetime.now(timezone.utc).date()
+    start = datetime.combine(
+        today - timedelta(days=366), datetime.min.time(), tzinfo=timezone.utc
+    ) + timedelta(hours=21)
     provider = FakeHistoryProvider({"AAA": _history(start, span_days=365), "BBB": _history(start, span_days=365)})
-    report = VerifiedMarketHistoryBackfillService(database=database, history_provider=provider, today_provider=lambda: date(2026, 1, 2)).run(limit=1)
+    report = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider, today_provider=lambda: today
+    ).run(limit=1)
     assert report.blockers_before == 2
     assert report.blockers_after == 1
     assert report.current_blockers_after == 1
