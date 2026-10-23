@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -39,6 +40,7 @@ class MarketHistoryGapReport:
     limit: int
     offset: int
     items: tuple[MarketHistoryGap, ...]
+    as_of: str | None = None
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -53,13 +55,18 @@ class MarketHistoryGapReport:
             "maximumSourceGapDays": self.maximum_source_gap_days,
             "limit": self.limit,
             "offset": self.offset,
+            "asOf": self.as_of,
+            "pointInTimeCutoffApplied": self.as_of is not None,
             "items": [item.to_api_dict() for item in self.items],
             "productionEvidenceClaimed": False,
             "warning": (
                 "Este informe prioriza huecos del histórico persistido; no ejecuta "
                 "backfill, no mezcla proveedores y no convierte fixtures o cobertura "
                 "parcial en evidencia de producción. La vigencia hasta el corte actual "
-                "se verifica por separado mediante MarketObservationCoverageService."
+                "se verifica por separado mediante MarketObservationCoverageService. "
+                "Solo se consideran observaciones ocurridas y recuperadas hasta asOf; "
+                "el universo elegible sigue siendo el catálogo activo actual, no una "
+                "reconstrucción histórica de altas y bajas."
             ),
         }
 
@@ -88,14 +95,27 @@ class MarketHistoryGapService:
         self._minimum_history_days = int(minimum_history_days)
         self._maximum_source_gap_days = int(maximum_source_gap_days)
 
-    def get_report(self, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> MarketHistoryGapReport:
+    def get_report(
+        self,
+        *,
+        limit: int = DEFAULT_LIMIT,
+        offset: int = 0,
+        as_of: datetime | None = None,
+    ) -> MarketHistoryGapReport:
         if limit <= 0 or limit > self.MAX_LIMIT:
             raise ValueError(f"limit debe estar entre 1 y {self.MAX_LIMIT}.")
         if offset < 0:
             raise ValueError("offset no puede ser negativo.")
 
+        cutoff = as_of if as_of is not None else datetime.now(timezone.utc)
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("as_of debe incluir zona horaria.")
+        cutoff_iso = cutoff.astimezone(timezone.utc).isoformat()
+
         self._database.initialize()
         params = (
+            cutoff_iso,
+            cutoff_iso,
             self._maximum_source_gap_days,
             self._minimum_history_days,
             self._minimum_history_days,
@@ -114,6 +134,8 @@ class MarketHistoryGapService:
                             ELSE TRIM(mo.source_provider) END AS source_provider,
                        mo.observed_at
                 FROM market_observations mo JOIN eligible e ON e.instrument_id = mo.instrument_id
+                WHERE julianday(mo.observed_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) <= julianday(?)
             ),
             ordered_history AS (
                 SELECT instrument_id, source_provider, observed_at,
@@ -205,5 +227,5 @@ class MarketHistoryGapService:
             discontinuous_source_count=int(counts["discontinuous_source"] or 0) if counts else 0,
             minimum_history_days=self._minimum_history_days,
             maximum_source_gap_days=self._maximum_source_gap_days,
-            limit=limit, offset=offset, items=items,
+            limit=limit, offset=offset, items=items, as_of=cutoff_iso,
         )
