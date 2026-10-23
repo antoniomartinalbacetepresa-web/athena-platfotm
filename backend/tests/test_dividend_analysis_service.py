@@ -257,3 +257,87 @@ def test_nonfinite_pit_price_is_rejected_before_yield_computation(
             knowledge_cutoff=known,
             pit_price=bad_price,
         )
+
+
+def _save_pit_dividend(database, instrument_id, provider, retrieved_at, effective_at, amount, currency="USD"):
+    CorporateActionRepository(database=database).save_many(
+        instrument_id=instrument_id, source_provider=provider, retrieved_at=retrieved_at,
+        actions=[{"action_type": "dividend", "effective_at": effective_at,
+                  "cash_amount": amount, "currency": currency}],
+    )
+
+
+def test_pit_same_day_forward_conflict_is_quarantined(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    effective = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    _save_pit_dividend(database, instrument_id, "primary", datetime(2026, 5, 1, tzinfo=timezone.utc), effective, 0.25)
+    _save_pit_dividend(database, instrument_id, "secondary", datetime(2026, 5, 15, tzinfo=timezone.utc), effective, 0.50)
+    result = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff, pit_price=20.0)
+    assert result.confirmed_forward_conflict_count == 1
+    assert result.confirmed_forward_payment_count == 0
+    assert result.confirmed_forward_cash_per_share is None
+    assert result.confirmed_forward_yield is None
+    assert result.confirmed_forward_source_providers == ("primary", "secondary")
+    assert result.to_api_dict()["confirmedForwardConflictCount"] == 1
+
+
+def test_pit_revision_is_invisible_before_retrieval(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    effective = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    _save_pit_dividend(database, instrument_id, "primary", datetime(2026, 5, 1, tzinfo=timezone.utc), effective, 0.25)
+    _save_pit_dividend(database, instrument_id, "primary", datetime(2026, 5, 15, tzinfo=timezone.utc), effective, 0.50)
+    service = DividendAnalysisService(database=database)
+    before = service.analyze(instrument_id=instrument_id,
+        knowledge_cutoff=datetime(2026, 5, 10, tzinfo=timezone.utc), pit_price=20.0)
+    after = service.analyze(instrument_id=instrument_id,
+        knowledge_cutoff=datetime(2026, 5, 20, tzinfo=timezone.utc), pit_price=20.0)
+    assert before.confirmed_forward_conflict_count == 0
+    assert before.confirmed_forward_payment_count == 1
+    assert before.confirmed_forward_cash_per_share == pytest.approx(0.25)
+    assert after.confirmed_forward_conflict_count == 1
+    assert after.confirmed_forward_payment_count == 0
+    assert after.confirmed_forward_cash_per_share is None
+
+
+def test_pit_paid_conflict_never_inflates_trailing_yield(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    effective = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    _save_pit_dividend(database, instrument_id, "primary", cutoff, effective, 0.25)
+    _save_pit_dividend(database, instrument_id, "secondary", cutoff, effective, 0.50)
+    result = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff, pit_price=20.0)
+    assert result.historical_conflict_count == 1
+    assert result.payment_count == 0
+    assert result.trailing_yield is None
+    assert result.annualized_cash_per_share is None
+    assert result.currency_consistent is False
+    assert result.to_api_dict()["historicalConflictCount"] == 1
+
+
+def test_pit_agreed_provider_observations_count_once(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    effective = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    _save_pit_dividend(database, instrument_id, "primary", datetime(2026, 5, 1, tzinfo=timezone.utc), effective, 0.25)
+    _save_pit_dividend(database, instrument_id, "secondary", datetime(2026, 5, 20, tzinfo=timezone.utc), effective, 0.25)
+    result = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=datetime(2026, 6, 1, tzinfo=timezone.utc), pit_price=20.0)
+    assert result.confirmed_forward_conflict_count == 0
+    assert result.confirmed_forward_payment_count == 1
+    assert result.confirmed_forward_cash_per_share == pytest.approx(0.25)
+
+
+def test_pit_same_utc_day_different_hours_is_one_economic_payment(tmp_path: Path) -> None:
+    database = _database(tmp_path); instrument_id = _instrument(database)
+    known = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    _save_pit_dividend(database, instrument_id, "primary", known,
+        datetime(2026, 7, 1, 0, tzinfo=timezone.utc), 0.25)
+    _save_pit_dividend(database, instrument_id, "secondary", known,
+        datetime(2026, 7, 1, 18, tzinfo=timezone.utc), 0.50)
+    result = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff, pit_price=20.0)
+    assert result.confirmed_forward_conflict_count == 1
+    assert result.confirmed_forward_cash_per_share is None
