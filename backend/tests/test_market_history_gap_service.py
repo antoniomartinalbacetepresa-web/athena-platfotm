@@ -36,7 +36,7 @@ def test_history_gap_report_classifies_actionable_blockers(tmp_path: Path) -> No
     observations.save_many(instrument_id=short_id, observations=[{"timestamp": base.isoformat(), "close": 100.0}, {"timestamp": (base + timedelta(days=100)).isoformat(), "close": 101.0}], source_provider="yahoo_finance", retrieved_at=base + timedelta(days=101))
     observations.save_many(instrument_id=discontinuous_id, observations=[{"timestamp": base.isoformat(), "close": 100.0}, {"timestamp": (base + timedelta(days=365)).isoformat(), "close": 110.0}], source_provider="yahoo_finance", retrieved_at=base + timedelta(days=366))
     observations.save_many(instrument_id=deep_id, observations=_continuous_history(base), source_provider="yahoo_finance", retrieved_at=base + timedelta(days=366))
-    report = MarketHistoryGapService(database=database).get_report()
+    report = MarketHistoryGapService(database=database).get_report(as_of=base + timedelta(days=366))
     assert report.total_blocking_count == 3
     assert report.no_observations_count == 1
     assert report.insufficient_span_count == 1
@@ -66,7 +66,7 @@ def test_history_gap_report_accepts_any_single_deep_source_without_stitching(tmp
     base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
     observations.save_many(instrument_id=instrument_id, observations=[{"timestamp": base.isoformat(), "close": 100.0}], source_provider="source_a", retrieved_at=base + timedelta(days=1))
     observations.save_many(instrument_id=instrument_id, observations=_continuous_history(base), source_provider="source_b", retrieved_at=base + timedelta(days=366))
-    report = MarketHistoryGapService(database=database).get_report()
+    report = MarketHistoryGapService(database=database).get_report(as_of=base + timedelta(days=366))
     assert report.total_blocking_count == 0
     assert report.items == ()
 
@@ -80,7 +80,7 @@ def test_history_gap_report_treats_yahoo_legacy_alias_as_same_provider(tmp_path:
     canonical = [{"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0 + day / 100} for day in range(185, 366, 5)]
     observations.save_many(instrument_id=instrument_id, observations=legacy, source_provider="yahoo_finance", retrieved_at=base + timedelta(days=181))
     observations.save_many(instrument_id=instrument_id, observations=canonical, source_provider="yahoo", retrieved_at=base + timedelta(days=366))
-    report = MarketHistoryGapService(database=database).get_report()
+    report = MarketHistoryGapService(database=database).get_report(as_of=base + timedelta(days=366))
     assert report.total_blocking_count == 0
     assert report.items == ()
 
@@ -93,7 +93,7 @@ def test_history_gap_report_clears_old_gap_when_later_segment_is_deep(tmp_path: 
     segment_start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
     observations.save_many(instrument_id=instrument_id, observations=[{"timestamp": old_point.isoformat(), "close": 80.0}], source_provider="yahoo_finance", retrieved_at=old_point + timedelta(days=1))
     observations.save_many(instrument_id=instrument_id, observations=_continuous_history(segment_start), source_provider="yahoo_finance", retrieved_at=segment_start + timedelta(days=366))
-    report = MarketHistoryGapService(database=database).get_report()
+    report = MarketHistoryGapService(database=database).get_report(as_of=segment_start + timedelta(days=366))
     assert report.total_blocking_count == 0
     assert report.discontinuous_source_count == 0
     assert report.items == ()
@@ -225,3 +225,55 @@ def test_gap_diagnostics_use_absolute_instants_for_legacy_offset_rows(
     assert report.total_blocking_count == 0
     assert report.items == ()
     assert report.to_api_dict()["productionEvidenceClaimed"] is False
+
+
+def test_stale_deep_history_is_an_actionable_pit_blocker(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "STALE")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    observations = MarketObservationRepository(database=database)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    service = MarketHistoryGapService(database=database)
+
+    current = service.get_report(as_of=base + timedelta(days=372))
+    assert current.total_blocking_count == 0
+    assert current.stale_source_count == 0
+
+    stale = service.get_report(as_of=base + timedelta(days=373))
+    assert stale.total_blocking_count == 1
+    assert stale.stale_source_count == 1
+    assert stale.items[0].reason == "stale_source"
+    assert stale.items[0].instrument_id == instrument_id
+    assert stale.items[0].best_source_provider == "yahoo"
+    assert stale.to_api_dict()["blockingByReason"]["stale_source"] == 1
+    assert stale.to_api_dict()["productionEvidenceClaimed"] is False
+
+
+def test_stale_primary_does_not_block_current_independent_deep_source(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "FRESH")
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    observations = MarketObservationRepository(database=database)
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="primary",
+        retrieved_at=base + timedelta(days=366),
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base + timedelta(days=20)),
+        source_provider="secondary",
+        retrieved_at=base + timedelta(days=386),
+    )
+    report = MarketHistoryGapService(database=database).get_report(
+        as_of=base + timedelta(days=386)
+    )
+    assert report.total_blocking_count == 0
+    assert report.stale_source_count == 0
+    assert report.items == ()
