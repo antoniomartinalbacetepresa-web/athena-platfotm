@@ -34,41 +34,70 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
-    """Require PIT-current full-universe depth, not a historical segment alone."""
+def _nonnegative_integral_count(value: Any) -> int | None:
+    """Reject fabricated/contradictory counts in readiness payloads."""
+    number = _finite_number(value)
+    if number is None or number < 0 or not number.is_integer():
+        return None
+    return int(number)
 
-    eligible = _finite_number(market_history.get("historyEligibleInstrumentCount"))
-    deep = _finite_number(market_history.get("deepHistoryInstrumentCount"))
-    deep_coverage = _finite_number(market_history.get("deepHistoryCoverage"))
-    current_deep = _finite_number(
+
+def _final_market_history_depth_passed(market_history: dict[str, Any]) -> bool:
+    """Require a coherent, PIT-current, 365-day eligible-universe history."""
+
+    active = _nonnegative_integral_count(market_history.get("activeInstrumentCount"))
+    eligible = _nonnegative_integral_count(
+        market_history.get("historyEligibleInstrumentCount")
+    )
+    covered = _nonnegative_integral_count(
+        market_history.get("coveredInstrumentCount")
+    )
+    deep = _nonnegative_integral_count(
+        market_history.get("deepHistoryInstrumentCount")
+    )
+    current_deep = _nonnegative_integral_count(
         market_history.get("currentDeepHistoryInstrumentCount")
     )
+    deep_coverage = _finite_number(market_history.get("deepHistoryCoverage"))
     current_coverage = _finite_number(
         market_history.get("currentDeepHistoryCoverage")
     )
-    minimum_days = _finite_number(market_history.get("minimumHistoryDays"))
+    minimum_days = _nonnegative_integral_count(
+        market_history.get("minimumHistoryDays")
+    )
+    maximum_gap_days = _nonnegative_integral_count(
+        market_history.get("maximumSourceGapDays")
+    )
+
+    cutoff_text = market_history.get("asOf")
+    if not isinstance(cutoff_text, str) or not cutoff_text.strip():
+        return False
+    try:
+        cutoff = datetime.fromisoformat(cutoff_text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+        return False
 
     return (
         market_history.get("historyDepthReady") is True
         and market_history.get("currentHistoryDepthReady") is True
         and market_history.get("sourceContinuityRequired") is True
         and market_history.get("pointInTimeCutoffApplied") is True
-        and isinstance(market_history.get("asOf"), str)
-        and bool(str(market_history.get("asOf")).strip())
+        and active is not None
         and eligible is not None
         and eligible > 0
-        and deep is not None
-        and deep >= eligible
-        and deep_coverage is not None
-        and deep_coverage >= _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
-        and current_deep is not None
-        and current_deep >= eligible
-        and current_coverage is not None
-        and current_coverage >= _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
+        and active >= eligible
+        and covered == eligible
+        and deep == eligible
+        and current_deep == eligible
+        and deep_coverage == _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
+        and current_coverage == _FINAL_REQUIRED_DEEP_HISTORY_COVERAGE
         and minimum_days is not None
         and minimum_days >= _FINAL_REQUIRED_HISTORY_DAYS
+        and maximum_gap_days is not None
+        and 0 < maximum_gap_days <= 7
     )
-
 
 def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
     """Require measured cross-family agreement, not a manual verification flag."""
@@ -262,6 +291,13 @@ def build_readiness_report(
         "marketWeighting": weighting,
         "instrumentTypes": instrument_types,
         "marketHistory": market_history,
+        "marketHistoryGapDiagnostics": {
+            "endpoint": "/api/v1/readiness/market-history/gaps",
+            "method": "GET",
+            "asOfParameter": "asOf",
+            "readOnly": True,
+            "productionEvidenceClaimed": False,
+        },
         "corporateActions": corporate_actions,
         "recommendationLearning": learning,
         "automaticActivation": False,
