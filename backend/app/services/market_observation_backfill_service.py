@@ -171,6 +171,7 @@ class MarketObservationBackfillService:
                 self._validate_source_provenance(
                     observations=history,
                     expected_provider=provider,
+                    expected_symbol=symbol,
                 )
                 stats = self._observations.save_many(
                     instrument_id=instrument_id,
@@ -227,8 +228,20 @@ class MarketObservationBackfillService:
         *,
         observations: list[dict[str, Any]],
         expected_provider: str,
+        expected_symbol: str,
     ) -> None:
         for observation in observations:
+            if not isinstance(observation, dict):
+                raise ValueError("El histórico contiene una observación no estructurada.")
+            # Older historical adapters may omit symbol, but an explicitly
+            # declared symbol must never contradict the selected instrument.
+            declared_symbol_raw = observation.get("symbol")
+            if declared_symbol_raw is not None:
+                declared_symbol = str(declared_symbol_raw).strip().upper()
+                if not declared_symbol or declared_symbol != expected_symbol:
+                    raise ValueError(
+                        "El símbolo declarado del histórico no coincide con el instrumento."
+                    )
             declared_raw = observation.get(
                 "sourceProvider",
                 observation.get("source_provider"),
