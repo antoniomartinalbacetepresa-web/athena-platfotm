@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/features/news/models/verified_news_feed.dart';
 import 'package:app/features/news/services/athena_backend_news_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -96,6 +98,17 @@ void main() {
     expect(requested.queryParameters['language'], 'en');
     expect(requested.queryParameters['country'], 'US');
     expect(feed.items, isEmpty);
+  });
+
+  test('verified feed times out instead of waiting forever or inventing articles',
+      () async {
+    final service = AthenaBackendNewsService(
+      baseUrl: 'http://127.0.0.1:8000',
+      requestTimeout: const Duration(milliseconds: 25),
+      client: MockClient((_) => Completer<http.Response>().future),
+    );
+    await expectLater(service.getFeed(), throwsA(isA<TimeoutException>()));
+    service.dispose();
   });
 
   test('backend service rejects unsafe backend payload', () async {
