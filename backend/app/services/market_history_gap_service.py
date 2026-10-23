@@ -139,7 +139,7 @@ class MarketHistoryGapService:
             ),
             ordered_history AS (
                 SELECT instrument_id, source_provider, observed_at,
-                       LAG(observed_at) OVER (PARTITION BY instrument_id, source_provider ORDER BY observed_at) AS previous_observed_at
+                       LAG(observed_at) OVER (PARTITION BY instrument_id, source_provider ORDER BY julianday(observed_at), observed_at) AS previous_observed_at
                 FROM normalized_history
             ),
             marked_history AS (
@@ -150,17 +150,17 @@ class MarketHistoryGapService:
             ),
             segmented_history AS (
                 SELECT instrument_id, source_provider, observed_at, previous_observed_at, starts_new_segment,
-                       SUM(starts_new_segment) OVER (PARTITION BY instrument_id, source_provider ORDER BY observed_at ROWS UNBOUNDED PRECEDING) AS segment_id
+                       SUM(starts_new_segment) OVER (PARTITION BY instrument_id, source_provider ORDER BY julianday(observed_at), observed_at ROWS UNBOUNDED PRECEDING) AS segment_id
                 FROM marked_history
             ),
             source_segments AS (
                 SELECT instrument_id, source_provider, segment_id,
-                       julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS continuous_span_days
+                       MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS continuous_span_days
                 FROM segmented_history GROUP BY instrument_id, source_provider, segment_id
             ),
             source_stats AS (
                 SELECT instrument_id, source_provider,
-                       julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS history_span_days,
+                       MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS history_span_days,
                        MAX(CASE WHEN previous_observed_at IS NULL THEN 0.0 ELSE julianday(observed_at) - julianday(previous_observed_at) END) AS maximum_gap_days
                 FROM ordered_history GROUP BY instrument_id, source_provider
             ),

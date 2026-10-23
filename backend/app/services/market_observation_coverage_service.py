@@ -179,7 +179,7 @@ class MarketObservationCoverageService:
                            observed_at,
                            LAG(observed_at) OVER (
                                PARTITION BY instrument_id, source_provider
-                               ORDER BY observed_at
+                               ORDER BY julianday(observed_at), observed_at
                            ) AS previous_observed_at
                     FROM normalized_history
                 ),
@@ -200,7 +200,7 @@ class MarketObservationCoverageService:
                            observed_at,
                            SUM(starts_new_segment) OVER (
                                PARTITION BY instrument_id, source_provider
-                               ORDER BY observed_at
+                               ORDER BY julianday(observed_at), observed_at
                                ROWS UNBOUNDED PRECEDING
                            ) AS segment_id
                     FROM marked_history
@@ -210,8 +210,8 @@ class MarketObservationCoverageService:
                            source_provider,
                            segment_id,
                            MIN(observed_at) AS segment_start,
-                           MAX(observed_at) AS segment_end,
-                           julianday(MAX(observed_at)) - julianday(MIN(observed_at)) AS history_span_days
+                           MAX(julianday(observed_at)) AS segment_end_jd,
+                           MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS history_span_days
                     FROM segmented_history
                     GROUP BY instrument_id, source_provider, segment_id
                 )
@@ -220,7 +220,7 @@ class MarketObservationCoverageService:
                        END) AS total,
                        COUNT(DISTINCT CASE
                            WHEN history_span_days >= ?
-                            AND julianday(?) - julianday(segment_end) BETWEEN 0 AND ?
+                            AND julianday(?) - segment_end_jd BETWEEN 0 AND ?
                            THEN instrument_id
                        END) AS current_total
                 FROM source_segments

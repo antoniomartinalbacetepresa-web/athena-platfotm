@@ -325,3 +325,44 @@ def test_deep_coverage_cannot_use_history_retrieved_after_pit_cutoff(
     assert after.current_deep_history_instrument_count == 1
     assert after.history_depth_ready is True
     assert after.current_history_depth_ready is True
+
+
+def test_coverage_depth_uses_absolute_instants_for_legacy_offset_rows(
+    tmp_path: Path,
+) -> None:
+    """Offset spelling must not reduce measured 365-day history depth."""
+
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "OFFSET")
+    base = datetime(2025, 1, 1, 23, 0, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base) + [
+            {"timestamp": (base + timedelta(hours=2)).isoformat(), "close": 101.0},
+        ],
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    # Legacy persisted ISO strings may use offsets even though new writes normalize.
+    with database.connect() as connection:
+        for instant, offset in (
+            (base, timedelta(hours=14)),
+            (base + timedelta(hours=2), -timedelta(hours=12)),
+        ):
+            connection.execute(
+                "UPDATE market_observations SET observed_at = ? "
+                "WHERE instrument_id = ? AND observed_at = ?",
+                (
+                    instant.astimezone(timezone(offset)).isoformat(),
+                    instrument_id,
+                    instant.isoformat(),
+                ),
+            )
+
+    report = MarketObservationCoverageService(database=database).get_report(
+        as_of=base + timedelta(days=366)
+    )
+    assert report.deep_history_instrument_count == 1
+    assert report.current_deep_history_instrument_count == 1
+    assert report.current_history_depth_ready is True
+    assert report.to_api_dict()["productionCoverageClaimed"] is False

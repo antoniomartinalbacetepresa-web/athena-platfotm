@@ -185,3 +185,43 @@ def test_gap_report_pit_excludes_future_observations_and_naive_cutoff(
     assert report.to_api_dict()["asOf"] == cutoff.isoformat()
     with pytest.raises(ValueError, match="as_of"):
         service.get_report(as_of=cutoff.replace(tzinfo=None))
+
+
+def test_gap_diagnostics_use_absolute_instants_for_legacy_offset_rows(
+    tmp_path: Path,
+) -> None:
+    """Lexical ISO ordering must not manufacture gaps in continuous history."""
+
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "OFFSET")
+    base = datetime(2025, 1, 1, 23, 0, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base) + [
+            {"timestamp": (base + timedelta(hours=2)).isoformat(), "close": 101.0},
+        ],
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    # Legacy persisted ISO strings may use offsets even though new writes normalize.
+    with database.connect() as connection:
+        for instant, offset in (
+            (base, timedelta(hours=14)),
+            (base + timedelta(hours=2), -timedelta(hours=12)),
+        ):
+            connection.execute(
+                "UPDATE market_observations SET observed_at = ? "
+                "WHERE instrument_id = ? AND observed_at = ?",
+                (
+                    instant.astimezone(timezone(offset)).isoformat(),
+                    instrument_id,
+                    instant.isoformat(),
+                ),
+            )
+
+    report = MarketHistoryGapService(database=database).get_report(
+        as_of=base + timedelta(days=366)
+    )
+    assert report.total_blocking_count == 0
+    assert report.items == ()
+    assert report.to_api_dict()["productionEvidenceClaimed"] is False
