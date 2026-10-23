@@ -366,3 +366,53 @@ def test_coverage_depth_uses_absolute_instants_for_legacy_offset_rows(
     assert report.current_deep_history_instrument_count == 1
     assert report.current_history_depth_ready is True
     assert report.to_api_dict()["productionCoverageClaimed"] is False
+
+
+def test_coverage_boundaries_order_legacy_offset_rows_by_absolute_instant(
+    tmp_path: Path,
+) -> None:
+    """Overall and per-source boundaries must not sort ISO offset strings lexically."""
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "OFFSET")
+    first = datetime(2025, 1, 1, 23, 0, tzinfo=timezone.utc)
+    last = first + timedelta(hours=2)
+    retrieved = first + timedelta(hours=3)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=[
+            {"timestamp": first.isoformat(), "close": 100.0},
+            {"timestamp": last.isoformat(), "close": 101.0},
+        ],
+        source_provider="yahoo_finance",
+        retrieved_at=retrieved,
+    )
+    earliest_spelling = first.astimezone(timezone(timedelta(hours=14))).isoformat()
+    latest_spelling = last.astimezone(timezone(-timedelta(hours=12))).isoformat()
+    with database.connect() as connection:
+        for instant, spelling in (
+            (first, earliest_spelling),
+            (last, latest_spelling),
+        ):
+            connection.execute(
+                "UPDATE market_observations SET observed_at = ? "
+                "WHERE instrument_id = ? AND observed_at = ?",
+                (spelling, instrument_id, instant.isoformat()),
+            )
+
+    report = MarketObservationCoverageService(database=database).get_report(
+        as_of=retrieved + timedelta(hours=1)
+    )
+    assert report.observation_count == 2
+    assert report.earliest_observed_at == earliest_spelling
+    assert report.latest_observed_at == latest_spelling
+    assert report.by_source["yahoo"]["earliestObservedAt"] == earliest_spelling
+    assert report.by_source["yahoo"]["latestObservedAt"] == latest_spelling
+    assert report.to_api_dict()["productionCoverageClaimed"] is False
+
+    before_retrieval = MarketObservationCoverageService(database=database).get_report(
+        as_of=first + timedelta(hours=2)
+    )
+    assert before_retrieval.observation_count == 0
+    assert before_retrieval.earliest_observed_at is None
+    assert before_retrieval.latest_observed_at is None
+    assert before_retrieval.by_source == {}
