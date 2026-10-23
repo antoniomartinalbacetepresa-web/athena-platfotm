@@ -26,9 +26,9 @@ class AuthenticatedPortfolioHistoryPanel extends StatefulWidget {
 
 class _AuthenticatedPortfolioHistoryPanelState
     extends State<AuthenticatedPortfolioHistoryPanel> {
-  late final AuthenticatedPortfolioService _service;
-  late final AuthSession _session;
-  late final bool _ownsService;
+  late AuthenticatedPortfolioService _service;
+  late AuthSession _session;
+  late bool _ownsService;
   AuthenticatedPortfolioHistory? _history;
   Object? _error;
   bool _loading = true;
