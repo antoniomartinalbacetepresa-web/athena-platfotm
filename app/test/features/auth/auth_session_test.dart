@@ -430,13 +430,13 @@ class _ControlledAuthTokenStore implements AuthTokenStore {
 
   @override
   Future<void> writeAccessToken(String value) async {
-    if (writeGate != null) await writeGate!.future;
+    if (writeGate != null) await writeGate.future;
     token = value;
   }
 
   @override
   Future<void> deleteAccessToken() async {
-    if (deleteGate != null) await deleteGate!.future;
+    if (deleteGate != null) await deleteGate.future;
     if (failDeletes) throw StateError('secure deletion failed');
     token = null;
   }
