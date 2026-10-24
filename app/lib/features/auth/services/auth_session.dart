@@ -25,14 +25,24 @@ class AuthSession extends ChangeNotifier {
   AuthAccount? _account;
   int _authorityVersion = 0;
   int _persistenceGeneration = 0;
-  Future<void> _pendingStorageMutation = Future<void>.value();
+  Future<void>? _pendingStorageMutation;
 
-  // Secure-storage plugins can complete writes and deletes out of order.
-  // Serialize mutations so a delayed logout cannot erase a newer login.
+  // Preserve immediate secure-storage invocation when idle (including in
+  // Flutter widget-test zones), while serializing overlapping mutations.
+  // A delayed logout must not erase a later persisted login.
   Future<void> _mutateTokenStore(Future<void> Function() operation) {
-    final pending = _pendingStorageMutation.then((_) => operation());
+    final previous = _pendingStorageMutation;
+    final pending = previous == null
+        ? operation()
+        : previous.then((_) => operation());
     // A failed mutation must fail its caller without poisoning later attempts.
-    _pendingStorageMutation = pending.catchError((Object _) {});
+    final settled = pending.catchError((Object _) {});
+    _pendingStorageMutation = settled;
+    unawaited(settled.then((_) {
+      if (identical(_pendingStorageMutation, settled)) {
+        _pendingStorageMutation = null;
+      }
+    }));
     return pending;
   }
 
