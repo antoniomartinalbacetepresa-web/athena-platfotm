@@ -68,6 +68,32 @@ void main() {
     expect(AthenaReadinessReport.fromMap(naive).marketHistory, isNull);
   });
 
+  test('readiness rejects an overall PIT cutoff without timezone', () {
+    final payload = readinessPayload(current: 3, gatePassed: true);
+    payload['asOf'] = '2026-10-23T00:00:00';
+    expect(
+      () => AthenaReadinessReport.fromMap(payload),
+      throwsFormatException,
+    );
+  });
+
+  test('history gate fails closed when its PIT cutoff differs from report', () {
+    final payload = readinessPayload(current: 3, gatePassed: true);
+    (payload['marketHistory'] as Map<String, dynamic>)['asOf'] =
+        '2026-10-22T00:00:00+00:00';
+    final report = AthenaReadinessReport.fromMap(payload);
+    expect(report.marketHistory, isNotNull);
+    expect(report.historyDepthGatePassed, isFalse);
+  });
+
+  test('equivalent timezone offsets preserve matching PIT instant', () {
+    final payload = readinessPayload(current: 3, gatePassed: true);
+    (payload['marketHistory'] as Map<String, dynamic>)['asOf'] =
+        '2026-10-23T02:00:00+02:00';
+    final report = AthenaReadinessReport.fromMap(payload);
+    expect(report.historyDepthGatePassed, isTrue);
+  });
+
   testWidgets('Dashboard shows blocked PIT coverage without production claims',
       (tester) async {
     final service = AthenaReadinessService(
