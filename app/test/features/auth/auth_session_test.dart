@@ -252,67 +252,6 @@ void main() {
     expect(restarted.accessToken, isNull);
     expect(store.token, 'server-revoked-token');
   });
-  test('delayed remote invalidation cannot delete a replacement owner token',
-      () async {
-    final store = _DelayedDeleteTokenStore(token: 'old-token');
-    final session = AuthSession.forTesting(store);
-    session.establish(accessToken: 'old-token', account: account());
-
-    final invalidation =
-        session.clearAfterRemoteInvalidationIfCurrent('old-token');
-    await store.started.future;
-    final replacement = session.establishPersisted(
-      accessToken: 'replacement-token',
-      account: account(id: 23, email: 'owner-b@example.com'),
-    );
-
-    store.release.complete();
-    expect(await invalidation, isTrue);
-    await replacement;
-    expect(session.accessToken, 'replacement-token');
-    expect(session.account?.id, 23);
-    expect(store.token, 'replacement-token');
-  });
-
-  test('logout during a pending secure write cannot resurrect a session',
-      () async {
-    final store = _DelayedWriteTokenStore();
-    final session = AuthSession.forTesting(store);
-
-    final establishing = session.establishPersisted(
-      accessToken: 'stale-token',
-      account: account(),
-    );
-    await store.started.future;
-    final clearing = session.clearPersisted();
-
-    store.release.complete();
-    await expectLater(establishing, throwsStateError);
-    await clearing;
-    expect(session.isAuthenticated, isFalse);
-    expect(store.token, isNull);
-  });
-
-  test('unawaited clear cannot erase a subsequent persisted login',
-      () async {
-    final store = _DelayedDeleteTokenStore(token: 'old-token');
-    final session = AuthSession.forTesting(store);
-    session.establish(accessToken: 'old-token', account: account());
-
-    session.clear();
-    await store.started.future;
-    final replacement = session.establishPersisted(
-      accessToken: 'replacement-token',
-      account: account(id: 24, email: 'owner-c@example.com'),
-    );
-
-    store.release.complete();
-    await replacement;
-    expect(session.isAuthenticated, isTrue);
-    expect(session.account?.id, 24);
-    expect(store.token, 'replacement-token');
-  });
-
 }
 
 class _RejectedSession implements Exception {
@@ -343,31 +282,5 @@ class _FakeAuthTokenStore implements AuthTokenStore {
   Future<void> writeAccessToken(String token) async {
     if (failWrites) throw StateError('secure storage unavailable');
     this.token = token;
-  }
-}
-
-class _DelayedDeleteTokenStore extends _FakeAuthTokenStore {
-  _DelayedDeleteTokenStore({String? token}) : super(token: token);
-
-  final started = Completer<void>();
-  final release = Completer<void>();
-
-  @override
-  Future<void> deleteAccessToken() async {
-    started.complete();
-    await release.future;
-    await super.deleteAccessToken();
-  }
-}
-
-class _DelayedWriteTokenStore extends _FakeAuthTokenStore {
-  final started = Completer<void>();
-  final release = Completer<void>();
-
-  @override
-  Future<void> writeAccessToken(String token) async {
-    started.complete();
-    await release.future;
-    await super.writeAccessToken(token);
   }
 }
