@@ -94,6 +94,45 @@ void main() {
     expect(report.historyDepthGatePassed, isTrue);
   });
 
+  test('operational readiness rejects impossible or fabricated gate counts', () {
+    final badCounts = [
+      {'passedGateCount': 5.5},
+      {'totalGateCount': 0},
+      {'passedGateCount': 8},
+      {'completionPercent': double.nan},
+      {'completionPercent': 100.0},
+      {'blockers': 'not a list'},
+    ];
+    for (final changes in badCounts) {
+      final payload = readinessPayload();
+      (payload['operationalReadiness'] as Map<String, dynamic>)
+          .addAll(changes);
+      expect(
+        () => AthenaReadinessReport.fromMap(payload),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('operational readiness never trusts a contradictory ready flag', () {
+    final payload = readinessPayload();
+    (payload['operationalReadiness'] as Map<String, dynamic>)['ready'] = true;
+    final report = AthenaReadinessReport.fromMap(payload);
+    expect(report.operationalReadiness.ready, isFalse);
+  });
+
+  test('operational readiness accepts coherent complete diagnostic gates', () {
+    final payload = readinessPayload(current: 3, gatePassed: true);
+    final operational = payload['operationalReadiness'] as Map<String, dynamic>;
+    operational['completionPercent'] = 100.0;
+    operational['passedGateCount'] = 7;
+    operational['blockers'] = <String>[];
+    operational['ready'] = true;
+    final report = AthenaReadinessReport.fromMap(payload);
+    expect(report.operationalReadiness.ready, isTrue);
+    expect(report.historyDepthGatePassed, isTrue);
+  });
+
   testWidgets('Dashboard shows blocked PIT coverage without production claims',
       (tester) async {
     final service = AthenaReadinessService(
