@@ -46,7 +46,10 @@ class _SystemReadinessPanelState extends State<SystemReadinessPanel> {
   }
 
   void _reload() {
-    setState(() => _future = _service.getReport());
+    final next = _service.getReport();
+    setState(() {
+      _future = next;
+    });
   }
 
   @override
