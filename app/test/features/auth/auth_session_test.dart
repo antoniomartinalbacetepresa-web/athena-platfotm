@@ -252,6 +252,133 @@ void main() {
     expect(restarted.accessToken, isNull);
     expect(store.token, 'server-revoked-token');
   });
+
+  test('delayed logout deletion cannot erase a newer persisted login', () async {
+    final deleteGate = Completer<void>();
+    final store = _ControlledAuthTokenStore(
+      token: 'old-token',
+      deleteGate: deleteGate,
+    );
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'old-token', account: account());
+
+    session.clear();
+    final newLogin = session.establishPersisted(
+      accessToken: 'new-token',
+      account: account(id: 23, email: 'new@example.com'),
+    );
+    expect(session.isAuthenticated, isFalse);
+    expect(store.token, 'old-token');
+
+    deleteGate.complete();
+    await newLogin;
+
+    expect(store.token, 'new-token');
+    expect(session.accessToken, 'new-token');
+    expect(session.account?.id, 23);
+  });
+
+  test('delayed login write cannot restore authority after logout', () async {
+    final writeGate = Completer<void>();
+    final store = _ControlledAuthTokenStore(writeGate: writeGate);
+    final session = AuthSession.forTesting(store);
+    final loggingIn = session.establishPersisted(
+      accessToken: 'stale-token',
+      account: account(),
+    );
+
+    session.clear();
+    expect(session.isAuthenticated, isFalse);
+    writeGate.complete();
+    await expectLater(loggingIn, throwsStateError);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.accessToken, isNull);
+    expect(session.isAuthenticated, isFalse);
+    expect(store.token, isNull);
+  });
+
+  test('concurrent logins persist and expose only the latest owner', () async {
+    final writeGate = Completer<void>();
+    final store = _ControlledAuthTokenStore(writeGate: writeGate);
+    final session = AuthSession.forTesting(store);
+    final first = session.establishPersisted(
+      accessToken: 'owner-a',
+      account: account(),
+    );
+    final second = session.establishPersisted(
+      accessToken: 'owner-b',
+      account: account(id: 23, email: 'b@example.com'),
+    );
+
+    writeGate.complete();
+    await expectLater(first, throwsStateError);
+    await second;
+
+    expect(store.token, 'owner-b');
+    expect(session.accessToken, 'owner-b');
+    expect(session.account?.id, 23);
+  });
+
+  test('restore waits for pending logout deletion before reading storage',
+      () async {
+    final deleteGate = Completer<void>();
+    final store = _ControlledAuthTokenStore(
+      token: 'old-token',
+      deleteGate: deleteGate,
+    );
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'old-token', account: account());
+    session.clear();
+    var validations = 0;
+
+    final restoring = session.restore(
+      validateToken: (_) async {
+        validations += 1;
+        return account();
+      },
+      shouldDiscardToken: (_) => true,
+    );
+    deleteGate.complete();
+
+    expect(await restoring, AuthSessionRestoreResult.noStoredToken);
+    expect(validations, 0);
+    expect(session.isAuthenticated, isFalse);
+  });
+
+  test('failed secure deletion prevents same-instance token resurrection',
+      () async {
+    final store = _ControlledAuthTokenStore(
+      token: 'revoked-token',
+      failDeletes: true,
+    );
+    final session = AuthSession.forTesting(store);
+    session.establish(accessToken: 'revoked-token', account: account());
+    expect(await session.clearAfterRemoteInvalidation(), isFalse);
+    var validations = 0;
+
+    final restored = await session.restore(
+      validateToken: (_) async {
+        validations += 1;
+        return account();
+      },
+      shouldDiscardToken: (_) => false,
+    );
+
+    expect(restored, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(validations, 0);
+    expect(session.isAuthenticated, isFalse);
+    expect(store.token, 'revoked-token');
+
+    store.failDeletes = false;
+    await session.establishPersisted(
+      accessToken: 'replacement',
+      account: account(id: 23),
+    );
+    expect(store.token, 'replacement');
+    expect(session.isAuthenticated, isTrue);
+  });
+
 }
 
 class _RejectedSession implements Exception {
@@ -282,5 +409,35 @@ class _FakeAuthTokenStore implements AuthTokenStore {
   Future<void> writeAccessToken(String token) async {
     if (failWrites) throw StateError('secure storage unavailable');
     this.token = token;
+  }
+}
+
+class _ControlledAuthTokenStore implements AuthTokenStore {
+  _ControlledAuthTokenStore({
+    this.token,
+    this.writeGate,
+    this.deleteGate,
+    this.failDeletes = false,
+  });
+
+  String? token;
+  final Completer<void>? writeGate;
+  final Completer<void>? deleteGate;
+  bool failDeletes;
+
+  @override
+  Future<String?> readAccessToken() async => token;
+
+  @override
+  Future<void> writeAccessToken(String value) async {
+    if (writeGate != null) await writeGate!.future;
+    token = value;
+  }
+
+  @override
+  Future<void> deleteAccessToken() async {
+    if (deleteGate != null) await deleteGate!.future;
+    if (failDeletes) throw StateError('secure deletion failed');
+    token = null;
   }
 }
