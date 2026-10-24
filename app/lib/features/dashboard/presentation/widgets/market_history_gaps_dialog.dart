@@ -59,16 +59,12 @@ class _MarketHistoryGapsDialogState extends State<MarketHistoryGapsDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Bloqueados: ' + page.totalBlockingCount.toString() +
-              ' · corte PIT ' + page.asOf.toUtc().toIso8601String(),
+          'Bloqueados: ${page.totalBlockingCount} · corte PIT ${page.asOf.toUtc().toIso8601String()}',
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
         Text(
-          'Sin datos: ' + counts['no_observations'].toString() +
-              ' · profundidad: ' + counts['insufficient_span'].toString() +
-              ' · discontinuos: ' + counts['discontinuous_source'].toString() +
-              ' · caducados: ' + counts['stale_source'].toString(),
+          'Sin datos: ${counts['no_observations']} · profundidad: ${counts['insufficient_span']} · discontinuos: ${counts['discontinuous_source']} · caducados: ${counts['stale_source']}',
           maxLines: 2,
         ),
         const SizedBox(height: 8),
@@ -83,9 +79,7 @@ class _MarketHistoryGapsDialogState extends State<MarketHistoryGapsDialog> {
                       dense: true,
                       title: Text(item.symbol),
                       subtitle: Text(
-                        item.reasonLabel +
-                            ' · ' +
-                            (item.bestSourceProvider ?? 'sin fuente verificada'),
+                        '${item.reasonLabel} · ${item.bestSourceProvider ?? 'sin fuente verificada'}',
                       ),
                     );
                   },
@@ -93,7 +87,7 @@ class _MarketHistoryGapsDialogState extends State<MarketHistoryGapsDialog> {
         ),
         Row(
           children: [
-            Text('Desde ' + (page.offset + 1).toString()),
+            Text('Desde ${page.offset + 1}'),
             const Spacer(),
             TextButton(
               onPressed: _offset > 0

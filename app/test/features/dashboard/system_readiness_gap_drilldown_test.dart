@@ -56,7 +56,7 @@ Map<String, dynamic> _gaps({int total = 2, int offset = 0}) => {
         offset >= total ? 0 : (total - offset > 10 ? 10 : total - offset),
         (index) => {
           'instrumentId': offset + index + 1,
-          'symbol': 'SYM' + (offset + index).toString(),
+          'symbol': 'SYM${offset + index}',
           'reason': 'no_observations',
           'sourceCount': 0,
           'bestSourceProvider': null,
