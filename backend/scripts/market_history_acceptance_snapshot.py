@@ -54,7 +54,11 @@ def run_snapshot(
                 source.backup(snapshot)
         # Fingerprint the exact backed-up source image, before any migrations
         # performed against the disposable copy.
-        fingerprint = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+        digest = hashlib.sha256()
+        with snapshot_path.open("rb") as copied_file:
+            for chunk in iter(lambda: copied_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        fingerprint = digest.hexdigest()
 
         database = AthenaDatabase(snapshot_path)
         coverage = MarketObservationCoverageService(database=database).get_report(
