@@ -56,10 +56,22 @@ class AuthSession extends ChangeNotifier {
     final writeAuthorityVersion = _authorityVersion;
     await _tokenStore.writeAccessToken(token);
     if (_authorityVersion != writeAuthorityVersion) {
-      // Only delete when no newer account owns the session. Deleting here
-      // unconditionally could erase the replacement owner's durable token.
-      if (!isAuthenticated) {
-        await _tokenStore.deleteAccessToken();
+      // A late write may have replaced the newer owner's durable credential.
+      // Repair the currently authoritative token instead of deleting it.
+      final repairVersion = _authorityVersion;
+      try {
+        if (isAuthenticated) {
+          await _tokenStore.writeAccessToken(_accessToken!);
+        } else {
+          await _tokenStore.deleteAccessToken();
+        }
+      } catch (_) {
+        // If repair fails, never continue exposing the same authority as
+        // reliably persisted. Do not revoke an even newer account.
+        if (_authorityVersion == repairVersion) {
+          _clearMemory();
+        }
+        rethrow;
       }
       throw StateError('La sesión cambió durante el inicio de sesión.');
     }

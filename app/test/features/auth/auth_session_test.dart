@@ -227,6 +227,30 @@ void main() {
     expect(store.token, isNull);
   });
 
+  test('late old-owner write repairs newer owner secure credential', () async {
+    final store = _FirstWriteDelayedAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+
+    final oldLogin = session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    expect(store.token, 'new-owner-token');
+    expect(session.account?.id, 23);
+
+    store.releaseFirstWrite.complete();
+    await expectLater(oldLogin, throwsStateError);
+
+    expect(session.isAuthenticated, isTrue);
+    expect(session.accessToken, 'new-owner-token');
+    expect(session.account?.id, 23);
+    expect(store.token, 'new-owner-token');
+  });
+
   test('clearPersisted removes durable token and authenticated memory state', () async {
     final store = _FakeAuthTokenStore();
     final session = AuthSession.forTesting(store);
@@ -326,6 +350,29 @@ class _DelayedWriteAuthTokenStore implements AuthTokenStore {
   @override
   Future<void> writeAccessToken(String value) async {
     await releaseWrite.future;
+    token = value;
+  }
+
+  @override
+  Future<String?> readAccessToken() async => token;
+
+  @override
+  Future<void> deleteAccessToken() async {
+    token = null;
+  }
+}
+
+class _FirstWriteDelayedAuthTokenStore implements AuthTokenStore {
+  final Completer<void> releaseFirstWrite = Completer<void>();
+  String? token;
+  int _writes = 0;
+
+  @override
+  Future<void> writeAccessToken(String value) async {
+    _writes += 1;
+    if (_writes == 1) {
+      await releaseFirstWrite.future;
+    }
     token = value;
   }
 
