@@ -303,3 +303,40 @@ def test_gap_and_coverage_agree_on_current_pit_depth(
     assert gaps.stale_source_count == expected_blockers
     assert coverage.current_deep_history_instrument_count == 1 - expected_blockers
     assert coverage.current_deep_history_instrument_count + gaps.total_blocking_count == 1
+
+
+def test_legacy_retrieval_before_observation_cannot_complete_365_days(
+    tmp_path: Path,
+) -> None:
+    """A predated last observation must not turn 360 days into 365 PIT days."""
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "LEGACY")
+    base = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    last = base + timedelta(days=365)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=last + timedelta(days=1),
+    )
+    with database.connect() as connection:
+        changed = connection.execute(
+            "UPDATE market_observations SET retrieved_at = ? "
+            "WHERE instrument_id = ? AND observed_at = ?",
+            ((last - timedelta(days=1)).isoformat(), instrument_id, last.isoformat()),
+        )
+        assert changed.rowcount == 1
+
+    cutoff = last + timedelta(days=2)
+    coverage = MarketObservationCoverageService(database=database).get_report(as_of=cutoff)
+    gaps = MarketHistoryGapService(database=database).get_report(as_of=cutoff)
+    assert coverage.observation_count == 73
+    assert coverage.deep_history_instrument_count == 0
+    assert coverage.current_deep_history_instrument_count == 0
+    assert coverage.current_history_depth_ready is False
+    assert coverage.by_source["yahoo"]["observationCount"] == 73
+    assert gaps.total_blocking_count == 1
+    assert gaps.insufficient_span_count == 1
+    assert gaps.items[0].reason == "insufficient_span"
+    assert gaps.items[0].best_history_span_days == pytest.approx(360.0)
+    assert gaps.to_api_dict()["productionEvidenceClaimed"] is False
