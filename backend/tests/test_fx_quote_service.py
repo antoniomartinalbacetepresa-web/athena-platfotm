@@ -245,3 +245,52 @@ def test_fx_historical_cutoff_must_be_timezone_aware() -> None:
             observed_on=date(2026, 8, 3),
             knowledge_cutoff=datetime(2026, 9, 4, 13, 0),
         )
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["FMP", "Financial Modeling Prep", "f%6dp", "f&#109;p", "yahoo\\\\fmp"],
+)
+def test_fx_current_rejects_forbidden_or_encoded_provider(provider: str) -> None:
+    payload = _payload()
+    payload["sourceProvider"] = provider
+    with pytest.raises(RuntimeError, match="FMP|procedencia"):
+        FxQuoteService(market_service=FakeMarketService(payload)).get_current_rate(
+            base_currency="USD", quote_currency="EUR"
+        )
+
+
+@pytest.mark.parametrize("provider", ["FMP", "f%6dp", "f&#109;p"])
+def test_fx_historical_rejects_forbidden_or_encoded_provider(provider: str) -> None:
+    payload = _historical_payload()
+    payload["sourceProvider"] = provider
+    with pytest.raises(RuntimeError, match="FMP|procedencia"):
+        FxQuoteService(
+            market_service=FakeMarketService(None, history=[payload])
+        ).get_historical_rate(
+            base_currency="USD",
+            quote_currency="EUR",
+            observed_on=date(2026, 8, 3),
+            knowledge_cutoff=datetime(2026, 9, 4, 13, 5, tzinfo=timezone.utc),
+        )
+
+
+def test_fx_historical_rejects_wrong_quote_currency() -> None:
+    payload = _historical_payload()
+    payload["currency"] = "USD"
+    with pytest.raises(RuntimeError, match="moneda destino"):
+        FxQuoteService(
+            market_service=FakeMarketService(None, history=[payload])
+        ).get_historical_rate(
+            base_currency="USD",
+            quote_currency="EUR",
+            observed_on=date(2026, 8, 3),
+            knowledge_cutoff=datetime(2026, 9, 4, 13, 5, tzinfo=timezone.utc),
+        )
+
+
+def test_fx_rejects_non_ascii_currency_identifiers() -> None:
+    with pytest.raises(ValueError, match="ISO"):
+        FxQuoteService(market_service=FakeMarketService(None)).get_current_rate(
+            base_currency="UŚD", quote_currency="EUR"
+        )
