@@ -122,3 +122,114 @@ def test_market_history_gap_api_fails_closed_without_leaking_internal_errors(
     assert response.status_code == 503
     assert "API_KEY" not in response.text
     assert "diagnóstico PIT" in response.json()["detail"]
+
+
+def test_market_history_coverage_api_measures_persisted_pit_and_matches_gap_counts(
+    tmp_path, monkeypatch,
+) -> None:
+    from datetime import datetime, timezone
+
+    from app.database.athena_database import AthenaDatabase
+    from app.repositories.instrument_repository import InstrumentRepository
+    from app.repositories.market_observation_repository import MarketObservationRepository
+    from app.services.market_history_gap_service import MarketHistoryGapService
+    from app.services.market_observation_coverage_service import (
+        MarketObservationCoverageService,
+    )
+
+    database = AthenaDatabase(tmp_path / "pit-coverage.db")
+    database.initialize()
+    instruments = InstrumentRepository(database=database)
+    known_id = instruments.upsert({
+        "symbol": "KNOWN",
+        "companyName": "Known",
+        "country": "United States",
+        "regionKey": "america",
+        "exchangeShortName": "KNOWN",
+        "instrumentType": "common_stock",
+    })
+    late_id = instruments.upsert({
+        "symbol": "LATE",
+        "companyName": "Late",
+        "country": "United States",
+        "regionKey": "america",
+        "exchangeShortName": "LATE",
+        "instrumentType": "common_stock",
+    })
+    observations = MarketObservationRepository(database=database)
+    observed_at = datetime(2026, 8, 30, 21, tzinfo=timezone.utc)
+    observations.save_many(
+        instrument_id=known_id,
+        observations=[{"timestamp": observed_at.isoformat(), "close": 100.0}],
+        source_provider="yahoo",
+        retrieved_at=datetime(2026, 8, 31, 21, tzinfo=timezone.utc),
+    )
+    observations.save_many(
+        instrument_id=late_id,
+        observations=[{"timestamp": observed_at.isoformat(), "close": 90.0}],
+        source_provider="yahoo",
+        retrieved_at=datetime(2026, 9, 2, 21, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        readiness_api, "MarketObservationCoverageService",
+        lambda: MarketObservationCoverageService(database=database),
+    )
+    monkeypatch.setattr(
+        readiness_api, "MarketHistoryGapService",
+        lambda: MarketHistoryGapService(database=database),
+    )
+
+    cutoff = "2026-09-01T21:00:00+00:00"
+    coverage_response = client.get(
+        "/api/v1/readiness/market-history/coverage",
+        params={"asOf": cutoff},
+    )
+    gap_response = client.get(
+        "/api/v1/readiness/market-history/gaps",
+        params={"asOf": cutoff},
+    )
+    assert coverage_response.status_code == 200
+    assert gap_response.status_code == 200
+    coverage = coverage_response.json()
+    gaps = gap_response.json()
+    assert coverage["status"] == "diagnostic_only"
+    assert coverage["asOf"] == gaps["asOf"] == cutoff
+    assert coverage["pointInTimeCutoffApplied"] is True
+    assert coverage["productionCoverageClaimed"] is False
+    assert coverage["historyEligibleInstrumentCount"] == 2
+    assert coverage["coveredInstrumentCount"] == 1
+    assert coverage["observationCount"] == 1
+    assert coverage["bySource"]["yahoo"]["observationCount"] == 1
+    assert coverage["currentDeepHistoryInstrumentCount"] == 0
+    assert coverage["currentHistoryDepthReady"] is False
+    assert gaps["totalBlockingCount"] == (
+        coverage["historyEligibleInstrumentCount"]
+        - coverage["currentDeepHistoryInstrumentCount"]
+    )
+    assert gaps["blockingByReason"]["no_observations"] == 1
+    assert gaps["blockingByReason"]["insufficient_span"] == 1
+
+
+def test_market_history_coverage_api_rejects_naive_cutoff_and_writes() -> None:
+    response = client.get(
+        "/api/v1/readiness/market-history/coverage",
+        params={"asOf": "2026-09-01T21:00:00"},
+    )
+    assert response.status_code == 422
+    assert client.post("/api/v1/readiness/market-history/coverage").status_code == 405
+
+
+def test_market_history_coverage_api_fails_closed_without_leaking_secrets(
+    monkeypatch,
+) -> None:
+    class FailingCoverageService:
+        def get_report(self, **kwargs):
+            raise RuntimeError("API_KEY=never_disclose")
+
+    monkeypatch.setattr(
+        readiness_api, "MarketObservationCoverageService", FailingCoverageService
+    )
+    response = client.get("/api/v1/readiness/market-history/coverage")
+    assert response.status_code == 503
+    assert "API_KEY" not in response.text
+    assert "cobertura histórica PIT" in response.json()["detail"]
