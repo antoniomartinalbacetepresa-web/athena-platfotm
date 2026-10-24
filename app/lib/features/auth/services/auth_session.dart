@@ -27,6 +27,7 @@ class AuthSession extends ChangeNotifier {
   // A deletion may finish while a newer login write is still in flight.
   // Track completions so that read-back cannot accept a pre-delete value.
   int _completedDeletionEpoch = 0;
+  int _pendingDeletions = 0;
 
   String? get accessToken => _accessToken;
   AuthAccount? get account => _account;
@@ -100,6 +101,11 @@ class AuthSession extends ChangeNotifier {
     required bool Function(Object error) shouldDiscardToken,
   }) async {
     if (isAuthenticated) return AuthSessionRestoreResult.restored;
+    // A logout may have revoked memory before its secure deletion finishes.
+    // Never restore the still-visible token while that deletion is pending.
+    if (_pendingDeletions > 0) {
+      return AuthSessionRestoreResult.temporarilyUnavailable;
+    }
     final restoreAuthorityVersion = _authorityVersion;
 
     final String? storedToken;
@@ -146,6 +152,29 @@ class AuthSession extends ChangeNotifier {
         return isAuthenticated
             ? AuthSessionRestoreResult.restored
             : AuthSessionRestoreResult.temporarilyUnavailable;
+      }
+      // Validation may take longer than a secure-storage mutation. Confirm
+      // that the same credential still exists before restoring authority.
+      final deletionEpoch = _completedDeletionEpoch;
+      final String? confirmedToken;
+      try {
+        confirmedToken = await _tokenStore.readAccessToken();
+      } catch (_) {
+        if (_authorityVersion == restoreAuthorityVersion) {
+          _clearMemory();
+        }
+        return AuthSessionRestoreResult.temporarilyUnavailable;
+      }
+      if (_authorityVersion != restoreAuthorityVersion) {
+        return isAuthenticated
+            ? AuthSessionRestoreResult.restored
+            : AuthSessionRestoreResult.temporarilyUnavailable;
+      }
+      if (_pendingDeletions > 0 ||
+          deletionEpoch != _completedDeletionEpoch ||
+          confirmedToken?.trim() != token) {
+        _clearMemory();
+        return AuthSessionRestoreResult.temporarilyUnavailable;
       }
       establish(accessToken: token, account: account);
       return AuthSessionRestoreResult.restored;
@@ -213,10 +242,15 @@ class AuthSession extends ChangeNotifier {
   // A logout deletion may complete after another account has logged in.
   // Repair only when that deletion outlives its original authority.
   Future<void> _deletePersistedForAuthority(int clearedVersion) async {
-    await _tokenStore.deleteAccessToken();
-    _completedDeletionEpoch += 1;
-    if (_authorityVersion != clearedVersion) {
-      await _reconcilePersistedAuthority();
+    _pendingDeletions += 1;
+    try {
+      await _tokenStore.deleteAccessToken();
+      _completedDeletionEpoch += 1;
+      if (_authorityVersion != clearedVersion) {
+        await _reconcilePersistedAuthority();
+      }
+    } finally {
+      _pendingDeletions -= 1;
     }
   }
 

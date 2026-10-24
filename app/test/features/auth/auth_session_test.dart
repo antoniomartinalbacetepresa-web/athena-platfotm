@@ -151,6 +151,52 @@ void main() {
     expect(session.account?.email, 'owner-b@example.com');
   });
 
+  test('restore refuses a token while an earlier logout deletion is pending',
+      () async {
+    final store = _FirstDeleteDelayedAuthTokenStore(token: 'stored-token');
+    final session = AuthSession.forTesting(store);
+    session.clear();
+    await store.firstDeleteStarted.future;
+
+    var validations = 0;
+    final result = await session.restore(
+      validateToken: (_) async {
+        validations += 1;
+        return account();
+      },
+      shouldDiscardToken: (_) => false,
+    );
+
+    expect(result, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(validations, 0);
+    expect(session.isAuthenticated, isFalse);
+    store.releaseFirstDelete.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(store.token, isNull);
+  });
+
+  test('restore refuses a credential removed during remote validation',
+      () async {
+    final store = _FakeAuthTokenStore(token: 'stored-token');
+    final session = AuthSession.forTesting(store);
+    final validation = Completer<AuthAccount>();
+
+    final restoring = session.restore(
+      validateToken: (token) {
+        expect(token, 'stored-token');
+        return validation.future;
+      },
+      shouldDiscardToken: (_) => false,
+    );
+    await Future<void>.delayed(Duration.zero);
+    store.token = null;
+    validation.complete(account());
+
+    expect(await restoring, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+  });
+
   test('restore normalizes persisted token before remote validation', () async {
     final store = _FakeAuthTokenStore(token: '  stored-token  ');
     final session = AuthSession.forTesting(store);
