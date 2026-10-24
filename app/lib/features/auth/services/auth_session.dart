@@ -51,7 +51,18 @@ class AuthSession extends ChangeNotifier {
     if (token.isEmpty || !account.isActive) {
       throw ArgumentError('La sesión autenticada no es válida.');
     }
+    // A logout or account switch can happen while secure storage is writing.
+    // A late completion must not resurrect the superseded account in memory.
+    final writeAuthorityVersion = _authorityVersion;
     await _tokenStore.writeAccessToken(token);
+    if (_authorityVersion != writeAuthorityVersion) {
+      // Only delete when no newer account owns the session. Deleting here
+      // unconditionally could erase the replacement owner's durable token.
+      if (!isAuthenticated) {
+        await _tokenStore.deleteAccessToken();
+      }
+      throw StateError('La sesión cambió durante el inicio de sesión.');
+    }
     establish(accessToken: token, account: account);
   }
 
