@@ -10,6 +10,9 @@ from app.services.deployment_security_readiness_service import (
     DeploymentSecurityReadinessService,
 )
 from app.services.market_history_gap_service import MarketHistoryGapService
+from app.services.market_observation_coverage_service import (
+    MarketObservationCoverageService,
+)
 
 
 router = APIRouter(
@@ -39,6 +42,27 @@ def get_deployment_security_readiness() -> dict[str, Any]:
     """
 
     return DeploymentSecurityReadinessService().evaluate().to_api_dict()
+
+
+@router.get("/market-history/coverage")
+def get_market_history_coverage(
+    as_of: datetime | None = Query(None, alias="asOf"),
+) -> dict[str, Any]:
+    """Measure persisted PIT coverage; never claim production readiness.
+
+    Observations must have been observed AND retrieved by the cutoff.
+    The current active catalog is not a historical membership snapshot.
+    """
+    try:
+        report = MarketObservationCoverageService().get_report(as_of=as_of)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo medir la cobertura histórica PIT.",
+        ) from exc
+    return report.to_api_dict()
 
 
 @router.get("/market-history/gaps")
