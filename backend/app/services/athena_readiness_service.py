@@ -315,7 +315,7 @@ def build_operational_readiness(
 
     gates = [
         {"id": "global_market_universe", "passed": universe.get("isGlobalReady") is True, "blocker": "global_market_universe_not_ready"},
-        {"id": "canonical_market_weighting", "passed": weighting.get("ready") is True, "blocker": "canonical_market_weighting_not_ready"},
+        {"id": "canonical_market_weighting", "passed": weighting.get("ready") is True and isinstance(weighting.get("blockers"), list) and not weighting["blockers"], "blocker": "canonical_market_weighting_not_ready"},
         {"id": "market_history_depth", "passed": _final_market_history_depth_passed(market_history), "blocker": "market_history_depth_insufficient"},
         {"id": "corporate_actions_cross_provider_reconciliation", "passed": _final_corporate_actions_passed(corporate_actions), "blocker": "corporate_actions_independent_reconciliation_pending"},
         {"id": "research_outcome_oos_evidence", "passed": _final_research_outcome_oos_passed(research_outcome), "blocker": "research_outcome_oos_evidence_pending"},
