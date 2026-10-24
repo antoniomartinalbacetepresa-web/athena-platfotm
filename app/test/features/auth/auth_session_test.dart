@@ -65,6 +65,49 @@ void main() {
     expect(session.accessToken, isNull);
   });
 
+  test('logout deletion finishing during a new login write is repaired', () async {
+    final store = _WriteCompletesAfterDeletionStore();
+    final session = AuthSession.forTesting(store);
+
+    session.clear();
+    await store.deleteStarted.future;
+    final loggingIn = session.establishPersisted(
+      accessToken: 'replacement-token',
+      account: account(id: 23, email: 'replacement@example.com'),
+    );
+    await store.firstWriteStarted.future;
+    expect(session.isAuthenticated, isFalse);
+
+    // The write already changed secure storage, but its Future is pending.
+    // The older logout deletes that token without observing new authority.
+    store.releaseDelete.complete();
+    await store.deleteCompleted.future;
+    expect(store.token, isNull);
+
+    store.releaseFirstWrite.complete();
+    await loggingIn;
+    expect(store.token, 'replacement-token');
+    expect(store.writeCount, 2);
+    expect(session.account?.id, 23);
+    expect(session.accessToken, 'replacement-token');
+  });
+
+  test('secure read-back failure does not expose authenticated authority', () async {
+    final store = _FakeAuthTokenStore(failReads: true);
+    final session = AuthSession.forTesting(store);
+
+    await expectLater(
+      session.establishPersisted(
+        accessToken: 'unverified-token',
+        account: account(),
+      ),
+      throwsStateError,
+    );
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(session.account, isNull);
+  });
+
   test('restore validates stored token before authenticating', () async {
     final store = _FakeAuthTokenStore(token: 'stored-token');
     final session = AuthSession.forTesting(store);
@@ -504,11 +547,13 @@ class _FakeAuthTokenStore implements AuthTokenStore {
     this.token,
     this.failWrites = false,
     this.failDeletes = false,
+    this.failReads = false,
   });
 
   String? token;
   final bool failWrites;
   final bool failDeletes;
+  final bool failReads;
 
   @override
   Future<void> deleteAccessToken() async {
@@ -517,12 +562,46 @@ class _FakeAuthTokenStore implements AuthTokenStore {
   }
 
   @override
-  Future<String?> readAccessToken() async => token;
+  Future<String?> readAccessToken() async {
+    if (failReads) throw StateError('secure storage read unavailable');
+    return token;
+  }
 
   @override
   Future<void> writeAccessToken(String token) async {
     if (failWrites) throw StateError('secure storage unavailable');
     this.token = token;
+  }
+}
+
+class _WriteCompletesAfterDeletionStore implements AuthTokenStore {
+  final Completer<void> deleteStarted = Completer<void>();
+  final Completer<void> releaseDelete = Completer<void>();
+  final Completer<void> deleteCompleted = Completer<void>();
+  final Completer<void> firstWriteStarted = Completer<void>();
+  final Completer<void> releaseFirstWrite = Completer<void>();
+  String? token;
+  int writeCount = 0;
+
+  @override
+  Future<void> deleteAccessToken() async {
+    deleteStarted.complete();
+    await releaseDelete.future;
+    token = null;
+    deleteCompleted.complete();
+  }
+
+  @override
+  Future<String?> readAccessToken() async => token;
+
+  @override
+  Future<void> writeAccessToken(String value) async {
+    writeCount += 1;
+    token = value;
+    if (writeCount == 1) {
+      firstWriteStarted.complete();
+      await releaseFirstWrite.future;
+    }
   }
 }
 
