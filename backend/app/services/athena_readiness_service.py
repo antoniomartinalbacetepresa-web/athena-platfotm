@@ -319,7 +319,7 @@ def build_operational_readiness(
         {"id": "market_history_depth", "passed": _final_market_history_depth_passed(market_history), "blocker": "market_history_depth_insufficient"},
         {"id": "corporate_actions_cross_provider_reconciliation", "passed": _final_corporate_actions_passed(corporate_actions), "blocker": "corporate_actions_independent_reconciliation_pending"},
         {"id": "research_outcome_oos_evidence", "passed": _final_research_outcome_oos_passed(research_outcome), "blocker": "research_outcome_oos_evidence_pending"},
-        {"id": "forecast_error_oos_complete", "passed": _final_forecast_error_oos_passed(forecast_error), "blocker": "forecast_error_oos_measurement_incomplete"},
+        {"id": "forecast_error_oos_complete", "passed": _final_forecast_error_oos_passed(forecast_error) and _final_research_outcome_oos_passed(research_outcome) and forecast_error.get("cohortHash") == research_outcome.get("cohortHash"), "blocker": "forecast_error_oos_measurement_incomplete"},
         {"id": "forecast_error_oos_longitudinal_sufficiency", "passed": _final_forecast_error_longitudinal_sufficiency_passed(forecast_error), "blocker": "forecast_error_oos_longitudinal_sufficiency_pending"},
     ]
 
@@ -339,7 +339,7 @@ def build_operational_readiness(
         "completionPercent": completion_percent,
         "passedGateCount": passed_gate_count,
         "totalGateCount": total_gate_count,
-        "ready": passed_gate_count == total_gate_count,
+        "ready": passed_gate_count == total_gate_count and not blockers,
         "gates": gates,
         "blockers": blockers,
         "policy": {
