@@ -256,3 +256,30 @@ def test_large_offsetting_dividend_and_fee_remain_finite(tmp_path) -> None:
     assert result.net_internal_cash_return == 0.0
     assert result.to_dict()["productionEligible"] is False
     assert result.to_dict()["automaticTrading"] is False
+
+
+@pytest.mark.parametrize("available_at", [
+    None,
+    "2026-02-01T00:00:00Z",
+    datetime(2026, 2, 1),
+])
+def test_dividend_fundamentals_reject_malformed_pit_availability(
+    tmp_path, available_at,
+) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    fundamentals = DividendFundamentalEvidence(
+        price=100.0,
+        trailing_dividend_per_share=2.0,
+        available_at=available_at,
+        source="issuer_filing",
+        source_ref="unverifiable-timestamp",
+    )
+    with pytest.raises(ValueError, match="PIT-available"):
+        PortfolioDividendReturnEvidenceService(ledger).build(
+            portfolio_id="personal",
+            reporting_currency="EUR",
+            period_start=START,
+            period_end=END,
+            as_of=AS_OF,
+            fundamentals=fundamentals,
+        )
