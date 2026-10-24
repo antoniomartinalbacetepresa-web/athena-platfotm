@@ -6,26 +6,42 @@ import '../../../analysis/services/athena_readiness_service.dart';
 import 'base/athena_card.dart';
 
 class SystemReadinessPanel extends StatefulWidget {
-  const SystemReadinessPanel({super.key});
+  const SystemReadinessPanel({super.key, this.service});
+
+  final AthenaReadinessService? service;
 
   @override
   State<SystemReadinessPanel> createState() => _SystemReadinessPanelState();
 }
 
 class _SystemReadinessPanelState extends State<SystemReadinessPanel> {
-  late final AthenaReadinessService _service;
+  late AthenaReadinessService _service;
+  late bool _ownsService;
   late Future<AthenaReadinessReport> _future;
 
   @override
   void initState() {
     super.initState();
-    _service = AthenaReadinessService();
+    _ownsService = widget.service == null;
+    _service = widget.service ?? AthenaReadinessService();
     _future = _service.getReport();
   }
 
   @override
+  void didUpdateWidget(covariant SystemReadinessPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.service == widget.service) return;
+    final previous = _service;
+    final previouslyOwned = _ownsService;
+    _ownsService = widget.service == null;
+    _service = widget.service ?? AthenaReadinessService();
+    _future = _service.getReport();
+    if (previouslyOwned) previous.dispose();
+  }
+
+  @override
   void dispose() {
-    _service.dispose();
+    if (_ownsService) _service.dispose();
     super.dispose();
   }
 
@@ -64,7 +80,14 @@ class _SystemReadinessPanelState extends State<SystemReadinessPanel> {
             );
           }
 
-          final readiness = snapshot.data!.operationalReadiness;
+          final report = snapshot.data!;
+          final readiness = report.operationalReadiness;
+          final history = report.marketHistory;
+          final historyStatus = history == null
+              ? 'Histórico PIT: evidencia no disponible · no producción'
+              : 'Histórico PIT ≥365d: '
+                  '${history.currentDeepHistoryInstrumentCount}/${history.eligibleInstrumentCount} vigentes · '
+                  '${report.historyDepthGatePassed ? 'gate diagnóstico OK' : 'BLOQUEADO'} · no producción';
           final percent = readiness.completionPercent.clamp(0, 100).toDouble();
           return Row(
             children: [
@@ -102,6 +125,20 @@ class _SystemReadinessPanelState extends State<SystemReadinessPanel> {
                       style: const TextStyle(
                         color: AthenaColors.textSecondary,
                         fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Tooltip(
+                      message: historyStatus,
+                      child: Text(
+                        historyStatus,
+                        key: const Key('dashboard-market-history-status'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AthenaColors.textSecondary,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
                   ],
