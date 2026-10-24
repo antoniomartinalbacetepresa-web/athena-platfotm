@@ -142,6 +142,7 @@ class MarketHistoryGapService:
                 FROM market_observations mo JOIN eligible e ON e.instrument_id = mo.instrument_id
                 WHERE julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
             ),
             ordered_history AS (
                 SELECT instrument_id, source_provider, observed_at,
