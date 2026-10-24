@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/portfolio/models/portfolio_position.dart';
 import 'package:app/features/portfolio/presentation/controllers/portfolio_cloud_sync_controller.dart';
@@ -121,4 +124,45 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });
+
+  for (final status in [401, 403]) {
+    test('late $status from previous owner cannot revoke replacement Portfolio session',
+        () async {
+      session.establish(accessToken: 'old-owner.jwt', account: account());
+      final requestStarted = Completer<void>();
+      final response = Completer<http.Response>();
+      final client = MockClient((request) async {
+        expect(request.headers['Authorization'], 'Bearer old-owner.jwt');
+        requestStarted.complete();
+        return response.future;
+      });
+      final service = AuthenticatedPortfolioService(
+        baseUrl: 'http://athena.local',
+        client: client,
+        session: session,
+      );
+
+      final pending = service.loadPositions();
+      await requestStarted.future;
+      session.establish(
+        accessToken: 'replacement-owner.jwt',
+        account: AuthAccount(
+          id: 23,
+          email: 'replacement@example.com',
+          displayName: 'Replacement',
+          isActive: true,
+          createdAt: DateTime.parse('2026-09-10T10:00:00Z'),
+          updatedAt: DateTime.parse('2026-09-10T10:00:00Z'),
+        ),
+      );
+      response.complete(http.Response('{"detail":"revoked old token"}', status));
+
+      await expectLater(pending, throwsA(isA<AuthSessionRejectedException>()));
+      expect(session.isAuthenticated, isTrue);
+      expect(session.account?.id, 23);
+      expect(session.accessToken, 'replacement-owner.jwt');
+      service.dispose();
+    });
+  }
+
 }

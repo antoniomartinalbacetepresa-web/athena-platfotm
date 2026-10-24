@@ -55,7 +55,8 @@ class PortfolioCloudSyncController extends ChangeNotifier {
       _message =
           'Sincronización completada: ${report.upsertedPositionCount} de '
           '${report.localPositionCount} posiciones declaradas actualizadas. '
-          'ATHENA no ha enviado coste de compra, P/L ni fechas de coste y no '
+          'ATHENA ha enviado el precio medio de compra declarado a tu cuenta; ' 
+          'se almacena cifrado en el backend. No se han enviado P/L ni '
           'ha eliminado posiciones remotas automáticamente.';
     } on AuthSessionRejectedException {
       _status = PortfolioCloudSyncStatus.sessionRejected;

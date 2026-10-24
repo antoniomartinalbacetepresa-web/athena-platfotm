@@ -62,7 +62,11 @@ void main() {
     expect(service.received, hasLength(1));
     expect(controller.status, PortfolioCloudSyncStatus.success);
     expect(controller.message, contains('1 de 1'));
-    expect(controller.message, contains('no ha enviado coste de compra'));
+    expect(controller.message, contains('precio medio de compra declarado'));
+    expect(controller.message, contains('se almacena cifrado en el backend'));
+    expect(controller.message, contains('No se han enviado P/L'));
+    expect(controller.message, isNot(contains('no ha enviado coste de compra')));
+    expect(controller.message, isNot(contains('100')));
     expect(controller.message, contains('no ha eliminado posiciones remotas'));
   });
 
