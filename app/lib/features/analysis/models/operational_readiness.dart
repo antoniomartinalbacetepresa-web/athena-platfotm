@@ -74,20 +74,7 @@ class MarketHistorySnapshot {
         maximumGap < 1 ||
         maximumGap > 7 ||
         asOfText is! String ||
-        !RegExp(r'(?:Z|[+-]\d{2}:\d{2})).hasMatch(asOfText)) {
-      return null;
-    }
-    final asOf = DateTime.tryParse(asOfText);
-    if (asOf == null) return null;
-    return MarketHistorySnapshot(
-      eligibleInstrumentCount: eligible,
-      currentDeepHistoryInstrumentCount: current,
-      asOf: asOf,
-    );
-  }
-}
-
-).hasMatch(asOfText)) {
+        !RegExp(r'(?:Z|[+-]\d{2}:\d{2})$').hasMatch(asOfText)) {
       return null;
     }
     final asOf = DateTime.tryParse(asOfText);
