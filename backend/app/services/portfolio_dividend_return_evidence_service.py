@@ -132,7 +132,12 @@ class PortfolioDividendReturnEvidenceService:
     def _fundamentals(evidence: DividendFundamentalEvidence | None, *, as_of: datetime) -> tuple[float | None, float | None, float | None, float | None, str, tuple[str, ...]]:
         if evidence is None:
             return None, None, None, None, "insufficient_evidence", ()
-        if evidence.available_at is None or evidence.available_at.tzinfo is None or evidence.available_at > as_of:
+        if (
+            not isinstance(evidence.available_at, datetime)
+            or evidence.available_at.tzinfo is None
+            or evidence.available_at.utcoffset() is None
+            or evidence.available_at > as_of
+        ):
             raise ValueError("dividend fundamentals must be PIT-available at as_of")
         if (not isinstance(evidence.source, str) or not evidence.source.strip()
                 or not isinstance(evidence.source_ref, str) or not evidence.source_ref.strip()):
