@@ -67,9 +67,7 @@ class FxQuoteService:
 
         rate = self._positive_finite_rate(payload.get("close"))
 
-        source_provider = str(payload.get("sourceProvider") or "").strip()
-        if not source_provider:
-            raise RuntimeError("La cotización FX no contiene proveedor de procedencia.")
+        source_provider = self._source_provider(payload.get("sourceProvider"))
 
         observed_at = self._aware_iso(payload.get("timestamp"), "timestamp")
         retrieved_at = self._aware_iso(payload.get("retrievedAt"), "retrievedAt")
@@ -191,9 +189,7 @@ class FxQuoteService:
             raise RuntimeError("La fuente FX histórica devolvió un instrumento distinto al solicitado.")
 
         rate = self._positive_finite_rate(payload.get("close"))
-        source_provider = str(payload.get("sourceProvider") or "").strip()
-        if not source_provider:
-            raise RuntimeError("La cotización FX histórica no contiene proveedor de procedencia.")
+        source_provider = self._source_provider(payload.get("sourceProvider"))
 
         observed_at = self._aware_iso(payload.get("timestamp"), "timestamp")
         retrieved_at = self._aware_iso(payload.get("retrievedAt"), "retrievedAt")
@@ -201,6 +197,9 @@ class FxQuoteService:
             raise RuntimeError("La recuperación FX histórica no puede preceder a su observación.")
         if observed_at.date() != target_date:
             raise RuntimeError("La observación FX histórica no corresponde a la fecha solicitada.")
+        returned_currency = str(payload.get("currency") or "").strip().upper()
+        if returned_currency and returned_currency != quote:
+            raise RuntimeError("La moneda de cotización FX histórica no coincide con la moneda destino.")
 
         effective_cutoff = cutoff or datetime.now(timezone.utc)
         if observed_at > effective_cutoff or retrieved_at > effective_cutoff:
@@ -239,8 +238,10 @@ class FxQuoteService:
         record: FxRateRecord,
         knowledge_cutoff: datetime,
     ) -> dict[str, Any]:
-        if record.source_symbol is None:
-            raise RuntimeError("La observación FX persistida carece de símbolo de procedencia.")
+        expected_symbol = f"{record.base_currency}{record.quote_currency}=X"
+        if record.source_symbol != expected_symbol:
+            raise RuntimeError("La observación FX persistida tiene un símbolo de procedencia incorrecto.")
+        self._source_provider(record.source_provider)
         if record.observed_at > knowledge_cutoff or record.retrieved_at > knowledge_cutoff:
             raise RuntimeError("La observación FX persistida viola el corte PIT solicitado.")
         return self._historical_payload(
@@ -295,9 +296,29 @@ class FxQuoteService:
 
     def _currency(self, value: str, field: str) -> str:
         normalized = str(value or "").strip().upper()
-        if len(normalized) != 3 or not normalized.isalpha():
+        if len(normalized) != 3 or not normalized.isascii() or not normalized.isalpha():
             raise ValueError(f"{field} debe ser un código ISO de tres letras.")
         return normalized
+
+    def _source_provider(self, value: object) -> str:
+        # Reject FMP and ambiguous/encoded provider identifiers before using
+        # current quotes, historical observations or persisted PIT replay.
+        if not isinstance(value, str):
+            raise RuntimeError("La cotización FX carece de procedencia verificable.")
+        provider = value.strip()
+        if (
+            not provider
+            or not provider.isascii()
+            or any(ord(char) < 32 or ord(char) == 127 for char in provider)
+            or "%" in provider
+            or "&" in provider
+            or "\\" in provider
+        ):
+            raise RuntimeError("La cotización FX tiene procedencia ambigua o codificada.")
+        key = "".join(char for char in provider.casefold() if char.isalnum())
+        if not key or "fmp" in key or "financialmodelingprep" in key:
+            raise RuntimeError("La fuente FX FMP o sin procedencia no está permitida.")
+        return provider
 
     def _date(self, value: object, field: str) -> date:
         if isinstance(value, datetime) or not isinstance(value, date):
