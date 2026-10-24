@@ -43,7 +43,33 @@ def _complete_corporate_actions() -> dict[str, object]:
 
 def _complete_learning(*, forecast_coverage: float = 1.0) -> dict[str, object]:
     return {
-        "researchOutcomeOos": {"status": "research_outcome_oos_evidence_available"},
+        "researchOutcomeOos": {
+            "status": "research_outcome_oos_evidence_available",
+            "cohortId": "cohort-test-1",
+            "cohortHash": "a" * 64,
+            "cohortAsOf": "2026-08-31T12:00:00+00:00",
+            "observationCount": 2,
+            "distinctResolvedIssuerCount": 2,
+            "unresolvedIssuerObservationCount": 0,
+            "horizonCount": 1,
+            "horizons": {
+                "604800": {
+                    "observationCount": 2,
+                    "unresolvedIssuerObservationCount": 0,
+                }
+            },
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "recommendationCandidateReady": False,
+            "productionLearningEligible": False,
+            "policy": {
+                "availability": "cohort_hash_reverified_before_diagnostic_read",
+                "automaticModelMutation": False,
+                "automaticProductionPromotion": False,
+                "automaticTrading": False,
+            },
+        },
         "researchForecastErrorOos": {
             "status": "forecast_error_oos_evidence_available",
             "eligibleOutcomeCount": 2,
@@ -392,3 +418,39 @@ def test_corporate_action_gate_rejects_self_consistent_fractional_event_evidence
     report = _readiness(corporate_actions=evidence)
     assert report["ready"] is False
     assert "corporate_actions_independent_reconciliation_pending" in report["blockers"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("cohortHash", "unverified"),
+        ("cohortId", ""),
+        ("cohortAsOf", "2026-08-31T12:00:00"),
+        ("observationCount", 0),
+        ("observationCount", 2.5),
+        ("horizonCount", 2),
+        ("unresolvedIssuerObservationCount", 3),
+        ("advisoryStatus", "advice"),
+        ("productionEligible", True),
+    ],
+)
+def test_oos_outcome_gate_rejects_unverified_or_inconsistent_cohorts(field, value):
+    learning = _complete_learning()
+    learning["researchOutcomeOos"][field] = value
+    report = _readiness(learning=learning)
+    assert report["ready"] is False
+    assert "research_outcome_oos_evidence_pending" in report["blockers"]
+
+
+def test_oos_outcome_gate_rejects_horizon_count_mismatch_and_unverified_policy():
+    learning = _complete_learning()
+    learning["researchOutcomeOos"]["horizons"]["604800"]["observationCount"] = 1
+    assert "research_outcome_oos_evidence_pending" in _readiness(
+        learning=learning
+    )["blockers"]
+
+    learning = _complete_learning()
+    learning["researchOutcomeOos"]["policy"]["availability"] = "unverified"
+    assert "research_outcome_oos_evidence_pending" in _readiness(
+        learning=learning
+    )["blockers"]
