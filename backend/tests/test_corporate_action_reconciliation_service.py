@@ -216,3 +216,27 @@ def test_identical_same_instant_replays_remain_reconciled() -> None:
     )
     assert report.reconciled is True
     assert report.agreed_event_count == 1
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [
+        ["yahoo", "yahoo_finance"],
+        ["YAHOO_FINANCE", " yahoo "],
+        ["secondary", " SECONDARY "],
+    ],
+)
+def test_provider_aliases_and_case_variants_are_not_independent(providers):
+    service = CorporateActionReconciliationService(repository=FakeRepository({}))
+    with pytest.raises(ValueError, match="duplicados"):
+        service.reconcile(
+            instrument_id=21, source_providers=providers, knowledge_cutoff=CUTOFF
+        )
+
+
+def test_nontext_provider_identity_is_not_coerced_into_provenance():
+    service = CorporateActionReconciliationService(repository=FakeRepository({}))
+    with pytest.raises(ValueError, match="texto"):
+        service.reconcile(
+            instrument_id=21, source_providers=["primary", 123], knowledge_cutoff=CUTOFF
+        )

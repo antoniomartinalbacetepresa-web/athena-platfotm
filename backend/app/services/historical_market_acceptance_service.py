@@ -20,6 +20,18 @@ class HistoricalMarketAcceptanceReport:
     required_deep_history_coverage: float
     independent_secondary_source_verified: bool
 
+    @staticmethod
+    def _parse_pit_cutoff(value: str | None) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            cutoff = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            return None
+        return cutoff
+
     @property
     def depth_gate_passed(self) -> bool:
         return (
@@ -30,12 +42,13 @@ class HistoricalMarketAcceptanceReport:
             and self.coverage.current_deep_history_instrument_count >= self.coverage.history_eligible_instrument_count
             and self.coverage.observation_count > 0
             and self.coverage.minimum_history_days >= self.required_history_days
+            and 0 < self.coverage.maximum_source_gap_days <= 7
             and self.coverage.deep_history_coverage
             >= self.required_deep_history_coverage
             and self.coverage.current_deep_history_coverage
             >= self.required_deep_history_coverage
             and self.coverage.current_history_depth_ready
-            and self.coverage.as_of is not None
+            and self._parse_pit_cutoff(self.coverage.as_of) is not None
         )
 
     @property
@@ -51,23 +64,24 @@ class HistoricalMarketAcceptanceReport:
         # Corporate-action reconciliation must cover the exact PIT instant
         # evaluated for market history. A later cutoff leaks future knowledge;
         # an earlier cutoff can silently omit subsequent corporate actions.
-        if not self.coverage.as_of:
-            return False
-        try:
-            cutoff = datetime.fromisoformat(self.coverage.as_of.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            return False
-        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+        cutoff = self._parse_pit_cutoff(self.coverage.as_of)
+        if cutoff is None:
             return False
         seen_instrument_ids: set[int] = set()
         for report in self.reconciliation_reports:
             if report.instrument_id <= 0 or report.instrument_id in seen_instrument_ids:
                 return False
             seen_instrument_ids.add(report.instrument_id)
-            providers = tuple(provider.strip().lower() for provider in report.source_providers)
-            if len(providers) < 2 or any(not provider for provider in providers):
+            if any(not isinstance(provider, str) for provider in report.source_providers):
                 return False
-            if len(set(providers)) != len(providers):
+            providers = tuple(provider.strip().casefold() for provider in report.source_providers)
+            families = tuple(
+                "yahoo" if provider in ("yahoo", "yahoo_finance") else provider
+                for provider in providers
+            )
+            if len(families) < 2 or any(not provider for provider in families):
+                return False
+            if len(set(families)) != len(families):
                 return False
             if report.knowledge_cutoff.tzinfo is None or report.knowledge_cutoff.utcoffset() is None:
                 return False
@@ -93,7 +107,7 @@ class HistoricalMarketAcceptanceReport:
             "requiredDeepHistoryCoverage": self.required_deep_history_coverage,
             "measuredDeepHistoryCoverage": self.coverage.deep_history_coverage,
             "measuredCurrentDeepHistoryCoverage": self.coverage.current_deep_history_coverage,
-            "pointInTimeCutoffApplied": self.coverage.as_of is not None,
+            "pointInTimeCutoffApplied": self._parse_pit_cutoff(self.coverage.as_of) is not None,
             "asOf": self.coverage.as_of,
             "independentSecondarySourceVerified": self.independent_secondary_source_verified,
             "reconciliationReportCount": len(self.reconciliation_reports),

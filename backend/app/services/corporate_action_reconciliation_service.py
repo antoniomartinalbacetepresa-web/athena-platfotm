@@ -211,12 +211,18 @@ class CorporateActionReconciliationService:
         normalized: list[str] = []
         seen: set[str] = set()
         for value in values:
-            provider = str(value or "").strip()
+            if not isinstance(value, str):
+                raise ValueError("source_providers requiere identificadores de texto.")
+            provider = value.strip()
             if not provider:
                 raise ValueError("source_providers no acepta valores vacíos.")
-            if provider in seen:
+            # Aliases from one upstream family are not independent evidence.
+            family = provider.casefold()
+            if family in ("yahoo", "yahoo_finance"):
+                family = "yahoo"
+            if family in seen:
                 raise ValueError("source_providers no acepta proveedores duplicados.")
-            seen.add(provider)
+            seen.add(family)
             normalized.append(provider)
         return tuple(normalized)
 

@@ -288,3 +288,49 @@ def test_reconciliation_rejects_duplicate_instrument_evidence():
     assert report.agreed_event_count == 2
     assert report.corporate_action_gate_passed is False
     assert report.history_acceptance_passed is False
+
+
+@pytest.mark.parametrize("maximum_gap_days", [0, 8, 30, 365])
+def test_historical_acceptance_rejects_relaxed_source_continuity(maximum_gap_days):
+    from dataclasses import replace
+
+    coverage = replace(_coverage(), maximum_source_gap_days=maximum_gap_days)
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=coverage,
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is False
+    assert report.history_acceptance_passed is False
+    assert report.to_api_dict()["productionAuthorization"] is False
+
+
+@pytest.mark.parametrize("as_of", ["", "not-a-date", "2026-09-11T00:00:00", None])
+def test_historical_depth_rejects_invalid_or_naive_pit_cutoff(as_of):
+    from dataclasses import replace
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=replace(_coverage(), as_of=as_of),
+        reconciliation_reports=[_reconciliation()],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is False
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+    assert report.to_api_dict()["pointInTimeCutoffApplied"] is False
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [("yahoo", "yahoo_finance"), ("YAHOO_FINANCE", " yahoo "), ("primary", 123)],
+)
+def test_historical_acceptance_rejects_same_family_or_nontext_providers(providers):
+    from dataclasses import replace
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(_reconciliation(), source_providers=providers)],
+        independent_secondary_source_verified=True,
+    )
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
