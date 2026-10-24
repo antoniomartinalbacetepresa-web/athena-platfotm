@@ -24,6 +24,17 @@ class AuthSession extends ChangeNotifier {
   String? _accessToken;
   AuthAccount? _account;
   int _authorityVersion = 0;
+  int _persistenceGeneration = 0;
+  Future<void> _pendingStorageMutation = Future<void>.value();
+
+  // Secure-storage plugins can complete writes and deletes out of order.
+  // Serialize mutations so a delayed logout cannot erase a newer login.
+  Future<void> _mutateTokenStore(Future<void> Function() operation) {
+    final pending = _pendingStorageMutation.then((_) => operation());
+    // A failed mutation must fail its caller without poisoning later attempts.
+    _pendingStorageMutation = pending.catchError((Object _) {});
+    return pending;
+  }
 
   String? get accessToken => _accessToken;
   AuthAccount? get account => _account;
@@ -51,7 +62,13 @@ class AuthSession extends ChangeNotifier {
     if (token.isEmpty || !account.isActive) {
       throw ArgumentError('La sesión autenticada no es válida.');
     }
-    await _tokenStore.writeAccessToken(token);
+    final authorityAtStart = _authorityVersion;
+    final generation = ++_persistenceGeneration;
+    await _mutateTokenStore(() => _tokenStore.writeAccessToken(token));
+    if (_authorityVersion != authorityAtStart ||
+        _persistenceGeneration != generation) {
+      throw StateError('La autoridad ATHENA cambió durante la persistencia.');
+    }
     establish(accessToken: token, account: account);
   }
 
@@ -61,12 +78,16 @@ class AuthSession extends ChangeNotifier {
   }) async {
     if (isAuthenticated) return AuthSessionRestoreResult.restored;
     final restoreAuthorityVersion = _authorityVersion;
+    final restorePersistenceGeneration = _persistenceGeneration;
+    bool restoreIsStale() =>
+        _authorityVersion != restoreAuthorityVersion ||
+        _persistenceGeneration != restorePersistenceGeneration;
 
     final String? storedToken;
     try {
       storedToken = await _tokenStore.readAccessToken();
     } catch (_) {
-      if (_authorityVersion != restoreAuthorityVersion) {
+      if (restoreIsStale()) {
         return isAuthenticated
             ? AuthSessionRestoreResult.restored
             : AuthSessionRestoreResult.temporarilyUnavailable;
@@ -74,7 +95,7 @@ class AuthSession extends ChangeNotifier {
       _clearMemory();
       return AuthSessionRestoreResult.temporarilyUnavailable;
     }
-    if (_authorityVersion != restoreAuthorityVersion) {
+    if (restoreIsStale()) {
       return isAuthenticated
           ? AuthSessionRestoreResult.restored
           : AuthSessionRestoreResult.temporarilyUnavailable;
@@ -87,8 +108,9 @@ class AuthSession extends ChangeNotifier {
     final token = storedToken.trim();
     if (token.isEmpty) {
       _clearMemory();
+      ++_persistenceGeneration;
       try {
-        await _tokenStore.deleteAccessToken();
+        await _mutateTokenStore(() => _tokenStore.deleteAccessToken());
       } catch (_) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
@@ -97,7 +119,7 @@ class AuthSession extends ChangeNotifier {
 
     try {
       final account = await validateToken(token);
-      if (_authorityVersion != restoreAuthorityVersion) {
+      if (restoreIsStale()) {
         return isAuthenticated
             ? AuthSessionRestoreResult.restored
             : AuthSessionRestoreResult.temporarilyUnavailable;
@@ -105,7 +127,7 @@ class AuthSession extends ChangeNotifier {
       establish(accessToken: token, account: account);
       return AuthSessionRestoreResult.restored;
     } catch (error) {
-      if (_authorityVersion != restoreAuthorityVersion) {
+      if (restoreIsStale()) {
         return isAuthenticated
             ? AuthSessionRestoreResult.restored
             : AuthSessionRestoreResult.temporarilyUnavailable;
@@ -114,8 +136,9 @@ class AuthSession extends ChangeNotifier {
       if (!shouldDiscardToken(error)) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
+      ++_persistenceGeneration;
       try {
-        await _tokenStore.deleteAccessToken();
+        await _mutateTokenStore(() => _tokenStore.deleteAccessToken());
       } catch (_) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
@@ -124,14 +147,16 @@ class AuthSession extends ChangeNotifier {
   }
 
   Future<void> clearPersisted() async {
+    ++_persistenceGeneration;
     _clearMemory();
-    await _tokenStore.deleteAccessToken();
+    await _mutateTokenStore(() => _tokenStore.deleteAccessToken());
   }
 
   Future<bool> clearAfterRemoteInvalidation() async {
+    ++_persistenceGeneration;
     _clearMemory();
     try {
-      await _tokenStore.deleteAccessToken();
+      await _mutateTokenStore(() => _tokenStore.deleteAccessToken());
       return true;
     } catch (_) {
       return false;
@@ -151,8 +176,10 @@ class AuthSession extends ChangeNotifier {
   }
 
   void clear() {
+    ++_persistenceGeneration;
     _clearMemory();
-    unawaited(_tokenStore.deleteAccessToken().catchError((Object _) {}));
+    unawaited(_mutateTokenStore(() => _tokenStore.deleteAccessToken())
+        .catchError((Object _) {}));
   }
 
   void _clearMemory() {
