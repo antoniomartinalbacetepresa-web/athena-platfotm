@@ -56,31 +56,7 @@ class AuthSession extends ChangeNotifier {
     final writeAuthorityVersion = _authorityVersion;
     await _tokenStore.writeAccessToken(token);
     if (_authorityVersion != writeAuthorityVersion) {
-      // A late write may have replaced the newer owner's durable credential.
-      // Repair the currently authoritative token instead of deleting it.
-      // Authority may change again while the repair itself is awaiting I/O.
-      // Reconcile against the latest authority until a complete operation
-      // finishes without another transition.
-      while (true) {
-        final repairVersion = _authorityVersion;
-        try {
-          if (isAuthenticated) {
-            await _tokenStore.writeAccessToken(_accessToken!);
-          } else {
-            await _tokenStore.deleteAccessToken();
-          }
-        } catch (_) {
-          // If repair fails, never continue exposing the same authority as
-          // reliably persisted. Do not revoke an even newer account.
-          if (_authorityVersion == repairVersion) {
-            _clearMemory();
-          }
-          rethrow;
-        }
-        if (_authorityVersion == repairVersion) {
-          break;
-        }
-      }
+      await _reconcilePersistedAuthority();
       throw StateError('La sesión cambió durante el inicio de sesión.');
     }
     establish(accessToken: token, account: account);
@@ -156,13 +132,15 @@ class AuthSession extends ChangeNotifier {
 
   Future<void> clearPersisted() async {
     _clearMemory();
-    await _tokenStore.deleteAccessToken();
+    final clearedVersion = _authorityVersion;
+    await _deletePersistedForAuthority(clearedVersion);
   }
 
   Future<bool> clearAfterRemoteInvalidation() async {
     _clearMemory();
+    final clearedVersion = _authorityVersion;
     try {
-      await _tokenStore.deleteAccessToken();
+      await _deletePersistedForAuthority(clearedVersion);
       return true;
     } catch (_) {
       return false;
@@ -183,7 +161,43 @@ class AuthSession extends ChangeNotifier {
 
   void clear() {
     _clearMemory();
-    unawaited(_tokenStore.deleteAccessToken().catchError((Object _) {}));
+    final clearedVersion = _authorityVersion;
+    unawaited(
+      _deletePersistedForAuthority(clearedVersion).catchError((Object _) {}),
+    );
+  }
+
+  // A logout deletion may complete after another account has logged in.
+  // Repair only when that deletion outlives its original authority.
+  Future<void> _deletePersistedForAuthority(int clearedVersion) async {
+    await _tokenStore.deleteAccessToken();
+    if (_authorityVersion != clearedVersion) {
+      await _reconcilePersistedAuthority();
+    }
+  }
+
+  // Never serialize all secure-storage operations in a global queue: widget
+  // tests and Portfolio invalidation must remain free to make progress.
+  Future<void> _reconcilePersistedAuthority() async {
+    while (true) {
+      final repairVersion = _authorityVersion;
+      try {
+        if (isAuthenticated) {
+          await _tokenStore.writeAccessToken(_accessToken!);
+        } else {
+          await _tokenStore.deleteAccessToken();
+        }
+      } catch (_) {
+        // Do not revoke an account established after this repair started.
+        if (_authorityVersion == repairVersion) {
+          _clearMemory();
+        }
+        rethrow;
+      }
+      if (_authorityVersion == repairVersion) {
+        return;
+      }
+    }
   }
 
   void _clearMemory() {

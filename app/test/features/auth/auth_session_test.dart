@@ -275,6 +275,99 @@ void main() {
     expect(store.token, isNull);
   });
 
+  test('delayed clear deletion cannot erase a newer owner credential', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+    await session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+
+    session.clear();
+    await store.firstDeleteStarted.future;
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.account?.id, 23);
+    expect(session.accessToken, 'new-owner-token');
+    expect(store.token, 'new-owner-token');
+  });
+
+  test('delayed clearPersisted deletion preserves newer owner', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+    await session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+
+    final oldLogout = session.clearPersisted();
+    await store.firstDeleteStarted.future;
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+    await oldLogout;
+
+    expect(session.account?.id, 23);
+    expect(session.accessToken, 'new-owner-token');
+    expect(store.token, 'new-owner-token');
+  });
+
+  test('delayed remote invalidation cannot erase replacement owner', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+    await session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+
+    final invalidating = session.clearAfterRemoteInvalidationIfCurrent(
+      'old-owner-token',
+    );
+    await store.firstDeleteStarted.future;
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+    expect(await invalidating, isTrue);
+
+    expect(session.account?.id, 23);
+    expect(session.accessToken, 'new-owner-token');
+    expect(store.token, 'new-owner-token');
+  });
+
+  test('logout during delayed deletion repair clears both authorities', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore(delayRepair: true);
+    final session = AuthSession.forTesting(store);
+    await session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+
+    final oldLogout = session.clearPersisted();
+    await store.firstDeleteStarted.future;
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+    await store.repairStarted.future;
+    session.clear();
+    store.releaseRepair.complete();
+    await oldLogout;
+
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.token, isNull);
+  });
+
   test('clearPersisted removes durable token and authenticated memory state', () async {
     final store = _FakeAuthTokenStore();
     final session = AuthSession.forTesting(store);
@@ -415,5 +508,41 @@ class _FirstWriteDelayedAuthTokenStore implements AuthTokenStore {
   @override
   Future<void> deleteAccessToken() async {
     token = null;
+  }
+}
+
+class _FirstDeleteDelayedAuthTokenStore implements AuthTokenStore {
+  _FirstDeleteDelayedAuthTokenStore({this.delayRepair = false});
+
+  final bool delayRepair;
+  final Completer<void> firstDeleteStarted = Completer<void>();
+  final Completer<void> releaseFirstDelete = Completer<void>();
+  final Completer<void> repairStarted = Completer<void>();
+  final Completer<void> releaseRepair = Completer<void>();
+  String? token;
+  int _deletes = 0;
+  int _writes = 0;
+
+  @override
+  Future<void> deleteAccessToken() async {
+    _deletes += 1;
+    if (_deletes == 1) {
+      firstDeleteStarted.complete();
+      await releaseFirstDelete.future;
+    }
+    token = null;
+  }
+
+  @override
+  Future<String?> readAccessToken() async => token;
+
+  @override
+  Future<void> writeAccessToken(String value) async {
+    _writes += 1;
+    if (_writes == 3 && delayRepair) {
+      repairStarted.complete();
+      await releaseRepair.future;
+    }
+    token = value;
   }
 }
