@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../../analysis/models/operational_readiness.dart';
+import 'market_history_gaps_dialog.dart';
 import '../../../analysis/services/athena_readiness_service.dart';
 import 'base/athena_card.dart';
 
@@ -147,6 +148,23 @@ class _SystemReadinessPanelState extends State<SystemReadinessPanel> {
                   ],
                 ),
               ),
+              if (history != null)
+                IconButton(
+                  tooltip: 'Ver bloqueos históricos',
+                  onPressed: () {
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => MarketHistoryGapsDialog(
+                        service: _service,
+                        asOf: report.asOf,
+                      ),
+                    );
+                  },
+                  icon: const Icon(
+                    Icons.fact_check_outlined,
+                    color: AthenaColors.textSecondary,
+                  ),
+                ),
               IconButton(
                 tooltip: 'Actualizar readiness',
                 onPressed: _reload,

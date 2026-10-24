@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/operational_readiness.dart';
+import '../models/market_history_gaps.dart';
 
 class AthenaReadinessService {
   static const String defaultBackendUrl = String.fromEnvironment(
@@ -32,6 +33,35 @@ class AthenaReadinessService {
       throw const FormatException('La respuesta de readiness no es un objeto JSON.');
     }
     return AthenaReadinessReport.fromMap(Map<String, dynamic>.from(decoded));
+  }
+
+  /// Same PIT cutoff as the readiness report; never triggers ingestion.
+  Future<MarketHistoryGapsPage> getMarketHistoryGaps({
+    required DateTime asOf,
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    if (limit < 1 || limit > 1000 || offset < 0) {
+      throw const FormatException('Paginación de bloqueos PIT inválida.');
+    }
+    final uri = Uri.parse('$baseUrl/api/v1/readiness/market-history/gaps')
+        .replace(queryParameters: {
+      'asOf': asOf.toUtc().toIso8601String(),
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+    });
+    final response = await client.get(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Diagnóstico PIT no disponible.');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw const FormatException('Diagnóstico PIT no es un objeto JSON.');
+    }
+    return MarketHistoryGapsPage.fromMap(
+      Map<String, dynamic>.from(decoded),
+      expectedAsOf: asOf,
+    );
   }
 
   void dispose() {
