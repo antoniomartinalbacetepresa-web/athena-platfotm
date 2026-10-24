@@ -36,8 +36,18 @@ def run_snapshot(
     database_path: Path,
     *,
     as_of: datetime | None = None,
+    blocker_limit: int = 100,
+    blocker_offset: int = 0,
 ) -> dict[str, Any]:
     """Measure one consistent SQLite snapshot without modifying the source."""
+    if (
+        isinstance(blocker_limit, bool)
+        or not isinstance(blocker_limit, int)
+        or not 1 <= blocker_limit <= MarketHistoryGapService.MAX_LIMIT
+    ):
+        raise ValueError("blocker_limit debe estar entre 1 y 1000.")
+    if isinstance(blocker_offset, bool) or not isinstance(blocker_offset, int) or blocker_offset < 0:
+        raise ValueError("blocker_offset debe ser un entero no negativo.")
     source_path = Path(database_path).resolve()
     if not source_path.is_file():
         raise FileNotFoundError("La base SQLite indicada no existe.")
@@ -60,12 +70,19 @@ def run_snapshot(
                 digest.update(chunk)
         fingerprint = digest.hexdigest()
 
+        # A successful backup is not evidence that every SQLite page is valid.
+        # Check the unmodified copy before schema initialization or diagnostics.
+        with closing(sqlite3.connect(snapshot_path)) as snapshot:
+            integrity = snapshot.execute("PRAGMA quick_check").fetchone()
+        if integrity is None or integrity[0] != "ok":
+            raise RuntimeError("La copia SQLite no supera la comprobación de integridad.")
+
         database = AthenaDatabase(snapshot_path)
         coverage = MarketObservationCoverageService(database=database).get_report(
             as_of=cutoff
         )
         gaps = MarketHistoryGapService(database=database).get_report(
-            as_of=cutoff, limit=1
+            as_of=cutoff, limit=blocker_limit, offset=blocker_offset
         )
 
     eligible = coverage.history_eligible_instrument_count
@@ -96,6 +113,13 @@ def run_snapshot(
         "currentDeepHistoryCoverage": coverage.current_deep_history_coverage,
         "totalBlockingCount": blocked,
         "blockingByReason": reason_counts,
+        "blockingPage": {
+            "limit": blocker_limit,
+            "offset": blocker_offset,
+            "returnedCount": len(gaps.items),
+            "hasMore": blocker_offset + len(gaps.items) < blocked,
+        },
+        "blockingItems": [item.to_api_dict() for item in gaps.items],
         "minimumHistoryDays": coverage.minimum_history_days,
         "maximumSourceGapDays": coverage.maximum_source_gap_days,
         "bySource": coverage.to_api_dict()["bySource"],
@@ -127,10 +151,21 @@ def main() -> int:
         "--as-of", type=str,
         help="Corte PIT ISO 8601 con zona horaria (por defecto UTC actual).",
     )
+    parser.add_argument(
+        "--blocker-limit", type=int, default=100,
+        help="Máximo de bloqueos concretos en la página (1..1000).",
+    )
+    parser.add_argument(
+        "--blocker-offset", type=int, default=0,
+        help="Desplazamiento de la página de bloqueos (>=0).",
+    )
     args = parser.parse_args()
     try:
         cutoff = parse_cutoff(args.as_of) if args.as_of else None
-        result = run_snapshot(args.database, as_of=cutoff)
+        result = run_snapshot(
+            args.database, as_of=cutoff,
+            blocker_limit=args.blocker_limit, blocker_offset=args.blocker_offset,
+        )
     except (FileNotFoundError, ValueError, sqlite3.Error, RuntimeError) as exc:
         parser.exit(2, f"Diagnóstico no disponible: {type(exc).__name__}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))

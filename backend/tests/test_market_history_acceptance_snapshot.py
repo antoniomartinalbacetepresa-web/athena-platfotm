@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -133,3 +134,56 @@ def test_mismatched_diagnostics_fail_closed(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setattr(MarketHistoryGapService, "get_report", incorrect)
     with pytest.raises(RuntimeError, match="inconsistentes"):
         run_snapshot(path)
+
+
+def test_blocker_pagination_is_deterministic_and_read_only(tmp_path: Path) -> None:
+    path, database = _database(tmp_path)
+    for symbol in ("ZZZ", "AAA", "MMM"):
+        _instrument(database, symbol)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    cutoff = datetime(2026, 10, 24, tzinfo=timezone.utc)
+    first = run_snapshot(path, as_of=cutoff, blocker_limit=2)
+    second = run_snapshot(path, as_of=cutoff, blocker_limit=2, blocker_offset=2)
+    assert first["totalBlockingCount"] == second["totalBlockingCount"] == 3
+    assert [item["symbol"] for item in first["blockingItems"]] == ["AAA", "MMM"]
+    assert [item["symbol"] for item in second["blockingItems"]] == ["ZZZ"]
+    assert [item["reason"] for item in first["blockingItems"]] == ["no_observations"] * 2
+    assert first["blockingPage"] == {
+        "limit": 2, "offset": 0, "returnedCount": 2, "hasMore": True,
+    }
+    assert second["blockingPage"] == {
+        "limit": 2, "offset": 2, "returnedCount": 1, "hasMore": False,
+    }
+    assert first["snapshotSha256"] == second["snapshotSha256"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    assert first["productionCoverageClaimed"] is False
+
+
+@pytest.mark.parametrize("limit,offset", [
+    (0, 0), (1001, 0), (True, 0), (1.5, 0), (1, -1), (1, True), (1, 2.5),
+])
+def test_blocker_pagination_rejects_invalid_bounds(
+    tmp_path: Path, limit: object, offset: object,
+) -> None:
+    path, _ = _database(tmp_path)
+    with pytest.raises(ValueError, match="blocker_"):
+        run_snapshot(path, blocker_limit=limit, blocker_offset=offset)
+
+
+def test_blocker_pagination_beyond_end_is_empty_not_ready(tmp_path: Path) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database)
+    result = run_snapshot(path, blocker_limit=2, blocker_offset=100)
+    assert result["totalBlockingCount"] == 1
+    assert result["blockingItems"] == []
+    assert result["blockingPage"]["hasMore"] is False
+    assert result["diagnosticReady"] is False
+
+
+def test_invalid_sqlite_source_is_rejected_without_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "broken.db"
+    path.write_bytes(b"not a sqlite database")
+    before = path.read_bytes()
+    with pytest.raises(sqlite3.DatabaseError):
+        run_snapshot(path)
+    assert path.read_bytes() == before
