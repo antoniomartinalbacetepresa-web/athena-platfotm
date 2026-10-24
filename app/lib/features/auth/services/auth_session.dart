@@ -24,6 +24,9 @@ class AuthSession extends ChangeNotifier {
   String? _accessToken;
   AuthAccount? _account;
   int _authorityVersion = 0;
+  // A deletion may finish while a newer login write is still in flight.
+  // Track completions so that read-back cannot accept a pre-delete value.
+  int _completedDeletionEpoch = 0;
 
   String? get accessToken => _accessToken;
   AuthAccount? get account => _account;
@@ -54,12 +57,42 @@ class AuthSession extends ChangeNotifier {
     // A logout or account switch can happen while secure storage is writing.
     // A late completion must not resurrect the superseded account in memory.
     final writeAuthorityVersion = _authorityVersion;
-    await _tokenStore.writeAccessToken(token);
-    if (_authorityVersion != writeAuthorityVersion) {
-      await _reconcilePersistedAuthority();
-      throw StateError('La sesión cambió durante el inicio de sesión.');
+    try {
+      await _tokenStore.writeAccessToken(token);
+      if (_authorityVersion != writeAuthorityVersion) {
+        await _reconcilePersistedAuthority();
+        throw StateError('La sesión cambió durante el inicio de sesión.');
+      }
+
+      // A previously scheduled logout may delete this token *after* the
+      // secure write takes effect but *before* its Future completes. Verify
+      // durable state before exposing authenticated authority. If a deletion
+      // completes during the read, retry rather than trusting a stale read.
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final deletionEpoch = _completedDeletionEpoch;
+        final stored = await _tokenStore.readAccessToken();
+        if (_authorityVersion != writeAuthorityVersion) {
+          await _reconcilePersistedAuthority();
+          throw StateError('La sesión cambió durante el inicio de sesión.');
+        }
+        if (deletionEpoch != _completedDeletionEpoch) {
+          continue;
+        }
+        if (stored == token) {
+          establish(accessToken: token, account: account);
+          return;
+        }
+        await _tokenStore.writeAccessToken(token);
+      }
+      throw StateError('No se pudo confirmar la credencial persistida.');
+    } catch (_) {
+      // A failed verification must not expose a session whose durable token
+      // may have been removed. Never revoke a newer authenticated authority.
+      if (_authorityVersion == writeAuthorityVersion) {
+        _clearMemory();
+      }
+      rethrow;
     }
-    establish(accessToken: token, account: account);
   }
 
   Future<AuthSessionRestoreResult> restore({
@@ -181,6 +214,7 @@ class AuthSession extends ChangeNotifier {
   // Repair only when that deletion outlives its original authority.
   Future<void> _deletePersistedForAuthority(int clearedVersion) async {
     await _tokenStore.deleteAccessToken();
+    _completedDeletionEpoch += 1;
     if (_authorityVersion != clearedVersion) {
       await _reconcilePersistedAuthority();
     }
@@ -196,6 +230,7 @@ class AuthSession extends ChangeNotifier {
           await _tokenStore.writeAccessToken(_accessToken!);
         } else {
           await _tokenStore.deleteAccessToken();
+          _completedDeletionEpoch += 1;
         }
       } catch (_) {
         // Do not revoke an account established after this repair started.
