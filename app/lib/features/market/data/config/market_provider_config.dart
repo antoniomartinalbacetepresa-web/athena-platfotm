@@ -1,8 +1,8 @@
-﻿/// Configuración de un proveedor externo de ATHENA TYCHE.
+/// Configuración de un proveedor de datos de ATHENA TYCHE.
 ///
-/// Esta clase no almacena secretos de forma persistente.
-/// Las claves podrán ser proporcionadas posteriormente por una
-/// capa de configuración segura o por el backend.
+/// Las claves de proveedores externos nunca deben residir en Flutter Web.
+/// El proveedor recomendado para la aplicación es el backend de ATHENA,
+/// que protege los secretos y normaliza las fuentes en el servidor.
 class MarketProviderConfig {
   final String providerId;
   final bool enabled;
@@ -16,17 +16,21 @@ class MarketProviderConfig {
     this.baseUrl,
   });
 
-  /// Indica si el proveedor está configurado para utilizarse.
-  ///
-  /// Un proveedor sin clave no se considera listo para conexiones
-  /// externas, aunque pueda estar habilitado conceptualmente.
   bool get isConfigured {
     if (!enabled) {
       return false;
     }
 
-    final key = apiKey;
+    if (providerId.startsWith('mock_')) {
+      return true;
+    }
 
+    final url = baseUrl;
+    if (providerId == 'athena_backend') {
+      return url != null && url.trim().isNotEmpty;
+    }
+
+    final key = apiKey;
     return key != null && key.trim().isNotEmpty;
   }
 

@@ -1,0 +1,287 @@
+import 'dart:convert';
+
+import 'package:app/features/auth/services/athena_auth_service.dart';
+import 'package:app/features/auth/services/auth_session.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+void main() {
+  tearDown(() => AuthSession.instance.clear());
+
+  test('register sends normalized JSON and parses backend account contract', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        '{"status":"account_created","account":{"id":5,"email":"user@example.com","displayName":"Athena User","isActive":true,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        201,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    final account = await service.register(
+      email: ' user@example.com ',
+      password: 'correct horse battery staple',
+      displayName: ' Athena User ',
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/register');
+    expect(captured.headers['Content-Type'], 'application/json');
+    final payload = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(payload['email'], 'user@example.com');
+    expect(payload['displayName'], 'Athena User');
+    expect(payload['password'], 'correct horse battery staple');
+    expect(account.id, 5);
+    expect(account.email, 'user@example.com');
+    expect(account.displayName, 'Athena User');
+  });
+
+  test('register enforces canonical new-password contract before network', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls += 1;
+      return http.Response('{}', 500);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    for (final invalidPassword in <String>[
+      'too-short',
+      List.filled(257, 'a').join(),
+      ' replacement-password ',
+    ]) {
+      await expectLater(
+        service.register(email: 'user@example.com', password: invalidPassword),
+        throwsArgumentError,
+      );
+    }
+    expect(calls, 0);
+  });
+
+  test('login uses OAuth form and validates bearer contract', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        '{"access_token":"signed.jwt.token","token_type":"bearer","expires_in":1800}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    final token = await service.login(
+      email: ' user@example.com ',
+      password: 'correct horse battery staple',
+    );
+
+    expect(token, 'signed.jwt.token');
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/token');
+    expect(captured.headers['Content-Type'], 'application/x-www-form-urlencoded');
+    expect(captured.bodyFields['username'], 'user@example.com');
+    expect(captured.bodyFields['password'], 'correct horse battery staple');
+  });
+
+  test('login rejects invalid password before network without trimming valid credentials', () async {
+    var calls = 0;
+    late http.Request captured;
+    final client = MockClient((request) async {
+      calls += 1;
+      captured = request;
+      return http.Response(
+        '{"access_token":"signed.jwt.token","token_type":"bearer"}',
+        200,
+      );
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    for (final invalidPassword in <String>['   ', List.filled(257, 'a').join()]) {
+      await expectLater(
+        service.login(email: 'user@example.com', password: invalidPassword),
+        throwsArgumentError,
+      );
+    }
+    expect(calls, 0);
+
+    await service.login(
+      email: ' user@example.com ',
+      password: ' significant password ',
+    );
+    expect(calls, 1);
+    expect(captured.bodyFields['username'], 'user@example.com');
+    expect(captured.bodyFields['password'], ' significant password ');
+  });
+
+  test('getMe sends bearer token and parses account', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        '{"status":"authenticated","account":{"id":7,"email":"user@example.com","displayName":"Athena User","isActive":true,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    final account = await service.getMe('signed.jwt.token');
+
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/api/v1/auth/me');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+    expect(account.id, 7);
+    expect(account.email, 'user@example.com');
+    expect(account.displayName, 'Athena User');
+    expect(account.isActive, isTrue);
+  });
+
+  test('changePassword sends normalized bearer and exact password payload', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.changePassword(
+      token: ' signed.jwt.token ',
+      currentPassword: 'current-password',
+      newPassword: 'replacement-password',
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/change-password');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+    final payload = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(payload['currentPassword'], 'current-password');
+    expect(payload['newPassword'], 'replacement-password');
+  });
+
+  test('changePassword rejects oversized or edge-spaced password before network', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls += 1;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await expectLater(
+      service.changePassword(
+        token: 'signed.jwt.token',
+        currentPassword: 'current-password',
+        newPassword: List.filled(257, 'a').join(),
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      service.changePassword(
+        token: 'signed.jwt.token',
+        currentPassword: 'current-password',
+        newPassword: ' replacement-password ',
+      ),
+      throwsArgumentError,
+    );
+    expect(calls, 0);
+  });
+
+  test('changePassword rejects invalid current password before network', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls += 1;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    for (final invalidCurrentPassword in <String>['   ', List.filled(257, 'a').join()]) {
+      await expectLater(
+        service.changePassword(
+          token: 'signed.jwt.token',
+          currentPassword: invalidCurrentPassword,
+          newPassword: 'replacement-password',
+        ),
+        throwsArgumentError,
+      );
+    }
+
+    expect(calls, 0);
+  });
+
+  test('changePassword preserves significant current-password whitespace', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.changePassword(
+      token: ' signed.jwt.token ',
+      currentPassword: ' current-password ',
+      newPassword: 'replacement-password',
+    );
+
+    final payload = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+    expect(payload['currentPassword'], ' current-password ');
+  });
+
+  test('logout calls backend revocation endpoint with bearer token', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.logout(' signed.jwt.token ');
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/logout');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+  });
+
+  test('logoutAll calls global revocation endpoint with bearer token', () async {
+    late http.Request captured;
+    final client = MockClient((request) async {
+      captured = request;
+      return http.Response('', 204);
+    });
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    await service.logoutAll(' signed.jwt.token ');
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/api/v1/auth/logout-all');
+    expect(captured.headers['Authorization'], 'Bearer signed.jwt.token');
+  });
+
+  test('logout does not silently accept backend revocation failure', () async {
+    final client = MockClient((request) async => http.Response('{}', 401));
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    expect(service.logout('signed.jwt.token'), throwsException);
+  });
+
+  test('login rejects invalid token contract', () async {
+    final client = MockClient((request) async => http.Response(
+          '{"access_token":"token","token_type":"unexpected"}',
+          200,
+        ));
+    final service = AthenaAuthService(baseUrl: 'http://athena.local', client: client);
+
+    expect(
+      service.login(email: 'user@example.com', password: 'password-password'),
+      throwsFormatException,
+    );
+  });
+
+  test('session never authenticates with token alone', () {
+    expect(AuthSession.instance.isAuthenticated, isFalse);
+    AuthSession.instance.clear();
+    expect(AuthSession.instance.accessToken, isNull);
+    expect(AuthSession.instance.account, isNull);
+  });
+}

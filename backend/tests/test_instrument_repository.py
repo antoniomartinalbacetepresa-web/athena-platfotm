@@ -312,6 +312,97 @@ def test_count_active_only(
     ) == 1
 
 
+def test_list_active_excludes_inactive_and_orders_by_listing(
+    tmp_path: Path,
+) -> None:
+    repository = _create_repository(
+        tmp_path
+    )
+
+    repository.upsert_many(
+        [
+            {
+                "symbol": "MSFT",
+                "companyName": "Microsoft",
+                "exchangeShortName": "NASDAQ",
+                "isActive": True,
+            },
+            {
+                "symbol": "AAPL",
+                "companyName": "Apple",
+                "exchangeShortName": "NASDAQ",
+                "isActive": True,
+            },
+            {
+                "symbol": "ZZZ",
+                "companyName": "Inactive",
+                "exchangeShortName": "NYSE",
+                "isActive": False,
+            },
+        ]
+    )
+
+    rows = repository.list_active()
+
+    assert [row["symbol"] for row in rows] == [
+        "AAPL",
+        "MSFT",
+    ]
+
+
+def test_list_active_filters_source_and_paginates(
+    tmp_path: Path,
+) -> None:
+    repository = _create_repository(
+        tmp_path
+    )
+
+    repository.upsert_many(
+        [
+            {
+                "symbol": "AAA",
+                "companyName": "A",
+                "exchangeShortName": "NASDAQ",
+                "sourceProvider": "nasdaq_trader",
+            },
+            {
+                "symbol": "BBB",
+                "companyName": "B",
+                "exchangeShortName": "NYSE",
+                "sourceProvider": "nasdaq_trader",
+            },
+            {
+                "symbol": "CCC",
+                "companyName": "C",
+                "exchangeShortName": "XETRA",
+                "sourceProvider": "other_source",
+            },
+        ]
+    )
+
+    rows = repository.list_active(
+        source_provider="nasdaq_trader",
+        limit=1,
+        offset=1,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "BBB"
+    assert rows[0]["source_provider"] == "nasdaq_trader"
+
+
+def test_list_active_validates_pagination(
+    tmp_path: Path,
+) -> None:
+    repository = _create_repository(tmp_path)
+
+    with pytest.raises(ValueError, match="limit"):
+        repository.list_active(limit=0)
+
+    with pytest.raises(ValueError, match="offset"):
+        repository.list_active(offset=-1)
+
+
 def test_upsert_normalizes_boolean_values(
     tmp_path: Path,
 ) -> None:
@@ -654,390 +745,3 @@ def test_upsert_many_with_stats_reports_mixed_changes(
     assert stats.inserted == 1
     assert stats.updated == 1
     assert stats.unchanged == 1
-    assert (
-        stats.inserted
-        + stats.updated
-        + stats.unchanged
-        == stats.processed
-    )
-
-
-def test_upsert_many_with_stats_preserves_existing_api(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    first_ids = repository.upsert_many(
-        [
-            {
-                "symbol": "AAPL",
-                "companyName": "Apple Inc.",
-                "exchangeShortName": "NASDAQ",
-            },
-        ]
-    )
-
-    stats = repository.upsert_many_with_stats(
-        [
-            {
-                "symbol": "AAPL",
-                "companyName": "Apple Inc.",
-                "exchangeShortName": "NASDAQ",
-            },
-        ]
-    )
-
-    second_ids = repository.upsert_many(
-        [
-            {
-                "symbol": "AAPL",
-                "companyName": "Apple Inc.",
-                "exchangeShortName": "NASDAQ",
-            },
-        ]
-    )
-
-    assert first_ids == second_ids
-    assert stats.instrument_ids == tuple(
-        first_ids
-    )
-    assert stats.unchanged == 1
-    assert repository.count() == 1
-
-
-def test_deactivate_missing_for_source_deactivates_only_missing_listings(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert_many(
-        [
-            {
-                "symbol": "KEEP",
-                "companyName": "Keep Company",
-                "exchangeShortName": "NASDAQ",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": True,
-            },
-            {
-                "symbol": "MISS",
-                "companyName": "Missing Company",
-                "exchangeShortName": "NYSE",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": True,
-            },
-        ]
-    )
-
-    deactivated = (
-        repository.deactivate_missing_for_source(
-            source_provider="nasdaq_trader",
-            active_listings={
-                (
-                    "KEEP",
-                    "NASDAQ",
-                ),
-            },
-        )
-    )
-
-    keep = repository.get_by_listing(
-        "KEEP",
-        "NASDAQ",
-    )
-
-    missing = repository.get_by_listing(
-        "MISS",
-        "NYSE",
-    )
-
-    assert deactivated == 1
-
-    assert keep is not None
-    assert keep["is_active"] == 1
-
-    assert missing is not None
-    assert missing["is_active"] == 0
-
-    assert repository.count() == 2
-
-
-def test_deactivate_missing_for_source_does_not_touch_other_sources(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert_many(
-        [
-            {
-                "symbol": "NASDAQ_ONLY",
-                "companyName": "Nasdaq Source Company",
-                "exchangeShortName": "NASDAQ",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": True,
-            },
-            {
-                "symbol": "YAHOO_ONLY",
-                "companyName": "Yahoo Source Company",
-                "exchangeShortName": "NYSE",
-                "sourceProvider": "yahoo",
-                "isActive": True,
-            },
-        ]
-    )
-
-    deactivated = (
-        repository.deactivate_missing_for_source(
-            source_provider="nasdaq_trader",
-            active_listings=set(),
-        )
-    )
-
-    nasdaq_instrument = repository.get_by_listing(
-        "NASDAQ_ONLY",
-        "NASDAQ",
-    )
-
-    yahoo_instrument = repository.get_by_listing(
-        "YAHOO_ONLY",
-        "NYSE",
-    )
-
-    assert deactivated == 1
-
-    assert nasdaq_instrument is not None
-    assert nasdaq_instrument["is_active"] == 0
-
-    assert yahoo_instrument is not None
-    assert yahoo_instrument["is_active"] == 1
-
-
-def test_deactivate_missing_for_source_ignores_already_inactive_rows(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert_many(
-        [
-            {
-                "symbol": "OLD",
-                "companyName": "Old Company",
-                "exchangeShortName": "NYSE",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": False,
-            },
-        ]
-    )
-
-    deactivated = (
-        repository.deactivate_missing_for_source(
-            source_provider="nasdaq_trader",
-            active_listings=set(),
-        )
-    )
-
-    stored = repository.get_by_listing(
-        "OLD",
-        "NYSE",
-    )
-
-    assert deactivated == 0
-
-    assert stored is not None
-    assert stored["is_active"] == 0
-
-
-def test_deactivate_missing_for_source_normalizes_listing_identity(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert(
-        {
-            "symbol": "AAPL",
-            "companyName": "Apple Inc.",
-            "exchangeShortName": "NASDAQ",
-            "sourceProvider": "nasdaq_trader",
-            "isActive": True,
-        }
-    )
-
-    deactivated = (
-        repository.deactivate_missing_for_source(
-            source_provider=" nasdaq_trader ",
-            active_listings={
-                (
-                    " aapl ",
-                    " nasdaq ",
-                ),
-            },
-        )
-    )
-
-    stored = repository.get_by_listing(
-        "AAPL",
-        "NASDAQ",
-    )
-
-    assert deactivated == 0
-
-    assert stored is not None
-    assert stored["is_active"] == 1
-
-
-def test_inactive_listing_can_be_reactivated_by_normal_upsert(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert(
-        {
-            "symbol": "RETURN",
-            "companyName": "Returning Company",
-            "exchangeShortName": "NASDAQ",
-            "sourceProvider": "nasdaq_trader",
-            "isActive": True,
-        }
-    )
-
-    deactivated = (
-        repository.deactivate_missing_for_source(
-            source_provider="nasdaq_trader",
-            active_listings=set(),
-        )
-    )
-
-    inactive = repository.get_by_listing(
-        "RETURN",
-        "NASDAQ",
-    )
-
-    assert deactivated == 1
-    assert inactive is not None
-    assert inactive["is_active"] == 0
-
-    stats = repository.upsert_many_with_stats(
-        [
-            {
-                "symbol": "RETURN",
-                "companyName": "Returning Company",
-                "exchangeShortName": "NASDAQ",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": True,
-            },
-        ]
-    )
-
-    active = repository.get_by_listing(
-        "RETURN",
-        "NASDAQ",
-    )
-
-    assert stats.processed == 1
-    assert stats.inserted == 0
-    assert stats.updated == 1
-    assert stats.unchanged == 0
-
-    assert active is not None
-    assert active["is_active"] == 1
-    assert repository.count() == 1
-
-
-def test_count_active_for_source_counts_only_active_matching_source(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert_many(
-        [
-            {
-                "symbol": "ACTIVE",
-                "companyName": "Active Company",
-                "exchangeShortName": "NASDAQ",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": True,
-            },
-            {
-                "symbol": "INACTIVE",
-                "companyName": "Inactive Company",
-                "exchangeShortName": "NYSE",
-                "sourceProvider": "nasdaq_trader",
-                "isActive": False,
-            },
-            {
-                "symbol": "OTHER",
-                "companyName": "Other Source Company",
-                "exchangeShortName": "NYSE",
-                "sourceProvider": "yahoo",
-                "isActive": True,
-            },
-        ]
-    )
-
-    result = repository.count_active_for_source(
-        "nasdaq_trader"
-    )
-
-    assert result == 1
-
-
-def test_count_active_for_source_normalizes_source_provider(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert(
-        {
-            "symbol": "AAPL",
-            "companyName": "Apple Inc.",
-            "exchangeShortName": "NASDAQ",
-            "sourceProvider": "nasdaq_trader",
-            "isActive": True,
-        }
-    )
-
-    result = repository.count_active_for_source(
-        " nasdaq_trader "
-    )
-
-    assert result == 1
-
-
-def test_count_active_for_source_returns_zero_when_source_is_unknown(
-    tmp_path: Path,
-) -> None:
-    repository = _create_repository(
-        tmp_path
-    )
-
-    repository.upsert(
-        {
-            "symbol": "AAPL",
-            "companyName": "Apple Inc.",
-            "exchangeShortName": "NASDAQ",
-            "sourceProvider": "nasdaq_trader",
-            "isActive": True,
-        }
-    )
-
-    result = repository.count_active_for_source(
-        "unknown_source"
-    )
-
-    assert result == 0

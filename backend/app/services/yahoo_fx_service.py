@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +16,7 @@ class FxRate:
 class YahooFxService:
     _USD = "USD"
 
+    # Known Yahoo conventions retained for compatibility and fewer probes.
     _DIRECT_TO_USD_SYMBOLS: dict[str, str] = {
         "EUR": "EURUSD=X",
     }
@@ -26,6 +27,9 @@ class YahooFxService:
         "HKD": "HKD=X",
     }
 
+    def __init__(self) -> None:
+        self._rate_cache: dict[str, FxRate] = {}
+
     def get_usd_rate(
         self,
         currency: str,
@@ -34,6 +38,18 @@ class YahooFxService:
             currency
         )
 
+        cached = self._rate_cache.get(normalized_currency)
+        if cached is not None:
+            return cached
+
+        rate = self._load_usd_rate(normalized_currency)
+        self._rate_cache[normalized_currency] = rate
+        return rate
+
+    def _load_usd_rate(
+        self,
+        normalized_currency: str,
+    ) -> FxRate:
         if normalized_currency == self._USD:
             return FxRate(
                 currency=self._USD,
@@ -71,10 +87,32 @@ class YahooFxService:
                 source_symbol=inverse_symbol,
             )
 
-        raise ValueError(
-            "No existe una conversión a USD configurada "
-            f"para la moneda {normalized_currency}."
-        )
+        generic_direct = f"{normalized_currency}USD=X"
+        try:
+            quote = self._get_positive_last_price(
+                generic_direct
+            )
+            return FxRate(
+                currency=normalized_currency,
+                usd_rate=quote,
+                source_symbol=generic_direct,
+            )
+        except RuntimeError:
+            generic_inverse = f"USD{normalized_currency}=X"
+            try:
+                quote = self._get_positive_last_price(
+                    generic_inverse
+                )
+                return FxRate(
+                    currency=normalized_currency,
+                    usd_rate=1.0 / quote,
+                    source_symbol=generic_inverse,
+                )
+            except RuntimeError as inverse_error:
+                raise ValueError(
+                    "No se pudo obtener una conversión a USD válida "
+                    f"para la moneda {normalized_currency}."
+                ) from inverse_error
 
     def convert_to_usd(
         self,
@@ -95,6 +133,9 @@ class YahooFxService:
         )
 
         return normalized_amount * fx_rate.usd_rate
+
+    def clear_cache(self) -> None:
+        self._rate_cache.clear()
 
     def _get_positive_last_price(
         self,

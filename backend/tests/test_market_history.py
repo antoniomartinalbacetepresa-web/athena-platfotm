@@ -31,6 +31,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 32419200.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
             {
                 "symbol": "AAPL",
@@ -43,6 +45,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 38609800.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
         ]
 
@@ -75,6 +79,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 32419200.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
             {
                 "symbol": "AAPL",
@@ -87,8 +93,17 @@ def test_market_history_returns_normalized_data(
                 "volume": 38609800.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
-        ]
+        ],
+        "provenance": {
+            "retrievalMode": "current_provider_history",
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "sourceProviders": ["yahoo"],
+            "retrievedAt": "2026-10-05T21:40:00+00:00",
+        },
     }
 
 
@@ -116,6 +131,13 @@ def test_market_history_can_return_empty_list(
     assert response.status_code == 200
     assert response.json() == {
         "data": [],
+        "provenance": {
+            "retrievalMode": "current_provider_history",
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "sourceProviders": [],
+            "retrievedAt": None,
+        },
     }
 
 
