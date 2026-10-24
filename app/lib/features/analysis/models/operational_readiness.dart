@@ -14,15 +14,35 @@ class OperationalReadiness {
   final List<String> blockers;
 
   factory OperationalReadiness.fromMap(Map<String, dynamic> map) {
+    final percent = map['completionPercent'];
+    final passed = map['passedGateCount'];
+    final total = map['totalGateCount'];
     final blockers = map['blockers'];
+    if (percent is! num ||
+        !percent.isFinite ||
+        percent < 0 ||
+        percent > 100 ||
+        passed is! int ||
+        total is! int ||
+        passed < 0 ||
+        total <= 0 ||
+        passed > total ||
+        blockers is! List ||
+        !blockers.every((item) => item is String) ||
+        map['ready'] is! bool ||
+        (percent - (passed / total) * 100).abs() > 0.11) {
+      throw const FormatException('ATHENA readiness contiene contadores incoherentes.');
+    }
+    final verifiedBlockers = List<String>.unmodifiable(blockers);
     return OperationalReadiness(
-      completionPercent: (map['completionPercent'] as num?)?.toDouble() ?? 0,
-      passedGateCount: (map['passedGateCount'] as num?)?.toInt() ?? 0,
-      totalGateCount: (map['totalGateCount'] as num?)?.toInt() ?? 0,
-      ready: map['ready'] == true,
-      blockers: blockers is List
-          ? blockers.map((item) => item.toString()).toList(growable: false)
-          : const [],
+      completionPercent: percent.toDouble(),
+      passedGateCount: passed,
+      totalGateCount: total,
+      ready: map['ready'] == true &&
+          passed == total &&
+          percent == 100 &&
+          verifiedBlockers.isEmpty,
+      blockers: verifiedBlockers,
     );
   }
 }
