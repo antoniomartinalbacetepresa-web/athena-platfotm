@@ -12,6 +12,7 @@ import hashlib
 import json
 import sqlite3
 import tempfile
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -48,9 +49,12 @@ def run_snapshot(
     with tempfile.TemporaryDirectory(prefix="athena-history-snapshot-") as directory:
         snapshot_path = Path(directory) / "market-history.db"
         # URI mode=ro prevents creation or modification of the source database.
-        with sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True) as source:
-            with sqlite3.connect(snapshot_path) as snapshot:
+        with closing(sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)) as source:
+            with closing(sqlite3.connect(snapshot_path)) as snapshot:
                 source.backup(snapshot)
+        # Fingerprint the exact backed-up source image, before any migrations
+        # performed against the disposable copy.
+        fingerprint = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
 
         database = AthenaDatabase(snapshot_path)
         coverage = MarketObservationCoverageService(database=database).get_report(
@@ -59,7 +63,6 @@ def run_snapshot(
         gaps = MarketHistoryGapService(database=database).get_report(
             as_of=cutoff, limit=1
         )
-        fingerprint = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
 
     eligible = coverage.history_eligible_instrument_count
     current = coverage.current_deep_history_instrument_count
