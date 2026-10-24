@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/operational_readiness.dart';
 import '../models/market_history_gaps.dart';
+import '../models/market_history_coverage.dart';
 
 class AthenaReadinessService {
   static const String defaultBackendUrl = String.fromEnvironment(
@@ -59,6 +60,29 @@ class AthenaReadinessService {
       throw const FormatException('Diagnóstico PIT no es un objeto JSON.');
     }
     return MarketHistoryGapsPage.fromMap(
+      Map<String, dynamic>.from(decoded),
+      expectedAsOf: asOf,
+    );
+  }
+
+
+  /// Read-only persisted PIT measurement at the readiness snapshot cutoff.
+  Future<MarketHistoryCoverage> getMarketHistoryCoverage({
+    required DateTime asOf,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/v1/readiness/market-history/coverage')
+        .replace(queryParameters: {
+      'asOf': asOf.toUtc().toIso8601String(),
+    });
+    final response = await client.get(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Cobertura histórica PIT no disponible.');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw const FormatException('Cobertura histórica PIT no es un objeto JSON.');
+    }
+    return MarketHistoryCoverage.fromMap(
       Map<String, dynamic>.from(decoded),
       expectedAsOf: asOf,
     );

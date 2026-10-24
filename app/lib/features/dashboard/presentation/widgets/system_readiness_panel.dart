@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../analysis/models/operational_readiness.dart';
 import 'market_history_gaps_dialog.dart';
+import 'market_history_coverage_dialog.dart';
 import '../../../analysis/services/athena_readiness_service.dart';
 import 'base/athena_card.dart';
 
@@ -162,6 +163,25 @@ class _SystemReadinessPanelState extends State<SystemReadinessPanel> {
                   },
                   icon: const Icon(
                     Icons.fact_check_outlined,
+                    color: AthenaColors.textSecondary,
+                  ),
+                ),
+              if (history != null)
+                IconButton(
+                  tooltip: 'Ver cobertura histórica persistida',
+                  onPressed: () {
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => MarketHistoryCoverageDialog(
+                        service: _service,
+                        asOf: report.asOf,
+                        expectedEligible: history.eligibleInstrumentCount,
+                        expectedCurrent: history.currentDeepHistoryInstrumentCount,
+                      ),
+                    );
+                  },
+                  icon: const Icon(
+                    Icons.analytics_outlined,
                     color: AthenaColors.textSecondary,
                   ),
                 ),
