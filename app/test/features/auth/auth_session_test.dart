@@ -275,6 +275,72 @@ void main() {
     expect(store.token, isNull);
   });
 
+  test('blank stored-token deletion cannot erase a newer login', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore(token: '   ');
+    final session = AuthSession.forTesting(store);
+    final restoring = session.restore(
+      validateToken: (_) async => throw StateError('must not validate blank'),
+      shouldDiscardToken: (_) => true,
+    );
+    await store.firstDeleteStarted.future;
+
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+
+    expect(await restoring, AuthSessionRestoreResult.restored);
+    expect(session.account?.id, 23);
+    expect(session.accessToken, 'new-owner-token');
+    expect(store.token, 'new-owner-token');
+  });
+
+  test('rejected stored-token deletion cannot erase a newer login', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore(token: 'revoked-token');
+    final session = AuthSession.forTesting(store);
+    final restoring = session.restore(
+      validateToken: (_) async => throw const _RejectedSession(),
+      shouldDiscardToken: (error) => error is _RejectedSession,
+    );
+    await store.firstDeleteStarted.future;
+
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+
+    expect(await restoring, AuthSessionRestoreResult.restored);
+    expect(session.account?.id, 23);
+    expect(session.accessToken, 'new-owner-token');
+    expect(store.token, 'new-owner-token');
+  });
+
+  test('failed restore-deletion repair revokes newer memory authority', () async {
+    final store = _FirstDeleteDelayedAuthTokenStore(
+      token: 'revoked-token',
+      failRepairWrites: true,
+    );
+    final session = AuthSession.forTesting(store);
+    final restoring = session.restore(
+      validateToken: (_) async => throw const _RejectedSession(),
+      shouldDiscardToken: (error) => error is _RejectedSession,
+    );
+    await store.firstDeleteStarted.future;
+
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    store.releaseFirstDelete.complete();
+
+    expect(await restoring, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(store.token, isNull);
+  });
+
   test('delayed clear deletion cannot erase a newer owner credential', () async {
     final store = _FirstDeleteDelayedAuthTokenStore();
     final session = AuthSession.forTesting(store);
@@ -512,9 +578,14 @@ class _FirstWriteDelayedAuthTokenStore implements AuthTokenStore {
 }
 
 class _FirstDeleteDelayedAuthTokenStore implements AuthTokenStore {
-  _FirstDeleteDelayedAuthTokenStore({this.delayRepair = false});
+  _FirstDeleteDelayedAuthTokenStore({
+    this.delayRepair = false,
+    this.failRepairWrites = false,
+    this.token,
+  });
 
   final bool delayRepair;
+  final bool failRepairWrites;
   final Completer<void> firstDeleteStarted = Completer<void>();
   final Completer<void> releaseFirstDelete = Completer<void>();
   final Completer<void> repairStarted = Completer<void>();
@@ -542,6 +613,9 @@ class _FirstDeleteDelayedAuthTokenStore implements AuthTokenStore {
     if (_writes == 3 && delayRepair) {
       repairStarted.complete();
       await releaseRepair.future;
+    }
+    if (_writes == 2 && failRepairWrites) {
+      throw StateError('secure storage repair unavailable');
     }
     token = value;
   }

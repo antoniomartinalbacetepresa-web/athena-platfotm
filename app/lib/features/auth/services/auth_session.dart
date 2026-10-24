@@ -94,12 +94,17 @@ class AuthSession extends ChangeNotifier {
     final token = storedToken.trim();
     if (token.isEmpty) {
       _clearMemory();
+      // A newer login may finish while this stale restore deletes its token.
+      // Reconcile with the current authority instead of erasing that login.
+      final deletionAuthorityVersion = _authorityVersion;
       try {
-        await _tokenStore.deleteAccessToken();
+        await _deletePersistedForAuthority(deletionAuthorityVersion);
       } catch (_) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
-      return AuthSessionRestoreResult.rejected;
+      return _authorityVersion != deletionAuthorityVersion && isAuthenticated
+          ? AuthSessionRestoreResult.restored
+          : AuthSessionRestoreResult.rejected;
     }
 
     try {
@@ -121,12 +126,17 @@ class AuthSession extends ChangeNotifier {
       if (!shouldDiscardToken(error)) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
+      // A newer login may finish while this stale restore deletes its token.
+      // Reconcile with the current authority instead of erasing that login.
+      final deletionAuthorityVersion = _authorityVersion;
       try {
-        await _tokenStore.deleteAccessToken();
+        await _deletePersistedForAuthority(deletionAuthorityVersion);
       } catch (_) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
-      return AuthSessionRestoreResult.rejected;
+      return _authorityVersion != deletionAuthorityVersion && isAuthenticated
+          ? AuthSessionRestoreResult.restored
+          : AuthSessionRestoreResult.rejected;
     }
   }
 
