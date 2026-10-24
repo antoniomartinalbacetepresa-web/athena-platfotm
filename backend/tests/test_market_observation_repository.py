@@ -344,3 +344,49 @@ def test_market_observation_repository_excludes_legacy_predated_retrieval(
     assert repository.list_for_instrument(
         instrument_id, knowledge_cutoff=observed + timedelta(days=2)
     ) == []
+
+@pytest.mark.parametrize("legacy_provider", ["", "fmp", "FinancialModelingPrep", "F-M-P", "%66mp"])
+def test_market_observation_repository_hides_forbidden_legacy_sources(
+    tmp_path: Path, legacy_provider: str
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 100.0}],
+        source_provider="yahoo",
+        retrieved_at=observed + timedelta(days=1),
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_provider = ? WHERE instrument_id = ?",
+            (legacy_provider, instrument_id),
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+
+
+def test_market_observation_repository_rejects_legacy_future_source_timestamp(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    retrieved = observed + timedelta(days=1)
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 100.0}],
+        source_provider="yahoo",
+        retrieved_at=retrieved,
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_timestamp = ? WHERE instrument_id = ?",
+            ((retrieved + timedelta(days=1)).isoformat(), instrument_id),
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+    assert repository.list_for_instrument(
+        instrument_id, knowledge_cutoff=retrieved + timedelta(days=2)
+    ) == []

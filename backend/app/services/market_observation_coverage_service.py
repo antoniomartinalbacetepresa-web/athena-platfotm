@@ -152,6 +152,7 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                       AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND (mo.source_timestamp IS NULL OR julianday(mo.source_timestamp) <= julianday(mo.retrieved_at))
                   AND TRIM(COALESCE(mo.source_provider, '')) <> ''
                   AND INSTR(mo.source_provider, '%') = 0
                   AND INSTR(mo.source_provider, '&') = 0
@@ -185,6 +186,7 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND (mo.source_timestamp IS NULL OR julianday(mo.source_timestamp) <= julianday(mo.retrieved_at))
                   AND TRIM(COALESCE(mo.source_provider, '')) <> ''
                   AND INSTR(mo.source_provider, '%') = 0
                   AND INSTR(mo.source_provider, '&') = 0
@@ -270,6 +272,7 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND (mo.source_timestamp IS NULL OR julianday(mo.source_timestamp) <= julianday(mo.retrieved_at))
                   AND TRIM(COALESCE(mo.source_provider, '')) <> ''
                   AND INSTR(mo.source_provider, '%') = 0
                   AND INSTR(mo.source_provider, '&') = 0

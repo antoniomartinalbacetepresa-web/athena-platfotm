@@ -367,3 +367,27 @@ def test_legacy_forbidden_provenance_is_a_history_gap(
     assert report.items[0].reason == "no_observations"
     assert report.items[0].best_source_provider is None
     assert report.to_api_dict()["productionEvidenceClaimed"] is False
+
+def test_future_source_timestamp_remains_blocked_in_gap_diagnostics(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "FUTURESRC")
+    base = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    retrieved = base + timedelta(days=366)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=retrieved,
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_timestamp = ? WHERE instrument_id = ?",
+            ((retrieved + timedelta(days=1)).isoformat(), instrument_id),
+        )
+    report = MarketHistoryGapService(database=database).get_report(
+        as_of=retrieved + timedelta(days=2)
+    )
+    assert report.total_blocking_count == 1
+    assert report.no_observations_count == 1
+    assert report.items[0].reason == "no_observations"
+    assert report.to_api_dict()["productionEvidenceClaimed"] is False

@@ -477,3 +477,26 @@ def test_legacy_forbidden_provenance_cannot_claim_historical_coverage(
     assert report.current_deep_history_instrument_count == 0
     assert report.by_source == {}
     assert report.to_api_dict()["productionCoverageClaimed"] is False
+
+def test_future_source_timestamp_cannot_count_as_pit_coverage(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "FUTURESRC")
+    base = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    retrieved = base + timedelta(days=366)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=retrieved,
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_timestamp = ? WHERE instrument_id = ?",
+            ((retrieved + timedelta(days=1)).isoformat(), instrument_id),
+        )
+    report = MarketObservationCoverageService(database=database).get_report(
+        as_of=retrieved + timedelta(days=2)
+    )
+    assert report.observation_count == 0
+    assert report.current_deep_history_instrument_count == 0
+    assert report.to_api_dict()["productionCoverageClaimed"] is False

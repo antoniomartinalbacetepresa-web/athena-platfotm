@@ -117,6 +117,7 @@ class MarketObservationRepository:
             "instrument_id = ?",
             # Reject imported records that violate the write-time PIT invariant.
             "julianday(retrieved_at) >= julianday(observed_at)",
+            "(source_timestamp IS NULL OR julianday(source_timestamp) <= julianday(retrieved_at))",
         ]
 
         if source_provider is not None:
@@ -157,7 +158,15 @@ class MarketObservationRepository:
                 tuple(params),
             ).fetchall()
 
-        result = [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            # Legacy rows can predate source-policy validation. Do not return
+            # forbidden or untraceable provenance to any PIT consumer.
+            try:
+                self._required_text(row["source_provider"], "source_provider")
+            except ValueError:
+                continue
+            result.append(dict(row))
         if cutoff_iso is not None:
             cutoff_dt = datetime.fromisoformat(cutoff_iso)
             for row in result:
