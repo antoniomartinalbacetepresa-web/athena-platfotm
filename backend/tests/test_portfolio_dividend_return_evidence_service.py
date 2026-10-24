@@ -194,3 +194,65 @@ def test_dividend_series_requires_complete_instrument_identity() -> None:
     assert check((SimpleNamespace(instrument_id="AAPL:XNAS"), SimpleNamespace(instrument_id=None))) is False
     assert check((SimpleNamespace(instrument_id="AAPL:XNAS"), SimpleNamespace(instrument_id=" "))) is False
     assert check((SimpleNamespace(instrument_id="AAPL:XNAS"), SimpleNamespace(instrument_id="MSFT:XNAS"))) is False
+
+
+@pytest.mark.parametrize("event_type,amount", [
+    ("cash_dividend", 1e308),
+    ("fee", -1e308),
+    ("tax", -1e308),
+])
+def test_portfolio_dividend_cash_aggregate_overflow_fails_closed(
+    tmp_path, event_type, amount,
+) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    ledger.append(as_of=AS_OF, item=_event(event_type, amount, "overflow-1"))
+    ledger.append(as_of=AS_OF, item=_event(event_type, amount, "overflow-2"))
+
+    with pytest.raises(ValueError, match="cash aggregate must be finite"):
+        PortfolioDividendReturnEvidenceService(ledger).build(
+            portfolio_id="personal",
+            reporting_currency="EUR",
+            period_start=START,
+            period_end=END,
+            as_of=AS_OF,
+        )
+
+
+def test_portfolio_dividend_yield_overflow_fails_closed(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    fundamentals = DividendFundamentalEvidence(
+        price=5e-324,
+        trailing_dividend_per_share=1e308,
+        available_at=AS_OF,
+        source="issuer_filing",
+        source_ref="extreme-price-and-dividend",
+    )
+
+    with pytest.raises(ValueError, match="yield must be finite"):
+        PortfolioDividendReturnEvidenceService(ledger).build(
+            portfolio_id="personal",
+            reporting_currency="EUR",
+            period_start=START,
+            period_end=END,
+            as_of=AS_OF,
+            fundamentals=fundamentals,
+        )
+
+
+def test_large_offsetting_dividend_and_fee_remain_finite(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    ledger.append(as_of=AS_OF, item=_event("cash_dividend", 1e308, "large-dividend"))
+    ledger.append(as_of=AS_OF, item=_event("fee", -1e308, "large-fee"))
+
+    result = PortfolioDividendReturnEvidenceService(ledger).build(
+        portfolio_id="personal",
+        reporting_currency="EUR",
+        period_start=START,
+        period_end=END,
+        as_of=AS_OF,
+    )
+    assert result.gross_dividends == 1e308
+    assert result.fees == -1e308
+    assert result.net_internal_cash_return == 0.0
+    assert result.to_dict()["productionEligible"] is False
+    assert result.to_dict()["automaticTrading"] is False
