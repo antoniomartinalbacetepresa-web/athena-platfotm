@@ -197,7 +197,9 @@ class AuthSession extends ChangeNotifier {
     _storageDeletionUnconfirmed = true;
     unawaited(
       _mutateStoredToken(() => _tokenStore.deleteAccessToken()).then(
-        (_) => _storageDeletionUnconfirmed = false,
+        (_) {
+          _storageDeletionUnconfirmed = false;
+        },
         onError: (Object _) {},
       ),
     );
