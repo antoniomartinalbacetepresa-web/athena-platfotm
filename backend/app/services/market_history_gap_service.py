@@ -92,8 +92,12 @@ class MarketHistoryGapService:
                 "minimum_history_days no puede ser inferior a "
                 f"{self.DEFAULT_MINIMUM_HISTORY_DAYS}."
             )
-        if maximum_source_gap_days <= 0:
-            raise ValueError("maximum_source_gap_days debe ser mayor que 0.")
+        if (
+            isinstance(maximum_source_gap_days, bool)
+            or not isinstance(maximum_source_gap_days, int)
+            or not 0 < maximum_source_gap_days <= self.DEFAULT_MAXIMUM_SOURCE_GAP_DAYS
+        ):
+            raise ValueError("maximum_source_gap_days debe estar entre 1 y 7.")
         self._database = database if database is not None else AthenaDatabase()
         self._minimum_history_days = int(minimum_history_days)
         self._maximum_source_gap_days = int(maximum_source_gap_days)
