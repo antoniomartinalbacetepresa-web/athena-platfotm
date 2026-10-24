@@ -151,6 +151,7 @@ class MarketObservationCoverageService:
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                       AND julianday(mo.observed_at) <= julianday(?)
                       AND julianday(mo.retrieved_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
                 )
                 SELECT COUNT(*) AS observation_count,
                        COUNT(DISTINCT instrument_id) AS covered_instrument_count,
@@ -178,6 +179,7 @@ class MarketObservationCoverageService:
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
                 ),
                 ordered_history AS (
                     SELECT instrument_id,
@@ -257,6 +259,7 @@ class MarketObservationCoverageService:
                       AND LOWER(TRIM(COALESCE(i.instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
                 )
                 SELECT grouped.source_provider,
                        COUNT(*) AS observation_count,
