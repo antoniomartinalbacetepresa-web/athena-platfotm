@@ -251,6 +251,50 @@ def test_history_depth_rejects_non_positive_gap_threshold(tmp_path: Path) -> Non
         MarketObservationCoverageService(database=database, maximum_source_gap_days=0)
 
 
+@pytest.mark.parametrize("days", [0, 30, 364, True, 365.5])
+def test_history_coverage_rejects_weakened_depth_requirement(
+    tmp_path: Path, days: object,
+) -> None:
+    with pytest.raises(ValueError, match="minimum_history_days"):
+        MarketObservationCoverageService(
+            database=_database(tmp_path), minimum_history_days=days,
+        )
+
+
+@pytest.mark.parametrize("coverage", [0.0, 0.5, 0.999, True, float("nan")])
+def test_history_coverage_rejects_less_than_full_eligible_universe(
+    tmp_path: Path, coverage: object,
+) -> None:
+    with pytest.raises(ValueError, match="minimum_deep_history_coverage"):
+        MarketObservationCoverageService(
+            database=_database(tmp_path), minimum_deep_history_coverage=coverage,
+        )
+
+
+@pytest.mark.parametrize("gap_days", [-1, 0, 0.5, 8, 365, True])
+def test_history_coverage_rejects_relaxed_or_fractional_gap(
+    tmp_path: Path, gap_days: object,
+) -> None:
+    with pytest.raises(ValueError, match="maximum_source_gap_days"):
+        MarketObservationCoverageService(
+            database=_database(tmp_path), maximum_source_gap_days=gap_days,
+        )
+
+
+def test_history_coverage_allows_stricter_thresholds(tmp_path: Path) -> None:
+    service = MarketObservationCoverageService(
+        database=_database(tmp_path),
+        minimum_history_days=400,
+        minimum_deep_history_coverage=1.0,
+        maximum_source_gap_days=5,
+    )
+    report = service.get_report()
+    assert report.minimum_history_days == 400
+    assert report.minimum_deep_history_coverage == 1.0
+    assert report.maximum_source_gap_days == 5
+    assert report.history_depth_ready is False
+
+
 def test_coverage_as_of_excludes_late_discovered_observations_everywhere(
     tmp_path: Path,
 ) -> None:
