@@ -135,3 +135,28 @@ def test_historical_identity_rejects_future_observation_date() -> None:
         )
 
     assert market.history_calls == []
+
+
+def test_persisted_fx_from_forbidden_provider_cannot_be_replayed(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    repository.save(
+        observed_on=date(2026, 8, 3),
+        base_currency="USD",
+        quote_currency="EUR",
+        rate=0.865,
+        source_provider="FMP",
+        source_symbol="USDEUR=X",
+        observed_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+        retrieved_at=datetime(2026, 8, 4, 12, tzinfo=timezone.utc),
+    )
+    market = FakeMarketService([])
+    with pytest.raises(RuntimeError, match="FMP"):
+        FxQuoteService(
+            market_service=market, repository=repository
+        ).get_historical_rate(
+            base_currency="USD",
+            quote_currency="EUR",
+            observed_on=date(2026, 8, 3),
+            knowledge_cutoff=datetime(2026, 8, 4, 12, 5, tzinfo=timezone.utc),
+        )
+    assert market.history_calls == []
