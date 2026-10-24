@@ -67,7 +67,7 @@ void main() {
     expect(controller.message, contains('No se han enviado P/L'));
     expect(controller.message, isNot(contains('no ha enviado coste de compra')));
     expect(controller.message, isNot(contains('100')));
-    expect(controller.message, contains('no ha eliminado posiciones remotas'));
+    expect(controller.message, contains('no se han eliminado posiciones remotas'));
   });
 
   test('sync failure preserves fail-closed semantics in presentation state', () async {
