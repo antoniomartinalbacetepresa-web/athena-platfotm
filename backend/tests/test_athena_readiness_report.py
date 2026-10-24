@@ -72,6 +72,7 @@ def _complete_learning(*, forecast_coverage: float = 1.0) -> dict[str, object]:
         },
         "researchForecastErrorOos": {
             "status": "forecast_error_oos_evidence_available",
+            "cohortHash": "a" * 64,
             "eligibleOutcomeCount": 2,
             "forecastErrorCount": 2,
             "missingForecastErrorCount": 0,
@@ -454,3 +455,25 @@ def test_oos_outcome_gate_rejects_horizon_count_mismatch_and_unverified_policy()
     assert "research_outcome_oos_evidence_pending" in _readiness(
         learning=learning
     )["blockers"]
+
+
+def test_forecast_error_must_reference_the_verified_outcome_cohort():
+    learning = _complete_learning()
+    learning["researchForecastErrorOos"]["cohortHash"] = "b" * 64
+    report = _readiness(learning=learning)
+    assert report["ready"] is False
+    assert "forecast_error_oos_measurement_incomplete" in report["blockers"]
+    assert report["policy"]["productionEligibilityClaimed"] is False
+
+
+def test_inherited_weighting_blockers_cannot_coexist_with_ready_true():
+    report = build_operational_readiness(
+        universe={"isGlobalReady": True},
+        weighting={"ready": True, "blockers": ["human_approval_missing"]},
+        market_history=_complete_market_history(),
+        corporate_actions=_complete_corporate_actions(),
+        learning=_complete_learning(),
+    )
+    assert report["passedGateCount"] == report["totalGateCount"]
+    assert report["ready"] is False
+    assert "human_approval_missing" in report["blockers"]
