@@ -383,6 +383,13 @@ def build_readiness_report(
         "marketWeighting": weighting,
         "instrumentTypes": instrument_types,
         "marketHistory": market_history,
+        "marketHistoryCoverageDiagnostics": {
+            "endpoint": "/api/v1/readiness/market-history/coverage",
+            "method": "GET",
+            "asOfParameter": "asOf",
+            "readOnly": True,
+            "productionEvidenceClaimed": False,
+        },
         "marketHistoryGapDiagnostics": {
             "endpoint": "/api/v1/readiness/market-history/gaps",
             "method": "GET",
