@@ -24,6 +24,28 @@ class AuthSession extends ChangeNotifier {
   String? _accessToken;
   AuthAccount? _account;
   int _authorityVersion = 0;
+  int _persistAttemptVersion = 0;
+  Future<void>? _pendingTokenMutation;
+  bool _storageDeletionUnconfirmed = false;
+
+  // Serialize only overlapping secure-storage writes/deletes. An uncontended
+  // operation starts immediately, preserving widget-test and UI scheduling.
+  Future<void> _mutateStoredToken(Future<void> Function() action) {
+    final previous = _pendingTokenMutation;
+    final operation =
+        previous == null ? action() : previous.then((_) => action());
+    final settled = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    _pendingTokenMutation = settled;
+    unawaited(settled.then((_) {
+      if (identical(_pendingTokenMutation, settled)) {
+        _pendingTokenMutation = null;
+      }
+    }));
+    return operation;
+  }
 
   String? get accessToken => _accessToken;
   AuthAccount? get account => _account;
@@ -51,7 +73,14 @@ class AuthSession extends ChangeNotifier {
     if (token.isEmpty || !account.isActive) {
       throw ArgumentError('La sesión autenticada no es válida.');
     }
-    await _tokenStore.writeAccessToken(token);
+    final authorityVersion = _authorityVersion;
+    final attemptVersion = ++_persistAttemptVersion;
+    await _mutateStoredToken(() => _tokenStore.writeAccessToken(token));
+    if (_authorityVersion != authorityVersion ||
+        _persistAttemptVersion != attemptVersion) {
+      throw StateError('La autoridad cambió durante el inicio de sesión.');
+    }
+    _storageDeletionUnconfirmed = false;
     establish(accessToken: token, account: account);
   }
 
@@ -60,6 +89,11 @@ class AuthSession extends ChangeNotifier {
     required bool Function(Object error) shouldDiscardToken,
   }) async {
     if (isAuthenticated) return AuthSessionRestoreResult.restored;
+    final pending = _pendingTokenMutation;
+    if (pending != null) await pending;
+    if (_storageDeletionUnconfirmed) {
+      return AuthSessionRestoreResult.temporarilyUnavailable;
+    }
     final restoreAuthorityVersion = _authorityVersion;
 
     final String? storedToken;
@@ -87,8 +121,10 @@ class AuthSession extends ChangeNotifier {
     final token = storedToken.trim();
     if (token.isEmpty) {
       _clearMemory();
+      _storageDeletionUnconfirmed = true;
       try {
-        await _tokenStore.deleteAccessToken();
+        await _mutateStoredToken(() => _tokenStore.deleteAccessToken());
+        _storageDeletionUnconfirmed = false;
       } catch (_) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
@@ -114,8 +150,10 @@ class AuthSession extends ChangeNotifier {
       if (!shouldDiscardToken(error)) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
+      _storageDeletionUnconfirmed = true;
       try {
-        await _tokenStore.deleteAccessToken();
+        await _mutateStoredToken(() => _tokenStore.deleteAccessToken());
+        _storageDeletionUnconfirmed = false;
       } catch (_) {
         return AuthSessionRestoreResult.temporarilyUnavailable;
       }
@@ -125,13 +163,17 @@ class AuthSession extends ChangeNotifier {
 
   Future<void> clearPersisted() async {
     _clearMemory();
-    await _tokenStore.deleteAccessToken();
+    _storageDeletionUnconfirmed = true;
+    await _mutateStoredToken(() => _tokenStore.deleteAccessToken());
+    _storageDeletionUnconfirmed = false;
   }
 
   Future<bool> clearAfterRemoteInvalidation() async {
     _clearMemory();
+    _storageDeletionUnconfirmed = true;
     try {
-      await _tokenStore.deleteAccessToken();
+      await _mutateStoredToken(() => _tokenStore.deleteAccessToken());
+      _storageDeletionUnconfirmed = false;
       return true;
     } catch (_) {
       return false;
@@ -152,7 +194,13 @@ class AuthSession extends ChangeNotifier {
 
   void clear() {
     _clearMemory();
-    unawaited(_tokenStore.deleteAccessToken().catchError((Object _) {}));
+    _storageDeletionUnconfirmed = true;
+    unawaited(
+      _mutateStoredToken(() => _tokenStore.deleteAccessToken()).then(
+        (_) => _storageDeletionUnconfirmed = false,
+        onError: (Object _) {},
+      ),
+    );
   }
 
   void _clearMemory() {
@@ -162,6 +210,7 @@ class AuthSession extends ChangeNotifier {
     // A clear is an authority transition even if memory was already empty.
     // Otherwise a pending restore can resurrect a session after logout.
     _authorityVersion += 1;
+    _persistAttemptVersion += 1;
     if (changed) {
       notifyListeners();
     }
