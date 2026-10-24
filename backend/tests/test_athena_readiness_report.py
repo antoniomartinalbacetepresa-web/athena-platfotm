@@ -126,6 +126,12 @@ def test_athena_readiness_report_is_read_only_and_conservative(tmp_path: Path) -
     assert report["marketHistory"]["historyDepthReady"] is False
     assert report["marketHistory"]["currentHistoryDepthReady"] is False
     assert report["marketHistory"]["pointInTimeCutoffApplied"] is True
+    coverage_link = report["marketHistoryCoverageDiagnostics"]
+    assert coverage_link["endpoint"] == "/api/v1/readiness/market-history/coverage"
+    assert coverage_link["method"] == "GET"
+    assert coverage_link["asOfParameter"] == "asOf"
+    assert coverage_link["readOnly"] is True
+    assert coverage_link["productionEvidenceClaimed"] is False
     assert report["corporateActions"]["eventCount"] == 0
     assert report["corporateActions"]["crossProviderReconciliationReady"] is False
     assert report["corporateActions"]["productionIndependenceClaimed"] is False
