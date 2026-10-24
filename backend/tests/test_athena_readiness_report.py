@@ -474,6 +474,8 @@ def test_inherited_weighting_blockers_cannot_coexist_with_ready_true():
         corporate_actions=_complete_corporate_actions(),
         learning=_complete_learning(),
     )
-    assert report["passedGateCount"] == report["totalGateCount"]
+    assert report["passedGateCount"] == report["totalGateCount"] - 1
+    assert report["completionPercent"] < 100.0
     assert report["ready"] is False
+    assert "canonical_market_weighting_not_ready" in report["blockers"]
     assert "human_approval_missing" in report["blockers"]
