@@ -29,7 +29,9 @@ class PositionUpsertRequest(BaseModel):
 
     symbol: str = Field(min_length=1, max_length=32)
     exchange: str | None = Field(default=None, max_length=32)
-    quantity: float = Field(gt=0, le=1_000_000_000_000)
+    # Validate the quantity range at the HTTP boundary as well: non-standard
+    # JSON NaN/Infinity values must not enter Pydantic's serialized 422 detail.
+    quantity: float
     # Keep finiteness/range validation at the HTTP boundary below. Pydantic can
     # accept IEEE-754 NaN/Infinity as floats; raising a model validation error
     # that embeds those values can itself become non-JSON-serializable.
@@ -184,6 +186,12 @@ def put_personal_portfolio_position(
     account: Annotated[dict[str, Any], Depends(current_account)],
 ) -> dict[str, Any]:
     owner_id = _owner_id(account)
+    quantity = payload.quantity
+    if not math.isfinite(quantity) or quantity <= 0 or quantity > 1_000_000_000_000:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="quantity debe ser un número finito, positivo y dentro del límite operativo.",
+        )
     average_purchase_price = payload.averagePurchasePrice
     if average_purchase_price is not None:
         if (
@@ -203,7 +211,7 @@ def put_personal_portfolio_position(
             owner_user_id=owner_id,
             symbol=payload.symbol,
             exchange=payload.exchange,
-            quantity=payload.quantity,
+            quantity=quantity,
             average_purchase_price=average_purchase_price,
         )
     except ValueError as exc:

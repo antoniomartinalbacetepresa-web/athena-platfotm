@@ -170,3 +170,60 @@ def test_legacy_position_without_cost_basis_does_not_require_encryption_key(monk
         loaded = client.get("/api/v1/user/portfolio", headers=_headers(token))
         assert loaded.status_code == 200, loaded.text
         assert loaded.json()["data"]["positions"][0]["averagePurchasePrice"] is None
+
+def test_quantity_rejects_non_finite_json_without_changing_owner_holdings(
+    monkeypatch, tmp_path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token = _register_and_token(client, email="nonfinite-quantity@example.com")
+        headers = _headers(token)
+        created = client.put(
+            "/api/v1/user/portfolio/positions",
+            headers=headers,
+            json={
+                "symbol": "AAPL",
+                "exchange": "NASDAQ",
+                "quantity": 3.5,
+                "averagePurchasePrice": 187.25,
+            },
+        )
+        assert created.status_code == 200, created.text
+        original = created.json()["data"]
+
+        for raw_quantity in ("NaN", "Infinity", "-Infinity", "1e309"):
+            response = client.put(
+                "/api/v1/user/portfolio/positions",
+                headers={**headers, "Content-Type": "application/json"},
+                content=(
+                    '{"symbol":"AAPL","exchange":"NASDAQ",'
+                    f'"quantity":{raw_quantity}}}'
+                ),
+            )
+            assert response.status_code == 422, (raw_quantity, response.text)
+            assert "quantity" in response.json()["detail"]
+
+            loaded = client.get("/api/v1/user/portfolio", headers=headers)
+            assert loaded.status_code == 200, loaded.text
+            positions = loaded.json()["data"]["positions"]
+            assert len(positions) == 1
+            assert positions[0]["id"] == original["id"]
+            assert positions[0]["quantity"] == 3.5
+            assert positions[0]["averagePurchasePrice"] == pytest.approx(187.25)
+
+
+@pytest.mark.parametrize("quantity", [0, -1, 1_000_000_000_000.01])
+def test_quantity_rejects_finite_out_of_range_values(monkeypatch, tmp_path, quantity) -> None:
+    _configure(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token = _register_and_token(client, email="quantity-range@example.com")
+        response = client.put(
+            "/api/v1/user/portfolio/positions",
+            headers=_headers(token),
+            json={"symbol": "NVDA", "exchange": "NASDAQ", "quantity": quantity},
+        )
+        assert response.status_code == 422, (quantity, response.text)
+        assert "quantity" in response.json()["detail"]
+        loaded = client.get("/api/v1/user/portfolio", headers=_headers(token))
+        assert loaded.status_code == 200, loaded.text
+        assert loaded.json()["data"]["positions"] == []
