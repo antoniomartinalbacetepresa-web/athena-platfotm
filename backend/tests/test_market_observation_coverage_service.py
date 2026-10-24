@@ -448,3 +448,32 @@ def test_legacy_retrieval_before_observation_is_not_pit_evidence(tmp_path: Path)
     assert report.current_deep_history_instrument_count == 0
     assert report.by_source == {}
     assert report.to_api_dict()["productionCoverageClaimed"] is False
+
+@pytest.mark.parametrize("legacy_provider", ["", "fmp", "FinancialModelingPrep", "F-M-P"])
+def test_legacy_forbidden_provenance_cannot_claim_historical_coverage(
+    tmp_path: Path, legacy_provider: str
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "LEGACYFMP")
+    base = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_provider = ? WHERE instrument_id = ?",
+            (legacy_provider, instrument_id),
+        )
+    report = MarketObservationCoverageService(database=database).get_report(
+        as_of=base + timedelta(days=366)
+    )
+    assert report.history_eligible_instrument_count == 1
+    assert report.observation_count == 0
+    assert report.covered_instrument_count == 0
+    assert report.deep_history_instrument_count == 0
+    assert report.current_deep_history_instrument_count == 0
+    assert report.by_source == {}
+    assert report.to_api_dict()["productionCoverageClaimed"] is False

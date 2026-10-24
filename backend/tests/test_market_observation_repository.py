@@ -303,3 +303,44 @@ def test_market_observation_repository_rejects_invalid_pit_ranges(tmp_path: Path
             instrument_id,
             knowledge_cutoff=datetime(2026, 1, 3),
         )
+
+@pytest.mark.parametrize("provider", ["fmp", "FinancialModelingPrep", "F-M-P", "%66mp", "&#102;mp"])
+def test_market_observation_repository_refuses_fmp_provider_aliases(
+    tmp_path: Path, provider: str
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="FMP"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[{"timestamp": observed.isoformat(), "close": 100.0}],
+            source_provider=provider,
+            retrieved_at=observed + timedelta(days=1),
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+
+
+def test_market_observation_repository_excludes_legacy_predated_retrieval(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 100.0}],
+        source_provider="yahoo",
+        retrieved_at=observed + timedelta(days=1),
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET retrieved_at = ? WHERE instrument_id = ?",
+            ((observed - timedelta(days=1)).isoformat(), instrument_id),
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+    assert repository.list_for_instrument(
+        instrument_id, knowledge_cutoff=observed + timedelta(days=2)
+    ) == []

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
+from html import unescape
+from urllib.parse import unquote
 from typing import Any, Iterable
 
 from app.database.athena_database import AthenaDatabase
@@ -111,7 +113,11 @@ class MarketObservationRepository:
         self._database.initialize()
 
         params: list[object] = [instrument_id]
-        clauses: list[str] = ["instrument_id = ?"]
+        clauses: list[str] = [
+            "instrument_id = ?",
+            # Reject imported records that violate the write-time PIT invariant.
+            "julianday(retrieved_at) >= julianday(observed_at)",
+        ]
 
         if source_provider is not None:
             provider = self._required_text(source_provider, "source_provider")
@@ -218,9 +224,22 @@ class MarketObservationRepository:
         }
 
     def _required_text(self, value: str, field: str) -> str:
+        if field == "source_provider" and not isinstance(value, str):
+            raise ValueError("source_provider debe ser texto.")
         normalized = str(value or "").strip()
         if not normalized:
             raise ValueError(f"{field} es obligatorio.")
+        if field == "source_provider":
+            # Reject disguised forbidden providers at ingestion/query boundaries.
+            decoded = normalized
+            for _ in range(8):
+                next_value = unescape(unquote(decoded))
+                if next_value == decoded:
+                    break
+                decoded = next_value
+            compact = "".join(ch for ch in decoded.casefold() if ch.isalnum())
+            if "fmp" in compact or "financialmodelingprep" in compact:
+                raise ValueError("source_provider no puede utilizar FMP.")
         return normalized
 
     def _utc_iso(self, value: datetime, field: str) -> str:

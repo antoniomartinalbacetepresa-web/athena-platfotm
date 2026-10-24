@@ -340,3 +340,30 @@ def test_legacy_retrieval_before_observation_cannot_complete_365_days(
     assert gaps.items[0].reason == "insufficient_span"
     assert gaps.items[0].best_history_span_days == pytest.approx(360.0)
     assert gaps.to_api_dict()["productionEvidenceClaimed"] is False
+
+@pytest.mark.parametrize("legacy_provider", ["", "fmp", "FinancialModelingPrep", "F-M-P"])
+def test_legacy_forbidden_provenance_is_a_history_gap(
+    tmp_path: Path, legacy_provider: str
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "LEGACYFMP")
+    base = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=base + timedelta(days=366),
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_provider = ? WHERE instrument_id = ?",
+            (legacy_provider, instrument_id),
+        )
+    report = MarketHistoryGapService(database=database).get_report(
+        as_of=base + timedelta(days=366)
+    )
+    assert report.total_blocking_count == 1
+    assert report.no_observations_count == 1
+    assert report.items[0].reason == "no_observations"
+    assert report.items[0].best_source_provider is None
+    assert report.to_api_dict()["productionEvidenceClaimed"] is False

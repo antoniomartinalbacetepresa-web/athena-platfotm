@@ -152,6 +152,11 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                       AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND TRIM(COALESCE(mo.source_provider, '')) <> ''
+                  AND INSTR(mo.source_provider, '%') = 0
+                  AND INSTR(mo.source_provider, '&') = 0
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%fmp%'
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%financialmodelingprep%'
                 )
                 SELECT COUNT(*) AS observation_count,
                        COUNT(DISTINCT instrument_id) AS covered_instrument_count,
@@ -180,6 +185,11 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND TRIM(COALESCE(mo.source_provider, '')) <> ''
+                  AND INSTR(mo.source_provider, '%') = 0
+                  AND INSTR(mo.source_provider, '&') = 0
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%fmp%'
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%financialmodelingprep%'
                 ),
                 ordered_history AS (
                     SELECT instrument_id,
@@ -260,6 +270,11 @@ class MarketObservationCoverageService:
                       AND julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND TRIM(COALESCE(mo.source_provider, '')) <> ''
+                  AND INSTR(mo.source_provider, '%') = 0
+                  AND INSTR(mo.source_provider, '&') = 0
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%fmp%'
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%financialmodelingprep%'
                 )
                 SELECT grouped.source_provider,
                        COUNT(*) AS observation_count,

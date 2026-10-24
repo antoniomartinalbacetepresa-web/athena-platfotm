@@ -143,6 +143,11 @@ class MarketHistoryGapService:
                 WHERE julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND TRIM(COALESCE(mo.source_provider, '')) <> ''
+                  AND INSTR(mo.source_provider, '%') = 0
+                  AND INSTR(mo.source_provider, '&') = 0
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%fmp%'
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%financialmodelingprep%'
             ),
             ordered_history AS (
                 SELECT instrument_id, source_provider, observed_at,
