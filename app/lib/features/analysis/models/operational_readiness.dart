@@ -107,31 +107,7 @@ class AthenaReadinessReport {
     }
     final asOfText = map['asOf'];
     final asOf = asOfText is String &&
-            RegExp(r'(?:Z|[+-]\\d{2}:\\d{2})
-      throw const FormatException('ATHENA readiness perdió asOf válido.');
-    }
-    final history = MarketHistorySnapshot.fromReadiness(map['marketHistory']);
-    final gates = operational['gates'];
-    final historyGatePassed = gates is List &&
-        gates.any((gate) =>
-            gate is Map &&
-            gate['id'] == 'market_history_depth' &&
-            gate['passed'] == true);
-    return AthenaReadinessReport(
-      asOf: asOf,
-      operationalReadiness: OperationalReadiness.fromMap(
-        Map<String, dynamic>.from(operational),
-      ),
-      marketHistory: history,
-      historyDepthGatePassed: history != null &&
-          history.asOf.isAtSameMomentAs(asOf) &&
-          history.currentDeepHistoryInstrumentCount ==
-              history.eligibleInstrumentCount &&
-          historyGatePassed,
-    );
-  }
-}
-).hasMatch(asOfText)
+            RegExp(r'(?:Z|[+-]\d{2}:\d{2})$').hasMatch(asOfText)
         ? DateTime.tryParse(asOfText)
         : null;
     if (asOf == null) {
@@ -151,6 +127,7 @@ class AthenaReadinessReport {
       ),
       marketHistory: history,
       historyDepthGatePassed: history != null &&
+          history.asOf.isAtSameMomentAs(asOf) &&
           history.currentDeepHistoryInstrumentCount ==
               history.eligibleInstrumentCount &&
           historyGatePassed,
