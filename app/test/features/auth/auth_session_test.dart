@@ -251,6 +251,30 @@ void main() {
     expect(store.token, 'new-owner-token');
   });
 
+  test('logout during stale-write repair removes durable credential', () async {
+    final store = _FirstWriteDelayedAuthTokenStore(delayRepair: true);
+    final session = AuthSession.forTesting(store);
+    final oldLogin = session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+    final rejection = expectLater(oldLogin, throwsStateError);
+    await session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+
+    store.releaseFirstWrite.complete();
+    await store.repairStarted.future;
+    session.clear();
+    expect(session.isAuthenticated, isFalse);
+    store.releaseRepair.complete();
+    await rejection;
+
+    expect(session.accessToken, isNull);
+    expect(store.token, isNull);
+  });
+
   test('clearPersisted removes durable token and authenticated memory state', () async {
     final store = _FakeAuthTokenStore();
     final session = AuthSession.forTesting(store);
@@ -363,7 +387,12 @@ class _DelayedWriteAuthTokenStore implements AuthTokenStore {
 }
 
 class _FirstWriteDelayedAuthTokenStore implements AuthTokenStore {
+  _FirstWriteDelayedAuthTokenStore({this.delayRepair = false});
+
+  final bool delayRepair;
   final Completer<void> releaseFirstWrite = Completer<void>();
+  final Completer<void> repairStarted = Completer<void>();
+  final Completer<void> releaseRepair = Completer<void>();
   String? token;
   int _writes = 0;
 
@@ -372,6 +401,10 @@ class _FirstWriteDelayedAuthTokenStore implements AuthTokenStore {
     _writes += 1;
     if (_writes == 1) {
       await releaseFirstWrite.future;
+    }
+    if (_writes == 3 && delayRepair) {
+      repairStarted.complete();
+      await releaseRepair.future;
     }
     token = value;
   }

@@ -58,20 +58,28 @@ class AuthSession extends ChangeNotifier {
     if (_authorityVersion != writeAuthorityVersion) {
       // A late write may have replaced the newer owner's durable credential.
       // Repair the currently authoritative token instead of deleting it.
-      final repairVersion = _authorityVersion;
-      try {
-        if (isAuthenticated) {
-          await _tokenStore.writeAccessToken(_accessToken!);
-        } else {
-          await _tokenStore.deleteAccessToken();
+      // Authority may change again while the repair itself is awaiting I/O.
+      // Reconcile against the latest authority until a complete operation
+      // finishes without another transition.
+      while (true) {
+        final repairVersion = _authorityVersion;
+        try {
+          if (isAuthenticated) {
+            await _tokenStore.writeAccessToken(_accessToken!);
+          } else {
+            await _tokenStore.deleteAccessToken();
+          }
+        } catch (_) {
+          // If repair fails, never continue exposing the same authority as
+          // reliably persisted. Do not revoke an even newer account.
+          if (_authorityVersion == repairVersion) {
+            _clearMemory();
+          }
+          rethrow;
         }
-      } catch (_) {
-        // If repair fails, never continue exposing the same authority as
-        // reliably persisted. Do not revoke an even newer account.
         if (_authorityVersion == repairVersion) {
-          _clearMemory();
+          break;
         }
-        rethrow;
       }
       throw StateError('La sesión cambió durante el inicio de sesión.');
     }
