@@ -179,6 +179,18 @@ class PortfolioDividendReturnEvidenceService:
         trailing_dps = None if evidence.trailing_dividend_per_share is None else float(evidence.trailing_dividend_per_share)
         return price, trailing_dps, payout, fcf, sustainability, (f"{evidence.source}:{evidence.source_ref}",)
 
+    @staticmethod
+    def _finite_cash_sum(amounts) -> float:
+        # Individually finite ledger entries can overflow when aggregated.
+        # Never publish Infinity/NaN as portfolio return evidence.
+        try:
+            total = math.fsum(amounts)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError("portfolio dividend cash aggregate must be finite") from exc
+        if not math.isfinite(total):
+            raise ValueError("portfolio dividend cash aggregate must be finite")
+        return total
+
     def build(
         self,
         *,
@@ -199,21 +211,24 @@ class PortfolioDividendReturnEvidenceService:
         dividends = tuple(item for item in events if item.event_type == "cash_dividend")
         fees = tuple(item for item in events if item.event_type == "fee")
         taxes = tuple(item for item in events if item.event_type == "tax")
-        gross_dividends = sum(item.amount for item in dividends)
-        fee_total = sum(item.amount for item in fees)
-        tax_total = sum(item.amount for item in taxes)
+        gross_dividends = self._finite_cash_sum(item.amount for item in dividends)
+        fee_total = self._finite_cash_sum(item.amount for item in fees)
+        tax_total = self._finite_cash_sum(item.amount for item in taxes)
+        net_cash = self._finite_cash_sum((gross_dividends, fee_total, tax_total))
         price, trailing_dps, payout, fcf, sustainability, fundamental_refs = self._fundamentals(fundamentals, as_of=as_of)
         # Ledger dividend amounts are portfolio cash totals, not per-share distributions.
         # Dividing those totals by a share price is dimensionally wrong and varies with
         # position size. Yield therefore requires explicit PIT trailing DPS evidence.
         trailing_yield = None if price is None or trailing_dps is None else trailing_dps / price
+        if trailing_yield is not None and not math.isfinite(trailing_yield):
+            raise ValueError("portfolio dividend yield must be finite")
         refs = tuple(sorted({f"{item.source}:{item.source_ref}" for item in events}.union(fundamental_refs)))
         return PortfolioDividendReturnEvidence(
             currency=reporting_currency.strip().upper(),
             gross_dividends=gross_dividends,
             fees=fee_total,
             taxes=tax_total,
-            net_internal_cash_return=gross_dividends + fee_total + tax_total,
+            net_internal_cash_return=net_cash,
             dividend_event_count=len(dividends),
             # Cadence/growth/stability are per-security concepts. Combining cash
             # distributions from different instruments can manufacture a plausible
