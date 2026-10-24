@@ -127,6 +127,97 @@ def _final_corporate_actions_passed(corporate_actions: dict[str, Any]) -> bool:
     )
 
 
+def _final_research_outcome_oos_passed(outcome: dict[str, Any]) -> bool:
+    """Require measured, tamper-verified cohort evidence, not only a status label."""
+
+    if outcome.get("status") != "research_outcome_oos_evidence_available":
+        return False
+    if outcome.get("advisoryStatus") != "no_advice":
+        return False
+    if any(
+        outcome.get(key) is not False
+        for key in (
+            "productionEligible",
+            "isWeightingReady",
+            "recommendationCandidateReady",
+            "productionLearningEligible",
+        )
+    ):
+        return False
+    policy = outcome.get("policy")
+    if not isinstance(policy, dict):
+        return False
+    if (
+        policy.get("availability") != "cohort_hash_reverified_before_diagnostic_read"
+        or policy.get("automaticModelMutation") is not False
+        or policy.get("automaticProductionPromotion") is not False
+        or policy.get("automaticTrading") is not False
+    ):
+        return False
+
+    cohort_id = outcome.get("cohortId")
+    cohort_hash = outcome.get("cohortHash")
+    cohort_as_of = outcome.get("cohortAsOf")
+    if not isinstance(cohort_id, str) or not cohort_id.strip():
+        return False
+    if (
+        not isinstance(cohort_hash, str)
+        or len(cohort_hash) != 64
+        or any(char not in "0123456789abcdef" for char in cohort_hash)
+    ):
+        return False
+    if not isinstance(cohort_as_of, str):
+        return False
+    try:
+        cutoff = datetime.fromisoformat(cohort_as_of.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+        return False
+
+    count = _nonnegative_integral_count(outcome.get("observationCount"))
+    issuers = _nonnegative_integral_count(outcome.get("distinctResolvedIssuerCount"))
+    unresolved = _nonnegative_integral_count(
+        outcome.get("unresolvedIssuerObservationCount")
+    )
+    horizon_count = _nonnegative_integral_count(outcome.get("horizonCount"))
+    horizons = outcome.get("horizons")
+    if (
+        count is None
+        or count <= 0
+        or issuers is None
+        or issuers > count
+        or unresolved is None
+        or unresolved > count
+        or horizon_count is None
+        or horizon_count <= 0
+        or not isinstance(horizons, dict)
+        or len(horizons) != horizon_count
+    ):
+        return False
+
+    observed_total = 0
+    unresolved_total = 0
+    for horizon in horizons.values():
+        if not isinstance(horizon, dict):
+            return False
+        observed = _nonnegative_integral_count(horizon.get("observationCount"))
+        missing_issuer = _nonnegative_integral_count(
+            horizon.get("unresolvedIssuerObservationCount")
+        )
+        if (
+            observed is None
+            or observed <= 0
+            or missing_issuer is None
+            or missing_issuer > observed
+        ):
+            return False
+        observed_total += observed
+        unresolved_total += missing_issuer
+
+    return observed_total == count and unresolved_total == unresolved
+
+
 def _final_forecast_error_oos_passed(forecast_error: dict[str, Any]) -> bool:
     """Require internally reconciled, complete OOS measurement evidence."""
 
@@ -227,7 +318,7 @@ def build_operational_readiness(
         {"id": "canonical_market_weighting", "passed": weighting.get("ready") is True, "blocker": "canonical_market_weighting_not_ready"},
         {"id": "market_history_depth", "passed": _final_market_history_depth_passed(market_history), "blocker": "market_history_depth_insufficient"},
         {"id": "corporate_actions_cross_provider_reconciliation", "passed": _final_corporate_actions_passed(corporate_actions), "blocker": "corporate_actions_independent_reconciliation_pending"},
-        {"id": "research_outcome_oos_evidence", "passed": research_outcome.get("status") == "research_outcome_oos_evidence_available", "blocker": "research_outcome_oos_evidence_pending"},
+        {"id": "research_outcome_oos_evidence", "passed": _final_research_outcome_oos_passed(research_outcome), "blocker": "research_outcome_oos_evidence_pending"},
         {"id": "forecast_error_oos_complete", "passed": _final_forecast_error_oos_passed(forecast_error), "blocker": "forecast_error_oos_measurement_incomplete"},
         {"id": "forecast_error_oos_longitudinal_sufficiency", "passed": _final_forecast_error_longitudinal_sufficiency_passed(forecast_error), "blocker": "forecast_error_oos_longitudinal_sufficiency_pending"},
     ]
