@@ -111,12 +111,25 @@ class MarketObservationCoverageService:
         minimum_deep_history_coverage: float = DEFAULT_MINIMUM_DEEP_HISTORY_COVERAGE,
         maximum_source_gap_days: int = DEFAULT_MAXIMUM_SOURCE_GAP_DAYS,
     ) -> None:
-        if minimum_history_days <= 0:
-            raise ValueError("minimum_history_days debe ser mayor que 0.")
-        if not 0 < minimum_deep_history_coverage <= 1:
-            raise ValueError("minimum_deep_history_coverage debe estar entre 0 y 1.")
-        if maximum_source_gap_days <= 0:
-            raise ValueError("maximum_source_gap_days debe ser mayor que 0.")
+        # Production acceptance thresholds are floors/ceilings, not optional
+        # diagnostic knobs: a caller must not turn partial history into ready.
+        if (
+            isinstance(minimum_history_days, bool)
+            or not isinstance(minimum_history_days, int)
+            or minimum_history_days < self.DEFAULT_MINIMUM_HISTORY_DAYS
+        ):
+            raise ValueError("minimum_history_days no puede ser inferior a 365.")
+        if (
+            isinstance(minimum_deep_history_coverage, bool)
+            or minimum_deep_history_coverage != self.DEFAULT_MINIMUM_DEEP_HISTORY_COVERAGE
+        ):
+            raise ValueError("minimum_deep_history_coverage debe ser 1.0.")
+        if (
+            isinstance(maximum_source_gap_days, bool)
+            or not isinstance(maximum_source_gap_days, int)
+            or not 0 < maximum_source_gap_days <= self.DEFAULT_MAXIMUM_SOURCE_GAP_DAYS
+        ):
+            raise ValueError("maximum_source_gap_days debe estar entre 1 y 7.")
         self._database = database if database is not None else AthenaDatabase()
         self._minimum_history_days = int(minimum_history_days)
         self._minimum_deep_history_coverage = float(minimum_deep_history_coverage)
