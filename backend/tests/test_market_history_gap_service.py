@@ -128,6 +128,28 @@ def test_history_gap_report_rejects_invalid_pagination_and_thresholds(tmp_path: 
         service.get_report(offset=-1)
 
 
+@pytest.mark.parametrize("gap_days", [-1, 0, 0.5, 8, 365, True])
+def test_gap_diagnostic_cannot_weaken_continuity_acceptance(
+    tmp_path: Path, gap_days: object,
+) -> None:
+    with pytest.raises(ValueError, match="maximum_source_gap_days"):
+        MarketHistoryGapService(
+            database=_database(tmp_path), maximum_source_gap_days=gap_days,
+        )
+
+
+def test_gap_diagnostic_allows_stricter_continuity(tmp_path: Path) -> None:
+    service = MarketHistoryGapService(
+        database=_database(tmp_path),
+        minimum_history_days=400,
+        maximum_source_gap_days=5,
+    )
+    report = service.get_report()
+    assert report.minimum_history_days == 400
+    assert report.maximum_source_gap_days == 5
+    assert report.total_blocking_count == 0
+
+
 def test_gap_report_rejects_history_retrieved_after_pit_cutoff(tmp_path: Path) -> None:
     database = _database(tmp_path)
     instrument_id = _insert_instrument(InstrumentRepository(database=database), "AAA")
