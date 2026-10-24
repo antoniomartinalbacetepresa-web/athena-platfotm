@@ -86,11 +86,11 @@ def test_richer_personalization_round_trips_only_inside_encrypted_profile(
         ).fetchone()
     assert row is not None
     serialized = " ".join(str(value) for value in row)
-    assert "intermediate" not in serialized
-    assert "low" not in serialized
-    # Do not search for a short numeric value such as "30" in randomized
-    # Base64 ciphertext: those characters may legitimately occur by chance.
-    # The sensitive field name is a robust plaintext-leak sentinel.
+    # Search for full JSON field names, not short values such as "low" or
+    # "30": randomized Base64 ciphertext can contain those by chance.
+    # The API round-trip above separately verifies authenticated decryption.
+    assert "experienceLevel" not in serialized
+    assert "liquidityNeed" not in serialized
     assert "maxDrawdownTolerancePct" not in serialized
 
 
