@@ -193,6 +193,40 @@ void main() {
     expect(session.isAuthenticated, isFalse);
   });
 
+  test('delayed secure write after logout cannot restore session authority', () async {
+    final store = _DelayedWriteAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+    final pending = session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+
+    session.clear();
+    expect(session.isAuthenticated, isFalse);
+    store.releaseWrite.complete();
+
+    await expectLater(pending, throwsStateError);
+    expect(session.accessToken, isNull);
+    expect(session.account, isNull);
+    expect(store.token, isNull);
+  });
+
+  test('delayed secure write after persisted logout is cleaned up', () async {
+    final store = _DelayedWriteAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+    final pending = session.establishPersisted(
+      accessToken: 'old-owner-token',
+      account: account(),
+    );
+
+    await session.clearPersisted();
+    store.releaseWrite.complete();
+
+    await expectLater(pending, throwsStateError);
+    expect(session.isAuthenticated, isFalse);
+    expect(store.token, isNull);
+  });
+
   test('clearPersisted removes durable token and authenticated memory state', () async {
     final store = _FakeAuthTokenStore();
     final session = AuthSession.forTesting(store);
@@ -282,5 +316,24 @@ class _FakeAuthTokenStore implements AuthTokenStore {
   Future<void> writeAccessToken(String token) async {
     if (failWrites) throw StateError('secure storage unavailable');
     this.token = token;
+  }
+}
+
+class _DelayedWriteAuthTokenStore implements AuthTokenStore {
+  final Completer<void> releaseWrite = Completer<void>();
+  String? token;
+
+  @override
+  Future<void> writeAccessToken(String value) async {
+    await releaseWrite.future;
+    token = value;
+  }
+
+  @override
+  Future<String?> readAccessToken() async => token;
+
+  @override
+  Future<void> deleteAccessToken() async {
+    token = null;
   }
 }
