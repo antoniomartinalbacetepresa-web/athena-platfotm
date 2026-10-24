@@ -416,3 +416,35 @@ def test_coverage_boundaries_order_legacy_offset_rows_by_absolute_instant(
     assert before_retrieval.earliest_observed_at is None
     assert before_retrieval.latest_observed_at is None
     assert before_retrieval.by_source == {}
+
+
+def test_legacy_retrieval_before_observation_is_not_pit_evidence(tmp_path: Path) -> None:
+    """Malformed legacy timestamps must never count as known market history."""
+    database = _database(tmp_path)
+    instrument_id = _insert_instrument(InstrumentRepository(database=database), "LEGACY")
+    observed = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 100.0}],
+        source_provider="yahoo",
+        retrieved_at=observed + timedelta(days=1),
+    )
+    # Simulate an old imported row violating the repository's write-time invariant.
+    with database.connect() as connection:
+        changed = connection.execute(
+            "UPDATE market_observations SET retrieved_at = ? "
+            "WHERE instrument_id = ? AND observed_at = ?",
+            ((observed - timedelta(days=1)).isoformat(), instrument_id, observed.isoformat()),
+        )
+        assert changed.rowcount == 1
+
+    report = MarketObservationCoverageService(database=database).get_report(
+        as_of=observed + timedelta(days=2)
+    )
+    assert report.history_eligible_instrument_count == 1
+    assert report.observation_count == 0
+    assert report.covered_instrument_count == 0
+    assert report.deep_history_instrument_count == 0
+    assert report.current_deep_history_instrument_count == 0
+    assert report.by_source == {}
+    assert report.to_api_dict()["productionCoverageClaimed"] is False
