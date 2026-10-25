@@ -142,8 +142,13 @@ class PortfolioDividendReturnEvidenceService:
             raise ValueError("dividend fundamentals require explicit provenance")
         # Apply the canonical total-return provenance contract before PIT
         # fundamentals can be displayed alongside authenticated portfolio cash.
-        source = DividendTotalReturnService._provider(evidence.source, "fundamentals.source")
-        source_ref = DividendTotalReturnService._provider(evidence.source_ref, "fundamentals.source_ref")
+        try:
+            source = DividendTotalReturnService._provider(evidence.source, "fundamentals.source")
+            source_ref = DividendTotalReturnService._provider(evidence.source_ref, "fundamentals.source_ref")
+        except ValueError as exc:
+            # Preserve the established public error contract for callers while
+            # rejecting every malformed or forbidden underlying identifier.
+            raise ValueError("dividend fundamentals provenance is ambiguous or FMP") from exc
         values = (evidence.price, evidence.trailing_dividend_per_share, evidence.payout_ratio, evidence.fcf_payout_ratio)
         if any(value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))) for value in values):
             raise ValueError("dividend fundamentals must be numeric and finite")
