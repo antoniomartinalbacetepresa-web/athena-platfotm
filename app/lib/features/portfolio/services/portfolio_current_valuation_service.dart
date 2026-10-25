@@ -56,7 +56,8 @@ class PortfolioCurrentValuation {
     if (costBasis == null || profitLoss == null || costBasis <= 0) {
       return null;
     }
-    return (profitLoss / costBasis) * 100;
+    final percentage = (profitLoss / costBasis) * 100;
+    return percentage.isFinite ? percentage : null;
   }
 }
 
@@ -179,7 +180,15 @@ class PortfolioCurrentValuationService {
         historicalFxEvidence.add(historicalFx);
       }
 
-      final convertedCost = historicalFx.convertHistorical(position.investedValue);
+      // A valid current valuation must remain available even when an
+      // extreme historical FX conversion cannot produce a finite cost basis.
+      final double convertedCost;
+      try {
+        convertedCost = historicalFx.convertHistorical(position.investedValue);
+      } on StateError {
+        historicalCostBasisReady = false;
+        continue;
+      }
       if (!convertedCost.isFinite || convertedCost < 0) {
         historicalCostBasisReady = false;
         continue;
@@ -189,6 +198,11 @@ class PortfolioCurrentValuationService {
 
     if (!currentValueInBase.isFinite || currentValueInBase < 0) {
       throw StateError('El valor agregado de cartera no es finito o es negativo.');
+    }
+    // Individually finite positions can still overflow the aggregated cost.
+    // Do not expose an infinite historical basis or an infinite P/L figure.
+    if (!historicalCostBasisInBase.isFinite || historicalCostBasisInBase < 0) {
+      historicalCostBasisReady = false;
     }
 
     DateTime? latestFxObservedAt;

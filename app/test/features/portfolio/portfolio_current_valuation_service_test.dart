@@ -346,4 +346,85 @@ void main() {
       throwsA(anything),
     );
   });
+
+  test('aggregate historical cost overflow leaves current valuation available',
+      () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+
+    final valuation = await service.value(
+      positions: [
+        position(symbol: 'LARGE1', currency: 'EUR', shares: 1e308,
+            averagePrice: 1.1, currentPrice: 1e-6),
+        position(symbol: 'LARGE2', currency: 'EUR', shares: 1e308,
+            averagePrice: 1.1, currentPrice: 1e-6),
+      ],
+    );
+
+    expect(valuation.currentValueInBaseCurrency.isFinite, isTrue);
+    expect(valuation.historicalCostBasisInBaseCurrency, isNull);
+    expect(valuation.hasHistoricalCostBasis, isFalse);
+    expect(valuation.profitLossInBaseCurrency, isNull);
+    expect(valuation.profitLossPercentage, isNull);
+  });
+
+  test('extreme finite values never expose an infinite P/L percentage',
+      () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+
+    final valuation = await service.value(
+      positions: [
+        position(symbol: 'EXTREME', currency: 'EUR', shares: 1,
+            averagePrice: 1e-300, currentPrice: 1e100),
+      ],
+    );
+
+    expect(valuation.currentValueInBaseCurrency.isFinite, isTrue);
+    expect(valuation.historicalCostBasisInBaseCurrency, 1e-300);
+    expect(valuation.profitLossInBaseCurrency?.isFinite, isTrue);
+    expect(valuation.profitLossPercentage, isNull);
+  });
+
+  test('historical FX overflow hides P/L but preserves verified current value',
+      () async {
+    final costDate = DateTime.utc(2026, 8, 15);
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur(rate: 0.5);
+      },
+      loadHistoricalFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+        required observedOn,
+      }) async {
+        return usdEur(
+          rate: 2,
+          observedAt: costDate,
+          retrievedAt: DateTime.utc(2026, 9, 4),
+          historical: true,
+        );
+      },
+    );
+
+    final valuation = await service.value(
+      positions: [
+        position(symbol: 'FX-LARGE', currency: 'USD', shares: 1e308,
+            averagePrice: 1, currentPrice: 1e-6, costBasisDate: costDate),
+      ],
+    );
+
+    expect(valuation.currentValueInBaseCurrency.isFinite, isTrue);
+    expect(valuation.fxEvidence, hasLength(1));
+    expect(valuation.historicalFxEvidence, hasLength(1));
+    expect(valuation.historicalCostBasisInBaseCurrency, isNull);
+    expect(valuation.profitLossInBaseCurrency, isNull);
+    expect(valuation.profitLossPercentage, isNull);
+  });
 }
