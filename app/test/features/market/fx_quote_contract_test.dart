@@ -73,6 +73,17 @@ void main() {
     expect(() => quote.convertCurrent(10), throwsStateError);
   });
 
+  test('historical conversion uses only PIT evidence and stays finite', () {
+    final historical = currentQuote()
+      ..['status'] = 'fx_historical_ready'
+      ..['historicalPointInTimeEligible'] = true;
+    final quote = FxQuote.fromMap(historical);
+    expect(quote.convertHistorical(100), 85);
+    expect(() => quote.convertHistorical(double.maxFinite), throwsStateError);
+    expect(() => FxQuote.fromMap(currentQuote()).convertHistorical(100),
+        throwsStateError);
+  });
+
   test('missing PIT eligibility is not silently treated as current', () {
     final payload = currentQuote()..remove('historicalPointInTimeEligible');
     expect(() => FxQuote.fromMap(payload), throwsFormatException);

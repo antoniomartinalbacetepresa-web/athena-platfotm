@@ -179,7 +179,7 @@ class PortfolioCurrentValuationService {
         historicalFxEvidence.add(historicalFx);
       }
 
-      final convertedCost = historicalFx.convertCurrent(position.investedValue);
+      final convertedCost = historicalFx.convertHistorical(position.investedValue);
       if (!convertedCost.isFinite || convertedCost < 0) {
         historicalCostBasisReady = false;
         continue;
@@ -279,6 +279,9 @@ class PortfolioCurrentValuationService {
     required String expectedQuote,
     required DateTime expectedDate,
   }) {
+    if (!fx.historicalPointInTimeEligible) {
+      throw StateError('El coste histórico requiere una cotización FX PIT.');
+    }
     _validateFxCore(
       fx,
       expectedBase: expectedBase,

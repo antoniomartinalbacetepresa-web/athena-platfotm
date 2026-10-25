@@ -34,7 +34,7 @@ void main() {
     String base = 'USD',
     String quote = 'EUR',
     double rate = 0.9,
-    String status = 'ok',
+    String status = 'fx_current_ready',
     String provider = 'verified-fx',
     bool pit = false,
     DateTime? observedAt,

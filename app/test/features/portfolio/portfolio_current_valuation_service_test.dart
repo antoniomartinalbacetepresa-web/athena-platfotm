@@ -38,10 +38,11 @@ FxQuote usdEur({
   DateTime? retrievedAt,
   String sourceProvider = 'yahoo',
   String sourceSymbol = 'USDEUR=X',
+  bool historical = false,
 }) {
   final observed = observedAt ?? DateTime.utc(2026, 9, 3, 0, 0);
   return FxQuote(
-    status: 'ok',
+    status: historical ? 'fx_historical_ready' : 'fx_current_ready',
     baseCurrency: 'USD',
     quoteCurrency: 'EUR',
     rate: rate,
@@ -49,7 +50,7 @@ FxQuote usdEur({
     retrievedAt: retrievedAt ?? observed.add(const Duration(seconds: 1)),
     sourceProvider: sourceProvider,
     sourceSymbol: sourceSymbol,
-    historicalPointInTimeEligible: false,
+    historicalPointInTimeEligible: historical,
   );
 }
 
@@ -149,6 +150,7 @@ void main() {
           rate: 0.80,
           observedAt: costDate,
           retrievedAt: DateTime.utc(2026, 9, 4),
+          historical: true,
         );
       },
     );
@@ -189,6 +191,7 @@ void main() {
           rate: 0.80,
           observedAt: DateTime.utc(2026, 8, 16),
           retrievedAt: DateTime.utc(2026, 9, 4),
+          historical: true,
         );
       },
     );
@@ -305,7 +308,7 @@ void main() {
   test('rejects FX evidence for a different currency pair', () async {
     final observedAt = DateTime.utc(2026, 9, 3, 0, 0);
     final wrongPair = FxQuote(
-      status: 'ok',
+      status: 'fx_current_ready',
       baseCurrency: 'GBP',
       quoteCurrency: 'EUR',
       rate: 1.1,

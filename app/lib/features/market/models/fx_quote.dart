@@ -101,6 +101,22 @@ class FxQuote {
     return converted;
   }
 
+  double convertHistorical(double amount) {
+    if (!historicalPointInTimeEligible) {
+      throw StateError(
+        'Una cotización FX actual no puede convertir costes históricos.',
+      );
+    }
+    if (!amount.isFinite) {
+      throw ArgumentError.value(amount, 'amount', 'El importe debe ser finito.');
+    }
+    final converted = amount * rate;
+    if (!converted.isFinite) {
+      throw StateError('La conversión FX histórica excede el rango numérico finito.');
+    }
+    return converted;
+  }
+
   factory FxQuote.fromMap(Map<String, dynamic> map) {
     if (map['historicalPointInTimeEligible'] is! bool) {
       throw const FormatException(

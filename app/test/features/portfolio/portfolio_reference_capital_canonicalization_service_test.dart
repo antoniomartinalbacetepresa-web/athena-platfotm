@@ -12,7 +12,7 @@ FxQuote fx({
 }) {
   final observed = observedAt ?? DateTime.utc(2026, 9, 6, 12);
   return FxQuote(
-    status: 'ok',
+    status: 'fx_current_ready',
     baseCurrency: base,
     quoteCurrency: quote,
     rate: rate,

@@ -30,7 +30,7 @@ void main() {
       );
 
   FxQuote fx(double rate, {String baseCurrency = 'USD', String quoteCurrency = 'EUR'}) => FxQuote(
-        baseCurrency: baseCurrency, quoteCurrency: quoteCurrency, rate: rate, status: 'ok', sourceProvider: 'verified-fx',
+        baseCurrency: baseCurrency, quoteCurrency: quoteCurrency, rate: rate, status: 'fx_current_ready', sourceProvider: 'verified-fx',
         sourceSymbol: baseCurrency == quoteCurrency ? null : '${baseCurrency.toUpperCase()}${quoteCurrency.toUpperCase()}=X',
         observedAt: observed, retrievedAt: retrieved, historicalPointInTimeEligible: false,
       );
