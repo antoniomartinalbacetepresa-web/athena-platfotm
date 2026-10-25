@@ -14,6 +14,33 @@ void main() {
         'historicalPointInTimeEligible': false,
       };
 
+  test('whitespace cannot disguise identity as a market FX provider', () {
+    for (final provider in [' identity ', 'IDENTITY ']) {
+      final payload = currentQuote()..['sourceProvider'] = provider;
+      expect(() => FxQuote.fromMap(payload), throwsArgumentError);
+    }
+  });
+
+  test('same-currency identity uses normalized provider consistently', () {
+    final payload = currentQuote()
+      ..['status'] = 'fx_identity'
+      ..['baseCurrency'] = 'EUR'
+      ..['quoteCurrency'] = 'EUR'
+      ..['rate'] = 1.0
+      ..['sourceProvider'] = ' identity '
+      ..['sourceSymbol'] = null;
+    final quote = FxQuote.fromMap(payload);
+    expect(quote.sourceProvider, 'identity');
+    expect(quote.isIdentity, isTrue);
+  });
+
+  test('provider control characters cannot disappear during trimming', () {
+    for (final provider in ['yahoo\n', 'yahoo\t']) {
+      final payload = currentQuote()..['sourceProvider'] = provider;
+      expect(() => FxQuote.fromMap(payload), throwsArgumentError);
+    }
+  });
+
   test('valid current market conversion stays finite', () {
     final quote = FxQuote.fromMap(currentQuote());
     expect(quote.convertCurrent(100), 85);

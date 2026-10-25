@@ -58,7 +58,7 @@ class FxQuote {
 
     final normalizedSourceSymbol = sourceSymbol?.trim().toUpperCase();
     if (this.baseCurrency == this.quoteCurrency) {
-      if (rate != 1.0 || sourceProvider != 'identity') {
+      if (rate != 1.0 || this.sourceProvider != 'identity') {
         throw ArgumentError(
           'Una conversión de identidad debe usar tasa 1 y proveedor identity.',
         );
@@ -69,7 +69,7 @@ class FxQuote {
         );
       }
     } else {
-      if (sourceProvider.toLowerCase() == 'identity') {
+      if (this.sourceProvider.toLowerCase() == 'identity') {
         throw ArgumentError(
           'Una cotización de mercado no puede declarar proveedor identity.',
         );
@@ -176,9 +176,13 @@ class FxQuote {
   }
 
   static String _requireSourceProvider(String value) {
+    // Check the raw input before trimming so a trailing control character
+    // cannot disappear from the provenance audit boundary.
+    if (value.codeUnits.any((unit) => unit < 32 || unit > 126)) {
+      throw ArgumentError.value(value, 'sourceProvider', 'Procedencia FX ambigua.');
+    }
     final provider = _requireText(value, 'sourceProvider');
-    if (provider.codeUnits.any((unit) => unit < 32 || unit > 126) ||
-        provider.contains('%') ||
+    if (provider.contains('%') ||
         provider.contains('&') ||
         provider.contains('\\')) {
       throw ArgumentError.value(value, 'sourceProvider', 'Procedencia FX ambigua.');
