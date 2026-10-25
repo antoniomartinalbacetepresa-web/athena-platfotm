@@ -137,7 +137,8 @@ class MarketObservationBackfillService:
                 else self._today_provider()
             ),
         )
-        retrieved_at = datetime.now(timezone.utc)
+        # PIT knowledge time must not precede the network response.
+        # A batch can take minutes; capture this independently for each symbol.
 
         persisted_instruments = 0
         skipped_non_equity = 0
@@ -186,6 +187,9 @@ class MarketObservationBackfillService:
                     expected_provider=provider,
                     expected_symbol=symbol,
                 )
+                # The observation was not available when the batch began.
+                # Recording that earlier time would create false PIT knowledge.
+                retrieved_at = datetime.now(timezone.utc)
                 stats = self._observations.save_many(
                     instrument_id=instrument_id,
                     observations=history,

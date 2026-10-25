@@ -600,3 +600,46 @@ def test_historical_blocker_selection_uses_requested_pit_cutoff_not_today(
     assert report.failed_count == 0
     assert report.effective_to_date == "2026-01-02"
     assert provider.calls == []
+
+def test_backfill_records_knowledge_time_after_each_provider_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slow multi-symbol requests must not backdate PIT knowledge to batch start."""
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    first_id = _insert(instruments, symbol="AAA", instrument_type="common_stock")
+    second_id = _insert(instruments, symbol="BBB", instrument_type="common_stock")
+
+    class ControlledDateTime(datetime):
+        current = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz) if tz is not None else cls.current.replace(tzinfo=None)
+
+    class SlowProvider(FakeHistoryProvider):
+        def get_history(self, symbol, from_date=None, to_date=None):
+            ControlledDateTime.current += timedelta(minutes=1)
+            return super().get_history(symbol, from_date, to_date)
+
+    provider = SlowProvider({
+        symbol: [{"timestamp": "2026-01-01T21:00:00+00:00", "close": 100.0}]
+        for symbol in ("AAA", "BBB")
+    })
+    monkeypatch.setattr(
+        "app.services.market_observation_backfill_service.datetime",
+        ControlledDateTime,
+    )
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=2)
+
+    assert report.failed_count == 0
+    assert report.observations_inserted == 2
+    observations = MarketObservationRepository(database=database)
+    first = observations.list_for_instrument(first_id)[0]
+    second = observations.list_for_instrument(second_id)[0]
+    assert first["retrieved_at"] == "2026-01-02T20:01:00+00:00"
+    assert second["retrieved_at"] == "2026-01-02T20:02:00+00:00"
+    assert provider.calls == ["AAA", "BBB"]
