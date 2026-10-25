@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+import re
 from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
@@ -130,6 +131,11 @@ class MarketObservationBackfillService:
             limit=limit,
             offset=offset,
             blocking_only=blocking_only,
+            as_of_date=(
+                self._parse_iso_date(effective_to_date, field="to_date")
+                if effective_to_date is not None
+                else self._today_provider()
+            ),
         )
         retrieved_at = datetime.now(timezone.utc)
 
@@ -283,18 +289,35 @@ class MarketObservationBackfillService:
         to_date: str | None,
         blocking_only: bool,
     ) -> tuple[str | None, str | None, bool]:
-        if not blocking_only or from_date is not None:
-            return from_date, to_date, False
+        # Reject impossible or future windows before database selection or network I/O.
+        start = self._parse_iso_date(from_date, field="from_date") if from_date is not None else None
+        end = self._parse_iso_date(to_date, field="to_date") if to_date is not None else None
+        today = self._today_provider()
+        if start is not None and start > today:
+            raise ValueError("from_date no puede ser una fecha futura.")
+        if end is not None and end > today:
+            raise ValueError("to_date no puede ser una fecha futura.")
+        if start is not None and end is not None and start > end:
+            raise ValueError("from_date no puede ser posterior a to_date.")
 
-        end_date = self._parse_iso_date(to_date) if to_date is not None else self._today_provider()
+        if not blocking_only or start is not None:
+            return (
+                start.isoformat() if start is not None else None,
+                end.isoformat() if end is not None else None,
+                False,
+            )
+
+        end_date = end if end is not None else today
         start_date = end_date - timedelta(days=self.BLOCKER_LOOKBACK_DAYS)
         return start_date.isoformat(), end_date.isoformat(), True
 
-    def _parse_iso_date(self, value: str) -> date:
+    def _parse_iso_date(self, value: str, *, field: str) -> date:
+        if not isinstance(value, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+            raise ValueError(f"{field} debe tener formato YYYY-MM-DD y ser una fecha válida.")
         try:
             return date.fromisoformat(value)
         except ValueError as exc:
-            raise ValueError("to_date debe tener formato YYYY-MM-DD y ser una fecha válida.") from exc
+            raise ValueError(f"{field} debe tener formato YYYY-MM-DD y ser una fecha válida.") from exc
 
     def _select_rows(
         self,
@@ -302,6 +325,7 @@ class MarketObservationBackfillService:
         limit: int,
         offset: int,
         blocking_only: bool,
+        as_of_date: date,
     ) -> list[dict[str, Any]]:
         if not blocking_only:
             return self._instruments.list_active(limit=limit, offset=offset)
@@ -309,7 +333,7 @@ class MarketObservationBackfillService:
         report = MarketHistoryGapService(database=self._database).get_report(
             limit=limit,
             offset=offset,
-            as_of=datetime.combine(self._today_provider(), time.max, tzinfo=timezone.utc),
+            as_of=datetime.combine(as_of_date, time.max, tzinfo=timezone.utc),
         )
         rows: list[dict[str, Any]] = []
         for blocker in report.items:

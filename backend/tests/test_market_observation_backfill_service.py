@@ -530,3 +530,73 @@ def test_backfill_accepts_matching_dual_provenance_aliases(
     assert report.failed_count == 0
     assert report.observations_inserted == 1
     assert len(MarketObservationRepository(database=database).list_for_instrument(stock_id)) == 1
+
+
+@pytest.mark.parametrize(
+    ("from_date", "to_date", "error"),
+    [
+        (None, "2026-10-26", "to_date no puede ser una fecha futura"),
+        ("2026-10-26", None, "from_date no puede ser una fecha futura"),
+        ("2026-01-03", "2026-01-02", "from_date no puede ser posterior"),
+        ("20260102", "2026-01-03", "from_date debe tener formato"),
+        (None, "2026-02-30", "to_date debe tener formato"),
+    ],
+)
+def test_backfill_rejects_invalid_pit_windows_before_any_network_or_write(
+    tmp_path: Path, from_date: str | None, to_date: str | None, error: str
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({"AAA": [{"timestamp": "2026-01-02T21:00:00+00:00", "close": 100.0}]})
+    service = MarketObservationBackfillService(
+        database=database,
+        history_provider=provider,
+        today_provider=lambda: date(2026, 10, 25),
+    )
+
+    with pytest.raises(ValueError, match=error):
+        service.run(limit=1, from_date=from_date, to_date=to_date, blocking_only=True)
+
+    assert provider.calls == []
+    assert MarketObservationRepository(database=database).list_for_instrument(stock_id) == []
+
+
+def test_historical_blocker_selection_uses_requested_pit_cutoff_not_today(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    stock_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA",
+        instrument_type="common_stock",
+    )
+    start = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    history = [
+        {"timestamp": (start + timedelta(days=day)).isoformat(), "close": 100.0}
+        for day in range(0, 366, 5)
+    ]
+    if history[-1]["timestamp"] != (start + timedelta(days=365)).isoformat():
+        history.append({"timestamp": (start + timedelta(days=365)).isoformat(), "close": 100.0})
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=stock_id,
+        observations=history,
+        source_provider="yahoo",
+        retrieved_at=datetime(2026, 1, 2, 22, 0, tzinfo=timezone.utc),
+    )
+    provider = FakeHistoryProvider({"AAA": RuntimeError("No blocker at the requested cutoff")})
+    service = MarketObservationBackfillService(
+        database=database,
+        history_provider=provider,
+        today_provider=lambda: date(2026, 10, 25),
+    )
+
+    report = service.run(limit=10, blocking_only=True, to_date="2026-01-02")
+
+    assert report.selected_count == 0
+    assert report.failed_count == 0
+    assert report.effective_to_date == "2026-01-02"
+    assert provider.calls == []
