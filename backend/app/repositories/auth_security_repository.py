@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -10,7 +10,7 @@ class AuthSecurityRepository:
     """Persistent auth-security state shared by all backend processes.
 
     Stores revoked JWT identifiers, per-user session versions and fixed-window
-    login counters. No plaintext password, bearer token, or secret key is ever
+    login counters anchored to each key's first attempt. No plaintext password, bearer token, or secret key is ever
     persisted here.
     """
 
@@ -125,11 +125,13 @@ class AuthSecurityRepository:
         key: str,
         window_started_at: datetime,
         limit: int,
+        window_seconds: int = 300,
     ) -> dict[str, Any]:
         normalized_key = self._required(key, "key")
-        if limit <= 0:
-            raise ValueError("limit debe ser positivo.")
-        window = self._aware(window_started_at, "window_started_at").isoformat()
+        if limit <= 0 or window_seconds <= 0:
+            raise ValueError("limit y window_seconds deben ser positivos.")
+        requested_at = self._aware(window_started_at, "window_started_at")
+        window = requested_at.isoformat()
         now = datetime.now(timezone.utc).isoformat()
         with self._database.connect() as connection:
             row = connection.execute(
@@ -141,7 +143,18 @@ class AuthSecurityRepository:
                 """,
                 (normalized_key,),
             ).fetchone()
-            if row is None or str(row["window_started_at"]) != window:
+            # Keep the original window for a key until its full duration
+            # expires. A wall-clock bucket rollover must not reset attempts.
+            stored_start = (
+                datetime.fromisoformat(str(row["window_started_at"])).astimezone(timezone.utc)
+                if row is not None
+                else None
+            )
+            if (
+                stored_start is None
+                or requested_at < stored_start
+                or requested_at >= stored_start + timedelta(seconds=window_seconds)
+            ):
                 attempts = 1
                 connection.execute(
                     f"""
@@ -156,6 +169,7 @@ class AuthSecurityRepository:
                     (normalized_key, window, attempts, now),
                 )
             else:
+                window = stored_start.isoformat()
                 attempts = int(row["attempts"]) + 1
                 connection.execute(
                     f"""
