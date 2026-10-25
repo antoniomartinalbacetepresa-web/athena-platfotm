@@ -25,12 +25,6 @@ class FxQuote {
     if (!rate.isFinite || rate <= 0) {
       throw ArgumentError.value(rate, 'rate', 'La tasa FX debe ser positiva y finita.');
     }
-    if (observedAt.timeZoneOffset == Duration.zero &&
-        retrievedAt.isBefore(observedAt)) {
-      throw ArgumentError(
-        'La recuperación FX no puede preceder a la observación.',
-      );
-    }
     if (retrievedAt.isBefore(observedAt)) {
       throw ArgumentError(
         'La recuperación FX no puede preceder a la observación.',
@@ -58,6 +52,11 @@ class FxQuote {
         );
       }
     } else {
+      if (sourceProvider.toLowerCase() == 'identity') {
+        throw ArgumentError(
+          'Una cotización de mercado no puede declarar proveedor identity.',
+        );
+      }
       final expectedSymbol = '${this.baseCurrency}${this.quoteCurrency}=X';
       if (normalizedSourceSymbol == null || normalizedSourceSymbol != expectedSymbol) {
         throw ArgumentError(
@@ -112,7 +111,11 @@ class FxQuote {
   }
 
   static DateTime _parseTimestamp(dynamic value, String field) {
-    final parsed = DateTime.tryParse(value?.toString() ?? '');
+    final raw = value?.toString().trim() ?? '';
+    if (!RegExp(r'(?:Z|[+-]\\d{2}:\\d{2})$').hasMatch(raw)) {
+      throw FormatException('La respuesta FX contiene $field sin zona horaria.');
+    }
+    final parsed = DateTime.tryParse(raw);
     if (parsed == null) {
       throw FormatException('La respuesta FX contiene $field inválido.');
     }

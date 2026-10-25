@@ -38,6 +38,12 @@ class AthenaBackendFxDataSource {
         'La respuesta FX actual tiene un contrato histórico o inválido.',
       );
     }
+    final now = DateTime.now().toUtc();
+    if (result.observedAt.isAfter(now) || result.retrievedAt.isAfter(now)) {
+      throw const FormatException(
+        'La respuesta FX actual contiene marcas temporales futuras.',
+      );
+    }
     return result;
   }
 
@@ -49,8 +55,20 @@ class AthenaBackendFxDataSource {
   }) async {
     final base = _normalizeCurrency(baseCurrency, 'baseCurrency');
     final quote = _normalizeCurrency(quoteCurrency, 'quoteCurrency');
-    final observedDate = observedOn.toUtc();
+    // observedOn is a calendar date, not an instant to shift across time zones.
+    final observedDate = DateTime.utc(
+      observedOn.year,
+      observedOn.month,
+      observedOn.day,
+    );
     final cutoff = knowledgeCutoff?.toUtc();
+    final now = DateTime.now().toUtc();
+    if (observedDate.isAfter(now) ||
+        (cutoff != null && cutoff.isAfter(now))) {
+      throw ArgumentError(
+        'La fecha FX o el corte de conocimiento no pueden estar en el futuro.',
+      );
+    }
 
     final query = <String, String>{
       'base': base,
@@ -82,9 +100,11 @@ class AthenaBackendFxDataSource {
         'La respuesta FX histórica no corresponde a la fecha solicitada.',
       );
     }
-    if (cutoff != null && !result.isIdentity && result.retrievedAt.isAfter(cutoff)) {
+    final effectiveCutoff = cutoff ?? DateTime.now().toUtc();
+    if (result.observedAt.isAfter(effectiveCutoff) ||
+        (!result.isIdentity && result.retrievedAt.isAfter(effectiveCutoff))) {
       throw const FormatException(
-        'La respuesta FX histórica fue recuperada después del knowledge cutoff.',
+        'La respuesta FX histórica supera el knowledge cutoff.',
       );
     }
 

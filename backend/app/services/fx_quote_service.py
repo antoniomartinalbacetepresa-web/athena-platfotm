@@ -131,7 +131,10 @@ class FxQuoteService:
             time.min,
             tzinfo=timezone.utc,
         )
-        if cutoff is not None and target_observed_at > cutoff:
+        now = datetime.now(timezone.utc)
+        if cutoff is not None and cutoff > now:
+            raise ValueError("knowledge_cutoff no puede estar en el futuro.")
+        if target_observed_at > (cutoff or now):
             raise RuntimeError(
                 "La fecha FX solicitada es posterior al corte de conocimiento; usarla introduciría lookahead."
             )

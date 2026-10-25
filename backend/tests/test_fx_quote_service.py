@@ -305,3 +305,28 @@ def test_fx_current_rejects_future_provider_timestamps(field: str) -> None:
         FxQuoteService(market_service=FakeMarketService(payload)).get_current_rate(
             base_currency="USD", quote_currency="EUR"
         )
+
+
+@pytest.mark.parametrize("pair", [("USD", "EUR"), ("EUR", "EUR")])
+def test_fx_historical_rejects_future_observation_without_cutoff(pair) -> None:
+    market = FakeMarketService(None)
+    with pytest.raises(RuntimeError, match="lookahead"):
+        FxQuoteService(market_service=market).get_historical_rate(
+            base_currency=pair[0],
+            quote_currency=pair[1],
+            observed_on=date(2099, 1, 1),
+        )
+    assert market.history_calls == []
+
+
+@pytest.mark.parametrize("pair", [("USD", "EUR"), ("EUR", "EUR")])
+def test_fx_historical_rejects_future_knowledge_cutoff(pair) -> None:
+    market = FakeMarketService(None)
+    with pytest.raises(ValueError, match="futuro"):
+        FxQuoteService(market_service=market).get_historical_rate(
+            base_currency=pair[0],
+            quote_currency=pair[1],
+            observed_on=date(2026, 8, 3),
+            knowledge_cutoff=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )
+    assert market.history_calls == []
