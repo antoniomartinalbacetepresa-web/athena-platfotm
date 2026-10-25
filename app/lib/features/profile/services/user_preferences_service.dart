@@ -45,12 +45,13 @@ class UserPreferencesService {
 
   Future<UserPreferences?> load() async {
     final token = _authenticatedToken();
+    final authorityVersion = _session.authorityVersion;
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
       headers: _authenticatedHeaders(token),
     );
-    await _rejectInvalidSession(response, token);
-    _requireCurrentToken(token);
+    await _rejectInvalidSession(response, token, authorityVersion);
+    _requireCurrentToken(token, authorityVersion);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -77,12 +78,13 @@ class UserPreferencesService {
 
   Future<UserPersonalization?> loadPersonalization() async {
     final token = _authenticatedToken();
+    final authorityVersion = _session.authorityVersion;
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/user/profile/personalization'),
       headers: _authenticatedHeaders(token),
     );
-    await _rejectInvalidSession(response, token);
-    _requireCurrentToken(token);
+    await _rejectInvalidSession(response, token, authorityVersion);
+    _requireCurrentToken(token, authorityVersion);
     final payload = _decodeObject(response);
     final status = payload['status'];
     if (status == 'not_configured') {
@@ -105,13 +107,14 @@ class UserPreferencesService {
 
   Future<UserPreferences> save(UserPreferences preferences) async {
     final token = _authenticatedToken();
+    final authorityVersion = _session.authorityVersion;
     final response = await _client.put(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
       headers: _authenticatedHeaders(token, json: true),
       body: jsonEncode(preferences.toJson()),
     );
-    await _rejectInvalidSession(response, token);
-    _requireCurrentToken(token);
+    await _rejectInvalidSession(response, token, authorityVersion);
+    _requireCurrentToken(token, authorityVersion);
     final payload = _decodeObject(response);
     if (payload['status'] != 'configured') {
       throw const FormatException('Estado de preferencias persistidas no válido.');
@@ -129,12 +132,13 @@ class UserPreferencesService {
 
   Future<void> delete() async {
     final token = _authenticatedToken();
+    final authorityVersion = _session.authorityVersion;
     final response = await _client.delete(
       Uri.parse('$_baseUrl/api/v1/user/profile/preferences'),
       headers: _authenticatedHeaders(token),
     );
-    await _rejectInvalidSession(response, token);
-    _requireCurrentToken(token);
+    await _rejectInvalidSession(response, token, authorityVersion);
+    _requireCurrentToken(token, authorityVersion);
     if (response.statusCode != 204) {
       throw StateError(_errorMessage(response));
     }
@@ -149,6 +153,7 @@ class UserPreferencesService {
       }
       throw StateError('Se requiere una sesión ATHENA autenticada.');
     }
+    _lastRejectedStatusCode = null;
     return token;
   }
 
@@ -165,16 +170,26 @@ class UserPreferencesService {
   Future<void> _rejectInvalidSession(
     http.Response response,
     String requestToken,
+    int requestAuthorityVersion,
   ) async {
     if (response.statusCode != 401 && response.statusCode != 403) return;
-    _lastRejectedStatusCode = response.statusCode;
-    await _session.clearAfterRemoteInvalidationIfCurrent(requestToken);
+    // A late 401 from a previous session must not revoke an owner that has
+    // since logged in, even when the credential text happens to be identical.
+    if (_session.authorityVersion == requestAuthorityVersion) {
+      _lastRejectedStatusCode = response.statusCode;
+    }
+    await _session.clearAfterRemoteInvalidationIfCurrent(
+      requestToken,
+      expectedAuthorityVersion: requestAuthorityVersion,
+    );
     throw UserPreferencesSessionRejectedException(response.statusCode);
   }
 
-  void _requireCurrentToken(String requestToken) {
+  void _requireCurrentToken(String requestToken, int requestAuthorityVersion) {
     final currentToken = _session.accessToken?.trim();
-    if (!_session.isAuthenticated || currentToken != requestToken) {
+    if (!_session.isAuthenticated ||
+        currentToken != requestToken ||
+        _session.authorityVersion != requestAuthorityVersion) {
       throw const UserPreferencesAuthorityChangedException();
     }
   }
