@@ -320,6 +320,18 @@ class GovernedForecastErrorOosService:
             horizon = record.get("horizonSeconds")
             if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
                 raise ValueError("error.horizonSeconds must be a positive integer.")
+            # Reject mixed cohorts before checking each record's internal PIT
+            # chronology; both checks remain mandatory for a homogeneous cohort.
+            baseline_name = self._text(record.get("baselineName"), "error.baselineName")
+            current = (provider, model_name, model_version, horizon, baseline_name)
+            if identity is None:
+                identity = current
+                canonical_model_config = dict(model_config)
+            elif current != identity:
+                raise ValueError("error_records must share provider/model/version/horizon/baseline.")
+            elif model_config != canonical_model_config:
+                raise ValueError("error_records must share the same modelConfig.")
+
             # Revalidate the complete PIT chain when a realized error is
             # consumed. The input is a mutable diagnostic dictionary: a caller
             # may have changed timestamps after measure_external_challenger_outcome.
@@ -360,16 +372,6 @@ class GovernedForecastErrorOosService:
                 raise ValueError("error record outcome precedes forecast maturity.")
             if outcome_observed > outcome_retrieved or outcome_retrieved > cutoff:
                 raise ValueError("error record failed outcome PIT ordering.")
-            baseline_name = self._text(record.get("baselineName"), "error.baselineName")
-            current = (provider, model_name, model_version, horizon, baseline_name)
-            if identity is None:
-                identity = current
-                canonical_model_config = dict(model_config)
-            elif current != identity:
-                raise ValueError("error_records must share provider/model/version/horizon/baseline.")
-            elif model_config != canonical_model_config:
-                raise ValueError("error_records must share the same modelConfig.")
-
             actual = self._finite(record.get("outcomeValue"), "error.outcomeValue")
             forecast = self._finite(record.get("forecastValue"), "error.forecastValue")
             baseline = self._finite(record.get("baselineValue"), "error.baselineValue")
