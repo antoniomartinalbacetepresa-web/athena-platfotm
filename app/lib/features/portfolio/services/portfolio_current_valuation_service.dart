@@ -251,11 +251,11 @@ class PortfolioCurrentValuationService {
   }
 
   void _validateMarketEvidence(PortfolioPosition position) {
-    final provider = position.currentPriceSourceProvider?.trim();
+    final provider = position.currentPriceSourceProvider;
     final observedAt = position.currentPriceUpdatedAt;
     final retrievedAt = position.currentPriceRetrievedAt;
 
-    if (provider == null || provider.isEmpty) {
+    if (provider == null || provider.trim().isEmpty) {
       throw StateError(
         'La posición ${position.symbol} no declara proveedor del precio actual.',
       );

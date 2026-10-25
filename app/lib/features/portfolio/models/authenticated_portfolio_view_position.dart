@@ -46,18 +46,24 @@ class AuthenticatedPortfolioViewPosition {
     AuthenticatedPortfolioValuedPosition value,
   ) {
     final quote = value.quote;
-    final provider = quote.sourceProvider?.trim();
+    final rawProvider = quote.sourceProvider;
+    final provider = rawProvider?.trim();
     final retrievedAt = quote.retrievedAt;
     if (provider == null || provider.isEmpty || retrievedAt == null) {
       throw StateError(
         'La posición autenticada no tiene provenance de mercado completa.',
       );
     }
-    MarketSourceProvenance.requireAllowed(provider);
+    MarketSourceProvenance.requireAllowed(rawProvider);
     if (retrievedAt.isBefore(quote.updatedAt)) {
       throw StateError(
         'La recuperación de mercado no puede preceder a la observación.',
       );
+    }
+    final now = DateTime.now().toUtc();
+    if (quote.updatedAt.toUtc().isAfter(now) ||
+        retrievedAt.toUtc().isAfter(now)) {
+      throw StateError('La proyección autenticada contiene precios futuros.');
     }
 
     final currency = quote.currency?.trim().toUpperCase();

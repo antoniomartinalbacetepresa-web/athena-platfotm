@@ -13,6 +13,8 @@ void main() {
     required String? currency,
     required double currentValue,
     String provider = 'verified-market',
+    DateTime? marketObservedAt,
+    DateTime? marketRetrievedAt,
   }) => AuthenticatedPortfolioViewPosition(
         serverPositionId: id,
         symbol: symbol,
@@ -27,8 +29,8 @@ void main() {
         profitLoss: null,
         profitLossPercentage: null,
         marketSourceProvider: provider,
-        marketObservedAt: observed,
-        marketRetrievedAt: retrieved,
+        marketObservedAt: marketObservedAt ?? observed,
+        marketRetrievedAt: marketRetrievedAt ?? retrieved,
       );
 
   FxQuote fx({
@@ -200,5 +202,51 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('authenticated same-currency valuation rejects trailing control provider', () async {
+    final service = AuthenticatedPortfolioFxValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(id: 11, symbol: 'CONTROL', currency: 'EUR',
+            currentValue: 100, provider: 'yahoo\n'),
+      ], baseCurrency: 'EUR'),
+      throwsStateError,
+    );
+  });
+
+  test('authenticated same-currency valuation rejects future market observation', () async {
+    final service = AuthenticatedPortfolioFxValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(id: 12, symbol: 'FUTURE', currency: 'EUR',
+            currentValue: 100, marketObservedAt: DateTime.utc(2099, 1, 1),
+            marketRetrievedAt: DateTime.utc(2099, 1, 2)),
+      ], baseCurrency: 'EUR'),
+      throwsStateError,
+    );
+  });
+
+  test('authenticated FX valuation rejects future FX retrieval', () async {
+    final service = AuthenticatedPortfolioFxValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async =>
+          fx(retrievedAt: DateTime.utc(2099, 1, 1)),
+    );
+    await expectLater(
+      service.value(positions: [
+        position(id: 13, symbol: 'FX-FUTURE', currency: 'USD',
+            currentValue: 100),
+      ], baseCurrency: 'EUR'),
+      throwsStateError,
+    );
+  });
+
 
 }

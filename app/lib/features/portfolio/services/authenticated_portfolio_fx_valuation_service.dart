@@ -71,6 +71,11 @@ class AuthenticatedPortfolioFxValuationService {
       if (position.marketRetrievedAt.isBefore(position.marketObservedAt)) {
         throw StateError('Provenance temporal inválida para ${position.symbol}.');
       }
+      final now = DateTime.now().toUtc();
+      if (position.marketObservedAt.toUtc().isAfter(now) ||
+          position.marketRetrievedAt.toUtc().isAfter(now)) {
+        throw StateError('Cotización futura para ${position.symbol}.');
+      }
       final source = _currency(
         position.currency ?? '',
         'currency(${position.symbol})',
@@ -132,6 +137,11 @@ class AuthenticatedPortfolioFxValuationService {
     }
     if (fx.sourceProvider.trim().isEmpty || fx.retrievedAt.isBefore(fx.observedAt)) {
       throw StateError('La evidencia FX no tiene provenance válida.');
+    }
+    final now = DateTime.now().toUtc();
+    if (fx.observedAt.toUtc().isAfter(now) ||
+        fx.retrievedAt.toUtc().isAfter(now)) {
+      throw StateError('La evidencia FX actual contiene fechas futuras.');
     }
   }
 

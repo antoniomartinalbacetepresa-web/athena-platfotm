@@ -141,4 +141,23 @@ void main() {
     );
   });
 
+  test('authenticated projection rejects trailing control in raw provider', () {
+    expect(
+      () => AuthenticatedPortfolioViewPosition.fromValuedPosition(
+        valued(provider: 'yahoo\n'),
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('authenticated projection rejects future market retrieval', () {
+    expect(
+      () => AuthenticatedPortfolioViewPosition.fromValuedPosition(
+        valued(retrieved: DateTime.utc(2099, 1, 1)),
+      ),
+      throwsStateError,
+    );
+  });
+
+
 }

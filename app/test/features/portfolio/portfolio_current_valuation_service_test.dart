@@ -630,4 +630,20 @@ void main() {
     );
   });
 
+  test('rejects trailing control characters in same-currency market provenance', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(symbol: 'CONTROL', currency: 'EUR',
+            sourceProvider: 'yahoo\n'),
+      ]),
+      throwsStateError,
+    );
+  });
+
+
 }
