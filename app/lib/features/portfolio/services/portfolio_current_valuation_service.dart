@@ -150,7 +150,14 @@ class PortfolioCurrentValuationService {
         continue;
       }
 
-      final normalizedCostDate = costBasisDate.toUtc();
+      // Historical FX is keyed by the acquisition's economic calendar date,
+      // not its time of day. Preserve the civil date before building a UTC
+      // date-only request, matching the backend FX datasource contract.
+      final normalizedCostDate = DateTime.utc(
+        costBasisDate.year,
+        costBasisDate.month,
+        costBasisDate.day,
+      );
       final historicalKey =
           '$sourceCurrency|${_dateKey(normalizedCostDate)}';
       var historicalFx = historicalFxByKey[historicalKey];
@@ -345,6 +352,14 @@ class PortfolioCurrentValuationService {
     }
     if (fx.retrievedAt.isBefore(fx.observedAt)) {
       throw StateError('La recuperación FX precede a su observación.');
+    }
+    // Loader injection must not bypass the HTTP datasource's future-date
+    // rejection: no current or historical portfolio evidence can be retrieved
+    // from the future, even when the FX quote is otherwise well formed.
+    final now = DateTime.now().toUtc();
+    if (fx.observedAt.toUtc().isAfter(now) ||
+        fx.retrievedAt.toUtc().isAfter(now)) {
+      throw StateError('La evidencia FX contiene marcas temporales futuras.');
     }
   }
 
