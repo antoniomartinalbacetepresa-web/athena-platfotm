@@ -142,4 +142,30 @@ void main() {
       throwsA(isA<ArgumentError>()),
     );
   });
+
+  test('historical PIT FX cannot value current authenticated holdings', () async {
+    final historical = FxQuote(
+      baseCurrency: 'USD',
+      quoteCurrency: 'EUR',
+      rate: 0.9,
+      status: 'fx_historical_ready',
+      sourceProvider: 'verified-fx',
+      sourceSymbol: 'USDEUR=X',
+      observedAt: observed,
+      retrievedAt: retrieved,
+      historicalPointInTimeEligible: true,
+    );
+    expect(() => historical.convertCurrent(100), throwsA(isA<StateError>()));
+    final service = AuthenticatedPortfolioFxValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async =>
+          historical,
+    );
+    await expectLater(
+      service.value(
+        positions: [position(id: 1, symbol: 'AAA', currency: 'USD', currentValue: 100)],
+        baseCurrency: 'EUR',
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
 }

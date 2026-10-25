@@ -21,7 +21,7 @@ class FxQuote {
     required this.historicalPointInTimeEligible,
   })  : baseCurrency = _normalizeCurrency(baseCurrency, 'baseCurrency'),
         quoteCurrency = _normalizeCurrency(quoteCurrency, 'quoteCurrency'),
-        sourceProvider = _requireText(sourceProvider, 'sourceProvider') {
+        sourceProvider = _requireSourceProvider(sourceProvider) {
     if (!rate.isFinite || rate <= 0) {
       throw ArgumentError.value(rate, 'rate', 'La tasa FX debe ser positiva y finita.');
     }
@@ -36,9 +36,12 @@ class FxQuote {
         'La recuperación FX no puede preceder a la observación.',
       );
     }
-    if (historicalPointInTimeEligible) {
+    final normalizedStatus = status.trim().toLowerCase();
+    final isHistoricalStatus = normalizedStatus == 'fx_historical_ready' ||
+        normalizedStatus == 'fx_historical_identity';
+    if (historicalPointInTimeEligible != isHistoricalStatus) {
       throw ArgumentError(
-        'El contrato FX actual de ATHENA no puede declararse elegible como PIT histórico.',
+        'El estado FX y la elegibilidad PIT histórica son inconsistentes.',
       );
     }
 
@@ -67,6 +70,11 @@ class FxQuote {
   bool get isIdentity => baseCurrency == quoteCurrency;
 
   double convertCurrent(double amount) {
+    if (historicalPointInTimeEligible) {
+      throw StateError(
+        'Una observación FX PIT histórica no puede convertir valores actuales.',
+      );
+    }
     if (!amount.isFinite) {
       throw ArgumentError.value(amount, 'amount', 'El importe debe ser finito.');
     }
@@ -120,6 +128,23 @@ class FxQuote {
       throw ArgumentError.value(value, field, 'Debe ser un código ISO de tres letras.');
     }
     return normalized;
+  }
+
+  static String _requireSourceProvider(String value) {
+    final provider = _requireText(value, 'sourceProvider');
+    if (provider.codeUnits.any((unit) => unit < 32 || unit > 126) ||
+        provider.contains('%') ||
+        provider.contains('&') ||
+        provider.contains('\\')) {
+      throw ArgumentError.value(value, 'sourceProvider', 'Procedencia FX ambigua.');
+    }
+    final key = provider.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    if (key.isEmpty ||
+        key.contains('fmp') ||
+        key.contains('financialmodelingprep')) {
+      throw ArgumentError.value(value, 'sourceProvider', 'Fuente FX prohibida.');
+    }
+    return provider;
   }
 
   static String _requireText(String? value, String field) {

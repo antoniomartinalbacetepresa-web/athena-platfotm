@@ -27,7 +27,18 @@ class AthenaBackendFxDataSource {
       },
     );
 
-    return _loadQuote(uri, expectedBase: base, expectedQuote: quote);
+    final result = await _loadQuote(
+      uri,
+      expectedBase: base,
+      expectedQuote: quote,
+    );
+    if (result.historicalPointInTimeEligible ||
+        (result.status != 'fx_current_ready' && result.status != 'fx_identity')) {
+      throw const FormatException(
+        'La respuesta FX actual tiene un contrato histórico o inválido.',
+      );
+    }
+    return result;
   }
 
   Future<FxQuote> getHistoricalRate({
@@ -59,12 +70,19 @@ class AthenaBackendFxDataSource {
       expectedQuote: quote,
     );
 
+    if (!result.historicalPointInTimeEligible ||
+        (result.status != 'fx_historical_ready' &&
+            result.status != 'fx_historical_identity')) {
+      throw const FormatException(
+        'La respuesta FX histórica no acredita elegibilidad PIT.',
+      );
+    }
     if (!_sameUtcDate(result.observedAt, observedDate)) {
       throw const FormatException(
         'La respuesta FX histórica no corresponde a la fecha solicitada.',
       );
     }
-    if (cutoff != null && result.retrievedAt.isAfter(cutoff)) {
+    if (cutoff != null && !result.isIdentity && result.retrievedAt.isAfter(cutoff)) {
       throw const FormatException(
         'La respuesta FX histórica fue recuperada después del knowledge cutoff.',
       );

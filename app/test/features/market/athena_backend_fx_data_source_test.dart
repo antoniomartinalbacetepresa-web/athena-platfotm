@@ -70,7 +70,7 @@ void main() {
               'retrievedAt': '2026-09-04T18:00:00Z',
               'sourceProvider': 'yahoo',
               'sourceSymbol': 'USDEUR=X',
-              'historicalPointInTimeEligible': false,
+              'historicalPointInTimeEligible': true,
             },
           }),
           200,
@@ -89,6 +89,7 @@ void main() {
       );
 
       expect(quote.rate, 0.84);
+      expect(quote.historicalPointInTimeEligible, isTrue);
       expect(quote.observedAt, DateTime.utc(2026, 8, 15));
       expect(quote.retrievedAt, DateTime.utc(2026, 9, 4, 18));
     });
@@ -105,7 +106,7 @@ void main() {
                 'retrievedAt': '2026-09-04T18:00:00Z',
                 'sourceProvider': 'yahoo',
                 'sourceSymbol': 'USDEUR=X',
-                'historicalPointInTimeEligible': false,
+                'historicalPointInTimeEligible': true,
               },
             }),
             200,
@@ -250,6 +251,129 @@ void main() {
 
       expect(quote.isIdentity, isTrue);
       expect(quote.rate, 1.0);
+    });
+
+    test('rechaza FMP y proveedores codificados desde el contrato HTTP FX', () async {
+      for (final provider in ['FMP', 'Financial Modeling Prep', 'f%6dp', 'f&#109;p']) {
+        final client = MockClient((request) async => http.Response(
+              jsonEncode({
+                'data': {
+                  'status': 'fx_current_ready',
+                  'baseCurrency': 'USD',
+                  'quoteCurrency': 'EUR',
+                  'rate': 0.86,
+                  'observedAt': '2026-09-02T22:00:00Z',
+                  'retrievedAt': '2026-09-02T22:00:02Z',
+                  'sourceProvider': provider,
+                  'sourceSymbol': 'USDEUR=X',
+                  'historicalPointInTimeEligible': false,
+                },
+              }),
+              200,
+            ));
+        final source = AthenaBackendFxDataSource(
+          baseUrl: 'https://api.athena.test',
+          client: client,
+        );
+        await expectLater(
+          source.getCurrentRate(baseCurrency: 'USD', quoteCurrency: 'EUR'),
+          throwsA(isA<ArgumentError>()),
+        );
+        source.dispose();
+      }
+    });
+
+    test('rechaza histórico si el backend omite la elegibilidad PIT', () async {
+      final client = MockClient((request) async => http.Response(
+            jsonEncode({
+              'data': {
+                'status': 'fx_historical_ready',
+                'baseCurrency': 'USD',
+                'quoteCurrency': 'EUR',
+                'rate': 0.84,
+                'observedAt': '2026-08-15T00:00:00Z',
+                'retrievedAt': '2026-08-16T00:00:00Z',
+                'sourceProvider': 'yahoo',
+                'sourceSymbol': 'USDEUR=X',
+                'historicalPointInTimeEligible': false,
+              },
+            }),
+            200,
+          ));
+      final source = AthenaBackendFxDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+      await expectLater(
+        source.getHistoricalRate(
+          baseCurrency: 'USD',
+          quoteCurrency: 'EUR',
+          observedOn: DateTime.utc(2026, 8, 15),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      source.dispose();
+    });
+
+    test('rechaza una respuesta histórica en el endpoint de FX actual', () async {
+      final client = MockClient((request) async => http.Response(
+            jsonEncode({
+              'data': {
+                'status': 'fx_historical_ready',
+                'baseCurrency': 'USD',
+                'quoteCurrency': 'EUR',
+                'rate': 0.84,
+                'observedAt': '2026-08-15T00:00:00Z',
+                'retrievedAt': '2026-08-16T00:00:00Z',
+                'sourceProvider': 'yahoo',
+                'sourceSymbol': 'USDEUR=X',
+                'historicalPointInTimeEligible': true,
+              },
+            }),
+            200,
+          ));
+      final source = AthenaBackendFxDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+      await expectLater(
+        source.getCurrentRate(baseCurrency: 'USD', quoteCurrency: 'EUR'),
+        throwsA(isA<FormatException>()),
+      );
+      source.dispose();
+    });
+
+    test('identidad FX histórica no exige recuperación de mercado antes del corte', () async {
+      final client = MockClient((request) async => http.Response(
+            jsonEncode({
+              'data': {
+                'status': 'fx_historical_identity',
+                'baseCurrency': 'EUR',
+                'quoteCurrency': 'EUR',
+                'rate': 1.0,
+                'observedAt': '2026-08-15T00:00:00Z',
+                'retrievedAt': '2026-09-04T18:00:00Z',
+                'sourceProvider': 'identity',
+                'sourceSymbol': null,
+                'historicalPointInTimeEligible': true,
+              },
+            }),
+            200,
+          ));
+      final source = AthenaBackendFxDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+      final result = await source.getHistoricalRate(
+        baseCurrency: 'EUR',
+        quoteCurrency: 'EUR',
+        observedOn: DateTime.utc(2026, 8, 15),
+        knowledgeCutoff: DateTime.utc(2026, 8, 16),
+      );
+      expect(result.isIdentity, isTrue);
+      expect(result.historicalPointInTimeEligible, isTrue);
+      expect(result.rate, 1.0);
+      source.dispose();
     });
   });
 }
