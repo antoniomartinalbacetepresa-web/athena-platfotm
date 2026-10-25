@@ -48,12 +48,13 @@ class AuthenticatedPortfolioSyncService {
     final positions = localPositions.toList(growable: false);
     _validateLocalPositions(positions);
     final authorityToken = _remoteService.captureAuthorityToken();
+    final authorityVersion = _remoteService.captureAuthorityVersion();
 
     final before = await _remoteService.loadPositions();
-    _remoteService.requireAuthorityToken(authorityToken);
+    _remoteService.requireAuthorityVersion(authorityToken, authorityVersion);
     final synced = <AuthenticatedPortfolioPosition>[];
     for (final position in positions) {
-      _remoteService.requireAuthorityToken(authorityToken);
+      _remoteService.requireAuthorityVersion(authorityToken, authorityVersion);
       synced.add(
         await _remoteService.upsertPosition(
           symbol: position.symbol,
@@ -62,12 +63,12 @@ class AuthenticatedPortfolioSyncService {
           averagePurchasePrice: position.averagePrice,
         ),
       );
-      _remoteService.requireAuthorityToken(authorityToken);
+      _remoteService.requireAuthorityVersion(authorityToken, authorityVersion);
     }
 
-    _remoteService.requireAuthorityToken(authorityToken);
+    _remoteService.requireAuthorityVersion(authorityToken, authorityVersion);
     final after = await _remoteService.loadPositions();
-    _remoteService.requireAuthorityToken(authorityToken);
+    _remoteService.requireAuthorityVersion(authorityToken, authorityVersion);
     return AuthenticatedPortfolioSyncReport(
       localPositionCount: positions.length,
       remotePositionCountBefore: before.length,
