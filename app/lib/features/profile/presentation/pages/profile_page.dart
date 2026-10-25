@@ -108,7 +108,9 @@ class _ProfilePageState extends State<ProfilePage> {
       // first await. Do not keep the protected UI blocked on secure-storage I/O.
       // A delayed rejection for a previous owner must not revoke the replacement.
       if (AuthSession.instance.accessToken != token ||
-          AuthSession.instance.authorityVersion != authorityVersion) return;
+          AuthSession.instance.authorityVersion != authorityVersion) {
+        return;
+      }
       unawaited(AuthSession.instance.clearAfterRemoteInvalidationIfCurrent(
         token,
         expectedAuthorityVersion: authorityVersion,
