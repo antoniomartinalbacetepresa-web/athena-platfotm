@@ -182,8 +182,13 @@ class AuthSession extends ChangeNotifier {
             ? AuthSessionRestoreResult.restored
             : AuthSessionRestoreResult.temporarilyUnavailable;
       }
+      // A replacement login may be writing while this older restore finishes.
+      // Do not clear memory here: that would invalidate the pending login and
+      // force its secure-storage reconciliation to erase the new credential.
+      if (_pendingWrites > 0) {
+        return AuthSessionRestoreResult.temporarilyUnavailable;
+      }
       if (_pendingDeletions > 0 ||
-          _pendingWrites > 0 ||
           deletionEpoch != _completedDeletionEpoch ||
           confirmedToken?.trim() != token) {
         _clearMemory();
