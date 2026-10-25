@@ -76,9 +76,10 @@ void main() {
   test('historical conversion uses only PIT evidence and stays finite', () {
     final historical = currentQuote()
       ..['status'] = 'fx_historical_ready'
-      ..['historicalPointInTimeEligible'] = true;
+      ..['historicalPointInTimeEligible'] = true
+      ..['rate'] = 2.0;
     final quote = FxQuote.fromMap(historical);
-    expect(quote.convertHistorical(100), 85);
+    expect(quote.convertHistorical(100), 200);
     expect(() => quote.convertHistorical(double.maxFinite), throwsStateError);
     expect(() => FxQuote.fromMap(currentQuote()).convertHistorical(100),
         throwsStateError);

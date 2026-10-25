@@ -122,7 +122,7 @@ class AuthenticatedPortfolioFxValuationService {
     if (fx.baseCurrency != expectedBase || fx.quoteCurrency != expectedQuote) {
       throw StateError('La evidencia FX no corresponde al par solicitado.');
     }
-    if (fx.status.trim().toLowerCase() != 'ok') {
+    if (fx.status.trim().toLowerCase() != 'fx_current_ready') {
       throw StateError('La evidencia FX no está disponible.');
     }
     if (fx.historicalPointInTimeEligible) {
