@@ -225,6 +225,70 @@ void main() {
     );
   });
 
+  for (final forbiddenProvider in <String>[
+    'Financial-Modeling-Prep',
+    'yahoo%2Ffinance',
+    'yahoo_finance\\n',
+    'fmp',
+  ]) {
+    test('valued positions reject forbidden raw provider: $forbiddenProvider',
+        () async {
+      session.establish(accessToken: 'signed.jwt.token', account: account());
+      final service = AuthenticatedPortfolioService(
+        baseUrl: 'http://athena.local',
+        client: MockClient((_) async => portfolioResponse()),
+        session: session,
+      );
+
+      await expectLater(
+        service.loadValuedPositions(
+          marketRepository: _MarketRepository(quote(provider: forbiddenProvider)),
+        ),
+        throwsStateError,
+      );
+      service.dispose();
+    });
+  }
+
+  test('valued positions reject future market observation', () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((_) async => portfolioResponse()),
+      session: session,
+    );
+
+    await expectLater(
+      service.loadValuedPositions(
+        marketRepository: _MarketRepository(
+          quote(observedAt: DateTime.utc(2099, 1, 1)),
+        ),
+      ),
+      throwsStateError,
+    );
+    service.dispose();
+  });
+
+  test('valued positions reject future retrieval of past market observation',
+      () async {
+    session.establish(accessToken: 'signed.jwt.token', account: account());
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      client: MockClient((_) async => portfolioResponse()),
+      session: session,
+    );
+
+    await expectLater(
+      service.loadValuedPositions(
+        marketRepository: _MarketRepository(
+          quote(retrievedAt: DateTime.utc(2099, 1, 1)),
+        ),
+      ),
+      throwsStateError,
+    );
+    service.dispose();
+  });
+
   test('upsert sends cost basis but never client owner or trading authority', () async {
     session.establish(accessToken: 'signed.jwt.token', account: account());
     late http.Request captured;
