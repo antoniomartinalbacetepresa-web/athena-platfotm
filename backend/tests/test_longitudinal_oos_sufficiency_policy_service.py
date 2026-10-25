@@ -263,3 +263,48 @@ def test_forecast_error_count_cannot_exceed_eligible_outcomes_in_policy_boundary
             as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=measurement,
             policy_record=policy, approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
         )
+
+
+def _evaluate_measurement(measurement: dict[str, object]) -> dict[str, object]:
+    policy = _policy()
+    return LongitudinalOosSufficiencyPolicyService().evaluate(
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        measurement=measurement,
+        policy_record=policy,
+        approval_record=_approval(str(policy["artifact"]["policyFingerprint"])),
+    )
+
+
+def test_claimed_span_cannot_exceed_actual_evaluation_period_span() -> None:
+    measurement = _measurement()
+    # Dates remain PIT-consistent, but the actual evaluation span is one day,
+    # not the 40 days claimed in the measurement.
+    measurement["firstEvaluationPeriodEnd"] = "2026-02-10T00:00:00+00:00"
+    result = _evaluate_measurement(measurement)
+    assert result["policyApproved"] is True
+    assert result["temporalPrecommitmentVerified"] is True
+    assert result["acceptanceEvidenceVerified"] is False
+    assert result["productionSufficiencyClaimed"] is False
+
+
+def test_horizon_error_counts_cannot_exceed_total_error_evidence() -> None:
+    measurement = _measurement()
+    measurement["horizons"]["604800"]["forecastErrorCount"] = 11
+    result = _evaluate_measurement(measurement)
+    assert result["policyApproved"] is True
+    assert result["acceptanceEvidenceVerified"] is False
+    assert result["automaticProductionPromotion"] is False
+
+
+def test_distinct_evaluation_periods_require_at_least_one_error_each() -> None:
+    measurement = _measurement()
+    measurement["distinctEvaluationPeriodCount"] = 13
+    result = _evaluate_measurement(measurement)
+    assert result["acceptanceEvidenceVerified"] is False
+
+
+def test_valid_measured_span_and_reconciled_horizons_remain_accepted() -> None:
+    result = _evaluate_measurement(_measurement())
+    assert result["temporalPrecommitmentVerified"] is True
+    assert result["acceptanceEvidenceVerified"] is True
+    assert result["productionSufficiencyClaimed"] is False

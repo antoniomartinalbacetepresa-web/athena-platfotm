@@ -63,18 +63,47 @@ class LongitudinalOosSufficiencyPolicyService:
         if forecast_errors > eligible_outcomes:
             raise ValueError("measurement.forecastErrorCount no puede superar eligibleOutcomeCount.")
         checks = [evaluation_span >= c["minimumEvaluationSpanDays"], distinct_periods >= c["minimumDistinctEvaluationPeriods"], eligible_outcomes >= c["minimumEligibleOutcomes"], forecast_errors >= c["minimumEligibleOutcomes"], resolved_issuers >= c["minimumDistinctResolvedIssuers"]]
+        # Longitudinal span is measured between the first and last resolved
+        # evaluation period ends, not between a forecast start and its end.
+        # A caller-supplied span cannot substitute for the actual chronology.
+        checks.append(
+            first_evaluation is not None
+            and last_evaluation is not None
+            and first_evaluation <= last_evaluation
+            and math.isclose(
+                evaluation_span,
+                (last_evaluation - first_evaluation).total_seconds() / 86400.0,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+        )
+        # Every distinct resolved evaluation period requires an observed error.
+        checks.append(distinct_periods <= forecast_errors and resolved_issuers <= forecast_errors)
         horizons = measurement.get("horizons")
         if not isinstance(horizons, dict):
             checks.append(False)
         else:
-            required_horizon_counts: list[int] = []
-            for horizon in c["requiredHorizonSeconds"]:
-                payload = horizons.get(str(horizon))
-                if not isinstance(payload, dict):
-                    required_horizon_counts.append(0)
+            horizon_counts: dict[str, int] = {}
+            horizon_structure_valid = True
+            for horizon_key, payload in horizons.items():
+                if (
+                    not isinstance(horizon_key, str)
+                    or not horizon_key.isdecimal()
+                    or int(horizon_key) <= 0
+                    or str(int(horizon_key)) != horizon_key
+                    or not isinstance(payload, dict)
+                ):
+                    horizon_structure_valid = False
                     continue
-                required_horizon_counts.append(self._measurement_nonnegative_int(payload.get("forecastErrorCount"), f"measurement.horizons.{horizon}.forecastErrorCount"))
-            checks.append(all(count > 0 for count in required_horizon_counts))
+                horizon_counts[horizon_key] = self._measurement_nonnegative_int(
+                    payload.get("forecastErrorCount"),
+                    f"measurement.horizons.{horizon_key}.forecastErrorCount",
+                )
+            checks.append(
+                horizon_structure_valid
+                and sum(horizon_counts.values()) == forecast_errors
+                and all(horizon_counts.get(str(horizon), 0) > 0 for horizon in c["requiredHorizonSeconds"])
+            )
         checks.append(temporal_precommitment_verified)
         satisfied = all(checks)
         return self._result(normalized, fingerprint, "precommitted_policy_satisfied" if satisfied else "precommitted_policy_not_satisfied", True, satisfied, checks, temporal_precommitment_verified)
