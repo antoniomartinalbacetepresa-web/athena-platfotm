@@ -90,7 +90,12 @@ class VerifiedMarketHistoryBackfillService:
         today_provider: TodayProvider | None = None,
     ) -> None:
         self._database = database if database is not None else AthenaDatabase()
-        self._today_provider = today_provider if today_provider is not None else date.today
+        # History acceptance uses UTC cutoffs, never the host's local calendar day.
+        self._today_provider = (
+            today_provider
+            if today_provider is not None
+            else lambda: datetime.now(timezone.utc).date()
+        )
         self._backfill = MarketObservationBackfillService(
             database=self._database,
             history_provider=history_provider,

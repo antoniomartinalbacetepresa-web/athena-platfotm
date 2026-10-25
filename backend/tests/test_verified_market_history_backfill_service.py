@@ -168,3 +168,34 @@ def test_no_history_remains_a_blocker_and_never_claims_operational_evidence(tmp_
     assert report.current_blockers_after == 1
     assert report.history_ready is False
     assert report.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
+
+def test_verified_backfill_default_cutoff_uses_utc_not_host_local_day(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A host already on tomorrow must not request tomorrow's market history."""
+    from app.services import verified_market_history_backfill_service as module
+
+    class AheadLocalDate(date):
+        @classmethod
+        def today(cls):
+            return date(2026, 10, 26)
+
+    class ControlledDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 10, 25, 23, 30, tzinfo=timezone.utc)
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(module, "date", AheadLocalDate)
+    monkeypatch.setattr(module, "datetime", ControlledDateTime)
+
+    database = _database(tmp_path)
+    _insert(InstrumentRepository(database=database), "AAA")
+    provider = FakeHistoryProvider({"AAA": []})
+    report = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider
+    ).run(limit=1)
+
+    assert report.history_ready is False
+    assert report.backfill.effective_to_date == "2026-10-25"
+    assert provider.calls == [("AAA", "2025-09-20", "2026-10-25")]
