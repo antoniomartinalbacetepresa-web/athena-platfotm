@@ -320,6 +320,46 @@ class GovernedForecastErrorOosService:
             horizon = record.get("horizonSeconds")
             if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
                 raise ValueError("error.horizonSeconds must be a positive integer.")
+            # Revalidate the complete PIT chain when a realized error is
+            # consumed. The input is a mutable diagnostic dictionary: a caller
+            # may have changed timestamps after measure_external_challenger_outcome.
+            input_observed = self._iso(
+                record.get("inputObservedThrough"), "error.inputObservedThrough"
+            )
+            input_retrieved = self._iso(
+                record.get("inputRetrievedAt"), "error.inputRetrievedAt"
+            )
+            if input_observed > input_retrieved or input_retrieved > forecast_origin:
+                raise ValueError("error record failed input PIT ordering.")
+            sources = record.get("sourceProvenance")
+            if not isinstance(sources, list) or not sources:
+                raise ValueError("error record requires source provenance.")
+            for source in sources:
+                if not isinstance(source, dict):
+                    raise ValueError("error record contains invalid source provenance.")
+                self._text(source.get("source"), "error.sourceProvenance.source")
+                source_observed = self._iso(
+                    source.get("observedAt"), "error.sourceProvenance.observedAt"
+                )
+                source_retrieved = self._iso(
+                    source.get("retrievedAt"), "error.sourceProvenance.retrievedAt"
+                )
+                if source_observed > source_retrieved or source_retrieved > forecast_origin:
+                    raise ValueError("error record failed source provenance PIT ordering.")
+            maturity = forecast_origin + timedelta(seconds=horizon)
+            if self._iso(record.get("maturityAt"), "error.maturityAt") != maturity:
+                raise ValueError("error record maturity does not match forecast horizon.")
+            outcome_observed = self._iso(
+                record.get("outcomeObservedAt"), "error.outcomeObservedAt"
+            )
+            outcome_retrieved = self._iso(
+                record.get("outcomeRetrievedAt"), "error.outcomeRetrievedAt"
+            )
+            cutoff = self._iso(record.get("asOf"), "error.asOf")
+            if outcome_observed < maturity:
+                raise ValueError("error record outcome precedes forecast maturity.")
+            if outcome_observed > outcome_retrieved or outcome_retrieved > cutoff:
+                raise ValueError("error record failed outcome PIT ordering.")
             baseline_name = self._text(record.get("baselineName"), "error.baselineName")
             current = (provider, model_name, model_version, horizon, baseline_name)
             if identity is None:

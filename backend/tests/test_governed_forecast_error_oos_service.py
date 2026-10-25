@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.longitudinal_oos_policy_repository import (
     LongitudinalOosPolicyRepository,
@@ -743,3 +745,50 @@ def test_external_challenger_longitudinal_diagnostic_rejects_duplicate_forecast_
         service.summarize_external_challenger_outcomes(
             error_records=[error, dict(error)]
         )
+
+@pytest.mark.parametrize(
+    "tamper,expected",
+    [
+        ("input_retrieval", "input PIT ordering"),
+        ("source_retrieval", "source provenance PIT ordering"),
+        ("maturity", "maturity does not match"),
+        ("unmatured", "precedes forecast maturity"),
+        ("late_outcome", "outcome PIT ordering"),
+        ("retroactive_as_of", "outcome PIT ordering"),
+    ],
+)
+def test_challenger_longitudinal_summary_revalidates_pit_after_measurement(
+    tmp_path, tamper: str, expected: str
+) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    error = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    if tamper == "input_retrieval":
+        error["inputRetrievedAt"] = (origin + timedelta(seconds=1)).isoformat()
+    elif tamper == "source_retrieval":
+        error["sourceProvenance"][0]["retrievedAt"] = (
+            origin + timedelta(seconds=1)
+        ).isoformat()
+    elif tamper == "maturity":
+        error["maturityAt"] = (origin + timedelta(days=2)).isoformat()
+    elif tamper == "unmatured":
+        error["outcomeObservedAt"] = (origin + timedelta(hours=23)).isoformat()
+    elif tamper == "late_outcome":
+        error["outcomeRetrievedAt"] = (observed + timedelta(minutes=3)).isoformat()
+    else:
+        error["asOf"] = (observed - timedelta(minutes=1)).isoformat()
+
+    with pytest.raises(ValueError, match=expected):
+        service.summarize_external_challenger_outcomes(error_records=[error])

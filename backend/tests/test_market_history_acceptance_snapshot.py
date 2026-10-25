@@ -187,3 +187,10 @@ def test_invalid_sqlite_source_is_rejected_without_mutation(tmp_path: Path) -> N
     with pytest.raises(sqlite3.DatabaseError):
         run_snapshot(path)
     assert path.read_bytes() == before
+
+def test_future_pit_cutoff_is_rejected_without_touching_source(tmp_path: Path) -> None:
+    path, _ = _database(tmp_path)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="fecha futura"):
+        run_snapshot(path, as_of=datetime.now(timezone.utc) + timedelta(days=1))
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before

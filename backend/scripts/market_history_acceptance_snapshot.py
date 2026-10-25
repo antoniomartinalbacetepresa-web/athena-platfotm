@@ -55,6 +55,9 @@ def run_snapshot(
     if cutoff.tzinfo is None or cutoff.utcoffset() is None:
         raise ValueError("as_of debe incluir zona horaria.")
     cutoff = cutoff.astimezone(timezone.utc)
+    # A diagnostic for a future instant cannot substantiate observed PIT coverage.
+    if cutoff > datetime.now(timezone.utc):
+        raise ValueError("as_of no puede ser una fecha futura.")
 
     with tempfile.TemporaryDirectory(prefix="athena-history-snapshot-") as directory:
         snapshot_path = Path(directory) / "market-history.db"
