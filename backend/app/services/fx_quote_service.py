@@ -73,6 +73,10 @@ class FxQuoteService:
         retrieved_at = self._aware_iso(payload.get("retrievedAt"), "retrievedAt")
         if retrieved_at < observed_at:
             raise RuntimeError("La recuperación FX no puede preceder a su observación.")
+        # A current valuation must never accept provider timestamps from the future.
+        now = datetime.now(timezone.utc)
+        if observed_at > now or retrieved_at > now:
+            raise RuntimeError("La cotización FX actual contiene marcas temporales futuras.")
 
         returned_currency = str(payload.get("currency") or "").strip().upper()
         if returned_currency and returned_currency != quote:

@@ -294,3 +294,14 @@ def test_fx_rejects_non_ascii_currency_identifiers() -> None:
         FxQuoteService(market_service=FakeMarketService(None)).get_current_rate(
             base_currency="UŚD", quote_currency="EUR"
         )
+
+@pytest.mark.parametrize("field", ["timestamp", "retrievedAt"])
+def test_fx_current_rejects_future_provider_timestamps(field: str) -> None:
+    payload = _payload()
+    payload[field] = "2099-01-01T00:00:00+00:00"
+    if field == "timestamp":
+        payload["retrievedAt"] = "2099-01-01T00:00:01+00:00"
+    with pytest.raises(RuntimeError, match="futuras"):
+        FxQuoteService(market_service=FakeMarketService(payload)).get_current_rate(
+            base_currency="USD", quote_currency="EUR"
+        )
