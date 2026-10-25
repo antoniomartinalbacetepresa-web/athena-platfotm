@@ -1,3 +1,4 @@
+import '../../market/models/market_source_provenance.dart';
 import '../services/authenticated_portfolio_service.dart';
 
 /// UI-safe projection of an owner-scoped authenticated holding joined with a
@@ -52,6 +53,7 @@ class AuthenticatedPortfolioViewPosition {
         'La posición autenticada no tiene provenance de mercado completa.',
       );
     }
+    MarketSourceProvenance.requireAllowed(provider);
     if (retrievedAt.isBefore(quote.updatedAt)) {
       throw StateError(
         'La recuperación de mercado no puede preceder a la observación.',

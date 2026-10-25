@@ -12,6 +12,7 @@ void main() {
     required String symbol,
     required String? currency,
     required double currentValue,
+    String provider = 'verified-market',
   }) => AuthenticatedPortfolioViewPosition(
         serverPositionId: id,
         symbol: symbol,
@@ -25,7 +26,7 @@ void main() {
         investedValue: null,
         profitLoss: null,
         profitLossPercentage: null,
-        marketSourceProvider: 'verified-market',
+        marketSourceProvider: provider,
         marketObservedAt: observed,
         marketRetrievedAt: retrieved,
       );
@@ -168,4 +169,36 @@ void main() {
       throwsA(isA<StateError>()),
     );
   });
+  test('authenticated same-currency valuation rejects FMP source', () async {
+    final service = AuthenticatedPortfolioFxValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(
+        positions: [position(id: 8, symbol: 'BLOCKED', currency: 'EUR',
+            currentValue: 100, provider: 'financial-modeling-prep')],
+        baseCurrency: 'EUR',
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('authenticated valuation rejects ambiguous encoded source', () async {
+    final service = AuthenticatedPortfolioFxValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(
+        positions: [position(id: 9, symbol: 'BLOCKED', currency: 'EUR',
+            currentValue: 100, provider: 'yahoo%2Ffinance')],
+        baseCurrency: 'EUR',
+      ),
+      throwsStateError,
+    );
+  });
+
 }

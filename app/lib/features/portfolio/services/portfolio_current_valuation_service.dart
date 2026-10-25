@@ -1,4 +1,5 @@
 import '../../market/models/fx_quote.dart';
+import '../../market/models/market_source_provenance.dart';
 import '../models/portfolio_position.dart';
 
 typedef CurrentFxRateLoader = Future<FxQuote> Function({
@@ -258,6 +259,7 @@ class PortfolioCurrentValuationService {
         'La posición ${position.symbol} no declara proveedor del precio actual.',
       );
     }
+    MarketSourceProvenance.requireAllowed(provider);
     if (observedAt == null || retrievedAt == null) {
       throw StateError(
         'La posición ${position.symbol} no conserva timestamps de provenance.',

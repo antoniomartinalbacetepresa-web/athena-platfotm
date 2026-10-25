@@ -1,4 +1,5 @@
 import '../../market/models/fx_quote.dart';
+import '../../market/models/market_source_provenance.dart';
 import '../models/authenticated_portfolio_view_position.dart';
 
 typedef AuthenticatedPortfolioFxLoader = Future<FxQuote> Function({
@@ -63,6 +64,7 @@ class AuthenticatedPortfolioFxValuationService {
     DateTime? latestFxRetrieved;
 
     for (final position in positions) {
+      MarketSourceProvenance.requireAllowed(position.marketSourceProvider);
       if (!position.currentValue.isFinite || position.currentValue < 0) {
         throw StateError('Valor actual inválido para ${position.symbol}.');
       }

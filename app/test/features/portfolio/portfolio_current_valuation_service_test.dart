@@ -427,4 +427,33 @@ void main() {
     expect(valuation.profitLossInBaseCurrency, isNull);
     expect(valuation.profitLossPercentage, isNull);
   });
+  test('rejects FMP market provenance without requiring FX', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(symbol: 'BLOCKED', currency: 'EUR', sourceProvider: 'F-M-P'),
+      ]),
+      throwsStateError,
+    );
+  });
+
+  test('rejects encoded market-provider provenance', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(symbol: 'AMBIGUOUS', currency: 'EUR',
+            sourceProvider: 'yahoo%2Ffinance'),
+      ]),
+      throwsStateError,
+    );
+  });
+
 }

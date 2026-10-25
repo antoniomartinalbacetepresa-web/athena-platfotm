@@ -123,4 +123,22 @@ void main() {
       isNull,
     );
   });
+  test('authenticated projection rejects forbidden FMP market source', () {
+    expect(
+      () => AuthenticatedPortfolioViewPosition.fromValuedPosition(
+        valued(provider: 'Financial-Modeling-Prep'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('authenticated projection rejects encoded market provenance', () {
+    expect(
+      () => AuthenticatedPortfolioViewPosition.fromValuedPosition(
+        valued(provider: 'yahoo%2Ffinance'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
 }
