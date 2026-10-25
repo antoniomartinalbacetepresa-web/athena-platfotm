@@ -31,24 +31,60 @@ class _ProfilePageState extends State<ProfilePage> {
   String? _sessionValidationError;
   String? _preferencesError;
   UserPreferences? _preferences;
+  String? _observedAccessToken;
+  int? _observedOwnerId;
+  late int _observedAuthorityVersion;
 
   @override
   void initState() {
     super.initState();
     _ownsAuthService = widget.authService == null;
     _authService = widget.authService ?? AthenaAuthService();
+    _observedAccessToken = AuthSession.instance.accessToken;
+    _observedOwnerId = AuthSession.instance.account?.id;
+    _observedAuthorityVersion = AuthSession.instance.authorityVersion;
+    AuthSession.instance.addListener(_onSessionAuthorityChanged);
     _refreshAuthenticatedAccount();
   }
 
   @override
   void dispose() {
+    AuthSession.instance.removeListener(_onSessionAuthorityChanged);
     if (_ownsAuthService) _authService.dispose();
     _preferencesService.dispose();
     super.dispose();
   }
 
+  // Profile may remain mounted while authentication changes elsewhere.
+  // Immediately discard the old owner's protected projection, including when
+  // the same token string is reused in a newer authority generation.
+  void _onSessionAuthorityChanged() {
+    final session = AuthSession.instance;
+    if (_observedAuthorityVersion == session.authorityVersion) return;
+    final previousToken = _observedAccessToken;
+    final previousOwnerId = _observedOwnerId;
+    _observedAccessToken = session.accessToken;
+    _observedOwnerId = session.account?.id;
+    _observedAuthorityVersion = session.authorityVersion;
+    if (!mounted) return;
+    setState(() {
+      _preferences = null;
+      _preferencesBusy = false;
+      _preferencesError = null;
+      _sessionValidationError = null;
+      _error = null;
+      _checking = false;
+    });
+    if (session.isAuthenticated &&
+        (session.accessToken != previousToken ||
+            session.account?.id != previousOwnerId)) {
+      unawaited(_refreshAuthenticatedAccount());
+    }
+  }
+
   Future<void> _refreshAuthenticatedAccount() async {
     final token = AuthSession.instance.accessToken;
+    final authorityVersion = AuthSession.instance.authorityVersion;
     if (token == null) return;
     setState(() {
       _checking = true;
@@ -61,7 +97,8 @@ class _ProfilePageState extends State<ProfilePage> {
       // If authority changed while it was in flight, never resurrect the old
       // owner or load protected preferences under the replacement session.
       if (!AuthSession.instance.isAuthenticated ||
-          AuthSession.instance.accessToken != token) {
+          AuthSession.instance.accessToken != token ||
+          AuthSession.instance.authorityVersion != authorityVersion) {
         return;
       }
       AuthSession.instance.establish(accessToken: token, account: account);
@@ -70,20 +107,26 @@ class _ProfilePageState extends State<ProfilePage> {
       // clearAfterRemoteInvalidation revokes in-memory authority before its
       // first await. Do not keep the protected UI blocked on secure-storage I/O.
       // A delayed rejection for a previous owner must not revoke the replacement.
-      if (AuthSession.instance.accessToken != token) return;
-      unawaited(AuthSession.instance.clearAfterRemoteInvalidationIfCurrent(token));
+      if (AuthSession.instance.accessToken != token ||
+          AuthSession.instance.authorityVersion != authorityVersion) return;
+      unawaited(AuthSession.instance.clearAfterRemoteInvalidationIfCurrent(
+        token,
+        expectedAuthorityVersion: authorityVersion,
+      ));
       _preferences = null;
       _preferencesError = null;
       _sessionValidationError = null;
       _error = 'La sesión ha caducado o ya no es válida.';
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() {
         _sessionValidationError =
             'No se pudo revalidar la sesión por un problema temporal. La sesión local se conserva sin asumir que ha sido revocada.';
       });
     } finally {
-      if (mounted) setState(() => _checking = false);
+      if (mounted && AuthSession.instance.authorityVersion == authorityVersion) {
+        setState(() => _checking = false);
+      }
     }
   }
 
@@ -93,71 +136,81 @@ class _ProfilePageState extends State<ProfilePage> {
         AuthSession.instance.accessToken != expectedAccessToken) {
       return;
     }
+    final authorityVersion = AuthSession.instance.authorityVersion;
     setState(() {
       _preferencesBusy = true;
       _preferencesError = null;
     });
     try {
       final preferences = await _preferencesService.load();
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() => _preferences = preferences);
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() {
         _preferencesError =
             'No se pudieron cargar las preferencias protegidas. No se han sustituido por datos locales.';
       });
     } finally {
-      if (mounted) setState(() => _preferencesBusy = false);
+      if (mounted && AuthSession.instance.authorityVersion == authorityVersion) {
+        setState(() => _preferencesBusy = false);
+      }
     }
   }
 
   Future<void> _savePreferences(UserPreferences preferences) async {
+    final authorityVersion = AuthSession.instance.authorityVersion;
     setState(() {
       _preferencesBusy = true;
       _preferencesError = null;
     });
     try {
       final stored = await _preferencesService.save(preferences);
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() => _preferences = stored);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preferencias protegidas guardadas.')),
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() {
         _preferencesError =
             'No se pudieron guardar las preferencias. No se conservará una copia local insegura.';
       });
     } finally {
-      if (mounted) setState(() => _preferencesBusy = false);
+      if (mounted && AuthSession.instance.authorityVersion == authorityVersion) {
+        setState(() => _preferencesBusy = false);
+      }
     }
   }
 
   Future<void> _deletePreferences() async {
+    final authorityVersion = AuthSession.instance.authorityVersion;
     setState(() {
       _preferencesBusy = true;
       _preferencesError = null;
     });
     try {
       await _preferencesService.delete();
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() => _preferences = null);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preferencias protegidas eliminadas.')),
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() {
         _preferencesError = 'No se pudieron eliminar las preferencias protegidas.';
       });
     } finally {
-      if (mounted) setState(() => _preferencesBusy = false);
+      if (mounted && AuthSession.instance.authorityVersion == authorityVersion) {
+        setState(() => _preferencesBusy = false);
+      }
     }
   }
 
   Future<void> _logout() async {
+    final authorityVersion = AuthSession.instance.authorityVersion;
     final lifecycle = AccountLifecycleService(
       authService: _authService,
       session: AuthSession.instance,
@@ -165,14 +218,15 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       await lifecycle.logoutCurrentSession();
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() {
         _sessionValidationError =
             'No se pudo confirmar el cierre de sesión en el servidor. La sesión se conserva hasta poder verificar la revocación.';
       });
       return;
     }
-    if (!mounted) return;
+    // A new login can win the race with a delayed logout completion.
+    if (!mounted || AuthSession.instance.isAuthenticated) return;
     Navigator.pushNamedAndRemoveUntil(
       context,
       AppRoutes.welcome,
