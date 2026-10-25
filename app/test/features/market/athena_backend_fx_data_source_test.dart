@@ -520,8 +520,7 @@ void main() {
 
     test('rechaza knowledge cutoff futuro antes de consultar al backend', () async {
       final client = MockClient((request) async {
-        fail('No debe consultar el backend con un cutoff futuro.');
-        return http.Response('', 500);
+        throw StateError('No debe consultar el backend con un cutoff futuro.');
       });
       final source = AthenaBackendFxDataSource(
         baseUrl: 'https://api.athena.test', client: client,
