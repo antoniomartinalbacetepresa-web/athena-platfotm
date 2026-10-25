@@ -36,6 +36,10 @@ class AuthSession extends ChangeNotifier {
   AuthAccount? get account => _account;
   bool get isAuthenticated => _accessToken != null && _account != null;
 
+  // Monotonic generation for in-flight owner-scoped requests. A token can be
+  // restored after logout, so token equality alone is not an authority check.
+  int get authorityVersion => _authorityVersion;
+
   void establish({required String accessToken, required AuthAccount account}) {
     final token = accessToken.trim();
     if (token.isEmpty || !account.isActive) {
@@ -240,9 +244,14 @@ class AuthSession extends ChangeNotifier {
   /// Applies a remote 401/403 only to the credential that actually received it.
   /// A late response from an older owner must never revoke a replacement owner.
   Future<bool> clearAfterRemoteInvalidationIfCurrent(
-    String expectedAccessToken,
-  ) async {
+    String expectedAccessToken, {
+    int? expectedAuthorityVersion,
+  }) async {
     final expected = expectedAccessToken.trim();
+    if (expectedAuthorityVersion != null &&
+        _authorityVersion != expectedAuthorityVersion) {
+      return false;
+    }
     if (expected.isEmpty || !isAuthenticated || _accessToken != expected) {
       return false;
     }
