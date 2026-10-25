@@ -91,6 +91,33 @@ class HistoricalMarketAcceptanceReport:
                 return False
             if report.events and not report.reconciled:
                 return False
+            # Do not trust a caller-supplied "agreed" label if the event's
+            # provider membership, economic instant or values contradict it.
+            # This gate is independently callable outside the reconciler.
+            expected_providers = set(report.source_providers)
+            for event in report.events:
+                if event.status != "agreed" or event.action_type not in ("dividend", "split"):
+                    return False
+                if (
+                    len(event.providers_present) != len(expected_providers)
+                    or set(event.providers_present) != expected_providers
+                    or event.providers_missing
+                    or set(event.values_by_provider) != expected_providers
+                ):
+                    return False
+                if any(
+                    not isinstance(event.values_by_provider[provider], dict)
+                    or not event.values_by_provider[provider]
+                    for provider in expected_providers
+                ):
+                    return False
+                effective_at = self._parse_pit_cutoff(event.effective_at)
+                if (
+                    effective_at is None
+                    or effective_at.astimezone(timezone.utc)
+                    > cutoff.astimezone(timezone.utc)
+                ):
+                    return False
         return True
 
     @property
