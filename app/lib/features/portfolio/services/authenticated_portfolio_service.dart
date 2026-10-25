@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../auth/services/athena_auth_service.dart';
 import '../../auth/services/auth_session.dart';
 import '../../market/models/market_quote.dart';
+import '../../market/models/market_source_provenance.dart';
 import '../../market/repositories/market_repository.dart';
 import '../models/authenticated_portfolio_history.dart';
 import '../models/authenticated_portfolio_position.dart';
@@ -97,7 +98,12 @@ class AuthenticatedPortfolioService {
     if(expected.isEmpty||actual!=expected) throw StateError('La cotización no corresponde a la posición autenticada solicitada.');
     if(!quote.currentPrice.isFinite||quote.currentPrice<=0) throw StateError('Cotización actual inválida para la cartera autenticada.');
     final provider=quote.sourceProvider?.trim(), retrieved=quote.retrievedAt; if(provider==null||provider.isEmpty||retrieved==null) throw StateError('La valoración autenticada requiere provenance de mercado completa.');
+    MarketSourceProvenance.requireAllowed(quote.sourceProvider);
     if(retrieved.isBefore(quote.updatedAt)) throw StateError('La recuperación de mercado no puede preceder a la observación.');
+    final now = DateTime.now().toUtc();
+    if (quote.updatedAt.toUtc().isAfter(now) || retrieved.toUtc().isAfter(now)) {
+      throw StateError('La valoración autenticada no admite cotizaciones futuras.');
+    }
     final he=holding.exchange?.trim().toUpperCase(), qe=quote.exchange?.trim().toUpperCase(); if(he!=null&&he.isNotEmpty&&(qe==null||qe.isEmpty||qe!=he)) throw StateError('La cotización pertenece a un listing distinto de la posición autenticada.');
   }
 
