@@ -65,6 +65,37 @@ void main() {
     expect(session.accessToken, isNull);
   });
 
+  test('failed secure write after persisting a token purges unverified authority', () async {
+    final store = _WriteThenFailAuthTokenStore();
+    final session = AuthSession.forTesting(store);
+
+    await expectLater(
+      session.establishPersisted(
+        accessToken: 'unverified-token',
+        account: account(),
+      ),
+      throwsStateError,
+    );
+
+    expect(store.token, isNull);
+    expect(store.deleteCount, 1);
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+
+    var validationCalls = 0;
+    expect(
+      await session.restore(
+        validateToken: (_) async {
+          validationCalls += 1;
+          return account();
+        },
+        shouldDiscardToken: (_) => false,
+      ),
+      AuthSessionRestoreResult.noStoredToken,
+    );
+    expect(validationCalls, 0);
+  });
+
   test('logout deletion finishing during a new login write is repaired', () async {
     final store = _WriteCompletesAfterDeletionStore();
     final session = AuthSession.forTesting(store);
@@ -679,6 +710,26 @@ class _FakeAuthTokenStore implements AuthTokenStore {
   Future<void> writeAccessToken(String token) async {
     if (failWrites) throw StateError('secure storage unavailable');
     this.token = token;
+  }
+}
+
+class _WriteThenFailAuthTokenStore implements AuthTokenStore {
+  String? token;
+  int deleteCount = 0;
+
+  @override
+  Future<void> writeAccessToken(String value) async {
+    token = value;
+    throw StateError('secure write completion failed');
+  }
+
+  @override
+  Future<String?> readAccessToken() async => token;
+
+  @override
+  Future<void> deleteAccessToken() async {
+    deleteCount += 1;
+    token = null;
   }
 }
 
