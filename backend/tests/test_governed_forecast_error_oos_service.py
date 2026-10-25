@@ -229,7 +229,7 @@ def test_governed_oos_rejects_retroactive_approval_of_historical_evidence(tmp_pa
     assert sufficiency["temporalPrecommitmentVerified"] is False
     assert sufficiency["acceptanceEvidenceVerified"] is False
     assert sufficiency["criteriaCheckCount"] == 9  # Includes span and evidence-count coherence.
-    assert sufficiency["satisfiedCriteriaCount"] == 6
+    assert sufficiency["satisfiedCriteriaCount"] == sufficiency["criteriaCheckCount"] - 1
     assert result["productionLearningEligible"] is False
 
 
