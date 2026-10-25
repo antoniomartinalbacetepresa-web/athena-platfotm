@@ -265,6 +265,54 @@ def test_radar_forbids_fmp_sources(source: str, source_ref: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("source", "source_ref"),
+    [
+        ("F-M-P", "https://example.com/quote"),
+        ("Financial-Modeling_Prep", "https://example.com/quote"),
+        ("Reuters", "fmp:issuer:acme"),
+        ("Reuters", "https://f-m-p.example.com/quote"),
+    ],
+)
+def test_radar_rejects_obfuscated_forbidden_sources(source: str, source_ref: str) -> None:
+    with pytest.raises(ValueError, match="FMP"):
+        RecommendationAthenaRadarService().build(
+            as_of=AS_OF,
+            candidates=(candidate("issuer:a", "AAA", evidence("blocked", source=source, source_ref=source_ref)),),
+        )
+
+
+@pytest.mark.parametrize("field", ["source", "source_ref", "provider"])
+@pytest.mark.parametrize("control", ["\\n", "\\x00", "\\u200b"])
+def test_radar_rejects_control_characters_in_provenance(field: str, control: str) -> None:
+    from dataclasses import replace
+
+    original = evidence("control")
+    modified = replace(original, **{field: getattr(original, field) + control})
+    with pytest.raises(ValueError, match="caracteres de control"):
+        RecommendationAthenaRadarService().build(
+            as_of=AS_OF,
+            candidates=(candidate("issuer:a", "AAA", modified),),
+        )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:secret@news.example.test/article",
+        "https://news.example.test:invalid/article",
+        "https://localhost/article",
+        "https://news.example.test\\\\@evil.example/article",
+    ],
+)
+def test_radar_rejects_untraceable_news_urls(url: str) -> None:
+    with pytest.raises(ValueError, match="HTTPS absoluto"):
+        RecommendationAthenaRadarService().build(
+            as_of=AS_OF,
+            candidates=(candidate("issuer:a", "AAA", evidence("bad-url", source_ref=url)),),
+        )
+
+
 def test_radar_api_is_registered_and_preserves_fail_closed_contract() -> None:
     client = TestClient(app)
     response = client.post(

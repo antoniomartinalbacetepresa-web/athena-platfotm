@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
+import unicodedata
 
 
 _ALLOWED_CATEGORIES = frozenset(
@@ -185,10 +186,10 @@ class RecommendationAthenaRadarService:
                     raise ValueError(
                         "evidence.available_at no puede ser posterior a as_of; evitar look-ahead es obligatorio."
                     )
-                source = self._required_text(raw_evidence.source, "evidence.source")
-                source_ref = self._required_text(raw_evidence.source_ref, "evidence.source_ref")
+                source = self._required_provenance_text(raw_evidence.source, "evidence.source")
+                source_ref = self._required_provenance_text(raw_evidence.source_ref, "evidence.source_ref")
                 self._assert_source_allowed(source, source_ref)
-                provider = self._optional_text(raw_evidence.provider)
+                provider = self._optional_provenance_text(raw_evidence.provider, "evidence.provider")
                 publisher = self._optional_text(raw_evidence.publisher)
                 published_at = (
                     self._aware_utc(raw_evidence.published_at, "evidence.published_at")
@@ -266,18 +267,45 @@ class RecommendationAthenaRadarService:
         text = str(value or "").strip()
         return text or None
 
+    def _required_provenance_text(self, value: object, field: str) -> str:
+        self._assert_provenance_characters(value, field)
+        return self._required_text(value, field)
+
+    def _optional_provenance_text(self, value: object, field: str) -> str | None:
+        if value is None:
+            return None
+        self._assert_provenance_characters(value, field)
+        return self._optional_text(value)
+
+    @staticmethod
+    def _assert_provenance_characters(value: object, field: str) -> None:
+        if not isinstance(value, str) or any(
+            unicodedata.category(char).startswith("C") for char in value
+        ):
+            raise ValueError(f"{field} contiene caracteres de control o no es texto válido.")
+
     def _aware_utc(self, value: datetime, field: str) -> datetime:
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{field} debe incluir zona horaria.")
         return value.astimezone(timezone.utc)
 
     def _assert_source_allowed(self, source: str, source_ref: str) -> None:
-        normalized_source = source.casefold().replace(" ", "")
-        normalized_ref = source_ref.casefold()
-        if normalized_source == "fmp" or "financialmodelingprep" in normalized_source:
+        normalized_source = "".join(char for char in source.casefold() if char.isalnum())
+        normalized_ref = "".join(char for char in source_ref.casefold() if char.isalnum())
+        parsed_ref = urlparse(source_ref)
+        host_labels = (parsed_ref.hostname or "").casefold().split(".")
+        forbidden = (
+            normalized_source == "fmp"
+            or "financialmodelingprep" in normalized_source
+            or "financialmodelingprep" in normalized_ref
+            or "".join(char for char in parsed_ref.scheme.casefold() if char.isalnum()) == "fmp"
+            or any(
+                "".join(char for char in label if char.isalnum()) == "fmp"
+                for label in host_labels
+            )
+        )
+        if forbidden:
             raise ValueError("FMP/Financial Modeling Prep no está permitido como fuente de ATHENA Radar.")
-        if "financialmodelingprep" in normalized_ref:
-            raise ValueError("FMP/Financial Modeling Prep no está permitido como provenance de ATHENA Radar.")
 
     def _assert_structured_external_provenance(
         self,
@@ -300,8 +328,24 @@ class RecommendationAthenaRadarService:
             raise ValueError(
                 f"La evidencia {category} requiere published_at explícito para preservar temporalidad PIT."
             )
-        parsed = urlparse(source_ref)
-        if parsed.scheme.casefold() != "https" or not parsed.netloc:
+        try:
+            parsed = urlparse(source_ref)
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError(
+                f"La evidencia {category} requiere source_ref HTTPS absoluto y trazable."
+            ) from exc
+        if (
+            parsed.scheme.casefold() != "https"
+            or not hostname
+            or "." not in hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or (port is not None and not 1 <= port <= 65535)
+            or "\\" in source_ref
+            or any(char.isspace() for char in source_ref)
+        ):
             raise ValueError(
                 f"La evidencia {category} requiere source_ref HTTPS absoluto y trazable."
             )

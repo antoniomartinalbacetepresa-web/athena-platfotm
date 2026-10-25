@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlsplit
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -147,11 +148,25 @@ class GoogleNewsService:
 
     @staticmethod
     def _is_https_url(value: str) -> bool:
+        if not isinstance(value, str) or any(
+            unicodedata.category(char).startswith("C") or char.isspace() or char == "\\"
+            for char in value
+        ):
+            return False
         try:
-            parsed = urlparse(value)
+            parsed = urlsplit(value)
+            hostname = parsed.hostname
+            port = parsed.port
         except ValueError:
             return False
-        return parsed.scheme == "https" and bool(parsed.netloc)
+        return (
+            parsed.scheme == "https"
+            and bool(hostname)
+            and "." in hostname
+            and parsed.username is None
+            and parsed.password is None
+            and (port is None or 1 <= port <= 65535)
+        )
 
     @staticmethod
     def _dedupe_text(value: str) -> str:

@@ -111,6 +111,41 @@ def test_google_news_parser_rejects_future_publication_relative_to_retrieval() -
     assert items == []
 
 
+@pytest.mark.parametrize(
+    "article_url",
+    [
+        "https://user:password@news.google.com/rss/articles/one",
+        "https://news.google.com:invalid/rss/articles/one",
+        "https://localhost/rss/articles/one",
+        "https://news.google.com\\\\@evil.example/rss/articles/one",
+    ],
+)
+def test_google_news_parser_rejects_unsafe_article_provenance(article_url: str) -> None:
+    xml = f"""<rss><channel><item>
+      <title>Unsafe provenance</title>
+      <link>{article_url}</link>
+      <pubDate>Thu, 03 Sep 2026 12:00:00 GMT</pubDate>
+      <source url="https://example.com">Publisher</source>
+    </item></channel></rss>"""
+    assert GoogleNewsService._parse_items(
+        xml, retrieved_at=datetime(2026, 9, 4, tzinfo=timezone.utc), limit=8
+    ) == []
+
+
+def test_google_news_preserves_article_but_rejects_credentialed_publisher_url() -> None:
+    xml = """<rss><channel><item>
+      <title>Valid article</title>
+      <link>https://news.google.com/rss/articles/one</link>
+      <pubDate>Thu, 03 Sep 2026 12:00:00 GMT</pubDate>
+      <source url="https://user:password@example.com">Publisher</source>
+    </item></channel></rss>"""
+    items = GoogleNewsService._parse_items(
+        xml, retrieved_at=datetime(2026, 9, 4, tzinfo=timezone.utc), limit=8
+    )
+    assert len(items) == 1
+    assert items[0]["publisherUrl"] is None
+
+
 def test_google_news_parser_rejects_invalid_xml() -> None:
     with pytest.raises(RuntimeError, match="RSS inválido"):
         GoogleNewsService._parse_items(
