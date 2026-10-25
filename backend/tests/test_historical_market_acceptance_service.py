@@ -334,3 +334,37 @@ def test_historical_acceptance_rejects_same_family_or_nontext_providers(provider
     )
     assert report.corporate_action_gate_passed is False
     assert report.history_acceptance_passed is False
+
+
+@pytest.mark.parametrize(
+    "event_changes",
+    [
+        {"providers_present": ("primary",)},
+        {"providers_missing": ("secondary",)},
+        {"values_by_provider": {"primary": {"splitRatio": 2.0}}},
+        {"values_by_provider": {"primary": {}, "secondary": {"splitRatio": 2.0}}},
+        {"effective_at": "2026-09-12T00:00:00+00:00"},
+        {"effective_at": "2026-01-02T00:00:00"},
+        {"action_type": "merger"},
+    ],
+)
+def test_historical_acceptance_rejects_contradictory_agreed_event_evidence(event_changes):
+    from dataclasses import replace
+
+    original = _reconciliation()
+    forged = replace(
+        original,
+        events=(replace(original.events[0], **event_changes),),
+    )
+    assert forged.agreed_event_count == 1
+    assert forged.reconciled is True
+
+    report = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[forged],
+        independent_secondary_source_verified=True,
+    )
+    assert report.depth_gate_passed is True
+    assert report.corporate_action_gate_passed is False
+    assert report.history_acceptance_passed is False
+    assert report.to_api_dict()["productionAuthorization"] is False
