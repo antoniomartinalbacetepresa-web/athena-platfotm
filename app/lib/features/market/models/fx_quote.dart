@@ -112,53 +112,7 @@ class FxQuote {
 
   static DateTime _parseTimestamp(dynamic value, String field) {
     final raw = value?.toString().trim() ?? '';
-    if (!RegExp(r'(?:Z|[+-]\d{2}:\d{2}).hasMatch(raw)) {
-      throw FormatException('La respuesta FX contiene $field sin zona horaria.');
-    }
-    final parsed = DateTime.tryParse(raw);
-    if (parsed == null) {
-      throw FormatException('La respuesta FX contiene $field inválido.');
-    }
-    if (!parsed.isUtc) {
-      return parsed.toUtc();
-    }
-    return parsed;
-  }
-
-  static String _normalizeCurrency(String value, String field) {
-    final normalized = value.trim().toUpperCase();
-    if (!RegExp(r'^[A-Z]{3}$').hasMatch(normalized)) {
-      throw ArgumentError.value(value, field, 'Debe ser un código ISO de tres letras.');
-    }
-    return normalized;
-  }
-
-  static String _requireSourceProvider(String value) {
-    final provider = _requireText(value, 'sourceProvider');
-    if (provider.codeUnits.any((unit) => unit < 32 || unit > 126) ||
-        provider.contains('%') ||
-        provider.contains('&') ||
-        provider.contains('\\')) {
-      throw ArgumentError.value(value, 'sourceProvider', 'Procedencia FX ambigua.');
-    }
-    final key = provider.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-    if (key.isEmpty ||
-        key.contains('fmp') ||
-        key.contains('financialmodelingprep')) {
-      throw ArgumentError.value(value, 'sourceProvider', 'Fuente FX prohibida.');
-    }
-    return provider;
-  }
-
-  static String _requireText(String? value, String field) {
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) {
-      throw ArgumentError.value(value, field, 'No puede estar vacío.');
-    }
-    return normalized;
-  }
-}
-).hasMatch(raw)) {
+    if (!RegExp(r'(?:Z|[+-]\d{2}:\d{2})$').hasMatch(raw)) {
       throw FormatException('La respuesta FX contiene $field sin zona horaria.');
     }
     final parsed = DateTime.tryParse(raw);
