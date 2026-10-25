@@ -233,3 +233,13 @@ def test_plan_includes_stale_365_day_history_without_claiming_backfill_execution
     assert sum(stale.to_api_dict()["blockingByReason"].values()) == stale.total_blocking_count
     assert stale.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
     assert stale.to_api_dict()["policy"]["automaticReadinessPromotion"] is False
+
+
+def test_backfill_plan_rejects_future_pit_cutoff_without_creating_requests(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    _instrument(InstrumentRepository(database=database), "AAA")
+    service = MarketHistoryBackfillPlanService(database=database)
+    with pytest.raises(ValueError, match="fecha futura"):
+        service.get_plan(as_of=datetime.now(timezone.utc) + timedelta(days=1))

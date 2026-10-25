@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any, Iterable
 
 from app.services.corporate_action_reconciliation_service import (
@@ -55,6 +56,52 @@ class HistoricalMarketAcceptanceReport:
     def agreed_event_count(self) -> int:
         return sum(report.agreed_event_count for report in self.reconciliation_reports)
 
+    @staticmethod
+    def _agreed_values_consistent(event: Any) -> bool:
+        """Independently verify the values behind an 'agreed' label.
+
+        The reconciliation report is a data object and may be constructed
+        without invoking the reconciler. Recheck its canonical public value
+        shape and the reconciler's 1e-9 numeric agreement tolerance here.
+        """
+        numeric_field = "splitRatio" if event.action_type == "split" else "cashAmount"
+        required_fields = (
+            {"splitRatio"} if event.action_type == "split" else {"cashAmount", "currency"}
+        )
+        reference_amount: float | None = None
+        reference_currency: str | None = None
+        for value in event.values_by_provider.values():
+            if not isinstance(value, dict) or set(value) != required_fields:
+                return False
+            amount = value[numeric_field]
+            if (
+                isinstance(amount, bool)
+                or not isinstance(amount, (int, float))
+                or not math.isfinite(amount)
+                or amount <= 0
+            ):
+                return False
+            currency = value.get("currency")
+            if event.action_type == "dividend" and (
+                not isinstance(currency, str)
+                or len(currency) != 3
+                or not currency.isascii()
+                or not currency.isalpha()
+                or not currency.isupper()
+            ):
+                return False
+            if reference_amount is not None:
+                if not math.isclose(
+                    float(amount), reference_amount, rel_tol=1e-9, abs_tol=1e-9
+                ):
+                    return False
+                if event.action_type == "dividend" and currency != reference_currency:
+                    return False
+            else:
+                reference_amount = float(amount)
+                reference_currency = currency
+        return reference_amount is not None
+
     @property
     def corporate_action_gate_passed(self) -> bool:
         if self.independent_secondary_source_verified is not True:
@@ -105,11 +152,7 @@ class HistoricalMarketAcceptanceReport:
                     or set(event.values_by_provider) != expected_providers
                 ):
                     return False
-                if any(
-                    not isinstance(event.values_by_provider[provider], dict)
-                    or not event.values_by_provider[provider]
-                    for provider in expected_providers
-                ):
+                if not self._agreed_values_consistent(event):
                     return False
                 effective_at = self._parse_pit_cutoff(event.effective_at)
                 if (

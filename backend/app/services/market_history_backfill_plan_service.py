@@ -157,4 +157,7 @@ class MarketHistoryBackfillPlanService:
     def _aware_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("as_of debe incluir zona horaria.")
-        return value.astimezone(timezone.utc)
+        cutoff = value.astimezone(timezone.utc)
+        if cutoff > datetime.now(timezone.utc):
+            raise ValueError("as_of no puede ser una fecha futura.")
+        return cutoff

@@ -368,3 +368,89 @@ def test_historical_acceptance_rejects_contradictory_agreed_event_evidence(event
     assert report.corporate_action_gate_passed is False
     assert report.history_acceptance_passed is False
     assert report.to_api_dict()["productionAuthorization"] is False
+
+
+@pytest.mark.parametrize(
+    "forged_values",
+    [
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": 3.0}},
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": float("nan")}},
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": float("inf")}},
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": -2.0}},
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": True}},
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": "2.0"}},
+        {"primary": {"splitRatio": 2.0}, "secondary": {"splitRatio": 2.0, "extra": 1}},
+    ],
+)
+def test_historical_acceptance_independently_rejects_forged_agreed_split_values(
+    forged_values,
+):
+    from dataclasses import replace
+
+    original = _reconciliation()
+    forged_event = replace(original.events[0], values_by_provider=forged_values)
+    forged_report = replace(original, events=(forged_event,))
+    assert forged_report.reconciled is True  # label alone is not evidence
+
+    acceptance = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[forged_report],
+        independent_secondary_source_verified=True,
+    )
+    assert acceptance.depth_gate_passed is True
+    assert acceptance.corporate_action_gate_passed is False
+    assert acceptance.history_acceptance_passed is False
+
+
+@pytest.mark.parametrize(
+    "secondary_value",
+    [
+        {"cashAmount": 2.5, "currency": "EUR"},
+        {"cashAmount": 2.0, "currency": "USD"},
+        {"cashAmount": 0.0, "currency": "EUR"},
+        {"cashAmount": 2.0, "currency": "eur"},
+        {"cashAmount": 2.0, "currency": "EUR", "unverified": True},
+    ],
+)
+def test_historical_acceptance_independently_rejects_forged_agreed_dividends(
+    secondary_value,
+):
+    from dataclasses import replace
+
+    original = _reconciliation()
+    dividend = replace(
+        original.events[0],
+        action_type="dividend",
+        values_by_provider={
+            "primary": {"cashAmount": 2.0, "currency": "EUR"},
+            "secondary": secondary_value,
+        },
+    )
+    forged_report = replace(original, events=(dividend,))
+    acceptance = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[forged_report],
+        independent_secondary_source_verified=True,
+    )
+    assert acceptance.corporate_action_gate_passed is False
+    assert acceptance.history_acceptance_passed is False
+
+
+def test_historical_acceptance_preserves_legitimate_numeric_tolerance():
+    from dataclasses import replace
+
+    original = _reconciliation()
+    event = replace(
+        original.events[0],
+        values_by_provider={
+            "primary": {"splitRatio": 2.0},
+            "secondary": {"splitRatio": 2.0 + 1e-10},
+        },
+    )
+    acceptance = HistoricalMarketAcceptanceService().evaluate(
+        coverage=_coverage(),
+        reconciliation_reports=[replace(original, events=(event,))],
+        independent_secondary_source_verified=True,
+    )
+    assert acceptance.corporate_action_gate_passed is True
+    assert acceptance.history_acceptance_passed is True
