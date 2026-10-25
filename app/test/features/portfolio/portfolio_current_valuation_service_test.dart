@@ -211,6 +211,107 @@ void main() {
     expect(valuation.profitLossInBaseCurrency, isNull);
   });
 
+  test('historical FX request uses acquisition calendar date, not time of day', () async {
+    final economicDate = DateTime.utc(2026, 8, 15, 23, 45);
+    final expectedDate = DateTime.utc(2026, 8, 15);
+    var historicalCalls = 0;
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur();
+      },
+      loadHistoricalFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+        required observedOn,
+      }) async {
+        historicalCalls += 1;
+        expect(observedOn, expectedDate);
+        return usdEur(
+          historical: true,
+          observedAt: expectedDate,
+          retrievedAt: DateTime.utc(2026, 9, 4),
+          rate: 0.8,
+        );
+      },
+    );
+
+    final valuation = await service.value(positions: [
+      position(
+        symbol: 'DATE-ONLY',
+        currency: 'USD',
+        costBasisDate: economicDate,
+      ),
+    ]);
+    expect(historicalCalls, 1);
+    expect(valuation.currentValueInBaseCurrency, 204);
+    expect(valuation.historicalCostBasisInBaseCurrency, 160);
+    expect(valuation.profitLossInBaseCurrency, 44);
+  });
+
+  test('rejects future FX observation even when market price is dated', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur(
+          observedAt: DateTime.utc(2099, 1, 1),
+          retrievedAt: DateTime.utc(2099, 1, 2),
+        );
+      },
+    );
+
+    await expectLater(
+      service.value(positions: [position(symbol: 'FUTURE-FX', currency: 'USD')]),
+      throwsStateError,
+    );
+  });
+
+  test('rejects future FX retrieval even with past observation', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur(
+          observedAt: DateTime.utc(2026, 9, 3),
+          retrievedAt: DateTime.utc(2099, 1, 1),
+        );
+      },
+    );
+
+    await expectLater(
+      service.value(positions: [position(symbol: 'FUTURE-FX-READ', currency: 'USD')]),
+      throwsStateError,
+    );
+  });
+
+  test('future historical FX retrieval hides cost basis but retains current value', () async {
+    final costDate = DateTime.utc(2026, 8, 15);
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        return usdEur();
+      },
+      loadHistoricalFxRate: ({
+        required baseCurrency,
+        required quoteCurrency,
+        required observedOn,
+      }) async {
+        return usdEur(
+          historical: true,
+          observedAt: costDate,
+          retrievedAt: DateTime.utc(2099, 1, 1),
+        );
+      },
+    );
+
+    final valuation = await service.value(positions: [
+      position(
+        symbol: 'FUTURE-HISTORY',
+        currency: 'USD',
+        costBasisDate: costDate,
+      ),
+    ]);
+    expect(valuation.currentValueInBaseCurrency, 204);
+    expect(valuation.historicalCostBasisInBaseCurrency, isNull);
+    expect(valuation.profitLossInBaseCurrency, isNull);
+    expect(valuation.historicalFxEvidence, isEmpty);
+  });
+
   test('reuses one current FX quote for positions sharing the same currency', () async {
     var fxCalls = 0;
     final service = PortfolioCurrentValuationService(
