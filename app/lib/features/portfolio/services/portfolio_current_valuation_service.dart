@@ -151,12 +151,6 @@ class PortfolioCurrentValuationService {
       }
 
       final normalizedCostDate = costBasisDate.toUtc();
-      if (normalizedCostDate.isAfter(position.currentPriceRetrievedAt!.toUtc())) {
-        throw StateError(
-          'La fecha económica del coste de ${position.symbol} es posterior a la evidencia actual.',
-        );
-      }
-
       final historicalKey =
           '$sourceCurrency|${_dateKey(normalizedCostDate)}';
       var historicalFx = historicalFxByKey[historicalKey];
@@ -268,6 +262,24 @@ class PortfolioCurrentValuationService {
     if (retrievedAt.isBefore(observedAt)) {
       throw StateError(
         'La recuperación del precio de ${position.symbol} precede a su observación.',
+      );
+    }
+    // A future-dated quote cannot be treated as verified current evidence,
+    // including when the portfolio is already denominated in its base currency.
+    final now = DateTime.now().toUtc();
+    if (observedAt.toUtc().isAfter(now) ||
+        retrievedAt.toUtc().isAfter(now)) {
+      throw StateError(
+        'La cotización actual de ${position.symbol} declara fechas futuras.',
+      );
+    }
+    // The economic cost date must never postdate the current market evidence.
+    // Enforce this for same-currency positions too, not only FX conversions.
+    final costBasisDate = position.costBasisDate;
+    if (costBasisDate != null &&
+        costBasisDate.toUtc().isAfter(retrievedAt.toUtc())) {
+      throw StateError(
+        'La fecha económica del coste de ${position.symbol} es posterior a la evidencia actual.',
       );
     }
   }
