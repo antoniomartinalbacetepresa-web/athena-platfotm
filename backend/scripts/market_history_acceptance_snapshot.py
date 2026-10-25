@@ -38,6 +38,7 @@ def run_snapshot(
     as_of: datetime | None = None,
     blocker_limit: int = 100,
     blocker_offset: int = 0,
+    all_blockers: bool = False,
 ) -> dict[str, Any]:
     """Measure one consistent SQLite snapshot without modifying the source."""
     if (
@@ -48,6 +49,10 @@ def run_snapshot(
         raise ValueError("blocker_limit debe estar entre 1 y 1000.")
     if isinstance(blocker_offset, bool) or not isinstance(blocker_offset, int) or blocker_offset < 0:
         raise ValueError("blocker_offset debe ser un entero no negativo.")
+    if not isinstance(all_blockers, bool):
+        raise ValueError("all_blockers debe ser booleano.")
+    if all_blockers and blocker_offset:
+        raise ValueError("blocker_offset debe ser cero con all_blockers.")
     source_path = Path(database_path).resolve()
     if not source_path.is_file():
         raise FileNotFoundError("La base SQLite indicada no existe.")
@@ -84,9 +89,33 @@ def run_snapshot(
         coverage = MarketObservationCoverageService(database=database).get_report(
             as_of=cutoff
         )
-        gaps = MarketHistoryGapService(database=database).get_report(
+        gap_service = MarketHistoryGapService(database=database)
+        gaps = gap_service.get_report(
             as_of=cutoff, limit=blocker_limit, offset=blocker_offset
         )
+        blocking_items = list(gaps.items)
+        if all_blockers:
+            # Every page is read from the SAME immutable SQLite snapshot. A
+            # series of independent CLI calls could mix different universes.
+            while len(blocking_items) < gaps.total_blocking_count:
+                page = gap_service.get_report(
+                    as_of=cutoff, limit=blocker_limit, offset=len(blocking_items)
+                )
+                if (
+                    not page.items
+                    or page.total_blocking_count != gaps.total_blocking_count
+                    or page.to_api_dict()["blockingByReason"] != gaps.to_api_dict()["blockingByReason"]
+                    or page.as_of != gaps.as_of
+                    or page.minimum_history_days != gaps.minimum_history_days
+                    or page.maximum_source_gap_days != gaps.maximum_source_gap_days
+                ):
+                    raise RuntimeError("Páginas del diagnóstico PIT inconsistentes.")
+                blocking_items.extend(page.items)
+            if (
+                len(blocking_items) != gaps.total_blocking_count
+                or len({item.instrument_id for item in blocking_items}) != len(blocking_items)
+            ):
+                raise RuntimeError("Exportación de bloqueos PIT incompleta o duplicada.")
 
     eligible = coverage.history_eligible_instrument_count
     current = coverage.current_deep_history_instrument_count
@@ -117,12 +146,13 @@ def run_snapshot(
         "totalBlockingCount": blocked,
         "blockingByReason": reason_counts,
         "blockingPage": {
-            "limit": blocker_limit,
+            "limit": len(blocking_items) if all_blockers else blocker_limit,
             "offset": blocker_offset,
-            "returnedCount": len(gaps.items),
-            "hasMore": blocker_offset + len(gaps.items) < blocked,
+            "returnedCount": len(blocking_items),
+            "hasMore": False if all_blockers else blocker_offset + len(blocking_items) < blocked,
         },
-        "blockingItems": [item.to_api_dict() for item in gaps.items],
+        "blockingExportComplete": all_blockers,
+        "blockingItems": [item.to_api_dict() for item in blocking_items],
         "minimumHistoryDays": coverage.minimum_history_days,
         "maximumSourceGapDays": coverage.maximum_source_gap_days,
         "bySource": coverage.to_api_dict()["bySource"],
@@ -162,17 +192,26 @@ def main() -> int:
         "--blocker-offset", type=int, default=0,
         help="Desplazamiento de la página de bloqueos (>=0).",
     )
+    parser.add_argument(
+        "--all-blockers", action="store_true",
+        help="Exporta todos los bloqueos desde una sola copia consistente; --blocker-limit es el tamaño de página interno.",
+    )
+    parser.add_argument(
+        "--require-history-ready", action="store_true",
+        help="Devuelve código 3 si la cobertura histórica diagnóstica no cumple 365 días para todo el universo elegible.",
+    )
     args = parser.parse_args()
     try:
         cutoff = parse_cutoff(args.as_of) if args.as_of else None
         result = run_snapshot(
             args.database, as_of=cutoff,
             blocker_limit=args.blocker_limit, blocker_offset=args.blocker_offset,
+            all_blockers=args.all_blockers,
         )
     except (FileNotFoundError, ValueError, sqlite3.Error, RuntimeError) as exc:
         parser.exit(2, f"Diagnóstico no disponible: {type(exc).__name__}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    return 0
+    return 3 if args.require_history_ready and not result["diagnosticReady"] else 0
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -14,7 +15,7 @@ from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
 from app.services.market_history_gap_service import MarketHistoryGapService
-from scripts.market_history_acceptance_snapshot import parse_cutoff, run_snapshot
+from scripts.market_history_acceptance_snapshot import main, parse_cutoff, run_snapshot
 
 
 def _database(tmp_path: Path) -> tuple[Path, AthenaDatabase]:
@@ -194,3 +195,94 @@ def test_future_pit_cutoff_is_rejected_without_touching_source(tmp_path: Path) -
     with pytest.raises(ValueError, match="fecha futura"):
         run_snapshot(path, as_of=datetime.now(timezone.utc) + timedelta(days=1))
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_complete_worklist_from_single_snapshot_is_read_only(tmp_path: Path) -> None:
+    path, database = _database(tmp_path)
+    for symbol in ("DDD", "AAA", "CCC", "BBB", "EEE"):
+        _instrument(database, symbol)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    result = run_snapshot(
+        path, as_of=datetime(2026, 10, 24, tzinfo=timezone.utc),
+        blocker_limit=2, all_blockers=True,
+    )
+    assert result["totalBlockingCount"] == 5
+    assert result["blockingExportComplete"] is True
+    assert [item["symbol"] for item in result["blockingItems"]] == [
+        "AAA", "BBB", "CCC", "DDD", "EEE",
+    ]
+    assert len({item["instrumentId"] for item in result["blockingItems"]}) == 5
+    assert result["blockingPage"] == {
+        "limit": 5, "offset": 0, "returnedCount": 5, "hasMore": False,
+    }
+    assert result["diagnosticReady"] is False
+    assert result["productionCoverageClaimed"] is False
+    assert result["operationalEvidenceVerified"] is False
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_complete_worklist_rejects_offset(tmp_path: Path) -> None:
+    path, _ = _database(tmp_path)
+    with pytest.raises(ValueError, match="blocker_offset"):
+        run_snapshot(path, blocker_offset=1, all_blockers=True)
+
+
+def test_complete_worklist_fails_closed_on_inconsistent_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database, "AAA")
+    _instrument(database, "BBB")
+    original = MarketHistoryGapService.get_report
+
+    def corrupted(self: MarketHistoryGapService, **kwargs: object):
+        report = original(self, **kwargs)
+        if kwargs.get("offset") == 1:
+            return replace(report, total_blocking_count=report.total_blocking_count + 1)
+        return report
+
+    monkeypatch.setattr(MarketHistoryGapService, "get_report", corrupted)
+    with pytest.raises(RuntimeError, match="inconsistentes"):
+        run_snapshot(path, blocker_limit=1, all_blockers=True)
+
+
+def test_cli_exports_all_and_returns_nonzero_for_unmet_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database, "AAA")
+    _instrument(database, "BBB")
+    monkeypatch.setattr("sys.argv", [
+        "market_history_acceptance_snapshot", "--database", str(path),
+        "--all-blockers", "--blocker-limit", "1", "--require-history-ready",
+    ])
+    assert main() == 3
+    output = json.loads(capsys.readouterr().out)
+    assert output["blockingExportComplete"] is True
+    assert output["totalBlockingCount"] == 2
+    assert len(output["blockingItems"]) == 2
+    assert output["productionCoverageClaimed"] is False
+
+
+def test_cli_history_gate_is_diagnostic_not_production_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path, database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    start = datetime(2025, 1, 1, 21, tzinfo=timezone.utc)
+    cutoff = start + timedelta(days=366)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id, observations=_history(start),
+        source_provider="yahoo", retrieved_at=cutoff,
+    )
+    monkeypatch.setattr("sys.argv", [
+        "market_history_acceptance_snapshot", "--database", str(path),
+        "--as-of", cutoff.isoformat(), "--all-blockers", "--require-history-ready",
+    ])
+    assert main() == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["diagnosticReady"] is True
+    assert output["blockingExportComplete"] is True
+    assert output["blockingItems"] == []
+    assert output["productionCoverageClaimed"] is False
+    assert output["operationalEvidenceVerified"] is False
