@@ -31,11 +31,28 @@ class FxQuote {
       );
     }
     final normalizedStatus = status.trim().toLowerCase();
+    const allowedStatuses = {
+      'fx_current_ready',
+      'fx_identity',
+      'fx_historical_ready',
+      'fx_historical_identity',
+    };
+    if (!allowedStatuses.contains(normalizedStatus)) {
+      throw ArgumentError('El estado FX no acredita una cotización válida.');
+    }
     final isHistoricalStatus = normalizedStatus == 'fx_historical_ready' ||
         normalizedStatus == 'fx_historical_identity';
     if (historicalPointInTimeEligible != isHistoricalStatus) {
       throw ArgumentError(
         'El estado FX y la elegibilidad PIT histórica son inconsistentes.',
+      );
+    }
+
+    final isIdentityStatus = normalizedStatus == 'fx_identity' ||
+        normalizedStatus == 'fx_historical_identity';
+    if (isIdentityStatus != (this.baseCurrency == this.quoteCurrency)) {
+      throw ArgumentError(
+        'El estado FX de identidad no corresponde al par de divisas.',
       );
     }
 
@@ -77,10 +94,19 @@ class FxQuote {
     if (!amount.isFinite) {
       throw ArgumentError.value(amount, 'amount', 'El importe debe ser finito.');
     }
-    return amount * rate;
+    final converted = amount * rate;
+    if (!converted.isFinite) {
+      throw StateError('La conversión FX excede el rango numérico finito.');
+    }
+    return converted;
   }
 
   factory FxQuote.fromMap(Map<String, dynamic> map) {
+    if (map['historicalPointInTimeEligible'] is! bool) {
+      throw const FormatException(
+        'La respuesta FX debe declarar explícitamente su elegibilidad PIT.',
+      );
+    }
     final observedAt = _parseTimestamp(map['observedAt'], 'observedAt');
     final retrievedAt = _parseTimestamp(map['retrievedAt'], 'retrievedAt');
     final rate = _parseRate(map['rate']);
