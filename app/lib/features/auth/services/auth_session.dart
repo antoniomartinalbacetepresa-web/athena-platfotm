@@ -28,6 +28,9 @@ class AuthSession extends ChangeNotifier {
   // Track completions so that read-back cannot accept a pre-delete value.
   int _completedDeletionEpoch = 0;
   int _pendingDeletions = 0;
+  // A secure write can expose a token before its Future confirms durability.
+  // Restoration must not authenticate that in-flight credential.
+  int _pendingWrites = 0;
 
   String? get accessToken => _accessToken;
   AuthAccount? get account => _account;
@@ -58,6 +61,7 @@ class AuthSession extends ChangeNotifier {
     // A logout or account switch can happen while secure storage is writing.
     // A late completion must not resurrect the superseded account in memory.
     final writeAuthorityVersion = _authorityVersion;
+    _pendingWrites += 1;
     try {
       await _tokenStore.writeAccessToken(token);
       if (_authorityVersion != writeAuthorityVersion) {
@@ -93,6 +97,8 @@ class AuthSession extends ChangeNotifier {
         _clearMemory();
       }
       rethrow;
+    } finally {
+      _pendingWrites -= 1;
     }
   }
 
@@ -103,7 +109,7 @@ class AuthSession extends ChangeNotifier {
     if (isAuthenticated) return AuthSessionRestoreResult.restored;
     // A logout may have revoked memory before its secure deletion finishes.
     // Never restore the still-visible token while that deletion is pending.
-    if (_pendingDeletions > 0) {
+    if (_pendingDeletions > 0 || _pendingWrites > 0) {
       return AuthSessionRestoreResult.temporarilyUnavailable;
     }
     final restoreAuthorityVersion = _authorityVersion;
@@ -124,6 +130,9 @@ class AuthSession extends ChangeNotifier {
       return isAuthenticated
           ? AuthSessionRestoreResult.restored
           : AuthSessionRestoreResult.temporarilyUnavailable;
+    }
+    if (_pendingWrites > 0) {
+      return AuthSessionRestoreResult.temporarilyUnavailable;
     }
     if (storedToken == null) {
       _clearMemory();
@@ -171,6 +180,7 @@ class AuthSession extends ChangeNotifier {
             : AuthSessionRestoreResult.temporarilyUnavailable;
       }
       if (_pendingDeletions > 0 ||
+          _pendingWrites > 0 ||
           deletionEpoch != _completedDeletionEpoch ||
           confirmedToken?.trim() != token) {
         _clearMemory();
