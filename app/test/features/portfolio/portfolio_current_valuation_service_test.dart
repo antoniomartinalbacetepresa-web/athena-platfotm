@@ -305,6 +305,79 @@ void main() {
     );
   });
 
+  test('rejects future market observation even without FX', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(
+          symbol: 'FUTURE-OBS',
+          currency: 'EUR',
+          observedAt: DateTime.utc(2099, 1, 1),
+          retrievedAt: DateTime.utc(2099, 1, 2),
+        ),
+      ]),
+      throwsStateError,
+    );
+  });
+
+  test('rejects future market retrieval even with past observation', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(
+          symbol: 'FUTURE-RETRIEVAL',
+          currency: 'EUR',
+          observedAt: DateTime.utc(2026, 9, 3),
+          retrievedAt: DateTime.utc(2099, 1, 1),
+        ),
+      ]),
+      throwsStateError,
+    );
+  });
+
+  test('rejects future cost date for same-currency valuation', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    await expectLater(
+      service.value(positions: [
+        position(
+          symbol: 'FUTURE-COST',
+          currency: 'EUR',
+          costBasisDate: DateTime.utc(2026, 9, 4),
+        ),
+      ]),
+      throwsStateError,
+    );
+  });
+
+  test('keeps valid same-currency cost basis with dated evidence', () async {
+    final service = PortfolioCurrentValuationService(
+      loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) async {
+        fail('Same-currency positions must not request FX');
+      },
+    );
+    final valuation = await service.value(positions: [
+      position(
+        symbol: 'PAST-COST',
+        currency: 'EUR',
+        costBasisDate: DateTime.utc(2026, 8, 15),
+      ),
+    ]);
+    expect(valuation.historicalCostBasisInBaseCurrency, 200);
+    expect(valuation.profitLossInBaseCurrency, 40);
+  });
+
   test('rejects FX evidence for a different currency pair', () async {
     final observedAt = DateTime.utc(2026, 9, 3, 0, 0);
     final wrongPair = FxQuote(
