@@ -78,6 +78,9 @@ void main() {
     // generation are different. Neither the old identity nor its preferences
     // may be restored by a delayed successful response.
     session.establish(accessToken: 'reused-token', account: _account(23));
+    // MockClient dispatches the second request asynchronously; drain that
+    // real async boundary rather than assuming a frame pump has dispatched it.
+    await tester.runAsync(() async => Future<void>.delayed(Duration.zero));
     await tester.pumpAndSettle();
     expect(calls, 2);
     expect(find.text('Owner 23'), findsOneWidget);
