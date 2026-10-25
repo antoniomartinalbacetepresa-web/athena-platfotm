@@ -283,3 +283,51 @@ def test_dividend_fundamentals_reject_malformed_pit_availability(
             as_of=AS_OF,
             fundamentals=fundamentals,
         )
+
+
+@pytest.mark.parametrize("field", ["source", "source_ref"])
+@pytest.mark.parametrize("ambiguous", [
+    "f%6dp",
+    "issuer\\nfiling",
+    "issuer%0Afiling",
+    "ＦＭＰ",
+    r"issuer\\filing",
+])
+def test_fundamental_provenance_rejects_ambiguous_or_forbidden_identifiers(
+    tmp_path, field, ambiguous,
+) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    kwargs = dict(
+        price=100.0,
+        trailing_dividend_per_share=2.0,
+        available_at=AS_OF,
+        source="issuer_filing",
+        source_ref="issuer-2026-report",
+    )
+    kwargs[field] = ambiguous
+    with pytest.raises(ValueError):
+        PortfolioDividendReturnEvidenceService(ledger).build(
+            portfolio_id="personal",
+            reporting_currency="EUR",
+            period_start=START,
+            period_end=END,
+            as_of=AS_OF,
+            fundamentals=DividendFundamentalEvidence(**kwargs),
+        )
+
+
+def test_fundamental_provenance_is_trimmed_consistently_in_output(tmp_path) -> None:
+    ledger = RecommendationPortfolioEventLedgerService(tmp_path / "ledger.jsonl")
+    result = PortfolioDividendReturnEvidenceService(ledger).build(
+        portfolio_id="personal",
+        reporting_currency="EUR",
+        period_start=START,
+        period_end=END,
+        as_of=AS_OF,
+        fundamentals=DividendFundamentalEvidence(
+            price=100.0, available_at=AS_OF,
+            source=" issuer_filing ", source_ref=" issuer-2026-report ",
+        ),
+    )
+    assert result.provenance_refs == ("issuer_filing:issuer-2026-report",)
+    assert result.to_dict()["productionEligible"] is False
