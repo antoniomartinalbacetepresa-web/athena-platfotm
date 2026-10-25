@@ -172,18 +172,20 @@ void main() {
     final store = _WriteCompletesAfterDeletionStore()
       ..token = 'stored-owner-a';
     final session = AuthSession.forTesting(store);
-    final validationStarted = Completer<void>();
     final validation = Completer<AuthAccount>();
+    var validationCalls = 0;
 
     final restoring = session.restore(
       validateToken: (token) {
+        validationCalls += 1;
         expect(token, 'stored-owner-a');
-        validationStarted.complete();
         return validation.future;
       },
       shouldDiscardToken: (_) => false,
     );
-    await validationStarted.future;
+    // Let the secure read and remote validation start before a new login.
+    await Future<void>.delayed(Duration.zero);
+    expect(validationCalls, 1);
 
     final pendingLogin = session.establishPersisted(
       accessToken: 'new-owner-token',
