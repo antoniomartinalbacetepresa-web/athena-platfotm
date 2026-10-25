@@ -108,6 +108,68 @@ void main() {
     expect(session.account, isNull);
   });
 
+  test('restore cannot authenticate a secure write still in flight', () async {
+    final store = _WriteCompletesAfterDeletionStore();
+    final session = AuthSession.forTesting(store);
+    final pendingLogin = session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    await store.firstWriteStarted.future;
+    expect(store.token, 'new-owner-token');
+    expect(session.isAuthenticated, isFalse);
+
+    var validationCalls = 0;
+    final result = await session.restore(
+      validateToken: (_) async {
+        validationCalls += 1;
+        return account();
+      },
+      shouldDiscardToken: (_) => false,
+    );
+    expect(result, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(validationCalls, 0);
+    expect(session.isAuthenticated, isFalse);
+
+    store.releaseFirstWrite.complete();
+    await pendingLogin;
+    expect(session.accessToken, 'new-owner-token');
+    expect(session.account?.id, 23);
+  });
+
+  test('restore validation cannot overtake a pending replacement login', () async {
+    final store = _WriteCompletesAfterDeletionStore()
+      ..token = 'stored-owner-a';
+    final session = AuthSession.forTesting(store);
+    final validationStarted = Completer<void>();
+    final validation = Completer<AuthAccount>();
+
+    final restoring = session.restore(
+      validateToken: (token) {
+        expect(token, 'stored-owner-a');
+        validationStarted.complete();
+        return validation.future;
+      },
+      shouldDiscardToken: (_) => false,
+    );
+    await validationStarted.future;
+
+    final pendingLogin = session.establishPersisted(
+      accessToken: 'new-owner-token',
+      account: account(id: 23, email: 'new-owner@example.com'),
+    );
+    await store.firstWriteStarted.future;
+    validation.complete(account());
+
+    expect(await restoring, AuthSessionRestoreResult.temporarilyUnavailable);
+    expect(session.isAuthenticated, isFalse);
+    store.releaseFirstWrite.complete();
+    await pendingLogin;
+    expect(session.accessToken, 'new-owner-token');
+    expect(session.account?.id, 23);
+    expect(store.token, 'new-owner-token');
+  });
+
   test('restore validates stored token before authenticating', () async {
     final store = _FakeAuthTokenStore(token: 'stored-token');
     final session = AuthSession.forTesting(store);
