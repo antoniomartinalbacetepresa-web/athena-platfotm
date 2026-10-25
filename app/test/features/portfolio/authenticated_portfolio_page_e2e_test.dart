@@ -117,6 +117,60 @@ void main() {
     remote.dispose();
   });
 
+  testWidgets(
+      'same-token owner replacement during local snapshot sends no Portfolio data',
+      (tester) async {
+    session.establish(accessToken: 'reused-token', account: account());
+    final localSnapshot = Completer<List<PortfolioPosition>>();
+    var networkCalled = false;
+    final remote = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      session: session,
+      client: MockClient((_) async {
+        networkCalled = true;
+        return http.Response('{}', 500);
+      }),
+    );
+    final controller = PortfolioCloudSyncController(
+      service: AuthenticatedPortfolioSyncService(remoteService: remote),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedPortfolioPage(
+          positionsLoader: () => localSnapshot.future,
+          syncController: controller,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('portfolio-authenticated-sync')));
+    await tester.pump();
+
+    session.establish(
+      accessToken: 'reused-token',
+      account: AuthAccount(
+        id: 8,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.utc(2026, 9, 21),
+        updatedAt: DateTime.utc(2026, 9, 21),
+      ),
+    );
+    localSnapshot.complete([position()]);
+    await tester.pumpAndSettle();
+
+    expect(networkCalled, isFalse);
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(find.textContaining('No se ha enviado ningún dato'), findsOneWidget);
+    expect(session.isAuthenticated, isTrue);
+    expect(session.account?.id, 8);
+    expect(session.accessToken, 'reused-token');
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+    remote.dispose();
+  });
+
   testWidgets('guest account controls are disabled and perform no local or network work', (tester) async {
     var networkCalled = false;
     var positionsRead = false;
