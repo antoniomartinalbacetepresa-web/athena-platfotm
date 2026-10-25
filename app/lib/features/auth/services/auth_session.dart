@@ -95,6 +95,9 @@ class AuthSession extends ChangeNotifier {
       // may have been removed. Never revoke a newer authenticated authority.
       if (_authorityVersion == writeAuthorityVersion) {
         _clearMemory();
+        // A platform write may have stored the token before reporting failure.
+        // Remove that unverified credential so a later restore cannot accept it.
+        await _reconcilePersistedAuthority();
       }
       rethrow;
     } finally {
