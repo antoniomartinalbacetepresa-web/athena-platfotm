@@ -55,6 +55,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="to_date",
         help="Fecha final inclusiva YYYY-MM-DD.",
     )
+    parser.add_argument(
+        "--sweep", action="store_true",
+        help="Procesa una lista fija y acotada de bloqueos sin saltarlos al cambiar la cola.",
+    )
+    parser.add_argument(
+        "--max-batches", type=int, default=20,
+        help="Máximo de lotes en --sweep; limit * max-batches <= 1000.",
+    )
     return parser
 
 
@@ -83,16 +91,38 @@ def run(
     return report.to_api_dict()
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    report = run(
-        limit=args.limit,
-        offset=args.offset,
-        from_date=args.from_date,
-        to_date=args.to_date,
+def run_sweep(
+    *,
+    limit: int,
+    max_batches: int,
+    from_date: str | None,
+    to_date: str | None,
+) -> dict[str, Any]:
+    return VerifiedMarketHistoryBackfillService(
+        progress_callback=_progress,
+    ).run_sweep(
+        limit=limit, max_batches=max_batches,
+        from_date=from_date, to_date=to_date,
     )
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    if args.sweep:
+        if args.offset:
+            raise ValueError("--offset debe ser cero con --sweep.")
+        report = run_sweep(
+            limit=args.limit, max_batches=args.max_batches,
+            from_date=args.from_date, to_date=args.to_date,
+        )
+    else:
+        report = run(
+            limit=args.limit, offset=args.offset,
+            from_date=args.from_date, to_date=args.to_date,
+        )
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 3 if args.sweep and not report["historyReady"] else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -104,7 +104,19 @@ class MarketObservationBackfillService:
         to_date: str | None = None,
         source_provider: str = YahooMarketService.PROVIDER_ID,
         blocking_only: bool = False,
+        _instrument_ids: tuple[int, ...] | None = None,
     ) -> MarketObservationBackfillReport:
+        if _instrument_ids is not None:
+            if not blocking_only or offset != 0:
+                raise ValueError("La selección fija requiere blocking_only y offset cero.")
+            if (
+                not isinstance(_instrument_ids, tuple)
+                or not _instrument_ids
+                or len(_instrument_ids) > limit
+                or any(type(value) is not int or value <= 0 for value in _instrument_ids)
+                or len(set(_instrument_ids)) != len(_instrument_ids)
+            ):
+                raise ValueError("La selección fija debe contener IDs únicos, positivos y acotados.")
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
         if offset < 0:
@@ -131,6 +143,7 @@ class MarketObservationBackfillService:
             limit=limit,
             offset=offset,
             blocking_only=blocking_only,
+            instrument_ids=_instrument_ids,
             as_of_date=(
                 self._parse_iso_date(effective_to_date, field="to_date")
                 if effective_to_date is not None
@@ -329,8 +342,17 @@ class MarketObservationBackfillService:
         limit: int,
         offset: int,
         blocking_only: bool,
+        instrument_ids: tuple[int, ...] | None,
         as_of_date: date,
     ) -> list[dict[str, Any]]:
+        if instrument_ids is not None:
+            rows: list[dict[str, Any]] = []
+            for instrument_id in instrument_ids:
+                row = self._instruments.get_by_id(instrument_id)
+                if row is None or not bool(row.get("is_active")):
+                    raise RuntimeError("Un instrumento del lote fijo ya no está activo.")
+                rows.append(row)
+            return rows
         if not blocking_only:
             return self._instruments.list_active(limit=limit, offset=offset)
 

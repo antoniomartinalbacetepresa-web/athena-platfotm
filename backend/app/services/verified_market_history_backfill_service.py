@@ -110,6 +110,7 @@ class VerifiedMarketHistoryBackfillService:
         offset: int = 0,
         from_date: str | None = None,
         to_date: str | None = None,
+        _instrument_ids: tuple[int, ...] | None = None,
     ) -> VerifiedMarketHistoryBackfillReport:
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
@@ -126,6 +127,7 @@ class VerifiedMarketHistoryBackfillService:
             from_date=from_date,
             to_date=to_date,
             blocking_only=True,
+            _instrument_ids=_instrument_ids,
         )
         blockers_after = self._blocking_count(verification_cutoff)
         coverage_after = MarketObservationCoverageService(database=self._database).get_report(
@@ -145,6 +147,91 @@ class VerifiedMarketHistoryBackfillService:
             current_blockers_after=current_blockers_after,
             eligible_instrument_count=coverage_after.history_eligible_instrument_count,
         )
+
+
+    def run_sweep(
+        self,
+        *,
+        limit: int,
+        max_batches: int = 20,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Attempt a bounded, frozen list of blockers exactly once each.
+
+        A live blockers queue shrinks and can reorder when observations are
+        persisted. Offset pagination during writes can skip instruments or
+        retry the wrong ones; freeze IDs before making provider requests.
+        """
+        if type(limit) is not int or limit <= 0 or limit > 500:
+            raise ValueError("limit debe estar entre 1 y 500.")
+        if type(max_batches) is not int or max_batches <= 0:
+            raise ValueError("max_batches debe ser un entero positivo.")
+        max_items = limit * max_batches
+        if max_items > MarketHistoryGapService.MAX_LIMIT:
+            raise ValueError("limit * max_batches no puede superar 1000 instrumentos.")
+
+        sweep_day = self._today_provider()
+        cutoff = datetime.combine(sweep_day, time.max, tzinfo=timezone.utc)
+        initial = MarketHistoryGapService(database=self._database).get_report(
+            as_of=cutoff, limit=max_items, offset=0
+        )
+        instrument_ids = tuple(item.instrument_id for item in initial.items)
+        if len(instrument_ids) != len(set(instrument_ids)):
+            raise RuntimeError("La lista inicial de bloqueos contiene IDs duplicados.")
+
+        reports: list[VerifiedMarketHistoryBackfillReport] = []
+        for index in range(0, len(instrument_ids), limit):
+            if self._today_provider() != sweep_day:
+                raise RuntimeError("El corte UTC cambió durante el barrido histórico.")
+            batch = instrument_ids[index:index + limit]
+            reports.append(self.run(
+                limit=len(batch),
+                offset=0,
+                from_date=from_date,
+                to_date=to_date,
+                _instrument_ids=batch,
+            ))
+        if not reports:
+            # Preserve the nonempty-universe and current-depth acceptance
+            # checks even when there are no historical blockers to fetch.
+            reports.append(self.run(
+                limit=limit, from_date=from_date, to_date=to_date
+            ))
+
+        final = reports[-1]
+        unattempted = max(0, initial.total_blocking_count - len(instrument_ids))
+        history_ready = (
+            unattempted == 0
+            and final.history_ready
+            and all(report.backfill.failed_count == 0 for report in reports)
+        )
+        return {
+            "status": (
+                "history_criteria_satisfied"
+                if history_ready else "history_criteria_still_blocked"
+            ),
+            "historyReady": history_ready,
+            "asOf": cutoff.isoformat(),
+            "initialBlockingCount": initial.total_blocking_count,
+            "attemptedInstrumentCount": len(instrument_ids),
+            "unattemptedInstrumentCount": unattempted,
+            "remainingBlockingCount": final.blockers_after,
+            "batchCount": len(reports),
+            "completeWorklistProcessed": unattempted == 0,
+            "batches": [report.to_api_dict() for report in reports],
+            "policy": {
+                "providerStitchingAllowed": False,
+                "productionEvidenceClaimed": False,
+                "automaticReadinessPromotion": False,
+                "automaticTrading": False,
+            },
+            "warning": (
+                "El barrido usa una lista inicial fija para no saltar bloqueos "
+                "cuando cambia su orden. No demuestra origen productivo, "
+                "acuerdo independiente de corporate actions ni evidencia OOS."
+            ),
+        }
 
     def _blocking_count(self, cutoff: datetime) -> int:
         return MarketHistoryGapService(database=self._database).get_report(
