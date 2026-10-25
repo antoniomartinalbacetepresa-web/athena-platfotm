@@ -106,11 +106,14 @@ class AuthService:
         return f"auth-login:{digest}"
 
     def consume_login_attempt(self, *, rate_key: str) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
-        epoch = int(now.timestamp())
-        window_epoch = epoch - (epoch % self.LOGIN_WINDOW_SECONDS)
-        window_start = datetime.fromtimestamp(window_epoch, tz=timezone.utc)
-        return self._security_repository.consume_login_attempt(key=rate_key, window_started_at=window_start, limit=self.LOGIN_ATTEMPT_LIMIT)
+        # Anchor the limit to the first attempt for this key. UTC clock-bucket
+        # boundaries previously reset counters early and allowed burst bypasses.
+        return self._security_repository.consume_login_attempt(
+            key=rate_key,
+            window_started_at=datetime.now(timezone.utc),
+            window_seconds=self.LOGIN_WINDOW_SECONDS,
+            limit=self.LOGIN_ATTEMPT_LIMIT,
+        )
 
     def clear_login_attempts(self, *, rate_key: str) -> None:
         self._security_repository.clear_login_attempts(key=rate_key)
