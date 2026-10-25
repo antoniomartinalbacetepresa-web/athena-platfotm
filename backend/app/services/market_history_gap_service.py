@@ -151,6 +151,8 @@ class MarketHistoryGapService:
                   AND TRIM(COALESCE(mo.source_provider, '')) <> ''
                   AND INSTR(mo.source_provider, '%') = 0
                   AND INSTR(mo.source_provider, '&') = 0
+                  AND INSTR(mo.source_provider, CHAR(0)) = 0
+                  AND mo.source_provider NOT GLOB '*[^ -~]*'
                   AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%fmp%'
                   AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%financialmodelingprep%'
             ),

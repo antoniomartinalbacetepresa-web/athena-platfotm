@@ -363,7 +363,10 @@ def test_legacy_retrieval_before_observation_cannot_complete_365_days(
     assert gaps.items[0].best_history_span_days == pytest.approx(360.0)
     assert gaps.to_api_dict()["productionEvidenceClaimed"] is False
 
-@pytest.mark.parametrize("legacy_provider", ["", "fmp", "FinancialModelingPrep", "F-M-P"])
+@pytest.mark.parametrize("legacy_provider", [
+    "", "fmp", "FinancialModelingPrep", "F-M-P",
+    "F\tM\tP", "yahoo\n", "yahoo\x00fmp", "yahoo\x7f", "yahoo\u200b",
+])
 def test_legacy_forbidden_provenance_is_a_history_gap(
     tmp_path: Path, legacy_provider: str
 ) -> None:
@@ -389,6 +392,14 @@ def test_legacy_forbidden_provenance_is_a_history_gap(
     assert report.items[0].reason == "no_observations"
     assert report.items[0].best_source_provider is None
     assert report.to_api_dict()["productionEvidenceClaimed"] is False
+    # Legacy rows must not inflate either the gap or coverage diagnostic.
+    coverage = MarketObservationCoverageService(database=database).get_report(
+        as_of=base + timedelta(days=366)
+    )
+    assert coverage.observation_count == 0
+    assert coverage.current_deep_history_instrument_count == 0
+    assert coverage.by_source == {}
+    assert coverage.to_api_dict()["productionCoverageClaimed"] is False
 
 def test_future_source_timestamp_remains_blocked_in_gap_diagnostics(tmp_path: Path) -> None:
     database = _database(tmp_path)
