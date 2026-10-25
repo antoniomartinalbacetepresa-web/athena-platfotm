@@ -71,7 +71,9 @@ class RecommendationResearchForecastErrorOosSummaryIntegrityService:
             period_end = self._aware_iso(row.get("periodEnd"), f"rows[{index}].periodEnd")
             if period_end <= period_start or period_end > summary_as_of:
                 raise ValueError("OOS forecast summary contiene periodo inválido o posterior al asOf.")
-            if int((period_end - period_start).total_seconds()) != horizon:
+            # Do not truncate subsecond differences into an apparently exact
+            # horizon: OOS evaluation windows must match their declared duration.
+            if (period_end - period_start).total_seconds() != horizon:
                 raise ValueError("Periodo de row no coincide con horizonSeconds.")
             normalized_periods.append((period_start, period_end))
 

@@ -216,3 +216,16 @@ def test_repository_rejects_rehashed_semantic_tampering_in_sqlite(tmp_path) -> N
 
     with pytest.raises(ValueError, match="meanAbsoluteError no reconcilia"):
         repository.get_by_hash(summary_hash=tampered_hash)
+
+
+def test_integrity_validator_rejects_subsecond_horizon_mismatch_even_if_rehashed() -> None:
+    artifact = _artifact()
+    # A 500 ms extension previously passed because int(total_seconds())
+    # truncated the duration to the declared 30-day horizon.
+    artifact["rows"][0]["periodEnd"] = "2026-07-01T00:00:00.500000+00:00"
+    _recompute_hash(artifact)
+
+    with pytest.raises(ValueError, match="Periodo de row no coincide"):
+        RecommendationResearchForecastErrorOosSummaryIntegrityService().validate_artifact(
+            artifact
+        )
