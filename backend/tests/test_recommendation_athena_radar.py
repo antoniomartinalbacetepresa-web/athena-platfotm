@@ -283,7 +283,7 @@ def test_radar_rejects_obfuscated_forbidden_sources(source: str, source_ref: str
 
 
 @pytest.mark.parametrize("field", ["source", "source_ref", "provider"])
-@pytest.mark.parametrize("control", ["\\n", "\\x00", "\\u200b"])
+@pytest.mark.parametrize("control", ["\n", "\x00", "\u200b"])
 def test_radar_rejects_control_characters_in_provenance(field: str, control: str) -> None:
     from dataclasses import replace
 
