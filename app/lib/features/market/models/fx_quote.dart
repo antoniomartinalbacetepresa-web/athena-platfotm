@@ -10,7 +10,7 @@ class FxQuote {
   final bool historicalPointInTimeEligible;
 
   FxQuote({
-    required this.status,
+    required String status,
     required String baseCurrency,
     required String quoteCurrency,
     required this.rate,
@@ -19,7 +19,8 @@ class FxQuote {
     required String sourceProvider,
     this.sourceSymbol,
     required this.historicalPointInTimeEligible,
-  })  : baseCurrency = _normalizeCurrency(baseCurrency, 'baseCurrency'),
+  })  : status = status.trim().toLowerCase(),
+        baseCurrency = _normalizeCurrency(baseCurrency, 'baseCurrency'),
         quoteCurrency = _normalizeCurrency(quoteCurrency, 'quoteCurrency'),
         sourceProvider = _requireSourceProvider(sourceProvider) {
     if (!rate.isFinite || rate <= 0) {
@@ -30,7 +31,7 @@ class FxQuote {
         'La recuperación FX no puede preceder a la observación.',
       );
     }
-    final normalizedStatus = status.trim().toLowerCase();
+    final normalizedStatus = this.status;
     const allowedStatuses = {
       'fx_current_ready',
       'fx_identity',
@@ -193,7 +194,7 @@ class FxQuote {
         key.contains('financialmodelingprep')) {
       throw ArgumentError.value(value, 'sourceProvider', 'Fuente FX prohibida.');
     }
-    return provider;
+    return provider.toLowerCase() == 'identity' ? 'identity' : provider;
   }
 
   static String _requireText(String? value, String field) {
