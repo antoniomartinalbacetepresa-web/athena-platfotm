@@ -228,7 +228,7 @@ void main() {
   for (final forbiddenProvider in <String>[
     'Financial-Modeling-Prep',
     'yahoo%2Ffinance',
-    'yahoo_finance\\n',
+    'yahoo_finance\n',
     'fmp',
   ]) {
     test('valued positions reject forbidden raw provider: $forbiddenProvider',
