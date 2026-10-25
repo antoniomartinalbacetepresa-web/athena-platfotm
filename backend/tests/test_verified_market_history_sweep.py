@@ -139,3 +139,15 @@ def test_cli_sweep_returns_nonzero_until_history_is_ready(monkeypatch, capsys):
     )
     assert backfill_deep_market_history.main() == 3
     assert "history_criteria_still_blocked" in capsys.readouterr().out
+
+
+def test_sweep_initializes_fresh_database_before_reading_blockers(tmp_path):
+    database = AthenaDatabase(tmp_path / "fresh-sweep.db")
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=FakeHistoryProvider({}),
+    )
+    report = service.run_sweep(limit=2, max_batches=1)
+    assert database.database_path.exists()
+    assert report["initialBlockingCount"] == 0
+    assert report["historyReady"] is False
+    assert report["policy"]["productionEvidenceClaimed"] is False

@@ -171,6 +171,9 @@ class VerifiedMarketHistoryBackfillService:
         if max_items > MarketHistoryGapService.MAX_LIMIT:
             raise ValueError("limit * max_batches no puede superar 1000 instrumentos.")
 
+        # The first sweep may run against a newly provisioned SQLite path.
+        # Match run() initialization before querying the frozen blocker list.
+        self._database.initialize()
         sweep_day = self._today_provider()
         cutoff = datetime.combine(sweep_day, time.max, tzinfo=timezone.utc)
         initial = MarketHistoryGapService(database=self._database).get_report(
