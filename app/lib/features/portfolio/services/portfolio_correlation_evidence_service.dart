@@ -49,6 +49,22 @@ class PortfolioCorrelationEvidenceService {
           'La correlación requiere identidad canónica verificable para ${position.symbol}.',
         );
       }
+      // A verified identifier is not sufficient for a PIT snapshot when
+      // its identity or market evidence was retrieved after the cutoff.
+      final identityRetrieved = position.identityRetrievedAt!;
+      final marketObserved = position.currentPriceUpdatedAt;
+      final marketRetrieved = position.currentPriceRetrievedAt;
+      if (identityRetrieved.isAfter(knowledgeCutoff) ||
+          marketObserved == null ||
+          marketRetrieved == null ||
+          marketRetrieved.isBefore(marketObserved) ||
+          marketObserved.isAfter(knowledgeCutoff) ||
+          marketRetrieved.isAfter(knowledgeCutoff)) {
+        throw StateError(
+          'La posición ${position.symbol} contiene evidencia posterior o '
+          'incompleta para el knowledgeCutoff.',
+        );
+      }
       final instrumentId = position.databaseInstrumentId!;
       if (!canonicalIds.add(instrumentId)) {
         throw StateError(
@@ -83,6 +99,25 @@ class PortfolioCorrelationEvidenceService {
           sourceProvider: sourceProvider,
           knowledgeCutoff: knowledgeCutoff,
         );
+        // Validate the exact pair even for injected/test loaders: a
+        // response for different instruments must never enter the aggregate.
+        if (result.leftInstrumentId !=
+                positions[leftIndex].databaseInstrumentId ||
+            result.rightInstrumentId !=
+                positions[rightIndex].databaseInstrumentId ||
+            result.sampleCount < 2 ||
+            result.firstReturnDate.isAfter(result.lastReturnDate) ||
+            result.lastReturnDate.isAfter(knowledgeCutoff) ||
+            result.latestRetrievedAt.isAfter(knowledgeCutoff) ||
+            result.priceField != 'adjusted_close' ||
+            result.alignmentPolicy != 'utc_calendar_date_intersection' ||
+            result.returnPolicy !=
+                'simple_return_consecutive_observations_per_instrument') {
+          throw StateError(
+            'El par de correlación no acredita instrumentos, ventana o '
+            'contrato PIT solicitados.',
+          );
+        }
         if (result.productionEligible ||
             result.allocationInfluence ||
             result.automaticTrading ||
