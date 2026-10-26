@@ -256,4 +256,19 @@ void main() {
     controller.dispose();
     service.dispose();
   });
+  test('disposed Profile capital controller ignores late HTTP completion', () async {
+    final response = Completer<http.Response>();
+    final service = UserPreferencesService(
+      client: MockClient((_) => response.future),
+      session: session(),
+    );
+    final controller =
+        AuthenticatedPortfolioCapitalController(preferencesService: service);
+    final pending = controller.load();
+    controller.dispose();
+    response.complete(configured());
+    await pending;
+    service.dispose();
+  });
+
 }
