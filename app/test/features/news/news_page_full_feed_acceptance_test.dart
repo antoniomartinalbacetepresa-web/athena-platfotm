@@ -7,6 +7,7 @@ import 'package:app/features/news/presentation/pages/news_page.dart';
 import 'package:app/features/news/presentation/widgets/news_feed_panel.dart';
 import 'package:app/features/news/services/athena_backend_news_synthesis_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -239,6 +240,79 @@ void main() {
     expect(find.text('Nueva 1'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('verified News exposes accessible HTTPS sources and copies the original link',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 400,
+          height: 340,
+          child: NewsFeedPanel(
+            limit: 1,
+            loadFeed: (_) async => _feed(1),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    const url = 'https://example.com/article/1';
+    expect(find.text(url), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Enlace HTTPS de la noticia: $url'),
+      findsOneWidget,
+    );
+    expect(
+      find.byTooltip('Copiar enlace de Noticia verificada 1'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Copiar enlace de Noticia verificada 1'));
+    await tester.pump();
+    expect((await Clipboard.getData('text/plain'))?.text, url);
+    expect(find.text('Enlace de noticia copiado'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('News feed failure hides sources and retry restores verified provenance',
+      (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 400,
+          height: 340,
+          child: NewsFeedPanel(
+            limit: 1,
+            loadFeed: (_) {
+              calls++;
+              if (calls == 1) {
+                return Future<VerifiedNewsFeed>.error(StateError('offline'));
+              }
+              return Future.value(_feed(1));
+            },
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Noticias verificadas no disponibles.'),
+      findsOneWidget,
+    );
+    expect(find.text('https://example.com/article/1'), findsNothing);
+    expect(find.byIcon(Icons.copy_outlined), findsNothing);
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('Noticias no disponibles'), findsNothing);
+    expect(find.text('https://example.com/article/1'), findsOneWidget);
+    expect(find.byIcon(Icons.copy_outlined), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }
 
 VerifiedNewsFeed _feed(int count, {String prefix = 'Noticia verificada'}) {

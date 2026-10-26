@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../models/verified_news_feed.dart';
@@ -65,12 +66,15 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
         Row(
           children: [
             const Expanded(
-              child: Text(
-                'NOTICIAS',
-                style: TextStyle(
-                  color: AthenaColors.text,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+              child: Semantics(
+                header: true,
+                child: Text(
+                  'NOTICIAS',
+                  style: TextStyle(
+                    color: AthenaColors.text,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
@@ -99,26 +103,38 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
             future: _feedFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
+                return const Semantics(
+                  liveRegion: true,
+                  label: 'Consultando noticias verificadas.',
+                  child: Center(child: CircularProgressIndicator()),
+                );
               }
               if (snapshot.hasError) {
-                return _NewsState(
-                  icon: Icons.cloud_off_outlined,
-                  title: 'Noticias no disponibles',
-                  detail: 'ATHENA no mostrará titulares sin un feed verificable.',
-                  actionLabel: 'Reintentar',
-                  onAction: _reload,
+                return Semantics(
+                  liveRegion: true,
+                  label: 'Noticias verificadas no disponibles.',
+                  child: _NewsState(
+                    icon: Icons.cloud_off_outlined,
+                    title: 'Noticias no disponibles',
+                    detail: 'ATHENA no mostrará titulares sin un feed verificable.',
+                    actionLabel: 'Reintentar',
+                    onAction: _reload,
+                  ),
                 );
               }
 
               final feed = snapshot.data;
               if (feed == null || feed.items.isEmpty) {
-                return _NewsState(
-                  icon: Icons.article_outlined,
-                  title: 'Sin noticias verificadas',
-                  detail: 'El proveedor real no devolvió artículos válidos en esta consulta.',
-                  actionLabel: 'Actualizar',
-                  onAction: _reload,
+                return Semantics(
+                  liveRegion: true,
+                  label: 'Sin noticias verificadas en la consulta.',
+                  child: _NewsState(
+                    icon: Icons.article_outlined,
+                    title: 'Sin noticias verificadas',
+                    detail: 'El proveedor real no devolvió artículos válidos en esta consulta.',
+                    actionLabel: 'Actualizar',
+                    onAction: _reload,
+                  ),
                 );
               }
 
@@ -166,36 +182,73 @@ class _NewsItem extends StatelessWidget {
 
   final VerifiedNewsItem item;
 
+  Future<void> _copySource(BuildContext context) async {
+    // The feed contract already rejects non-HTTPS and credential-bearing URLs.
+    // Copying a source is presentation-only: it never authorizes a trade.
+    await Clipboard.setData(ClipboardData(text: item.articleUrl));
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Enlace de noticia copiado')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: item.articleUrl,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AthenaColors.text,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              height: 1.3,
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          item.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: AthenaColors.text,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            height: 1.3,
           ),
-          const SizedBox(height: 5),
-          Text(
-            '${item.publisher} · publicado ${_formatUtc(item.publishedAt)} UTC',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 11,
-            ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          '${item.publisher} · publicado ${_formatUtc(item.publishedAt)} UTC',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: AthenaColors.textSecondary,
+            fontSize: 11,
           ),
-        ],
-      ),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                label: 'Enlace HTTPS de la noticia: ${item.articleUrl}',
+                child: ExcludeSemantics(
+                  child: Text(
+                    item.articleUrl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AthenaColors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Copiar enlace de ${item.title}',
+              onPressed: () => _copySource(context),
+              icon: const Icon(
+                Icons.copy_outlined,
+                color: AthenaColors.textSecondary,
+                size: 18,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
