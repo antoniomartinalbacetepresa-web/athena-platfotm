@@ -140,4 +140,73 @@ void main() {
     expect(session.account?.id, 2);
     expect(store.value, 'replacement-token');
   });
+  // An identical token string does not mean the old owner still has authority.
+  // Each successful lifecycle response must be scoped to its initiating generation.
+  for (final operation in <String>[
+    'logout',
+    'logout-all',
+    'change-password',
+    'close-account',
+  ]) {
+    test('late $operation response preserves same-token replacement owner', () async {
+      final gate = Completer<void>();
+      final requestStarted = Completer<void>();
+      final store = _MemoryTokenStore();
+      final session = await _session(store);
+      final oldVersion = session.authorityVersion;
+      final auth = AthenaAuthService(
+        baseUrl: 'https://athena.local',
+        client: MockClient((request) async {
+          final expectedPath = switch (operation) {
+            'logout' => '/api/v1/auth/logout',
+            'logout-all' => '/api/v1/auth/logout-all',
+            'change-password' => '/api/v1/auth/change-password',
+            _ => '/api/v1/auth/close-account',
+          };
+          expect(request.url.path, expectedPath);
+          expect(request.headers['Authorization'], 'Bearer old-token');
+          requestStarted.complete();
+          await gate.future;
+          return http.Response('', 204);
+        }),
+      );
+      final lifecycle = AccountLifecycleService(authService: auth, session: session);
+
+      Future<bool> perform() async {
+        switch (operation) {
+          case 'logout':
+            return (await lifecycle.logoutCurrentSession()).localCredentialDeleted;
+          case 'logout-all':
+            return (await lifecycle.logoutAllSessions()).localCredentialDeleted;
+          case 'change-password':
+            return (await lifecycle.changeCurrentPassword(
+              currentPassword: 'current-password',
+              newPassword: 'replacement-password',
+            )).localCredentialDeleted;
+          case 'close-account':
+            return (await lifecycle.closeCurrentAccount(
+              currentPassword: 'current-password',
+            )).localCredentialDeleted;
+          default:
+            throw StateError('Operación de prueba desconocida.');
+        }
+      }
+
+      final pending = perform();
+      await requestStarted.future;
+      await session.establishPersisted(
+        accessToken: 'old-token',
+        account: _account(2),
+      );
+      expect(session.authorityVersion, greaterThan(oldVersion));
+      gate.complete();
+
+      expect(await pending, isFalse);
+      expect(session.isAuthenticated, isTrue);
+      expect(session.account?.id, 2);
+      expect(session.accessToken, 'old-token');
+      expect(store.value, 'old-token');
+      auth.dispose();
+    });
+  }
 }
