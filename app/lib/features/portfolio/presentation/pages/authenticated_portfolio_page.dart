@@ -43,12 +43,15 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   AuthenticatedPortfolioCapitalController? _capitalController;
   AuthenticatedPortfolioFxValuationController? _fxValuationController;
   bool _valuationRefreshScheduled = false;
+  bool _refreshingAuthenticated = false;
+  late int _observedAuthorityVersion;
 
   bool get _usesLegacyInjectedBoundary => widget.positionsLoader != null || widget.syncController != null || widget.child != null;
 
   @override
   void initState() {
     super.initState();
+    _observedAuthorityVersion = AuthSession.instance.authorityVersion;
     AuthSession.instance.addListener(_onSessionAuthorityChanged);
     _ownsSyncController = widget.syncController == null;
     _syncController = widget.syncController ?? PortfolioCloudSyncController();
@@ -84,6 +87,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
 
   void _disposeAuthenticatedBoundary() {
     _valuationRefreshScheduled = false;
+    _refreshingAuthenticated = false;
     final fxController = _fxValuationController;
     final capitalController = _capitalController;
     final preferencesService = _preferencesService;
@@ -117,16 +121,50 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   }
 
   void _onSessionAuthorityChanged() {
-    // A prior owner's sync result or snackbar must not remain visible after
-    // logout, token renewal or account replacement.
+    final version = AuthSession.instance.authorityVersion;
+    if (version == _observedAuthorityVersion) return;
+    _observedAuthorityVersion = version;
+    // A new credential generation owns a NEW service/controller boundary,
+    // even when its token text matches the previous owner's token.
+    // Discard all pending valuation, holdings, preferences and sync UI first.
     _syncController.invalidateAuthority();
     if (mounted) ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
-    if (AuthSession.instance.isAuthenticated) {
-      _ensureAuthenticatedBoundary();
-    } else {
-      _disposeAuthenticatedBoundary();
-    }
+    _disposeAuthenticatedBoundary();
+    if (AuthSession.instance.isAuthenticated) _ensureAuthenticatedBoundary();
     if (mounted) setState(() {});
+  }
+
+  Future<void> _refreshAuthenticatedPortfolio() async {
+    final holdings = _authenticatedController;
+    final capital = _capitalController;
+    if (holdings == null ||
+        capital == null ||
+        _refreshingAuthenticated ||
+        holdings.isLoading ||
+        capital.isLoading ||
+        holdings.sessionRejected ||
+        capital.sessionRejected ||
+        !AuthSession.instance.isAuthenticated) {
+      return;
+    }
+    final authorityVersion = AuthSession.instance.authorityVersion;
+    setState(() => _refreshingAuthenticated = true);
+    // Invalidate the prior FX aggregate BEFORE requesting new holdings or
+    // Profile currency. Never mix a refreshed leg with an old valuation.
+    _fxValuationController?.clear();
+    try {
+      await Future.wait<void>([holdings.load(), capital.load()]);
+    } finally {
+      if (mounted &&
+          AuthSession.instance.authorityVersion == authorityVersion &&
+          identical(_authenticatedController, holdings)) {
+        _refreshingAuthenticated = false;
+        if (!holdings.sessionRejected && !capital.sessionRejected) {
+          _scheduleVerifiedValuationRefresh();
+        }
+        setState(() {});
+      }
+    }
   }
   bool _isCurrentOwnerAction(int authorityVersion, AuthenticatedPortfolioController controller) =>
       mounted &&
@@ -227,7 +265,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   child: const ExcludeSemantics(
     child: Text('Vista informativa: no ejecuta órdenes ni modifica recomendaciones o pesos automáticamente.', style: TextStyle(fontSize: 12)),
   ),
-)])), IconButton(key: const Key('portfolio-authenticated-history'), tooltip: 'Historial de cuenta', onPressed: controller.sessionRejected ? null : _openAuthenticatedHistory, icon: const Icon(Icons.history))]),
+)])), IconButton(key: const Key('portfolio-authenticated-refresh'), tooltip: 'Actualizar cartera y preferencias', onPressed: _refreshingAuthenticated || controller.isLoading || capitalController.isLoading || controller.sessionRejected || capitalController.sessionRejected ? null : _refreshAuthenticatedPortfolio, icon: _refreshingAuthenticated ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh_rounded)), IconButton(key: const Key('portfolio-authenticated-history'), tooltip: 'Historial de cuenta', onPressed: controller.sessionRejected ? null : _openAuthenticatedHistory, icon: const Icon(Icons.history))]),
       const SizedBox(height: 20), AuthenticatedPortfolioCapitalView(controller: capitalController, onRetry: capitalController.load), const SizedBox(height: 12), AuthenticatedPortfolioView(controller: controller, fxValuationController: _fxValuationController, verifiedBaseCurrency: verifiedBaseCurrency, onRetry: controller.load, onAdd: _addAuthenticatedPosition, onRemove: _removeAuthenticatedPosition),
     ]))))));
   }
