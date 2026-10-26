@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
+import '../../models/verified_news_feed.dart';
 import '../../services/athena_backend_news_synthesis_service.dart';
 import '../news_synthesis_controller.dart';
 import '../widgets/news_feed_panel.dart';
@@ -9,11 +10,13 @@ import '../widgets/news_synthesis_panel.dart';
 class NewsPage extends StatefulWidget {
   final NewsSynthesisController? synthesisController;
   final Widget? newsFeed;
+  final Future<VerifiedNewsFeed> Function(int limit)? feedLoader;
 
   const NewsPage({
     super.key,
     this.synthesisController,
     this.newsFeed,
+    this.feedLoader,
   });
 
   @override
@@ -89,6 +92,18 @@ class _NewsPageState extends State<NewsPage> {
           header: true,
           child: Text('NOTICIAS', key: Key('news-page-heading')),
         ),
+        actions: [
+          IconButton(
+            key: const Key('news-page-refresh-synthesis'),
+            tooltip: 'Actualizar análisis ATHENA de noticias',
+            onPressed: () {
+              // Invalidate a pending synthesis before requesting fresh evidence.
+              _synthesisController.clear();
+              _synthesisController.load();
+            },
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -98,7 +113,11 @@ class _NewsPageState extends State<NewsPage> {
             children: [
               NewsSynthesisPanel(controller: _synthesisController),
               const SizedBox(height: 24),
-              widget.newsFeed ?? const NewsFeedPanel(limit: 20),
+              widget.newsFeed ?? NewsFeedPanel(
+                limit: 20,
+                shrinkWrap: true,
+                loadFeed: widget.feedLoader,
+              ),
             ],
           ),
         ),
