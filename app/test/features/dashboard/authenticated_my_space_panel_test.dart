@@ -6,9 +6,12 @@ import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/dashboard/presentation/widgets/authenticated_my_space_panel.dart';
 import 'package:app/features/dashboard/presentation/widgets/my_space_panel.dart';
 import 'package:app/features/market/models/market_quote.dart';
+import 'package:app/features/market/models/fx_quote.dart';
 import 'package:app/features/market/repositories/market_repository.dart';
 import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_capital_controller.dart';
 import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_controller.dart';
+import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_fx_valuation_controller.dart';
+import 'package:app/features/portfolio/services/authenticated_portfolio_fx_valuation_service.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:app/features/profile/services/user_preferences_service.dart';
 import 'package:flutter/material.dart';
@@ -180,6 +183,120 @@ void main() {
         findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+
+  testWidgets('Dashboard uses verified current FX but never invents historical P/L',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings()),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('USD'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    final fx = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({
+          required String baseCurrency,
+          required String quoteCurrency,
+        }) async => FxQuote(
+          baseCurrency: baseCurrency,
+          quoteCurrency: quoteCurrency,
+          rate: 0.9,
+          status: 'fx_current_ready',
+          sourceProvider: 'verified-fx',
+          sourceSymbol: 'USDEUR=X',
+          observedAt: DateTime.utc(2026, 10, 25, 12),
+          retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+          historicalPointInTimeEligible: false,
+        ),
+      ),
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          fxValuationController: fx,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('360.00 EUR'), findsOneWidget);
+    expect(find.textContaining('USD/EUR · verified-fx'), findsOneWidget);
+    expect(find.text('80.00 EUR'), findsNothing);
+    expect(find.text('HHI 1.000'), findsNothing);
+    expect(find.textContaining('no se utiliza FX actual'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fx.dispose();
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('Dashboard fails closed when authenticated FX evidence is rejected',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings()),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('USD'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    final fx = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({
+          required String baseCurrency,
+          required String quoteCurrency,
+        }) async => throw StateError('FX not verified'),
+      ),
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          fxValuationController: fx,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('360.00 EUR'), findsNothing);
+    expect(find.text('400.00 EUR'), findsNothing);
+    expect(find.text('HHI 1.000'), findsNothing);
+    expect(find.text('No disponible'), findsNWidgets(3));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fx.dispose();
     holdings.dispose();
     capital.dispose();
     service.dispose();
