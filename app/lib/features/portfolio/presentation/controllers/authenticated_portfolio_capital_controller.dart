@@ -115,6 +115,8 @@ class AuthenticatedPortfolioCapitalController extends ChangeNotifier {
 
   @override
   void dispose() {
+    // In-flight HTTP/market work must not notify a disposed owner boundary.
+    _loadGeneration++;
     _session.removeListener(_onAuthorityChanged);
     super.dispose();
   }
