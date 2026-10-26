@@ -175,4 +175,70 @@ void main() {
       throwsStateError,
     );
   });
+  test('rejects SEC documents belonging to another filer or accession',
+      () async {
+    for (final url in [
+      'https://www.sec.gov/Archives/edgar/data/999999/000012345626000001/table.xml',
+      'https://www.sec.gov/Archives/edgar/data/123456/000012345626000002/table.xml',
+      'https://www.sec.gov/Archives/edgar/data/123456/000012345626000001/other/table.xml',
+    ]) {
+      final payload = envelope();
+      (payload['data'] as Map<String, Object?>)['sourceUrl'] = url;
+      final source = AthenaBackendRelevantInvestorDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode(payload), 200)),
+      );
+      expect(
+        () => source.getLatestInstitutionalHoldings(cik: '123456'),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('rejects mismatched accession index or unapproved selection policy',
+      () async {
+    for (final indexUrl in [
+      'https://www.sec.gov/Archives/edgar/data/999999/000012345626000001/index.json',
+      'https://www.sec.gov/Archives/edgar/data/123456/000012345626000002/index.json',
+    ]) {
+      final payload = envelope();
+      (payload['data'] as Map<String, Object?>)['accessionIndexUrl'] = indexUrl;
+      final source = AthenaBackendRelevantInvestorDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode(payload), 200)),
+      );
+      expect(
+        () => source.getLatestInstitutionalHoldings(cik: '123456'),
+        throwsA(isA<FormatException>()),
+      );
+    }
+    final payload = envelope();
+    (payload['data'] as Map<String, Object?>)['documentSelectionPolicy'] =
+        'first_xml_without_index';
+    final source = AthenaBackendRelevantInvestorDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async => http.Response(jsonEncode(payload), 200)),
+    );
+    expect(
+      () => source.getLatestInstitutionalHoldings(cik: '123456'),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('rejects 13F position dates later than filing/publication',
+      () async {
+    final payload = envelope();
+    (payload['data'] as Map<String, Object?>)['positionDate'] = '2026-09-30';
+    (payload['selectedFiling'] as Map<String, Object?>)['reportDate'] =
+        '2026-09-30';
+    final source = AthenaBackendRelevantInvestorDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async => http.Response(jsonEncode(payload), 200)),
+    );
+    expect(
+      () => source.getLatestInstitutionalHoldings(cik: '123456'),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
 }

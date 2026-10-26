@@ -189,8 +189,13 @@ class RelevantInvestorActivity {
       throw const FormatException('La política de identidad 13F no es fail-closed.');
     }
 
+    final positionDate = dateOnly('positionDate');
+    final filingDate = dateOnly('filingDate');
     final publication = utcTimestamp('publicationDateTime');
     final retrieved = utcTimestamp('retrievedAt');
+    if (positionDate.isAfter(filingDate) || filingDate.isAfter(publication)) {
+      throw const FormatException('La cronología del filing 13F es inválida.');
+    }
     if (retrieved.isBefore(publication)) {
       throw const FormatException('La recuperación 13F precede a su publicación.');
     }
@@ -198,8 +203,12 @@ class RelevantInvestorActivity {
     if (sourceProvider != 'SEC EDGAR') {
       throw const FormatException('La actividad institucional no procede de SEC EDGAR.');
     }
-    final sourceUrl = requiredText('sourceUrl');
-    _requireSecArchiveUrl(sourceUrl);
+    if (data['status'] != 'sec_13f_information_table_parsed' ||
+        data['valueUnit'] != 'thousands_usd_as_reported_by_sec_13f') {
+      throw const FormatException('Contrato SEC 13F o unidades no verificables.');
+    }
+    final requestedAccession = requiredText('accessionNumber');
+    if (!RegExp(r'^\d{10}-\d{2}-\d{6}
 
     final rawHoldings = data['holdings'];
     if (rawHoldings is! List || rawHoldings.isEmpty) {
@@ -255,6 +264,88 @@ class RelevantInvestorActivity {
         uri.hasQuery ||
         uri.hasFragment) {
       throw const FormatException('URL SEC EDGAR no aprobada.');
+    }
+  }
+}
+).hasMatch(requestedAccession)) {
+      throw const FormatException('Accession SEC 13F inválido.');
+    }
+    final archiveCik = BigInt.parse(normalizedCik).toString();
+    final archivePath =
+        '/Archives/edgar/data/$archiveCik/${requestedAccession.replaceAll('-', '')}';
+    final sourceUrl = requiredText('sourceUrl');
+    _requireSecArchiveUrl(sourceUrl, archivePath);
+    if (requiredText('accessionIndexUrl') !=
+            'https://www.sec.gov$archivePath/index.json' ||
+        data['documentSelectionPolicy'] !=
+            'official_accession_index_then_unique_information_table_xml') {
+      throw const FormatException(
+        'La procedencia del índice SEC 13F no coincide con el filing.',
+      );
+    }
+
+    final rawHoldings = data['holdings'];
+    if (rawHoldings is! List || rawHoldings.isEmpty) {
+      throw const FormatException('El 13F no contiene holdings verificables.');
+    }
+    final holdings = rawHoldings
+        .map((item) {
+          if (item is! Map) throw const FormatException('Holding 13F inválido.');
+          return RelevantInvestorHolding.fromMap(Map<String, dynamic>.from(item));
+        })
+        .toList(growable: false);
+    final holdingCount = data['holdingCount'];
+    if (holdingCount is! int || holdingCount != holdings.length) {
+      throw const FormatException('holdingCount no coincide con los holdings recibidos.');
+    }
+
+    final selectedRaw = envelope['selectedFiling'];
+    if (selectedRaw is! Map) throw const FormatException('Falta selectedFiling.');
+    final selected = Map<String, dynamic>.from(selectedRaw);
+    final form = requiredText('form');
+    final accession = requiredText('accessionNumber');
+    if (selected['form']?.toString() != form ||
+        selected['accessionNumber']?.toString() != accession ||
+        selected['reportDate']?.toString() != requiredText('positionDate') ||
+        selected['filingDate']?.toString() != requiredText('filingDate')) {
+      throw const FormatException('selectedFiling no coincide con el documento 13F parseado.');
+    }
+    if (form != '13F-HR' && form != '13F-HR/A') {
+      throw const FormatException('Formulario institucional no soportado.');
+    }
+
+    return RelevantInvestorActivity(
+      cik: normalizedCik,
+      form: form,
+      accessionNumber: accession,
+      positionDate: dateOnly('positionDate'),
+      filingDate: dateOnly('filingDate'),
+      publicationDateTime: publication,
+      retrievedAt: retrieved,
+      sourceUrl: sourceUrl,
+      sourceProvider: sourceProvider,
+      valueUnit: requiredText('valueUnit'),
+      holdings: List.unmodifiable(holdings),
+    );
+  }
+
+  static void _requireSecArchiveUrl(String url, String archivePath) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host.toLowerCase() != 'www.sec.gov' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasPort ||
+        !uri.path.startsWith('$archivePath/') ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      throw const FormatException('URL SEC EDGAR no aprobada.');
+    }
+    final filename = uri.path.substring(archivePath.length + 1);
+    if (!RegExp(r'^[A-Za-z0-9._-]+\.xml$', caseSensitive: false)
+            .hasMatch(filename) ||
+        filename.startsWith('.')) {
+      throw const FormatException('Documento SEC 13F fuera del accession.');
     }
   }
 }
