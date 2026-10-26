@@ -222,6 +222,112 @@ void main() {
 
     dependencies.dispose();
   });
+
+  testWidgets('Market and News returns refresh canonical synthesis fail-closed',
+      (tester) async {
+    var requests = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async {
+        requests++;
+        if (requests == 2) return http.Response('{"detail":"unavailable"}', 503);
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] =
+            requests == 1 ? 'Síntesis anterior' : 'Síntesis renovada';
+        return http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'});
+      }),
+    );
+    final dependencies = _dependencies(source);
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        renderOperationalPanels: false,
+      ),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => Scaffold(body: Text('Abierta: ${settings.name}')),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(requests, 1);
+    expect(find.text('Síntesis anterior'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Mercado'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Abierta: /market'))).pop();
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(find.text('Síntesis anterior'), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Abierta: /news'))).pop();
+    await tester.pumpAndSettle();
+    expect(requests, 3);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsNothing);
+    expect(find.text('Síntesis renovada'), findsOneWidget);
+  });
+
+  testWidgets('late Market response cannot overwrite refreshed News synthesis',
+      (tester) async {
+    final delayedMarket = Completer<http.Response>();
+    var requests = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        requests++;
+        if (requests == 2) return delayedMarket.future;
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] =
+            requests == 1 ? 'Síntesis inicial' : 'Síntesis de noticias';
+        return Future.value(http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'}));
+      }),
+    );
+    final dependencies = _dependencies(source);
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        renderOperationalPanels: false,
+      ),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => Scaffold(body: Text('Abierta: ${settings.name}')),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Síntesis inicial'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Mercado'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Abierta: /market'))).pop();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(requests, 2);
+    expect(find.text('Síntesis inicial'), findsNothing);
+
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pump(const Duration(milliseconds: 400));
+    Navigator.of(tester.element(find.text('Abierta: /news'))).pop();
+    await tester.pumpAndSettle();
+    expect(requests, 3);
+    expect(find.text('Síntesis de noticias'), findsOneWidget);
+
+    final oldPayload = _validPayload();
+    ((oldPayload['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Respuesta tardía';
+    delayedMarket.complete(http.Response(jsonEncode(oldPayload), 200,
+        headers: {'content-type': 'application/json'}));
+    await tester.pump();
+    expect(find.text('Respuesta tardía'), findsNothing);
+    expect(find.text('Síntesis de noticias'), findsOneWidget);
+  });
 }
 
 RecommendationDependencies _dependencies(

@@ -37,14 +37,28 @@ class _DashboardPageState extends State<DashboardPage> {
   late RecommendationDependencies _recommendationDependencies;
   late bool _ownsRecommendationDependencies;
   int _ownerRefreshEpoch = 0;
+  int _marketRefreshEpoch = 0;
+  int _newsRefreshEpoch = 0;
 
   void _onReturnFromRoute(String route) {
-    if (route != AppRoutes.profile && route != AppRoutes.portfolio) return;
     if (!mounted) return;
-    // Profile edits and Portfolio mutations do not change JWT authority.
-    // Remount only the owner-scoped projections on return; never reuse stale
-    // capital, currency, positions or explanation preferences.
-    setState(() => _ownerRefreshEpoch++);
+    if (route == AppRoutes.profile || route == AppRoutes.portfolio) {
+      // Owner edits do not necessarily rotate JWT authority.
+      setState(() => _ownerRefreshEpoch++);
+      return;
+    }
+    if (route != AppRoutes.market && route != AppRoutes.news) return;
+    // Public evidence may have changed while Dashboard was hidden.
+    // Clear the previous synthesis and invalidate any in-flight request.
+    _synthesisController.clear();
+    _synthesisController.loadLatest();
+    setState(() {
+      if (route == AppRoutes.market) {
+        _marketRefreshEpoch++;
+      } else {
+        _newsRefreshEpoch++;
+      }
+    });
   }
 
   AthenaSynthesisController get _synthesisController =>
@@ -130,9 +144,17 @@ class _DashboardPageState extends State<DashboardPage> {
                       LayoutBuilder(
                         builder: (context, constraints) {
                           if (constraints.maxWidth < DashboardPage._desktopBreakpoint) {
-                            return _CompactDashboard(ownerRefreshEpoch: _ownerRefreshEpoch);
+                            return _CompactDashboard(
+                              ownerRefreshEpoch: _ownerRefreshEpoch,
+                              marketRefreshEpoch: _marketRefreshEpoch,
+                              newsRefreshEpoch: _newsRefreshEpoch,
+                            );
                           }
-                          return _DesktopDashboard(ownerRefreshEpoch: _ownerRefreshEpoch);
+                          return _DesktopDashboard(
+                            ownerRefreshEpoch: _ownerRefreshEpoch,
+                            marketRefreshEpoch: _marketRefreshEpoch,
+                            newsRefreshEpoch: _newsRefreshEpoch,
+                          );
                         },
                       ),
                     ],
@@ -148,9 +170,15 @@ class _DashboardPageState extends State<DashboardPage> {
 }
 
 class _DesktopDashboard extends StatelessWidget {
-  const _DesktopDashboard({required this.ownerRefreshEpoch});
+  const _DesktopDashboard({
+    required this.ownerRefreshEpoch,
+    required this.marketRefreshEpoch,
+    required this.newsRefreshEpoch,
+  });
 
   final int ownerRefreshEpoch;
+  final int marketRefreshEpoch;
+  final int newsRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -173,7 +201,7 @@ class _DesktopDashboard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(
+        SizedBox(
           height: 400,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -183,9 +211,18 @@ class _DesktopDashboard extends StatelessWidget {
                 child: AthenaScorePanel(),
               ),
               SizedBox(width: AthenaSpacing.md),
-              Expanded(child: MarketPanel()),
+              Expanded(
+                child: MarketPanel(
+                  key: ValueKey('dashboard-market-$marketRefreshEpoch'),
+                ),
+              ),
               SizedBox(width: AthenaSpacing.md),
-              Expanded(flex: 2, child: NewsPanel()),
+              Expanded(
+                flex: 2,
+                child: NewsPanel(
+                  key: ValueKey('dashboard-news-$newsRefreshEpoch'),
+                ),
+              ),
             ],
           ),
         ),
@@ -197,9 +234,15 @@ class _DesktopDashboard extends StatelessWidget {
 }
 
 class _CompactDashboard extends StatelessWidget {
-  const _CompactDashboard({required this.ownerRefreshEpoch});
+  const _CompactDashboard({
+    required this.ownerRefreshEpoch,
+    required this.marketRefreshEpoch,
+    required this.newsRefreshEpoch,
+  });
 
   final int ownerRefreshEpoch;
+  final int marketRefreshEpoch;
+  final int newsRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -216,9 +259,15 @@ class _CompactDashboard extends StatelessWidget {
         const SizedBox(height: AthenaSpacing.md),
         const SizedBox(height: 360, child: AthenaScorePanel()),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(height: 430, child: MarketPanel()),
+        SizedBox(
+          height: 430,
+          child: MarketPanel(key: ValueKey('dashboard-market-$marketRefreshEpoch')),
+        ),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(height: 300, child: NewsPanel()),
+        SizedBox(
+          height: 300,
+          child: NewsPanel(key: ValueKey('dashboard-news-$newsRefreshEpoch')),
+        ),
         const SizedBox(height: AthenaSpacing.md),
         const SizedBox(height: 340, child: RelevantInvestorsPanel()),
       ],
