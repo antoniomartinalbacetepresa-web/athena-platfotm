@@ -44,7 +44,7 @@ AuthAccount _account(int id) => AuthAccount(
       updatedAt: DateTime.utc(2026, 10, 25),
     );
 
-http.Response _holdings({bool empty = false}) => http.Response(
+http.Response _holdings({bool empty = false, bool twoListings = false}) => http.Response(
       jsonEncode({
         'data': {
           'positions': empty
@@ -58,7 +58,17 @@ http.Response _holdings({bool empty = false}) => http.Response(
                     'averagePurchasePrice': 160,
                     'createdAt': '2026-10-25T10:00:00Z',
                     'updatedAt': '2026-10-25T10:00:00Z',
-                  }
+                  },
+                  if (twoListings)
+                    {
+                      'id': 2,
+                      'symbol': 'MSFT',
+                      'exchange': 'NASDAQ',
+                      'quantity': 1,
+                      'averagePurchasePrice': 150,
+                      'createdAt': '2026-10-25T10:00:00Z',
+                      'updatedAt': '2026-10-25T10:00:00Z',
+                    },
                 ],
         }
       }),
@@ -124,8 +134,50 @@ void main() {
     expect(find.text('1500.00 EUR'), findsOneWidget);
     expect(find.text('400.00 EUR'), findsNothing);
     expect(find.text('80.00 EUR'), findsNothing);
-    expect(find.text('No disponible'), findsNWidgets(2));
+    expect(find.text('No disponible'), findsNWidgets(3));
+    expect(find.text('HHI 1.000'), findsNothing);
     expect(find.textContaining('no ejecuta órdenes'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('Dashboard calculates verified listing concentration, not issuer risk',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings(twoListings: true)),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('EUR'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+        ),
+      ),
+    ));
+    expect(find.text('600.00 EUR'), findsOneWidget);
+    expect(find.text('HHI 0.556'), findsOneWidget);
+    expect(find.textContaining('AAPL (NASDAQ) 66.7 %'), findsOneWidget);
+    expect(find.textContaining('No equivale a concentración por emisor'),
+        findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     holdings.dispose();

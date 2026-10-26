@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../auth/services/auth_session.dart';
 import '../../../market/di/market_dependencies.dart';
+import '../../../portfolio/models/authenticated_portfolio_view_position.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_capital_controller.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_controller.dart';
 import '../../../portfolio/services/authenticated_portfolio_service.dart';
@@ -131,6 +132,10 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
         ? current - invested
         : null;
     final capital = _capital.hasVerifiedCapital ? _capital.availableCapital : null;
+    // Concentration is listing-scoped, never issuer-scoped. It is only
+    // meaningful when all positions have verified values in the Profile base
+    // currency; mixed-currency holdings remain blocked without PIT FX.
+    final concentration = comparable ? _listingConcentration(positions) : null;
 
     return SingleChildScrollView(
       key: const Key('dashboard-authenticated-my-space'),
@@ -157,6 +162,19 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
           ),
           const Divider(),
           _row(
+            'Concentración por cotización',
+            concentration == null
+                ? 'No disponible'
+                : 'HHI ${concentration.hhi.toStringAsFixed(3)}',
+            concentration == null
+                ? 'Requiere valoraciones homogéneas en la moneda del Perfil'
+                : '${concentration.effectiveCount.toStringAsFixed(2)} posiciones efectivas · '
+                    'mayor ${concentration.largestListing} '
+                    '${(concentration.largestWeight * 100).toStringAsFixed(1)} %. '
+                    'No equivale a concentración por emisor.',
+          ),
+          const Divider(),
+          _row(
             'Capital disponible',
             capital == null || baseCurrency == null
                 ? 'No disponible'
@@ -175,6 +193,45 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
           ),
         ],
       ),
+    );
+  }
+
+  /// HHI over canonical listing labels (symbol + exchange), not issuers.
+  /// Duplicate rows for the same listing are aggregated before computing HHI.
+  static ({
+    double hhi,
+    double effectiveCount,
+    String largestListing,
+    double largestWeight,
+  })? _listingConcentration(List<AuthenticatedPortfolioViewPosition> positions) {
+    if (positions.isEmpty) return null;
+    final values = <String, double>{};
+    for (final position in positions) {
+      final value = position.currentValue;
+      if (!value.isFinite || value <= 0) return null;
+      final listing = '${position.symbol} (${position.exchange ?? 'sin mercado'})';
+      values.update(listing, (previous) => previous + value,
+          ifAbsent: () => value);
+    }
+    final total = values.values.fold<double>(0, (sum, value) => sum + value);
+    if (!total.isFinite || total <= 0) return null;
+    var hhi = 0.0;
+    var largestWeight = 0.0;
+    var largestListing = '';
+    for (final entry in values.entries) {
+      final weight = entry.value / total;
+      hhi += weight * weight;
+      if (weight > largestWeight) {
+        largestWeight = weight;
+        largestListing = entry.key;
+      }
+    }
+    if (!hhi.isFinite || hhi <= 0) return null;
+    return (
+      hhi: hhi,
+      effectiveCount: 1 / hhi,
+      largestListing: largestListing,
+      largestWeight: largestWeight,
     );
   }
 
