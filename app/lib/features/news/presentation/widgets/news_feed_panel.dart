@@ -5,9 +5,18 @@ import '../../models/verified_news_feed.dart';
 import '../../services/athena_backend_news_service.dart';
 
 class NewsFeedPanel extends StatefulWidget {
-  const NewsFeedPanel({super.key, this.limit = 8});
+  const NewsFeedPanel({
+    super.key,
+    this.limit = 8,
+    this.shrinkWrap = false,
+    this.loadFeed,
+  });
 
   final int limit;
+  /// True when embedded in a vertically scrolling page rather than a
+  /// height-constrained dashboard card.
+  final bool shrinkWrap;
+  final Future<VerifiedNewsFeed> Function(int limit)? loadFeed;
 
   @override
   State<NewsFeedPanel> createState() => _NewsFeedPanelState();
@@ -21,7 +30,21 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
   void initState() {
     super.initState();
     _service = AthenaBackendNewsService();
-    _feedFuture = _service.getFeed(limit: widget.limit);
+    _feedFuture = _load();
+  }
+
+  Future<VerifiedNewsFeed> _load() =>
+      widget.loadFeed?.call(widget.limit) ??
+      _service.getFeed(limit: widget.limit);
+
+  @override
+  void didUpdateWidget(covariant NewsFeedPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.limit != widget.limit ||
+        !identical(oldWidget.loadFeed, widget.loadFeed)) {
+      // A replaced future cannot publish a stale result from an old source.
+      _feedFuture = _load();
+    }
   }
 
   @override
@@ -31,7 +54,7 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
   }
 
   void _reload() {
-    setState(() => _feedFuture = _service.getFeed(limit: widget.limit));
+    setState(() => _feedFuture = _load());
   }
 
   @override
@@ -63,8 +86,16 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
           ],
         ),
         const SizedBox(height: 10),
-        Expanded(
-          child: FutureBuilder<VerifiedNewsFeed>(
+        if (widget.shrinkWrap)
+          _buildFeed()
+        else
+          Expanded(child: _buildFeed()),
+      ],
+    );
+  }
+
+  Widget _buildFeed() {
+    return FutureBuilder<VerifiedNewsFeed>(
             future: _feedFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -103,23 +134,29 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Expanded(
-                    child: ListView.separated(
-                      padding: EdgeInsets.zero,
-                      itemCount: feed.items.length,
-                      separatorBuilder: (_, _) => const Divider(
-                        height: 18,
-                        color: AthenaColors.border,
-                      ),
-                      itemBuilder: (context, index) => _NewsItem(item: feed.items[index]),
-                    ),
-                  ),
+                  if (widget.shrinkWrap)
+                    _buildItems(feed)
+                  else
+                    Expanded(child: _buildItems(feed)),
                 ],
               );
             },
-          ),
-        ),
-      ],
+    );
+  }
+
+  Widget _buildItems(VerifiedNewsFeed feed) {
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      shrinkWrap: widget.shrinkWrap,
+      physics: widget.shrinkWrap
+          ? const NeverScrollableScrollPhysics()
+          : null,
+      itemCount: feed.items.length,
+      separatorBuilder: (_, _) => const Divider(
+        height: 18,
+        color: AthenaColors.border,
+      ),
+      itemBuilder: (context, index) => _NewsItem(item: feed.items[index]),
     );
   }
 }
