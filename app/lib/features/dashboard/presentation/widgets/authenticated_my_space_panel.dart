@@ -8,6 +8,8 @@ import '../../../market/di/market_dependencies.dart';
 import '../../../portfolio/models/authenticated_portfolio_view_position.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_capital_controller.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_controller.dart';
+import '../../../portfolio/presentation/controllers/authenticated_portfolio_fx_valuation_controller.dart';
+import '../../../portfolio/services/authenticated_portfolio_fx_valuation_service.dart';
 import '../../../portfolio/services/authenticated_portfolio_service.dart';
 import '../../../profile/services/user_preferences_service.dart';
 
@@ -19,6 +21,7 @@ class AuthenticatedMySpacePanel extends StatefulWidget {
     super.key,
     this.portfolioController,
     this.capitalController,
+    this.fxValuationController,
   }) : assert(
           (portfolioController == null) == (capitalController == null),
           'Inject both owner-scoped controllers or neither.',
@@ -26,6 +29,7 @@ class AuthenticatedMySpacePanel extends StatefulWidget {
 
   final AuthenticatedPortfolioController? portfolioController;
   final AuthenticatedPortfolioCapitalController? capitalController;
+  final AuthenticatedPortfolioFxValuationController? fxValuationController;
 
   @override
   State<AuthenticatedMySpacePanel> createState() =>
@@ -39,6 +43,11 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
   late final AuthenticatedPortfolioController _portfolio;
   late final AuthenticatedPortfolioCapitalController _capital;
   late final bool _ownsControllers;
+  AuthenticatedPortfolioFxValuationController? _fx;
+  List<AuthenticatedPortfolioViewPosition>? _fxPositions;
+  String? _fxCurrency;
+  int? _fxAuthorityVersion;
+  bool _fxRefreshScheduled = false;
 
   @override
   void initState() {
@@ -62,8 +71,28 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
       _portfolio = widget.portfolioController!;
       _capital = widget.capitalController!;
     }
+    if (_ownsControllers) {
+      final source = _market?.backendFxDataSource;
+      if (source != null) {
+        _fx = AuthenticatedPortfolioFxValuationController(
+          valuationService: AuthenticatedPortfolioFxValuationService(
+            loadCurrentFxRate: ({
+              required String baseCurrency,
+              required String quoteCurrency,
+            }) => source.getCurrentRate(
+              baseCurrency: baseCurrency,
+              quoteCurrency: quoteCurrency,
+            ),
+          ),
+        );
+      }
+    } else {
+      _fx = widget.fxValuationController;
+    }
     _portfolio.addListener(_onChanged);
     _capital.addListener(_onChanged);
+    _fx?.addListener(_onChanged);
+    _scheduleFxRefresh();
     if (_ownsControllers && AuthSession.instance.isAuthenticated) {
       unawaited(_portfolio.load());
       unawaited(_capital.load());
@@ -71,13 +100,62 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
   }
 
   void _onChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    _scheduleFxRefresh();
+  }
+
+  void _scheduleFxRefresh() {
+    if (_fx == null || _fxRefreshScheduled) return;
+    _fxRefreshScheduled = true;
+    scheduleMicrotask(() {
+      _fxRefreshScheduled = false;
+      if (mounted) _refreshFx();
+    });
+  }
+
+  void _refreshFx() {
+    final fx = _fx;
+    if (fx == null) return;
+    final currency =
+        _capital.hasVerifiedBaseCurrency ? _capital.currency : null;
+    final valid = AuthSession.instance.isAuthenticated &&
+        !_portfolio.isLoading &&
+        !_capital.isLoading &&
+        !_portfolio.sessionRejected &&
+        !_capital.sessionRejected &&
+        _portfolio.error == null &&
+        _capital.error == null &&
+        _portfolio.positions.isNotEmpty &&
+        currency != null;
+    if (!valid) {
+      _fxPositions = null;
+      _fxCurrency = null;
+      _fxAuthorityVersion = null;
+      if (fx.valuation != null || fx.isLoading || fx.error != null) {
+        fx.clear();
+      }
+      return;
+    }
+    final positions = _portfolio.positions;
+    final authority = AuthSession.instance.authorityVersion;
+    if (identical(_fxPositions, positions) &&
+        _fxCurrency == currency &&
+        _fxAuthorityVersion == authority) {
+      return;
+    }
+    _fxPositions = positions;
+    _fxCurrency = currency;
+    _fxAuthorityVersion = authority;
+    unawaited(fx.load(positions: positions, baseCurrency: currency));
   }
 
   @override
   void dispose() {
     _portfolio.removeListener(_onChanged);
     _capital.removeListener(_onChanged);
+    _fx?.removeListener(_onChanged);
+    if (_ownsControllers) _fx?.dispose();
     if (_ownsControllers) {
       _portfolio.dispose();
       _capital.dispose();
@@ -126,9 +204,23 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
     final comparable = positions.isNotEmpty &&
         baseCurrency != null &&
         _portfolio.directlyComparableCurrency == baseCurrency;
-    final current = comparable ? _portfolio.directlyComparableCurrentValue : null;
+    final fxValuation = _fx?.valuation;
+    final verifiedFx = _fx?.hasVerifiedValuation == true &&
+        fxValuation != null &&
+        identical(_fxPositions, positions) &&
+        _fxCurrency == baseCurrency &&
+        _fxAuthorityVersion == AuthSession.instance.authorityVersion &&
+        fxValuation.baseCurrency == baseCurrency &&
+        fxValuation.positionsValued == positions.length;
+    final current = verifiedFx
+        ? fxValuation.currentValueInBaseCurrency
+        : comparable
+            ? _portfolio.directlyComparableCurrentValue
+            : null;
     final invested = comparable ? _portfolio.directlyComparableInvestedValue : null;
-    final profitLoss = current != null && invested != null
+    // Today's FX can value current holdings, but cannot reconstruct the
+    // historical acquisition-date FX needed for cross-currency P/L.
+    final profitLoss = comparable && current != null && invested != null
         ? current - invested
         : null;
     final capital = _capital.hasVerifiedCapital ? _capital.availableCapital : null;
@@ -149,15 +241,25 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
             'Valor actual',
             current == null ? 'No disponible' : _money(current, baseCurrency!),
             current == null
-                ? 'Requiere precios y moneda base verificables; sin suma multimoneda'
-                : 'Cotizaciones verificadas · moneda del Perfil',
+                ? 'Requiere precios y FX verificables; sin suma multimoneda'
+                : verifiedFx && fxValuation.usesFx
+                    ? 'Conversión FX actual verificada · no válida para coste histórico'
+                    : 'Cotizaciones verificadas · moneda del Perfil',
           ),
+          if (verifiedFx && fxValuation.usesFx)
+            Text(
+              'FX: ${fxValuation.fxEvidence.map((quote) => '${quote.baseCurrency}/${quote.quoteCurrency} · ${quote.sourceProvider}').join(' · ')}',
+              style: const TextStyle(
+                color: AthenaColors.textSecondary,
+                fontSize: 11,
+              ),
+            ),
           const Divider(),
           _row(
             'Resultado no realizado',
             profitLoss == null ? 'No disponible' : _money(profitLoss, baseCurrency!),
             profitLoss == null
-                ? 'Requiere coste declarado y moneda comparable verificable'
+                ? 'Requiere coste declarado y FX histórico verificable; no se utiliza FX actual'
                 : 'Valor actual menos coste declarado; no incluye comisiones',
           ),
           const Divider(),
