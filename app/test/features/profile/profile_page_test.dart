@@ -91,6 +91,11 @@ void main() {
   testWidgets(
       'Profile reload discards unsaved capital even when preferences remain unconfigured',
       (tester) async {
+    // This acceptance test exercises the reload action, not viewport scrolling.
+    tester.view.physicalSize = const Size(900, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     session.establish(accessToken: 'profile.jwt', account: account());
     var preferencesReads = 0;
     final auth = AthenaAuthService(
