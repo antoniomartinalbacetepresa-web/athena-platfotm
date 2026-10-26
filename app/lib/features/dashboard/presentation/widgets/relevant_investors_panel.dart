@@ -255,78 +255,7 @@ class _InvestorActivityItem extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        top: false,
-        child: SizedBox(
-          height: MediaQuery.sizeOf(sheetContext).height * 0.85,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Semantics(
-                        header: true,
-                        child: Text(
-                          'Detalle SEC 13F · CIK ${activity.cik}',
-                          style: Theme.of(sheetContext).textTheme.titleMedium,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Cerrar detalle 13F',
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                Text(
-                  'Posición ${_formatDate(activity.positionDate)} · '
-                  'presentación ${_formatDate(activity.filingDate)} · '
-                  'publicado ${_formatUtc(activity.publicationDateTime)} UTC',
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Declaraciones históricas SEC 13F: no representan posiciones '
-                  'actuales ni implican recomendaciones, score u órdenes.',
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${activity.sourceProvider} · expediente ${activity.accessionNumber} · '
-                  '${activity.holdings.length} posiciones declaradas',
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: ListView.builder(
-                    key: const Key('investor-holdings-detail-list'),
-                    itemCount: activity.holdings.length,
-                    itemBuilder: (context, index) {
-                      final holding = activity.holdings[index];
-                      return ListTile(
-                        title: Text(holding.issuerName),
-                        subtitle: Text(
-                          '${holding.titleOfClass} · CUSIP ${holding.cusip}\n'
-                          '${holding.shareOrPrincipalAmount} '
-                          '${holding.shareOrPrincipalType} · '
-                          '${holding.investmentDiscretion} · '
-                          '${holding.valueThousandsUsd} miles USD declarados',
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SelectableText(
-                  activity.sourceUrl,
-                  style: const TextStyle(fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      builder: (_) => _InvestorHoldingsSheet(activity: activity),
     );
   }
 
@@ -398,6 +327,182 @@ class _InvestorActivityItem extends StatelessWidget {
           child: Text('Ver todas las posiciones (${activity.holdings.length})'),
         ),
       ],
+    );
+  }
+}
+
+/// Read-only exploration of every holding in one verified SEC filing.
+/// Search and ordering affect presentation only, never canonical identity,
+/// ATHENA scores, recommendations or portfolio weights.
+class _InvestorHoldingsSheet extends StatefulWidget {
+  const _InvestorHoldingsSheet({required this.activity});
+
+  final RelevantInvestorActivity activity;
+
+  @override
+  State<_InvestorHoldingsSheet> createState() => _InvestorHoldingsSheetState();
+}
+
+class _InvestorHoldingsSheetState extends State<_InvestorHoldingsSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+  bool _sortByReportedValue = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<MapEntry<int, RelevantInvestorHolding>> _visibleHoldings() {
+    final matches = widget.activity.holdings
+        .asMap()
+        .entries
+        .where((entry) {
+          if (_query.isEmpty) return true;
+          final holding = entry.value;
+          return holding.issuerName.toLowerCase().contains(_query) ||
+              holding.cusip.toLowerCase().contains(_query);
+        })
+        .toList(growable: false);
+
+    if (_sortByReportedValue) {
+      // Keep the SEC document order for equal values.
+      matches.sort((a, b) {
+        final byValue = b.value.valueThousandsUsd
+            .compareTo(a.value.valueThousandsUsd);
+        return byValue != 0 ? byValue : a.key.compareTo(b.key);
+      });
+    }
+    return matches;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activity = widget.activity;
+    final matches = _visibleHoldings();
+    return SafeArea(
+      top: false,
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.85,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      child: Text(
+                        'Detalle SEC 13F · CIK ${activity.cik}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cerrar detalle 13F',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              Text(
+                'Posición ${_formatDate(activity.positionDate)} · '
+                'presentación ${_formatDate(activity.filingDate)} · '
+                'publicado ${_formatUtc(activity.publicationDateTime)} UTC',
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Declaraciones históricas SEC 13F: no representan posiciones '
+                'actuales ni implican recomendaciones, score u órdenes.',
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${activity.sourceProvider} · expediente ${activity.accessionNumber} · '
+                '${activity.holdings.length} posiciones declaradas',
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('investor-holdings-search'),
+                controller: _searchController,
+                onChanged: (value) =>
+                    setState(() => _query = value.trim().toLowerCase()),
+                decoration: InputDecoration(
+                  labelText: 'Buscar emisor o CUSIP',
+                  isDense: true,
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Limpiar búsqueda 13F',
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.clear),
+                        ),
+                ),
+              ),
+              Wrap(
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      '${matches.length} de ${activity.holdings.length} posiciones',
+                      key: const Key('investor-holdings-result-count'),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key('investor-holdings-sort'),
+                    onPressed: () => setState(
+                      () => _sortByReportedValue = !_sortByReportedValue,
+                    ),
+                    icon: const Icon(Icons.sort),
+                    label: Text(
+                      _sortByReportedValue
+                          ? 'Orden: valor declarado ↓'
+                          : 'Orden: documento SEC',
+                    ),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: matches.isEmpty
+                    ? const Center(
+                        child: Text('Sin coincidencias en este expediente 13F'),
+                      )
+                    : ListView.builder(
+                        key: const Key('investor-holdings-detail-list'),
+                        itemCount: matches.length,
+                        itemBuilder: (context, index) {
+                          final holding = matches[index].value;
+                          return ListTile(
+                            title: Text(holding.issuerName),
+                            subtitle: Text(
+                              '${holding.titleOfClass} · CUSIP ${holding.cusip}\n'
+                              '${holding.shareOrPrincipalAmount} '
+                              '${holding.shareOrPrincipalType} · '
+                              '${holding.investmentDiscretion} · '
+                              '${holding.valueThousandsUsd} miles USD declarados',
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                activity.sourceUrl,
+                style: const TextStyle(fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
