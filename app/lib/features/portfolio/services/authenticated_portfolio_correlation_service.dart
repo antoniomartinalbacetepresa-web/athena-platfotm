@@ -14,8 +14,8 @@ class AuthenticatedPortfolioCorrelationService {
   const AuthenticatedPortfolioCorrelationService({
     required this.resolveIdentity,
     required this.loadPair,
-    void Function()? disposeDependencies,
-  }) : _disposeDependencies = disposeDependencies;
+    this._disposeDependencies,
+  });
 
   final PortfolioIdentityResolver resolveIdentity;
   final PortfolioPairCorrelationLoader loadPair;
@@ -30,7 +30,7 @@ class AuthenticatedPortfolioCorrelationService {
     return AuthenticatedPortfolioCorrelationService(
       resolveIdentity: identity.resolve,
       loadPair: correlation.getPair,
-      disposeDependencies: () {
+      _disposeDependencies: () {
         identity.dispose();
         correlation.dispose();
       },

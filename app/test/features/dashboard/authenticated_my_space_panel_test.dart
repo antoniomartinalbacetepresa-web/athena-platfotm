@@ -157,7 +157,7 @@ void main() {
     expect(find.text('1500.00 EUR'), findsOneWidget);
     expect(find.text('400.00 EUR'), findsNothing);
     expect(find.text('80.00 EUR'), findsNothing);
-    expect(find.text('No disponible'), findsNWidgets(3));
+    expect(find.text('No disponible'), findsNWidgets(4));
     expect(find.text('HHI 1.000'), findsNothing);
     expect(find.textContaining('no ejecuta órdenes'), findsOneWidget);
 
@@ -378,7 +378,7 @@ void main() {
     expect(find.text('360.00 EUR'), findsNothing);
     expect(find.text('400.00 EUR'), findsNothing);
     expect(find.text('HHI 1.000'), findsNothing);
-    expect(find.text('No disponible'), findsNWidgets(3));
+    expect(find.text('No disponible'), findsNWidgets(4));
 
     await tester.pumpWidget(const SizedBox.shrink());
     fx.dispose();
