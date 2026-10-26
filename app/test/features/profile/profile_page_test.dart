@@ -98,7 +98,7 @@ void main() {
       client: MockClient((request) async {
         expect(request.url.path, '/api/v1/auth/me');
         return http.Response(
-          '{"id":17,"email":"profile-owner@example.com","displayName":"Profile Owner","isActive":true,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}',
+          '{"status":"authenticated","account":{"id":17,"email":"profile-owner@example.com","displayName":"Profile Owner","isActive":true,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}}',
           200,
           headers: {'content-type': 'application/json'},
         );
