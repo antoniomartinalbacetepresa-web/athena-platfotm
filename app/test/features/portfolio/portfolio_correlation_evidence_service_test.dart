@@ -165,6 +165,90 @@ void main() {
     );
   });
 
+  test('rejects future identity or quote provenance before requesting pairs',
+      () async {
+    final cutoff = DateTime.utc(2026, 9, 4, 18);
+    var requests = 0;
+    final service = PortfolioCorrelationEvidenceService(
+      loadPair: ({
+        required leftInstrumentId,
+        required rightInstrumentId,
+        required sourceProvider,
+        required knowledgeCutoff,
+        observedFrom,
+        observedTo,
+      }) async {
+        requests++;
+        return pair(leftInstrumentId, rightInstrumentId, 0.2, cutoff);
+      },
+    );
+    final future = cutoff.add(const Duration(seconds: 1));
+    for (final invalid in [
+      verifiedPosition('AAA', 1).copyWith(identityRetrievedAt: future),
+      verifiedPosition('AAA', 1).copyWith(currentPriceRetrievedAt: future),
+      verifiedPosition('AAA', 1).copyWith(currentPriceUpdatedAt: future),
+    ]) {
+      await expectLater(
+        service.analyze(
+          positions: [invalid, verifiedPosition('BBB', 2)],
+          knowledgeCutoff: cutoff,
+        ),
+        throwsStateError,
+      );
+    }
+    expect(requests, 0);
+  });
+
+  test('rejects mismatched pair identity, sample and PIT return contract',
+      () async {
+    final cutoff = DateTime.utc(2026, 9, 4, 18);
+    final invalidPairs = [
+      pair(9, 2, 0.2, cutoff),
+      pair(1, 9, 0.2, cutoff),
+      pair(1, 2, 0.2, cutoff, sampleCount: 1),
+      PortfolioPairCorrelation(
+        leftInstrumentId: 1,
+        rightInstrumentId: 2,
+        sourceProvider: 'yahoo',
+        knowledgeCutoff: cutoff,
+        sampleCount: 20,
+        correlation: 0.2,
+        firstReturnDate: DateTime.utc(2026, 8, 1),
+        lastReturnDate: DateTime.utc(2026, 9, 5),
+        latestRetrievedAt: cutoff.subtract(const Duration(minutes: 1)),
+        priceField: 'adjusted_close',
+        alignmentPolicy: 'utc_calendar_date_intersection',
+        returnPolicy: 'simple_return_consecutive_observations_per_instrument',
+        recommendationPolicy: 'no_advice',
+        productionEligible: false,
+        allocationInfluence: false,
+        automaticTrading: false,
+      ),
+    ];
+    for (final invalid in invalidPairs) {
+      final service = PortfolioCorrelationEvidenceService(
+        loadPair: ({
+          required leftInstrumentId,
+          required rightInstrumentId,
+          required sourceProvider,
+          required knowledgeCutoff,
+          observedFrom,
+          observedTo,
+        }) async => invalid,
+      );
+      await expectLater(
+        service.analyze(
+          positions: [
+            verifiedPosition('AAA', 1),
+            verifiedPosition('BBB', 2),
+          ],
+          knowledgeCutoff: cutoff,
+        ),
+        throwsStateError,
+      );
+    }
+  });
+
   test('rejects pair evidence whose cutoff or provider drifts', () async {
     final cutoff = DateTime.utc(2026, 9, 4, 18);
 
