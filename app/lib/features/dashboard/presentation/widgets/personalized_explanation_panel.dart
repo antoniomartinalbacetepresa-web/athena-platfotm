@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
@@ -27,22 +29,71 @@ class PersonalizedExplanationPanel extends StatefulWidget {
 class _PersonalizedExplanationPanelState
     extends State<PersonalizedExplanationPanel> {
   UserPreferencesService? _ownedService;
+  late AuthSession _session;
   UserPersonalization? _personalization;
   _PersonalizationLoadState _state = _PersonalizationLoadState.loading;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _session = widget.session ?? AuthSession.instance;
+    _session.addListener(_onAuthorityChanged);
+    unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant PersonalizedExplanationPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session == widget.session &&
+        oldWidget.loadPersonalization == widget.loadPersonalization) {
+      return;
+    }
+    _session.removeListener(_onAuthorityChanged);
+    _session = widget.session ?? AuthSession.instance;
+    _session.addListener(_onAuthorityChanged);
+    _resetAndReload();
+  }
+
+  void _onAuthorityChanged() => _resetAndReload();
+
+  void _resetAndReload() {
+    // Never keep an old owner's presentation preferences on screen while
+    // the replacement account is being validated, even with a reused token.
+    _loadGeneration++;
+    _ownedService?.dispose();
+    _ownedService = null;
+    if (!mounted) return;
+    setState(() {
+      _personalization = null;
+      _state = _PersonalizationLoadState.loading;
+    });
+    unawaited(_load());
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final session = _session;
+    final authorityVersion = session.authorityVersion;
+    final token = session.accessToken;
     final injectedLoader = widget.loadPersonalization;
-    final session = widget.session ?? AuthSession.instance;
 
-    if (injectedLoader == null && !session.isAuthenticated) {
-      if (!mounted) return;
-      setState(() => _state = _PersonalizationLoadState.guest);
+    bool isCurrent() =>
+        mounted &&
+        generation == _loadGeneration &&
+        identical(session, _session) &&
+        session.authorityVersion == authorityVersion &&
+        session.accessToken == token;
+
+    // Explicitly injected loaders support standalone preview tests. An
+    // explicitly supplied session, however, always enforces guest authority.
+    if (!session.isAuthenticated &&
+        (injectedLoader == null || widget.session != null)) {
+      if (!isCurrent()) return;
+      setState(() {
+        _personalization = null;
+        _state = _PersonalizationLoadState.guest;
+      });
       return;
     }
 
@@ -57,7 +108,7 @@ class _PersonalizedExplanationPanelState
       }
 
       final personalization = await loader();
-      if (!mounted) return;
+      if (!isCurrent()) return;
       setState(() {
         _personalization = personalization;
         _state = personalization == null
@@ -65,13 +116,18 @@ class _PersonalizedExplanationPanelState
             : _PersonalizationLoadState.configured;
       });
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _state = _PersonalizationLoadState.error);
+      if (!isCurrent()) return;
+      setState(() {
+        _personalization = null;
+        _state = _PersonalizationLoadState.error;
+      });
     }
   }
 
   @override
   void dispose() {
+    _loadGeneration++;
+    _session.removeListener(_onAuthorityChanged);
     _ownedService?.dispose();
     super.dispose();
   }
