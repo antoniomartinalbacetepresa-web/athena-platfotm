@@ -167,19 +167,45 @@ class VerifiedMarketHistoryBackfillService:
             raise ValueError("limit debe estar entre 1 y 500.")
         if type(max_batches) is not int or max_batches <= 0:
             raise ValueError("max_batches debe ser un entero positivo.")
+        # A bounded sweep may cover more than one diagnostic page. The
+        # per-page SQL limit is not a cap on the eligible market universe.
+        if max_batches > 1000:
+            raise ValueError("max_batches no puede superar 1000 lotes.")
         max_items = limit * max_batches
-        if max_items > MarketHistoryGapService.MAX_LIMIT:
-            raise ValueError("limit * max_batches no puede superar 1000 instrumentos.")
 
         # The first sweep may run against a newly provisioned SQLite path.
         # Match run() initialization before querying the frozen blocker list.
         self._database.initialize()
         sweep_day = self._today_provider()
         cutoff = datetime.combine(sweep_day, time.max, tzinfo=timezone.utc)
-        initial = MarketHistoryGapService(database=self._database).get_report(
-            as_of=cutoff, limit=max_items, offset=0
+        gap_service = MarketHistoryGapService(database=self._database)
+        initial = gap_service.get_report(
+            as_of=cutoff,
+            limit=min(max_items, MarketHistoryGapService.MAX_LIMIT),
+            offset=0,
         )
-        instrument_ids = tuple(item.instrument_id for item in initial.items)
+        # Freeze every requested ID before any provider writes. Pagination
+        # against a shrinking queue would silently skip unresolved symbols.
+        frozen = list(initial.items)
+        target_count = min(initial.total_blocking_count, max_items)
+        while len(frozen) < target_count:
+            page = gap_service.get_report(
+                as_of=cutoff,
+                limit=min(MarketHistoryGapService.MAX_LIMIT, target_count - len(frozen)),
+                offset=len(frozen),
+            )
+            if (
+                page.total_blocking_count != initial.total_blocking_count
+                or page.as_of != initial.as_of
+                or page.minimum_history_days != initial.minimum_history_days
+                or page.maximum_source_gap_days != initial.maximum_source_gap_days
+                or not page.items
+            ):
+                raise RuntimeError(
+                    "La lista de bloqueos cambió durante la congelación del barrido."
+                )
+            frozen.extend(page.items)
+        instrument_ids = tuple(item.instrument_id for item in frozen)
         if len(instrument_ids) != len(set(instrument_ids)):
             raise RuntimeError("La lista inicial de bloqueos contiene IDs duplicados.")
 

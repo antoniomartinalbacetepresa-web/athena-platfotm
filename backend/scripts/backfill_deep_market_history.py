@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-batches", type=int, default=20,
-        help="Máximo de lotes en --sweep; limit * max-batches <= 1000.",
+        help="Máximo de lotes en --sweep (1..1000); la cola se pagina sin limitar el universo a 1000.",
     )
     return parser
 
