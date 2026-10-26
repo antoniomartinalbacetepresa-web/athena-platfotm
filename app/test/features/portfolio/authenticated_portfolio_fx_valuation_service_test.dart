@@ -74,6 +74,7 @@ void main() {
     expect(value.baseCurrency, 'EUR');
     expect(value.currentValueInBaseCurrency, 150);
     expect(value.positionsValued, 2);
+    expect(value.positionValuesInBaseCurrency, [100, 50]);
     expect(value.usesFx, isFalse);
     expect(calls, 0);
   });
@@ -99,6 +100,8 @@ void main() {
     );
 
     expect(value.currentValueInBaseCurrency, 155);
+    expect(value.positionValuesInBaseCurrency, [90, 45, 20]);
+    expect(() => value.positionValuesInBaseCurrency.add(1), throwsUnsupportedError);
     expect(value.fxEvidence, hasLength(1));
     expect(calls, 1);
   });

@@ -39,6 +39,23 @@ class _Market implements MarketRepository {
       );
 }
 
+/// Two authenticated listings with different quote currencies.
+class _MixedMarket implements MarketRepository {
+  @override
+  Future<MarketQuote> getQuote(String symbol) async => MarketQuote(
+        symbol: symbol,
+        companyName: symbol,
+        currentPrice: 200,
+        change: 0,
+        changePercentage: 0,
+        currency: symbol == 'AAPL' ? 'USD' : 'EUR',
+        exchange: 'NASDAQ',
+        updatedAt: DateTime.utc(2026, 10, 25, 12),
+        sourceProvider: 'yahoo_finance',
+        retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+      );
+}
+
 AuthAccount _account(int id) => AuthAccount(
       id: id,
       email: 'owner-$id@example.invalid',
@@ -241,8 +258,73 @@ void main() {
     expect(find.text('360.00 EUR'), findsOneWidget);
     expect(find.textContaining('USD/EUR · verified-fx'), findsOneWidget);
     expect(find.text('80.00 EUR'), findsNothing);
-    expect(find.text('HHI 1.000'), findsNothing);
+    expect(find.text('HHI 1.000'), findsOneWidget);
+    expect(find.textContaining('FX actual verificado; no es PIT histórica'),
+        findsOneWidget);
     expect(find.textContaining('no se utiliza FX actual'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fx.dispose();
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('mixed-currency authenticated concentration uses verified per-position FX',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings(twoListings: true)),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _MixedMarket(),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    final fx = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({
+          required String baseCurrency,
+          required String quoteCurrency,
+        }) async => FxQuote(
+          baseCurrency: baseCurrency,
+          quoteCurrency: quoteCurrency,
+          rate: 0.9,
+          status: 'fx_current_ready',
+          sourceProvider: 'verified-fx',
+          sourceSymbol: 'USDEUR=X',
+          observedAt: DateTime.utc(2026, 10, 25, 12),
+          retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+          historicalPointInTimeEligible: false,
+        ),
+      ),
+    );
+    await holdings.load();
+    await capital.load();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          fxValuationController: fx,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    // AAPL 400 USD -> 360 EUR; MSFT 200 EUR. HHI = (360/560)^2 + (200/560)^2.
+    expect(find.text('560.00 EUR'), findsOneWidget);
+    expect(find.text('HHI 0.541'), findsOneWidget);
+    expect(find.textContaining('AAPL (NASDAQ) 64.3 %'), findsOneWidget);
+    expect(find.textContaining('FX actual verificado; no es PIT histórica'),
+        findsOneWidget);
+    expect(find.text('80.00 EUR'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     fx.dispose();

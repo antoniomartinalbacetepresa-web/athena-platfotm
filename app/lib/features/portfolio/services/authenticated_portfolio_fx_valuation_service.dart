@@ -12,6 +12,7 @@ class AuthenticatedPortfolioFxValuation {
     required this.baseCurrency,
     required this.currentValueInBaseCurrency,
     required this.positionsValued,
+    required this.positionValuesInBaseCurrency,
     required this.fxEvidence,
     required this.latestMarketObservedAt,
     required this.latestMarketRetrievedAt,
@@ -22,6 +23,9 @@ class AuthenticatedPortfolioFxValuation {
   final String baseCurrency;
   final double currentValueInBaseCurrency;
   final int positionsValued;
+  /// Verified current values, ordered exactly like the requested positions.
+  /// Current FX evidence must never stand in for acquisition-date PIT cost.
+  final List<double> positionValuesInBaseCurrency;
   final List<FxQuote> fxEvidence;
   final DateTime latestMarketObservedAt;
   final DateTime latestMarketRetrievedAt;
@@ -58,6 +62,7 @@ class AuthenticatedPortfolioFxValuationService {
     final fxByCurrency = <String, FxQuote>{};
     final fxEvidence = <FxQuote>[];
     var total = 0.0;
+    final positionValues = <double>[];
     DateTime? latestMarketObserved;
     DateTime? latestMarketRetrieved;
     DateTime? latestFxObserved;
@@ -85,6 +90,7 @@ class AuthenticatedPortfolioFxValuationService {
 
       if (source == base) {
         total += position.currentValue;
+        positionValues.add(position.currentValue);
         continue;
       }
 
@@ -100,6 +106,7 @@ class AuthenticatedPortfolioFxValuationService {
         throw StateError('Conversión FX inválida para ${position.symbol}.');
       }
       total += converted;
+      positionValues.add(converted);
       latestFxObserved = _latest(latestFxObserved, fx.observedAt);
       latestFxRetrieved = _latest(latestFxRetrieved, fx.retrievedAt);
     }
@@ -113,6 +120,7 @@ class AuthenticatedPortfolioFxValuationService {
       baseCurrency: base,
       currentValueInBaseCurrency: total,
       positionsValued: positions.length,
+      positionValuesInBaseCurrency: List.unmodifiable(positionValues),
       fxEvidence: List.unmodifiable(fxEvidence),
       latestMarketObservedAt: latestMarketObserved,
       latestMarketRetrievedAt: latestMarketRetrieved,

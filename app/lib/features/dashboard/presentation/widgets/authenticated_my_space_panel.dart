@@ -224,10 +224,16 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
         ? current - invested
         : null;
     final capital = _capital.hasVerifiedCapital ? _capital.availableCapital : null;
-    // Concentration is listing-scoped, never issuer-scoped. It is only
-    // meaningful when all positions have verified values in the Profile base
-    // currency; mixed-currency holdings remain blocked without PIT FX.
-    final concentration = comparable ? _listingConcentration(positions) : null;
+    // Current listing concentration may use verified current FX per holding;
+    // it never implies historical PIT FX, issuer exposure or allocation advice.
+    final concentration = verifiedFx
+        ? _listingConcentration(
+            positions,
+            valuesInBaseCurrency: fxValuation.positionValuesInBaseCurrency,
+          )
+        : comparable
+            ? _listingConcentration(positions)
+            : null;
 
     return SingleChildScrollView(
       key: const Key('dashboard-authenticated-my-space'),
@@ -273,7 +279,8 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
                 : '${concentration.effectiveCount.toStringAsFixed(2)} posiciones efectivas · '
                     'mayor ${concentration.largestListing} '
                     '${(concentration.largestWeight * 100).toStringAsFixed(1)} %. '
-                    'No equivale a concentración por emisor.',
+                    'No equivale a concentración por emisor.'
+                    '${verifiedFx && fxValuation.usesFx ? ' FX actual verificado; no es PIT histórica.' : ''}',
           ),
           const Divider(),
           _row(
@@ -305,11 +312,21 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
     double effectiveCount,
     String largestListing,
     double largestWeight,
-  })? _listingConcentration(List<AuthenticatedPortfolioViewPosition> positions) {
-    if (positions.isEmpty) return null;
+  })? _listingConcentration(
+    List<AuthenticatedPortfolioViewPosition> positions, {
+    List<double>? valuesInBaseCurrency,
+  }) {
+    if (positions.isEmpty ||
+        (valuesInBaseCurrency != null &&
+            valuesInBaseCurrency.length != positions.length)) {
+      return null;
+    }
     final values = <String, double>{};
-    for (final position in positions) {
-      final value = position.currentValue;
+    for (var index = 0; index < positions.length; index++) {
+      final position = positions[index];
+      final value = valuesInBaseCurrency == null
+          ? position.currentValue
+          : valuesInBaseCurrency[index];
       if (!value.isFinite || value <= 0) return null;
       final listing = '${position.symbol} (${position.exchange ?? 'sin mercado'})';
       values.update(listing, (previous) => previous + value,
