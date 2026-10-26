@@ -147,7 +147,7 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
     _fxPositions = positions;
     _fxCurrency = currency;
     _fxAuthorityVersion = authority;
-    unawaited(fx.load(positions: positions, baseCurrency: currency));
+    unawaited(fx.load(positions: positions, baseCurrency: currency!));
   }
 
   @override
