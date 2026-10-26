@@ -250,6 +250,86 @@ class _InvestorActivityItem extends StatelessWidget {
 
   const _InvestorActivityItem({required this.activity});
 
+  void _showHoldings(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Semantics(
+                        header: true,
+                        child: Text(
+                          'Detalle SEC 13F · CIK ${activity.cik}',
+                          style: Theme.of(sheetContext).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Cerrar detalle 13F',
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                Text(
+                  'Posición ${_formatDate(activity.positionDate)} · '
+                  'presentación ${_formatDate(activity.filingDate)} · '
+                  'publicado ${_formatUtc(activity.publicationDateTime)} UTC',
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Declaraciones históricas SEC 13F: no representan posiciones '
+                  'actuales ni implican recomendaciones, score u órdenes.',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${activity.sourceProvider} · expediente ${activity.accessionNumber} · '
+                  '${activity.holdings.length} posiciones declaradas',
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ListView.builder(
+                    key: const Key('investor-holdings-detail-list'),
+                    itemCount: activity.holdings.length,
+                    itemBuilder: (context, index) {
+                      final holding = activity.holdings[index];
+                      return ListTile(
+                        title: Text(holding.issuerName),
+                        subtitle: Text(
+                          '${holding.titleOfClass} · CUSIP ${holding.cusip}\n'
+                          '${holding.shareOrPrincipalAmount} '
+                          '${holding.shareOrPrincipalType} · '
+                          '${holding.investmentDiscretion} · '
+                          '${holding.valueThousandsUsd} miles USD declarados',
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  activity.sourceUrl,
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sample = activity.holdings.take(2).toList(growable: false);
@@ -311,6 +391,11 @@ class _InvestorActivityItem extends StatelessWidget {
             color: AthenaColors.textSecondary,
             fontSize: 10,
           ),
+        ),
+        TextButton(
+          key: Key('investor-holdings-detail-${activity.cik}'),
+          onPressed: () => _showHoldings(context),
+          child: Text('Ver todas las posiciones (${activity.holdings.length})'),
         ),
       ],
     );

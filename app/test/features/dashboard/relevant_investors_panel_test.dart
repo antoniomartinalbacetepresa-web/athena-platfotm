@@ -6,7 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/features/dashboard/presentation/widgets/relevant_investors_panel.dart';
 import 'package:app/features/investors/models/relevant_investor_activity.dart';
 
-RelevantInvestorActivity activityFor(String cik) {
+RelevantInvestorActivity activityFor(
+  String cik, {
+  List<RelevantInvestorHolding> extraHoldings = const [],
+}) {
   return RelevantInvestorActivity(
     cik: cik,
     form: '13F-HR',
@@ -19,8 +22,8 @@ RelevantInvestorActivity activityFor(String cik) {
         'https://www.sec.gov/Archives/edgar/data/123456/000012345626000001/table.xml',
     sourceProvider: 'SEC EDGAR',
     valueUnit: 'thousands_usd_as_reported_by_sec_13f',
-    holdings: const [
-      RelevantInvestorHolding(
+    holdings: [
+      const RelevantInvestorHolding(
         issuerName: 'APPLE INC',
         titleOfClass: 'COM',
         cusip: '037833100',
@@ -33,6 +36,7 @@ RelevantInvestorActivity activityFor(String cik) {
         votingShared: 0,
         votingNone: 0,
       ),
+      ...extraHoldings,
     ],
   );
 }
@@ -241,4 +245,67 @@ void main() {
     expect(find.textContaining('CIK 999999'), findsNothing);
   });
 
+
+  testWidgets('opens complete SEC 13F holdings without presenting them as current',
+      (tester) async {
+    const additional = [
+      RelevantInvestorHolding(
+        issuerName: 'SECOND ISSUER',
+        titleOfClass: 'COM',
+        cusip: '123456789',
+        valueThousandsUsd: 200,
+        shareOrPrincipalAmount: 10,
+        shareOrPrincipalType: 'SH',
+        putCall: null,
+        investmentDiscretion: 'SOLE',
+        votingSole: 10,
+        votingShared: 0,
+        votingNone: 0,
+      ),
+      RelevantInvestorHolding(
+        issuerName: 'THIRD ISSUER',
+        titleOfClass: 'COM',
+        cusip: '987654321',
+        valueThousandsUsd: 100,
+        shareOrPrincipalAmount: 5,
+        shareOrPrincipalType: 'SH',
+        putCall: null,
+        investmentDiscretion: 'SOLE',
+        votingSole: 5,
+        votingShared: 0,
+        votingNone: 0,
+      ),
+    ];
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik, extraHoldings: additional),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('THIRD ISSUER'), findsNothing);
+    await tester.tap(find.text('Ver todas las posiciones (3)'));
+    await tester.pumpAndSettle();
+    expect(find.text('THIRD ISSUER'), findsOneWidget);
+    expect(find.textContaining('no representan posiciones actuales'), findsOneWidget);
+    expect(find.textContaining('expediente 0000123456-26-000001'), findsOneWidget);
+    expect(find.textContaining('CUSIP 987654321'), findsOneWidget);
+    await tester.tap(find.byTooltip('Cerrar detalle 13F'));
+    await tester.pumpAndSettle();
+    expect(find.text('THIRD ISSUER'), findsNothing);
+  });
+
+  testWidgets('single holding detail preserves SEC source and historical dates',
+      (tester) async {
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ver todas las posiciones (1)'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Posición 2026-06-30'), findsWidgets);
+    expect(find.textContaining('publicado 2026-08-14 20:30 UTC'), findsOneWidget);
+    expect(find.textContaining('www.sec.gov/Archives/edgar/data/123456'), findsOneWidget);
+    expect(find.textContaining('no representan posiciones actuales'), findsOneWidget);
+    expect(find.textContaining('AAPL'), findsNothing);
+  });
 }
