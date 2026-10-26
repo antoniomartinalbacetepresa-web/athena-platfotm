@@ -152,7 +152,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   children: [
                     if (widget.renderOperationalPanels) ...[
-                      const SizedBox(
+                      SizedBox(
                         height: 112,
                         child: SystemReadinessPanel(
                           key: ValueKey('dashboard-readiness-$_readinessRefreshEpoch'),
@@ -179,8 +179,8 @@ class _DashboardPageState extends State<DashboardPage> {
                               ownerRefreshEpoch: _ownerRefreshEpoch,
                               marketRefreshEpoch: _marketRefreshEpoch,
                               newsRefreshEpoch: _newsRefreshEpoch,
-                              investorsRefreshEpoch: _investorsRefreshEpoch,
-                              researchRefreshEpoch: _researchRefreshEpoch,
+                            investorsRefreshEpoch: _investorsRefreshEpoch,
+                            researchRefreshEpoch: _researchRefreshEpoch,
                             );
                           }
                           return _DesktopDashboard(
