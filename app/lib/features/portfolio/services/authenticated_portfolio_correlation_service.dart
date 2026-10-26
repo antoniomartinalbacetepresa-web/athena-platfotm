@@ -14,12 +14,12 @@ class AuthenticatedPortfolioCorrelationService {
   const AuthenticatedPortfolioCorrelationService({
     required this.resolveIdentity,
     required this.loadPair,
-    this._disposeDependencies,
+    this.disposeDependencies,
   });
 
   final PortfolioIdentityResolver resolveIdentity;
   final PortfolioPairCorrelationLoader loadPair;
-  final void Function()? _disposeDependencies;
+  final void Function()? disposeDependencies;
 
   factory AuthenticatedPortfolioCorrelationService.forBackend({
     required String backendUrl,
@@ -30,7 +30,7 @@ class AuthenticatedPortfolioCorrelationService {
     return AuthenticatedPortfolioCorrelationService(
       resolveIdentity: identity.resolve,
       loadPair: correlation.getPair,
-      _disposeDependencies: () {
+      disposeDependencies: () {
         identity.dispose();
         correlation.dispose();
       },
@@ -106,5 +106,5 @@ class AuthenticatedPortfolioCorrelationService {
     );
   }
 
-  void dispose() => _disposeDependencies?.call();
+  void dispose() => disposeDependencies?.call();
 }
