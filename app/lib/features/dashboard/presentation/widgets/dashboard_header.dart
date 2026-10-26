@@ -1,12 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/routing/app_routes.dart';
 
 class DashboardHeader extends StatelessWidget {
-  const DashboardHeader({super.key});
+  const DashboardHeader({super.key, this.onReturnFromRoute});
+
+  /// Called after a primary route is popped, so owner-scoped Dashboard
+  /// projections can re-read changes made in Profile or Portfolio.
+  final ValueChanged<String>? onReturnFromRoute;
 
   static const double _compactBreakpoint = 620;
+
+  Future<void> _navigate(BuildContext context, String route) async {
+    await Navigator.of(context).pushNamed<void>(route);
+    if (context.mounted) onReturnFromRoute?.call(route);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +49,7 @@ class DashboardHeader extends StatelessWidget {
                 PopupMenuButton<String>(
                   tooltip: 'Navegación',
                   icon: const Icon(Icons.menu_rounded, color: Colors.white),
-                  onSelected: (route) => Navigator.of(context).pushNamed(route),
+                  onSelected: (route) => unawaited(_navigate(context, route)),
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: AppRoutes.market, child: Text('Mercado')),
                     PopupMenuItem(value: AppRoutes.news, child: Text('Noticias')),
@@ -47,10 +58,26 @@ class DashboardHeader extends StatelessWidget {
                   ],
                 )
               else ...[
-                _RouteButton(tooltip: 'Mercado', route: AppRoutes.market, icon: Icons.public_rounded),
-                _RouteButton(tooltip: 'Noticias', route: AppRoutes.news, icon: Icons.article_outlined),
-                _RouteButton(tooltip: 'Cartera', route: AppRoutes.portfolio, icon: Icons.account_balance_wallet_outlined),
-                _RouteButton(tooltip: 'Perfil', route: AppRoutes.profile, icon: Icons.person_outline_rounded),
+                _RouteButton(
+                  tooltip: 'Mercado',
+                  onPressed: () => unawaited(_navigate(context, AppRoutes.market)),
+                  icon: Icons.public_rounded,
+                ),
+                _RouteButton(
+                  tooltip: 'Noticias',
+                  onPressed: () => unawaited(_navigate(context, AppRoutes.news)),
+                  icon: Icons.article_outlined,
+                ),
+                _RouteButton(
+                  tooltip: 'Cartera',
+                  onPressed: () => unawaited(_navigate(context, AppRoutes.portfolio)),
+                  icon: Icons.account_balance_wallet_outlined,
+                ),
+                _RouteButton(
+                  tooltip: 'Perfil',
+                  onPressed: () => unawaited(_navigate(context, AppRoutes.profile)),
+                  icon: Icons.person_outline_rounded,
+                ),
               ],
               const SizedBox(width: 8),
               Container(
@@ -71,17 +98,17 @@ class DashboardHeader extends StatelessWidget {
 }
 
 class _RouteButton extends StatelessWidget {
-  const _RouteButton({required this.tooltip, required this.route, required this.icon});
+  const _RouteButton({required this.tooltip, required this.onPressed, required this.icon});
 
   final String tooltip;
-  final String route;
+  final VoidCallback onPressed;
   final IconData icon;
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
       tooltip: tooltip,
-      onPressed: () => Navigator.of(context).pushNamed(route),
+      onPressed: onPressed,
       icon: Icon(icon, color: Colors.white),
     );
   }

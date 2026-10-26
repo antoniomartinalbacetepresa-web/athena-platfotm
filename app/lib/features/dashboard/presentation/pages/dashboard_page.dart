@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_spacing.dart';
 import '../../../recommendations/controllers/athena_synthesis_controller.dart';
@@ -35,6 +36,16 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   late RecommendationDependencies _recommendationDependencies;
   late bool _ownsRecommendationDependencies;
+  int _ownerRefreshEpoch = 0;
+
+  void _onReturnFromRoute(String route) {
+    if (route != AppRoutes.profile && route != AppRoutes.portfolio) return;
+    if (!mounted) return;
+    // Profile edits and Portfolio mutations do not change JWT authority.
+    // Remount only the owner-scoped projections on return; never reuse stale
+    // capital, currency, positions or explanation preferences.
+    setState(() => _ownerRefreshEpoch++);
+  }
 
   AthenaSynthesisController get _synthesisController =>
       _recommendationDependencies.synthesisController;
@@ -85,7 +96,7 @@ class _DashboardPageState extends State<DashboardPage> {
       body: SafeArea(
         child: Column(
           children: [
-            const DashboardHeader(),
+            DashboardHeader(onReturnFromRoute: _onReturnFromRoute),
             const SizedBox(height: AthenaSpacing.md),
             Expanded(
               child: SingleChildScrollView(
@@ -103,7 +114,9 @@ class _DashboardPageState extends State<DashboardPage> {
                         child: SystemReadinessPanel(),
                       ),
                       const SizedBox(height: AthenaSpacing.md),
-                      const PersonalizedExplanationPanel(),
+                      PersonalizedExplanationPanel(
+                        key: ValueKey('dashboard-personalization-$_ownerRefreshEpoch'),
+                      ),
                       const SizedBox(height: AthenaSpacing.md),
                     ],
                     SizedBox(
@@ -117,9 +130,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       LayoutBuilder(
                         builder: (context, constraints) {
                           if (constraints.maxWidth < DashboardPage._desktopBreakpoint) {
-                            return const _CompactDashboard();
+                            return _CompactDashboard(ownerRefreshEpoch: _ownerRefreshEpoch);
                           }
-                          return const _DesktopDashboard();
+                          return _DesktopDashboard(ownerRefreshEpoch: _ownerRefreshEpoch);
                         },
                       ),
                     ],
@@ -135,11 +148,13 @@ class _DashboardPageState extends State<DashboardPage> {
 }
 
 class _DesktopDashboard extends StatelessWidget {
-  const _DesktopDashboard();
+  const _DesktopDashboard({required this.ownerRefreshEpoch});
+
+  final int ownerRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       children: [
         SizedBox(
           height: 430,
@@ -148,15 +163,17 @@ class _DesktopDashboard extends StatelessWidget {
             children: [
               SizedBox(
                 width: DashboardPage._leftColumnWidth,
-                child: MySpacePanel(),
+                child: MySpacePanel(
+                  key: ValueKey('dashboard-my-space-$ownerRefreshEpoch'),
+                ),
               ),
-              SizedBox(width: AthenaSpacing.md),
-              Expanded(child: RecommendationsPanel()),
+              const SizedBox(width: AthenaSpacing.md),
+              const Expanded(child: RecommendationsPanel()),
             ],
           ),
         ),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(
           height: 400,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -172,31 +189,38 @@ class _DesktopDashboard extends StatelessWidget {
             ],
           ),
         ),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(height: 330, child: RelevantInvestorsPanel()),
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(height: 330, child: RelevantInvestorsPanel()),
       ],
     );
   }
 }
 
 class _CompactDashboard extends StatelessWidget {
-  const _CompactDashboard();
+  const _CompactDashboard({required this.ownerRefreshEpoch});
+
+  final int ownerRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       children: [
-        SizedBox(height: 360, child: MySpacePanel()),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(height: 430, child: RecommendationsPanel()),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(height: 360, child: AthenaScorePanel()),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(height: 430, child: MarketPanel()),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(height: 300, child: NewsPanel()),
-        SizedBox(height: AthenaSpacing.md),
-        SizedBox(height: 340, child: RelevantInvestorsPanel()),
+        SizedBox(
+          height: 360,
+          child: MySpacePanel(
+            key: ValueKey('dashboard-my-space-$ownerRefreshEpoch'),
+          ),
+        ),
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(height: 430, child: RecommendationsPanel()),
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(height: 360, child: AthenaScorePanel()),
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(height: 430, child: MarketPanel()),
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(height: 300, child: NewsPanel()),
+        const SizedBox(height: AthenaSpacing.md),
+        const SizedBox(height: 340, child: RelevantInvestorsPanel()),
       ],
     );
   }

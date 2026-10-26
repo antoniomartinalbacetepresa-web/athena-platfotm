@@ -124,6 +124,60 @@ void main() {
     }
   });
 
+  testWidgets('wide Profile return refreshes owner projections only after pop',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final returned = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: DashboardHeader(onReturnFromRoute: returned.add),
+      ),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => const Scaffold(body: Text('Profile is open')),
+      ),
+    ));
+
+    await tester.tap(find.byTooltip('Perfil'));
+    await tester.pumpAndSettle();
+    expect(returned, isEmpty);
+    Navigator.of(tester.element(find.text('Profile is open'))).pop();
+    await tester.pumpAndSettle();
+    expect(returned, [AppRoutes.profile]);
+  });
+
+  testWidgets('compact Portfolio return refreshes owner projections after pop',
+      (tester) async {
+    tester.view.physicalSize = const Size(500, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final returned = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: DashboardHeader(onReturnFromRoute: returned.add),
+      ),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => const Scaffold(body: Text('Portfolio is open')),
+      ),
+    ));
+
+    await tester.tap(find.byTooltip('Navegación'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cartera'));
+    await tester.pumpAndSettle();
+    expect(returned, isEmpty);
+    Navigator.of(tester.element(find.text('Portfolio is open'))).pop();
+    await tester.pumpAndSettle();
+    expect(returned, [AppRoutes.portfolio]);
+  });
+
   testWidgets(
     'dashboard to News is a real cross-surface route with fail-closed synthesis',
     (tester) async {
