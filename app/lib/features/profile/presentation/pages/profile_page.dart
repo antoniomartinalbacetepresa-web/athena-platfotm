@@ -12,9 +12,10 @@ import '../../models/user_preferences.dart';
 import '../../services/user_preferences_service.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key, this.authService});
+  const ProfilePage({super.key, this.authService, this.preferencesService});
 
   final AthenaAuthService? authService;
+  final UserPreferencesService? preferencesService;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -23,7 +24,9 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   late final AthenaAuthService _authService;
   late final bool _ownsAuthService;
-  final UserPreferencesService _preferencesService = UserPreferencesService();
+  late final UserPreferencesService _preferencesService;
+  late final bool _ownsPreferencesService;
+  int _preferencesRevision = 0;
 
   bool _checking = false;
   bool _preferencesBusy = false;
@@ -39,6 +42,8 @@ class _ProfilePageState extends State<ProfilePage> {
     super.initState();
     _ownsAuthService = widget.authService == null;
     _authService = widget.authService ?? AthenaAuthService();
+    _ownsPreferencesService = widget.preferencesService == null;
+    _preferencesService = widget.preferencesService ?? UserPreferencesService();
     _observedAuthorityVersion = AuthSession.instance.authorityVersion;
     AuthSession.instance.addListener(_onSessionAuthorityChanged);
     _refreshAuthenticatedAccount();
@@ -48,7 +53,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void dispose() {
     AuthSession.instance.removeListener(_onSessionAuthorityChanged);
     if (_ownsAuthService) _authService.dispose();
-    _preferencesService.dispose();
+    if (_ownsPreferencesService) _preferencesService.dispose();
     super.dispose();
   }
 
@@ -62,6 +67,7 @@ class _ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
     setState(() {
       _preferences = null;
+      _preferencesRevision++;
       _preferencesBusy = false;
       _preferencesError = null;
       _sessionValidationError = null;
@@ -145,7 +151,12 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       final preferences = await _preferencesService.load();
       if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
-      setState(() => _preferences = preferences);
+      setState(() {
+        _preferences = preferences;
+        // A successful reload is authoritative even if both snapshots are null.
+        // Reset unsaved form edits rather than displaying them as reloaded data.
+        _preferencesRevision++;
+      });
     } catch (_) {
       if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
       setState(() {
@@ -168,7 +179,10 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       final stored = await _preferencesService.save(preferences);
       if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
-      setState(() => _preferences = stored);
+      setState(() {
+        _preferences = stored;
+        _preferencesRevision++;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preferencias protegidas guardadas.')),
       );
@@ -194,7 +208,10 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       await _preferencesService.delete();
       if (!mounted || AuthSession.instance.authorityVersion != authorityVersion) return;
-      setState(() => _preferences = null);
+      setState(() {
+        _preferences = null;
+        _preferencesRevision++;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preferencias protegidas eliminadas.')),
       );
@@ -262,6 +279,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     account: account,
                     sessionValidationError: _sessionValidationError,
                     preferences: _preferences,
+                    preferencesRevision: _preferencesRevision,
                     preferencesBusy: _preferencesBusy,
                     preferencesError: _preferencesError,
                     onRefresh: _refreshAuthenticatedAccount,
@@ -343,6 +361,7 @@ class _AuthenticatedProfile extends StatelessWidget {
     required this.account,
     required this.sessionValidationError,
     required this.preferences,
+    required this.preferencesRevision,
     required this.preferencesBusy,
     required this.preferencesError,
     required this.onRefresh,
@@ -355,6 +374,7 @@ class _AuthenticatedProfile extends StatelessWidget {
   final AuthAccount account;
   final String? sessionValidationError;
   final UserPreferences? preferences;
+  final int preferencesRevision;
   final bool preferencesBusy;
   final String? preferencesError;
   final Future<void> Function() onRefresh;
@@ -397,6 +417,9 @@ class _AuthenticatedProfile extends StatelessWidget {
         _IdentityCard(account: account),
         const SizedBox(height: 16),
         ProfilePreferencesForm(
+          // The form contains mutable controllers. Never reuse their unsaved
+          // contents after a reload or a credential-generation change.
+          key: ValueKey('profile-preferences-${AuthSession.instance.authorityVersion}-$preferencesRevision'),
           preferences: preferences,
           busy: preferencesBusy,
           error: preferencesError,

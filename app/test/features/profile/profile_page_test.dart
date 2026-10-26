@@ -7,6 +7,7 @@ import 'package:app/features/auth/services/athena_auth_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/profile/models/user_preferences.dart';
 import 'package:app/features/profile/presentation/pages/profile_page.dart';
+import 'package:app/features/profile/services/user_preferences_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -85,6 +86,62 @@ void main() {
     auth.dispose();
   });
 
+
+
+  testWidgets(
+      'Profile reload discards unsaved capital even when preferences remain unconfigured',
+      (tester) async {
+    session.establish(accessToken: 'profile.jwt', account: account());
+    var preferencesReads = 0;
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/auth/me');
+        return http.Response(
+          '{"id":17,"email":"profile-owner@example.com","displayName":"Profile Owner","isActive":true,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final preferences = UserPreferencesService(
+      baseUrl: 'https://athena.local',
+      session: session,
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/user/profile/preferences');
+        expect(request.headers['Authorization'], 'Bearer profile.jwt');
+        preferencesReads++;
+        return http.Response(
+          '{"status":"not_configured","data":null}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    addTearDown(auth.dispose);
+    addTearDown(preferences.dispose);
+
+    await tester.pumpWidget(MaterialApp(
+      home: ProfilePage(authService: auth, preferencesService: preferences),
+    ));
+    await tester.pumpAndSettle();
+    expect(preferencesReads, 1);
+
+    const capitalField = Key('available-capital-field');
+    await tester.enterText(find.byKey(capitalField), '98765');
+    expect(tester.widget<TextFormField>(find.byKey(capitalField)).controller!.text,
+        '98765');
+
+    await tester.ensureVisible(find.text('RECARGAR'));
+    await tester.tap(find.text('RECARGAR'));
+    await tester.pumpAndSettle();
+
+    expect(preferencesReads, 2);
+    expect(tester.widget<TextFormField>(find.byKey(capitalField)).controller!.text,
+        isEmpty);
+    expect(find.text('Preferencias cargadas desde almacenamiento cifrado.'),
+        findsNothing);
+  });
 
   testWidgets('stale me response cannot resurrect a replaced authenticated owner',
       (tester) async {

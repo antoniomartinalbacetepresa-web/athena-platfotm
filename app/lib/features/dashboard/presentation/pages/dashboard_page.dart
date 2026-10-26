@@ -98,6 +98,8 @@ class _DashboardPageState extends State<DashboardPage> {
         _ownerRefreshEpoch++;
         // Owner edits can change portfolio-dependent research eligibility.
         _researchRefreshEpoch++;
+        // Re-evaluate operational readiness after Profile/Portfolio changes.
+        _readinessRefreshEpoch++;
       });
       return;
     }

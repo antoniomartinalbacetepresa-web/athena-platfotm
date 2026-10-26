@@ -574,6 +574,52 @@ void main() {
     expect(find.byKey(const Key('dashboard-score-1')), findsOneWidget);
   });
 
+
+  testWidgets(
+      'Profile and Portfolio returns refresh owner research and readiness together',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(
+        jsonEncode(_validPayload()), 200,
+        headers: {'content-type': 'application/json'},
+      )),
+    ));
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder: operationalEpochPanels,
+      ),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => Scaffold(body: Text('Abierta: ${settings.name}')),
+      ),
+    ));
+    await tester.pump();
+
+    for (final (route, label, epoch) in [
+      (AppRoutes.profile, 'Perfil', 1),
+      (AppRoutes.portfolio, 'Cartera', 2),
+    ]) {
+      await tester.tap(find.byTooltip(label));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.text('Abierta: $route'))).pop();
+      await tester.pump();
+      expect(find.byKey(Key('dashboard-my-space-$epoch')), findsOneWidget);
+      expect(find.byKey(Key('dashboard-recommendations-$epoch')), findsOneWidget);
+      expect(find.byKey(Key('dashboard-score-$epoch')), findsOneWidget);
+      expect(find.byKey(Key('dashboard-readiness-$epoch')), findsOneWidget);
+      expect(find.byKey(const Key('dashboard-market-0')), findsOneWidget);
+      expect(find.byKey(const Key('dashboard-news-0')), findsOneWidget);
+      expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+    }
+  });
+
   testWidgets('Market and News return refresh research/readiness but preserve owner scope',
       (tester) async {
     tester.view.physicalSize = const Size(1400, 900);
