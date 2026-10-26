@@ -318,4 +318,108 @@ void main() {
     expect(find.textContaining('no representan posiciones actuales'), findsOneWidget);
     expect(find.textContaining('AAPL'), findsNothing);
   });
+  testWidgets('filters all reported holdings by issuer and CUSIP, with recovery',
+      (tester) async {
+    const additional = [
+      RelevantInvestorHolding(
+        issuerName: 'THIRD ISSUER',
+        titleOfClass: 'COM',
+        cusip: '987654321',
+        valueThousandsUsd: 100,
+        shareOrPrincipalAmount: 5,
+        shareOrPrincipalType: 'SH',
+        putCall: null,
+        investmentDiscretion: 'SOLE',
+        votingSole: 5,
+        votingShared: 0,
+        votingNone: 0,
+      ),
+      RelevantInvestorHolding(
+        issuerName: 'FOURTH ISSUER',
+        titleOfClass: 'COM',
+        cusip: '123456789',
+        valueThousandsUsd: 200,
+        shareOrPrincipalAmount: 10,
+        shareOrPrincipalType: 'SH',
+        putCall: null,
+        investmentDiscretion: 'SOLE',
+        votingSole: 10,
+        votingShared: 0,
+        votingNone: 0,
+      ),
+    ];
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik, extraHoldings: additional),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ver todas las posiciones (3)'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('investor-holdings-search')), 'third',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('THIRD ISSUER'), findsOneWidget);
+    expect(find.text('APPLE INC'), findsNothing);
+    expect(find.text('1 de 3 posiciones'), findsOneWidget);
+    expect(find.textContaining('no representan posiciones actuales'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('investor-holdings-search')), '123456789',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('FOURTH ISSUER'), findsOneWidget);
+    expect(find.text('THIRD ISSUER'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const Key('investor-holdings-search')), 'not-present',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Sin coincidencias en este expediente 13F'), findsOneWidget);
+    expect(find.text('0 de 3 posiciones'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Limpiar búsqueda 13F'));
+    await tester.pumpAndSettle();
+    expect(find.text('3 de 3 posiciones'), findsOneWidget);
+    expect(find.text('APPLE INC'), findsOneWidget);
+  });
+
+  testWidgets('sorts by declared value without losing SEC document order',
+      (tester) async {
+    const larger = RelevantInvestorHolding(
+      issuerName: 'LARGER ISSUER',
+      titleOfClass: 'COM',
+      cusip: '123456789',
+      valueThousandsUsd: 200000,
+      shareOrPrincipalAmount: 10,
+      shareOrPrincipalType: 'SH',
+      putCall: null,
+      investmentDiscretion: 'SOLE',
+      votingSole: 10,
+      votingShared: 0,
+      votingNone: 0,
+    );
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik, extraHoldings: const [larger]),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ver todas las posiciones (2)'));
+    await tester.pumpAndSettle();
+
+    Finder rows() => find.descendant(
+      of: find.byKey(const Key('investor-holdings-detail-list')),
+      matching: find.byType(ListTile),
+    );
+    expect((tester.widget<ListTile>(rows().first).title as Text).data, 'APPLE INC');
+    await tester.tap(find.byKey(const Key('investor-holdings-sort')));
+    await tester.pumpAndSettle();
+    expect((tester.widget<ListTile>(rows().first).title as Text).data, 'LARGER ISSUER');
+    expect(find.text('Orden: valor declarado ↓'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('investor-holdings-sort')));
+    await tester.pumpAndSettle();
+    expect((tester.widget<ListTile>(rows().first).title as Text).data, 'APPLE INC');
+  });
+
 }
