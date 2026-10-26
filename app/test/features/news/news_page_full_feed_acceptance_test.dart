@@ -114,6 +114,103 @@ void main() {
     service.dispose();
   });
 
+
+  testWidgets('News refreshes feed and synthesis together without losing selective synthesis refresh',
+      (tester) async {
+    var synthesisCalls = 0;
+    var feedCalls = 0;
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async {
+        synthesisCalls++;
+        final payload = _synthesisPayload();
+        final synthesis = (payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>;
+        (synthesis['items'] as List).first['summary'] =
+            'Análisis ATHENA ciclo $synthesisCalls';
+        return http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'});
+      }),
+    );
+    final controller = NewsSynthesisController(service: service);
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        synthesisController: controller,
+        feedLoader: (_) async {
+          feedCalls++;
+          return _feed(1, prefix: 'Feed ciclo $feedCalls');
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(synthesisCalls, 1);
+    expect(feedCalls, 1);
+    expect(find.text('Feed ciclo 1 1'), findsOneWidget);
+    expect(find.text('Análisis ATHENA ciclo 1'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('news-page-refresh-all')));
+    await tester.pumpAndSettle();
+    expect(synthesisCalls, 2);
+    expect(feedCalls, 2);
+    expect(find.text('Feed ciclo 1 1'), findsNothing);
+    expect(find.text('Feed ciclo 2 1'), findsOneWidget);
+    expect(find.text('Análisis ATHENA ciclo 1'), findsNothing);
+    expect(find.text('Análisis ATHENA ciclo 2'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('news-page-refresh-synthesis')));
+    await tester.pumpAndSettle();
+    expect(synthesisCalls, 3);
+    expect(feedCalls, 2, reason: 'Selective synthesis refresh must not reload the feed');
+    expect(find.text('Análisis ATHENA ciclo 3'), findsOneWidget);
+    expect(find.text('Feed ciclo 2 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+    service.dispose();
+  });
+
+  testWidgets('News combined refresh fails closed and rejects a late former feed',
+      (tester) async {
+    final oldFeed = Completer<VerifiedNewsFeed>();
+    var feedCalls = 0;
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async =>
+          http.Response('{"detail":"unavailable"}', 503)),
+    );
+    final controller = NewsSynthesisController(service: service);
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        synthesisController: controller,
+        feedLoader: (_) {
+          feedCalls++;
+          if (feedCalls == 1) return oldFeed.future;
+          return Future<VerifiedNewsFeed>.error(StateError('provider unavailable'));
+        },
+      ),
+    ));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('news-page-refresh-all')));
+    await tester.pumpAndSettle();
+    expect(feedCalls, 2);
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+    expect(find.text('La síntesis verificada de noticias no está disponible.'),
+        findsOneWidget);
+
+    oldFeed.complete(_feed(1, prefix: 'Resultado antiguo'));
+    await tester.pump();
+    expect(find.text('Resultado antiguo 1'), findsNothing);
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+    service.dispose();
+  });
+
   testWidgets('replacing News feed loader discards a pending former source',
       (tester) async {
     final oldRequest = Completer<VerifiedNewsFeed>();

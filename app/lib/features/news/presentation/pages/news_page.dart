@@ -27,6 +27,16 @@ class _NewsPageState extends State<NewsPage> {
   AthenaBackendNewsSynthesisService? _ownedSynthesisService;
   late NewsSynthesisController _synthesisController;
   late bool _ownsSynthesisController;
+  int _feedRefreshEpoch = 0;
+
+  void _refreshAllEvidence() {
+    if (!mounted) return;
+    // News synthesis and the independently verified feed are different sources.
+    // Invalidate both; neither a late synthesis nor a late feed may survive.
+    _synthesisController.clear();
+    _synthesisController.load();
+    setState(() => _feedRefreshEpoch++);
+  }
 
   @override
   void initState() {
@@ -94,6 +104,12 @@ class _NewsPageState extends State<NewsPage> {
         ),
         actions: [
           IconButton(
+            key: const Key('news-page-refresh-all'),
+            tooltip: 'Actualizar noticias y análisis ATHENA',
+            onPressed: _refreshAllEvidence,
+            icon: const Icon(Icons.sync),
+          ),
+          IconButton(
             key: const Key('news-page-refresh-synthesis'),
             tooltip: 'Actualizar análisis ATHENA de noticias',
             onPressed: () {
@@ -114,6 +130,7 @@ class _NewsPageState extends State<NewsPage> {
               NewsSynthesisPanel(controller: _synthesisController),
               const SizedBox(height: 24),
               widget.newsFeed ?? NewsFeedPanel(
+                key: ValueKey('news-page-feed-$_feedRefreshEpoch'),
                 limit: 20,
                 shrinkWrap: true,
                 loadFeed: widget.feedLoader,
