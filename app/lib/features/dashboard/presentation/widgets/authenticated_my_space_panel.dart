@@ -213,7 +213,7 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
         fxValuation.baseCurrency == baseCurrency &&
         fxValuation.positionsValued == positions.length;
     final current = verifiedFx
-        ? fxValuation.currentValueInBaseCurrency
+        ? fxValuation!.currentValueInBaseCurrency
         : comparable
             ? _portfolio.directlyComparableCurrentValue
             : null;
@@ -242,13 +242,13 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
             current == null ? 'No disponible' : _money(current, baseCurrency!),
             current == null
                 ? 'Requiere precios y FX verificables; sin suma multimoneda'
-                : verifiedFx && fxValuation.usesFx
+                : verifiedFx && fxValuation!.usesFx
                     ? 'Conversión FX actual verificada · no válida para coste histórico'
                     : 'Cotizaciones verificadas · moneda del Perfil',
           ),
-          if (verifiedFx && fxValuation.usesFx)
+          if (verifiedFx && fxValuation!.usesFx)
             Text(
-              'FX: ${fxValuation.fxEvidence.map((quote) => '${quote.baseCurrency}/${quote.quoteCurrency} · ${quote.sourceProvider}').join(' · ')}',
+              'FX: ${fxValuation!.fxEvidence.map((quote) => '${quote.baseCurrency}/${quote.quoteCurrency} · ${quote.sourceProvider}').join(' · ')}',
               style: const TextStyle(
                 color: AthenaColors.textSecondary,
                 fontSize: 11,
