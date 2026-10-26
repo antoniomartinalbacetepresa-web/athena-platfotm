@@ -9,10 +9,11 @@ import 'package:app/features/investors/models/relevant_investor_activity.dart';
 RelevantInvestorActivity activityFor(
   String cik, {
   List<RelevantInvestorHolding> extraHoldings = const [],
+  String form = '13F-HR',
 }) {
   return RelevantInvestorActivity(
     cik: cik,
-    form: '13F-HR',
+    form: form,
     accessionNumber: '0000123456-26-000001',
     positionDate: DateTime.utc(2026, 6, 30),
     filingDate: DateTime.utc(2026, 8, 14),
@@ -422,4 +423,72 @@ void main() {
     expect((tester.widget<ListTile>(rows().first).title as Text).data, 'APPLE INC');
   });
 
+
+  testWidgets('SEC 13F summary separates ordinary, PUT and CALL reported values',
+      (tester) async {
+    const options = [
+      RelevantInvestorHolding(
+        issuerName: 'PUT ISSUER',
+        titleOfClass: 'COM',
+        cusip: '123456789',
+        valueThousandsUsd: 200,
+        shareOrPrincipalAmount: 10,
+        shareOrPrincipalType: 'SH',
+        putCall: 'PUT',
+        investmentDiscretion: 'SOLE',
+        votingSole: 0,
+        votingShared: 0,
+        votingNone: 0,
+      ),
+      RelevantInvestorHolding(
+        issuerName: 'CALL ISSUER',
+        titleOfClass: 'COM',
+        cusip: '987654321',
+        valueThousandsUsd: 300,
+        shareOrPrincipalAmount: 5,
+        shareOrPrincipalType: 'SH',
+        putCall: 'CALL',
+        investmentDiscretion: 'SOLE',
+        votingSole: 0,
+        votingShared: 0,
+        votingNone: 0,
+      ),
+    ];
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik, extraHoldings: options),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ver todas las posiciones (3)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('investor-filing-summary')));
+    await tester.pumpAndSettle();
+    expect(find.text('Suma de valores declarados: 123956 miles USD'),
+        findsOneWidget);
+    expect(find.text('Sin opción: 123456 miles USD'), findsOneWidget);
+    expect(find.text('PUT: 200 miles USD'), findsOneWidget);
+    expect(find.text('CALL: 300 miles USD'), findsOneWidget);
+    expect(find.textContaining('no una cartera completa'), findsOneWidget);
+    expect(find.textContaining('Fuente: https://www.sec.gov/'), findsOneWidget);
+    await tester.tap(find.text('Cerrar resumen'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('investor-holdings-search')), findsOneWidget);
+  });
+
+  testWidgets('13F amendment is never described as a complete current portfolio',
+      (tester) async {
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik, form: '13F-HR/A'),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ver todas las posiciones (1)'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('puede contener solo parte'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('investor-filing-summary')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('puede modificar solo parte'), findsOneWidget);
+    expect(find.textContaining('No se interpreta como cartera completa'),
+        findsOneWidget);
+  });
 }

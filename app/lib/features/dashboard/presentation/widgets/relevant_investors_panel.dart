@@ -348,6 +348,56 @@ class _InvestorHoldingsSheetState extends State<_InvestorHoldingsSheet> {
   String _query = '';
   bool _sortByReportedValue = false;
 
+  Future<void> _showFilingSummary() async {
+    final activity = widget.activity;
+    final summary = _ReportedFilingSummary.fromHoldings(activity.holdings);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Resumen del expediente SEC 13F'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('CIK ${activity.cik} · ${activity.form} · '
+                  'posición ${_formatDate(activity.positionDate)}'),
+              const SizedBox(height: 8),
+              Text('Suma de valores declarados: ${summary.total} miles USD',
+                  key: const Key('investor-filing-reported-total')),
+              Text('Sin opción: ${summary.ordinary} miles USD'),
+              Text('PUT: ${summary.put} miles USD'),
+              Text('CALL: ${summary.call} miles USD'),
+              if (summary.unclassified != BigInt.zero)
+                Text('Opciones sin clasificar: ${summary.unclassified} miles USD'),
+              const SizedBox(height: 8),
+              const Text(
+                'Son sumas de filas de este documento, no una cartera completa '
+                'verificada, una exposición económica comparable ni un valor '
+                'actual. No generan score, recomendaciones ni órdenes.',
+              ),
+              if (activity.form == '13F-HR/A') ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'Enmienda 13F-HR/A: puede modificar solo parte de la '
+                  'declaración original. No se interpreta como cartera completa.',
+                ),
+              ],
+              const SizedBox(height: 8),
+              Text('Fuente: ${activity.sourceUrl}'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cerrar resumen'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -402,6 +452,12 @@ class _InvestorHoldingsSheetState extends State<_InvestorHoldingsSheet> {
                     ),
                   ),
                   IconButton(
+                    key: const Key('investor-filing-summary'),
+                    tooltip: 'Resumen de valores declarados SEC 13F',
+                    onPressed: _showFilingSummary,
+                    icon: const Icon(Icons.assessment_outlined),
+                  ),
+                  IconButton(
                     tooltip: 'Cerrar detalle 13F',
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close),
@@ -414,9 +470,15 @@ class _InvestorHoldingsSheetState extends State<_InvestorHoldingsSheet> {
                 'publicado ${_formatUtc(activity.publicationDateTime)} UTC',
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Declaraciones históricas SEC 13F: no representan posiciones '
-                'actuales ni implican recomendaciones, score u órdenes.',
+              Text(
+                activity.form == '13F-HR/A'
+                    ? 'Enmienda SEC 13F-HR/A: puede contener solo parte de la '
+                      'declaración original. Sus filas no representan una '
+                      'cartera completa ni posiciones actuales; no implican '
+                      'recomendaciones, score u órdenes.'
+                    : 'Declaraciones históricas SEC 13F: no representan '
+                      'posiciones actuales ni implican recomendaciones, '
+                      'score u órdenes.',
               ),
               const SizedBox(height: 8),
               Text(
@@ -575,4 +637,54 @@ String _formatUtc(DateTime value) {
   final hour = utc.hour.toString().padLeft(2, '0');
   final minute = utc.minute.toString().padLeft(2, '0');
   return '${utc.year}-$month-$day $hour:$minute';
+}
+ 
+/// Exact sums of reported 13F row values. Never used as market weights or
+/// economic exposure; options are kept separate from ordinary securities.
+class _ReportedFilingSummary {
+  final BigInt total;
+  final BigInt ordinary;
+  final BigInt put;
+  final BigInt call;
+  final BigInt unclassified;
+
+  const _ReportedFilingSummary({
+    required this.total,
+    required this.ordinary,
+    required this.put,
+    required this.call,
+    required this.unclassified,
+  });
+
+  factory _ReportedFilingSummary.fromHoldings(
+    List<RelevantInvestorHolding> holdings,
+  ) {
+    var total = BigInt.zero;
+    var ordinary = BigInt.zero;
+    var put = BigInt.zero;
+    var call = BigInt.zero;
+    var unclassified = BigInt.zero;
+    for (final holding in holdings) {
+      final reported = BigInt.from(holding.valueThousandsUsd);
+      total += reported;
+      switch (holding.putCall?.trim().toUpperCase()) {
+        case null:
+        case '':
+          ordinary += reported;
+        case 'PUT':
+          put += reported;
+        case 'CALL':
+          call += reported;
+        default:
+          unclassified += reported;
+      }
+    }
+    return _ReportedFilingSummary(
+      total: total,
+      ordinary: ordinary,
+      put: put,
+      call: call,
+      unclassified: unclassified,
+    );
+  }
 }
