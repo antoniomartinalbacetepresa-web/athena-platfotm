@@ -195,7 +195,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     // A dialog opened by owner A must never write into owner B's account.
     if (result == null || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     final saved = await controller.upsert(symbol: result.symbol, exchange: result.exchange, quantity: result.shares, averagePurchasePrice: result.averagePrice);
-    if (saved || !_isCurrentOwnerAction(authorityVersion, controller)) return;
+    if (!mounted || saved || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     if (!controller.sessionRejected) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(controller.error ?? 'No se pudo guardar la posición.')));
   }
 
@@ -208,7 +208,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     // owned by the replacement account, even if the token text is reused.
     if (confirmed != true || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     final removed = await controller.remove(position);
-    if (removed || !_isCurrentOwnerAction(authorityVersion, controller)) return;
+    if (!mounted || removed || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     if (!controller.sessionRejected) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(controller.error ?? 'No se pudo eliminar la posición.')));
   }
 
