@@ -313,7 +313,10 @@ void main() {
     expect(find.text('Síntesis inicial'), findsNothing);
 
     await tester.tap(find.byTooltip('Noticias'));
-    await tester.pump(const Duration(milliseconds: 400));
+    // Let the named route finish its push before looking up its context.
+    // The pending Market request belongs to the now-offstage Dashboard.
+    await tester.pumpAndSettle();
+    expect(find.text('Abierta: /news'), findsOneWidget);
     Navigator.of(tester.element(find.text('Abierta: /news'))).pop();
     await tester.pumpAndSettle();
     expect(requests, 3);
