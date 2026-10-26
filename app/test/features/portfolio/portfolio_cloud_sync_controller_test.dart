@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/features/portfolio/models/portfolio_position.dart';
 import 'package:app/features/portfolio/presentation/controllers/portfolio_cloud_sync_controller.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
@@ -27,6 +29,19 @@ class _FakeSyncService extends AuthenticatedPortfolioSyncService {
   }
 }
 
+class _DeferredSyncService extends AuthenticatedPortfolioSyncService {
+  final pending = Completer<AuthenticatedPortfolioSyncReport>();
+  int calls = 0;
+
+  @override
+  Future<AuthenticatedPortfolioSyncReport> syncDeclaredPositions(
+    Iterable<PortfolioPosition> localPositions,
+  ) {
+    calls += 1;
+    return pending.future;
+  }
+}
+
 PortfolioPosition _position() => PortfolioPosition(
       symbol: 'AAPL',
       companyName: 'Apple',
@@ -40,6 +55,42 @@ PortfolioPosition _position() => PortfolioPosition(
     );
 
 void main() {
+  test('authority switch drops a late success and serializes pending writes', () async {
+    final service = _DeferredSyncService();
+    final controller = PortfolioCloudSyncController(service: service);
+    final pending = controller.sync([_position()]);
+    expect(controller.isSyncing, isTrue);
+    controller.invalidateAuthority();
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(controller.message, isNull);
+    await controller.sync([_position()]);
+    expect(service.calls, 1);
+    service.pending.complete(const AuthenticatedPortfolioSyncReport(
+      localPositionCount: 1,
+      remotePositionCountBefore: 0,
+      upsertedPositionCount: 1,
+      remotePositionCountAfter: 1,
+    ));
+    await pending;
+    expect(controller.isSyncing, isFalse);
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(controller.message, isNull);
+    controller.dispose();
+  });
+
+  test('authority switch drops a late failed sync without stale error', () async {
+    final service = _DeferredSyncService();
+    final controller = PortfolioCloudSyncController(service: service);
+    final pending = controller.sync([_position()]);
+    controller.invalidateAuthority();
+    service.pending.completeError(StateError('old owner failed'));
+    await pending;
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(controller.message, isNull);
+    expect(controller.isSyncing, isFalse);
+    controller.dispose();
+  });
+
   test('empty portfolio fails closed without contacting backend', () async {
     final service = _FakeSyncService();
     final controller = PortfolioCloudSyncController(service: service);

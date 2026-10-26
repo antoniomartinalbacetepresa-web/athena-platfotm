@@ -24,10 +24,12 @@ class PortfolioCloudSyncController extends ChangeNotifier {
 
   PortfolioCloudSyncStatus _status = PortfolioCloudSyncStatus.idle;
   String? _message;
+  int _syncGeneration = 0;
+  bool _inFlight = false;
 
   PortfolioCloudSyncStatus get status => _status;
   String? get message => _message;
-  bool get isSyncing => _status == PortfolioCloudSyncStatus.syncing;
+  bool get isSyncing => _inFlight;
   bool get hasError =>
       _status == PortfolioCloudSyncStatus.failure ||
       _status == PortfolioCloudSyncStatus.sessionRejected ||
@@ -35,8 +37,18 @@ class PortfolioCloudSyncController extends ChangeNotifier {
   bool get sessionRejected => _status == PortfolioCloudSyncStatus.sessionRejected;
   bool get authorityChanged => _status == PortfolioCloudSyncStatus.authorityChanged;
 
+  /// Drop presentation state immediately when the authenticated authority changes.
+  /// A previous request may finish later, but it cannot publish its result to
+  /// the replacement owner's screen. In-flight work remains serialized.
+  void invalidateAuthority() {
+    _syncGeneration += 1;
+    _status = PortfolioCloudSyncStatus.idle;
+    _message = null;
+    notifyListeners();
+  }
+
   Future<void> sync(Iterable<PortfolioPosition> positions) async {
-    if (isSyncing) return;
+    if (_inFlight) return;
     final snapshot = positions.toList(growable: false);
     if (snapshot.isEmpty) {
       _status = PortfolioCloudSyncStatus.failure;
@@ -45,12 +57,15 @@ class PortfolioCloudSyncController extends ChangeNotifier {
       return;
     }
 
+    final generation = ++_syncGeneration;
+    _inFlight = true;
     _status = PortfolioCloudSyncStatus.syncing;
     _message = 'Sincronizando posiciones declaradas con tu cuenta ATHENA…';
     notifyListeners();
 
     try {
       final report = await _service.syncDeclaredPositions(snapshot);
+      if (generation != _syncGeneration) return;
       _status = PortfolioCloudSyncStatus.success;
       _message =
           'Sincronización completada: ${report.upsertedPositionCount} de '
@@ -60,21 +75,26 @@ class PortfolioCloudSyncController extends ChangeNotifier {
           'No se han enviado P/L ni fechas de coste, y no se han eliminado '
           'posiciones remotas automáticamente.';
     } on AuthSessionRejectedException {
+      if (generation != _syncGeneration) return;
       _status = PortfolioCloudSyncStatus.sessionRejected;
       _message =
           'Tu sesión ATHENA ya no es válida. Inicia sesión de nuevo antes de sincronizar.';
     } on AuthenticatedPortfolioAuthorityChangedException {
+      if (generation != _syncGeneration) return;
       _status = PortfolioCloudSyncStatus.authorityChanged;
       _message =
           'La cuenta ATHENA cambió durante la sincronización. No se continuará '
           'con datos de la cuenta anterior; revisa la cartera antes de reintentar.';
     } catch (_) {
+      if (generation != _syncGeneration) return;
       _status = PortfolioCloudSyncStatus.failure;
       _message =
           'No se pudo sincronizar la cartera autenticada. La cartera local no '
           'se ha modificado y ATHENA no aplica cambios destructivos como fallback.';
+    } finally {
+      _inFlight = false;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   void clearMessage() {

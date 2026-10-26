@@ -93,6 +93,22 @@ void main() {
     expect(body.containsKey('currentPrice'), isFalse);
     expect(body.containsKey('automaticTrading'), isFalse);
     expect(find.textContaining('Sincronización completada: 1 de 1'), findsOneWidget);
+    // An already completed sync must not be displayed under a new owner.
+    session.establish(
+      accessToken: 'replacement-token',
+      account: AuthAccount(
+        id: 8,
+        email: 'replacement@example.com',
+        displayName: 'Replacement',
+        isActive: true,
+        createdAt: DateTime.utc(2026, 10, 1),
+        updatedAt: DateTime.utc(2026, 10, 1),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(controller.message, isNull);
+    expect(find.textContaining('Sincronización completada: 1 de 1'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });

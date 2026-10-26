@@ -117,6 +117,10 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   }
 
   void _onSessionAuthorityChanged() {
+    // A prior owner's sync result or snackbar must not remain visible after
+    // logout, token renewal or account replacement.
+    _syncController.invalidateAuthority();
+    if (mounted) ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
     if (AuthSession.instance.isAuthenticated) {
       _ensureAuthenticatedBoundary();
     } else {
