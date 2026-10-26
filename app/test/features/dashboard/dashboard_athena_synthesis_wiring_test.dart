@@ -16,6 +16,19 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+
+  Widget operationalEpochPanels(
+    int owner, int market, int news, int investors, int research, int readiness,
+  ) => Column(children: [
+    SizedBox(key: Key('dashboard-my-space-$owner'), height: 1),
+    SizedBox(key: Key('dashboard-market-$market'), height: 1),
+    SizedBox(key: Key('dashboard-news-$news'), height: 1),
+    SizedBox(key: Key('dashboard-investors-$investors'), height: 1),
+    SizedBox(key: Key('dashboard-recommendations-$research'), height: 1),
+    SizedBox(key: Key('dashboard-score-$research'), height: 1),
+    SizedBox(key: Key('dashboard-readiness-$readiness'), height: 1),
+  ]);
+
   Widget synthesisDashboard(RecommendationDependencies dependencies) => MaterialApp(
         home: DashboardPage(
           recommendationDependencies: dependencies,
@@ -411,7 +424,7 @@ void main() {
   });
 
 
-  testWidgets('Dashboard full refresh re-queries every operational and research panel',
+  testWidgets('Dashboard full refresh rebinds every operational and research projection',
       (tester) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1;
@@ -426,7 +439,10 @@ void main() {
     ));
     addTearDown(dependencies.dispose);
     await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(recommendationDependencies: dependencies),
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder: operationalEpochPanels,
+      ),
     ));
     await tester.pump();
 
@@ -470,7 +486,10 @@ void main() {
     ));
     addTearDown(dependencies.dispose);
     await tester.pumpWidget(MaterialApp(
-      home: DashboardPage(recommendationDependencies: dependencies),
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder: operationalEpochPanels,
+      ),
       onGenerateRoute: (settings) => MaterialPageRoute<void>(
         settings: settings,
         builder: (_) => Scaffold(body: Text('Abierta: ${settings.name}')),

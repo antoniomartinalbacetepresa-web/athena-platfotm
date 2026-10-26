@@ -16,14 +16,26 @@ import '../widgets/recommendations_panel.dart';
 import '../widgets/relevant_investors_panel.dart';
 import '../widgets/system_readiness_panel.dart';
 
+typedef DashboardOperationalPanelsBuilder = Widget Function(
+  int ownerEpoch,
+  int marketEpoch,
+  int newsEpoch,
+  int investorsEpoch,
+  int researchEpoch,
+  int readinessEpoch,
+);
+
 class DashboardPage extends StatefulWidget {
   final RecommendationDependencies? recommendationDependencies;
   final bool renderOperationalPanels;
+  /// Test composition seam; production always mounts real operational panels.
+  final DashboardOperationalPanelsBuilder? operationalPanelsBuilder;
 
   const DashboardPage({
     super.key,
     this.recommendationDependencies,
     this.renderOperationalPanels = true,
+    this.operationalPanelsBuilder,
   });
 
   static const double _leftColumnWidth = 280;
@@ -151,7 +163,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 child: Column(
                   children: [
-                    if (widget.renderOperationalPanels) ...[
+                    if (widget.renderOperationalPanels && widget.operationalPanelsBuilder == null) ...[
                       SizedBox(
                         height: 112,
                         child: SystemReadinessPanel(
@@ -170,7 +182,16 @@ class _DashboardPageState extends State<DashboardPage> {
                         controller: _synthesisController,
                       ),
                     ),
-                    if (widget.renderOperationalPanels) ...[
+                    if (widget.renderOperationalPanels && widget.operationalPanelsBuilder != null)
+                      widget.operationalPanelsBuilder!(
+                        _ownerRefreshEpoch,
+                        _marketRefreshEpoch,
+                        _newsRefreshEpoch,
+                        _investorsRefreshEpoch,
+                        _researchRefreshEpoch,
+                        _readinessRefreshEpoch,
+                      ),
+                    if (widget.renderOperationalPanels && widget.operationalPanelsBuilder == null) ...[
                       const SizedBox(height: AthenaSpacing.md),
                       LayoutBuilder(
                         builder: (context, constraints) {
