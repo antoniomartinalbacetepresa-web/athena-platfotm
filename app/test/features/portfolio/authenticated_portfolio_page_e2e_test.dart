@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/portfolio/models/portfolio_position.dart';
+import 'package:app/features/portfolio/models/authenticated_portfolio_view_position.dart';
+import 'package:app/features/portfolio/presentation/widgets/authenticated_portfolio_view.dart';
+import 'package:app/features/portfolio/widgets/add_position_dialog.dart';
 import 'package:app/features/portfolio/presentation/controllers/portfolio_cloud_sync_controller.dart';
 import 'package:app/features/portfolio/presentation/pages/authenticated_portfolio_page.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
@@ -263,5 +266,88 @@ void main() {
     expect(session.accessToken, 'owner-b-token');
 
     await tester.pumpWidget(const SizedBox());
+  });
+
+  AuthAccount replacementOwner() => AuthAccount(
+    id: 8,
+    email: 'replacement@example.com',
+    displayName: 'Replacement',
+    isActive: true,
+    createdAt: DateTime.utc(2026, 10, 1),
+    updatedAt: DateTime.utc(2026, 10, 1),
+  );
+
+  testWidgets('owner change while add-position dialog is open discards old draft',
+      (tester) async {
+    session.establish(accessToken: 'reused-token', account: account());
+    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    final view = tester.widget<AuthenticatedPortfolioView>(
+      find.byType(AuthenticatedPortfolioView),
+    );
+    view.onAdd();
+    await tester.pump();
+    expect(find.byType(AddPositionDialog), findsOneWidget);
+
+    session.establish(accessToken: 'reused-token', account: replacementOwner());
+    final dialogContext = tester.element(find.byType(AddPositionDialog));
+    Navigator.of(dialogContext).pop(AddPositionResult(
+      symbol: 'AAPL',
+      companyName: 'Apple Inc.',
+      shares: 1,
+      averagePrice: 100,
+      currentPrice: 110,
+      priceCurrency: 'USD',
+      exchange: 'NASDAQ',
+      currentPriceUpdatedAt: DateTime.utc(2026, 10, 1),
+      currentPriceSourceProvider: 'yahoo_finance',
+      currentPriceRetrievedAt: DateTime.utc(2026, 10, 1, 0, 0, 1),
+      databaseInstrumentId: 1,
+      canonicalInstrumentId: 'AAPL:XNAS',
+      canonicalIssuerId: 'APPLE',
+      identitySourceProvider: 'test',
+      identityRetrievedAt: DateTime.utc(2026, 10, 1),
+      identityResolutionMethod: 'verified',
+      identityExchangeVerified: true,
+      identityRiskReady: true,
+    ));
+    await tester.pumpAndSettle();
+    expect(session.account?.id, 8);
+    expect(find.textContaining('No se pudo guardar la posición'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('owner change during remove confirmation cannot delete replacement holding',
+      (tester) async {
+    session.establish(accessToken: 'reused-token', account: account());
+    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    final view = tester.widget<AuthenticatedPortfolioView>(
+      find.byType(AuthenticatedPortfolioView),
+    );
+    view.onRemove(AuthenticatedPortfolioViewPosition(
+      serverPositionId: 19,
+      symbol: 'AAPL',
+      companyName: 'Apple Inc.',
+      exchange: 'NASDAQ',
+      quantity: 1,
+      currency: 'USD',
+      currentPrice: 110,
+      averagePurchasePrice: 100,
+      currentValue: 110,
+      investedValue: 100,
+      profitLoss: 10,
+      profitLossPercentage: 10,
+      marketSourceProvider: 'yahoo_finance',
+      marketObservedAt: DateTime.utc(2026, 10, 1),
+      marketRetrievedAt: DateTime.utc(2026, 10, 1, 0, 0, 1),
+    ));
+    await tester.pump();
+    expect(find.text('Eliminar posición'), findsOneWidget);
+
+    session.establish(accessToken: 'reused-token', account: replacementOwner());
+    await tester.tap(find.text('Eliminar'));
+    await tester.pumpAndSettle();
+    expect(session.account?.id, 8);
+    expect(find.textContaining('No se pudo eliminar la posición'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

@@ -31,17 +31,14 @@ class _ProfilePageState extends State<ProfilePage> {
   String? _sessionValidationError;
   String? _preferencesError;
   UserPreferences? _preferences;
-  String? _observedAccessToken;
-  int? _observedOwnerId;
   late int _observedAuthorityVersion;
+  bool _applyingValidatedAccount = false;
 
   @override
   void initState() {
     super.initState();
     _ownsAuthService = widget.authService == null;
     _authService = widget.authService ?? AthenaAuthService();
-    _observedAccessToken = AuthSession.instance.accessToken;
-    _observedOwnerId = AuthSession.instance.account?.id;
     _observedAuthorityVersion = AuthSession.instance.authorityVersion;
     AuthSession.instance.addListener(_onSessionAuthorityChanged);
     _refreshAuthenticatedAccount();
@@ -61,10 +58,6 @@ class _ProfilePageState extends State<ProfilePage> {
   void _onSessionAuthorityChanged() {
     final session = AuthSession.instance;
     if (_observedAuthorityVersion == session.authorityVersion) return;
-    final previousToken = _observedAccessToken;
-    final previousOwnerId = _observedOwnerId;
-    _observedAccessToken = session.accessToken;
-    _observedOwnerId = session.account?.id;
     _observedAuthorityVersion = session.authorityVersion;
     if (!mounted) return;
     setState(() {
@@ -75,9 +68,10 @@ class _ProfilePageState extends State<ProfilePage> {
       _error = null;
       _checking = false;
     });
-    if (session.isAuthenticated &&
-        (session.accessToken != previousToken ||
-            session.account?.id != previousOwnerId)) {
+    // A renewed authority must be revalidated even if token and owner match.
+    // Suppress only the synchronous notification from this page's own /me
+    // reconciliation, otherwise a successful refresh would loop forever.
+    if (session.isAuthenticated && !_applyingValidatedAccount) {
       unawaited(_refreshAuthenticatedAccount());
     }
   }
@@ -101,7 +95,12 @@ class _ProfilePageState extends State<ProfilePage> {
           AuthSession.instance.authorityVersion != authorityVersion) {
         return;
       }
-      AuthSession.instance.establish(accessToken: token, account: account);
+      _applyingValidatedAccount = true;
+      try {
+        AuthSession.instance.establish(accessToken: token, account: account);
+      } finally {
+        _applyingValidatedAccount = false;
+      }
       await _loadPreferences(expectedAccessToken: token);
     } on AuthSessionRejectedException {
       // clearAfterRemoteInvalidation revokes in-memory authority before its

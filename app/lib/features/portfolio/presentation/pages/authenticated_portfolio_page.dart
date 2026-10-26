@@ -124,6 +124,13 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     }
     if (mounted) setState(() {});
   }
+  bool _isCurrentOwnerAction(int authorityVersion, AuthenticatedPortfolioController controller) =>
+      mounted &&
+      AuthSession.instance.isAuthenticated &&
+      AuthSession.instance.authorityVersion == authorityVersion &&
+      identical(_authenticatedController, controller) &&
+      !controller.sessionRejected;
+
   void _onSyncChanged() { if (mounted) setState(() {}); }
   void _onAuthenticatedChanged() { _scheduleVerifiedValuationRefresh(); if (mounted) setState(() {}); }
   void _onFxChanged() { if (mounted) setState(() {}); }
@@ -183,20 +190,25 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   Future<void> _addAuthenticatedPosition() async {
     final controller = _authenticatedController, market = _marketDependencies;
     if (controller == null || market == null || controller.sessionRejected) return;
+    final authorityVersion = AuthSession.instance.authorityVersion;
     final result = await showDialog<AddPositionResult>(context: context, builder: (context) => AddPositionDialog(marketRepository: market.repository));
-    if (result == null) return;
+    // A dialog opened by owner A must never write into owner B's account.
+    if (result == null || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     final saved = await controller.upsert(symbol: result.symbol, exchange: result.exchange, quantity: result.shares, averagePurchasePrice: result.averagePrice);
-    if (!mounted || saved) return;
+    if (saved || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     if (!controller.sessionRejected) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(controller.error ?? 'No se pudo guardar la posición.')));
   }
 
   Future<void> _removeAuthenticatedPosition(AuthenticatedPortfolioViewPosition position) async {
     final controller = _authenticatedController;
     if (controller == null || controller.sessionRejected) return;
+    final authorityVersion = AuthSession.instance.authorityVersion;
     final confirmed = await showDialog<bool>(context: context, builder: (context) => AlertDialog(title: const Text('Eliminar posición'), content: Text('¿Quieres eliminar ${position.companyName} (${position.symbol}) de tu cuenta ATHENA?'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Eliminar'))]));
-    if (confirmed != true) return;
+    // Never apply an old confirmation to an identically numbered position
+    // owned by the replacement account, even if the token text is reused.
+    if (confirmed != true || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     final removed = await controller.remove(position);
-    if (!mounted || removed) return;
+    if (removed || !_isCurrentOwnerAction(authorityVersion, controller)) return;
     if (!controller.sessionRejected) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(controller.error ?? 'No se pudo eliminar la posición.')));
   }
 
