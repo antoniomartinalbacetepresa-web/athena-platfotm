@@ -13,6 +13,9 @@ import 'package:app/features/portfolio/presentation/controllers/authenticated_po
 import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_fx_valuation_controller.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_fx_valuation_service.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
+import 'package:app/features/portfolio/services/authenticated_portfolio_correlation_service.dart';
+import 'package:app/features/portfolio/models/portfolio_instrument_identity.dart';
+import 'package:app/features/portfolio/models/portfolio_pair_correlation.dart';
 import 'package:app/features/profile/services/user_preferences_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -436,6 +439,114 @@ void main() {
     expect(find.text('0'), findsOneWidget);
     expect(find.text('250.00 EUR'), findsOneWidget);
     expect(find.text('400.00 EUR'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('late PIT correlation cannot cross same-token owner authority',
+      (tester) async {
+    final oldPair = Completer<PortfolioPairCorrelation>();
+    DateTime? oldCutoff;
+    var pairRequests = 0;
+    PortfolioPairCorrelation pair(double value, DateTime cutoff) =>
+        PortfolioPairCorrelation(
+          leftInstrumentId: 1,
+          rightInstrumentId: 2,
+          sourceProvider: 'yahoo_finance',
+          knowledgeCutoff: cutoff,
+          sampleCount: 35,
+          correlation: value,
+          firstReturnDate: DateTime.utc(2026, 8, 1),
+          lastReturnDate: DateTime.utc(2026, 10, 24),
+          latestRetrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+          priceField: 'adjusted_close',
+          alignmentPolicy: 'utc_calendar_date_intersection',
+          returnPolicy: 'simple_return_consecutive_observations_per_instrument',
+          recommendationPolicy: 'no_advice',
+          productionEligible: false,
+          allocationInfluence: false,
+          automaticTrading: false,
+        );
+    final correlation = AuthenticatedPortfolioCorrelationService(
+      resolveIdentity: ({required symbol, exchange}) async =>
+          PortfolioInstrumentIdentity(
+            databaseInstrumentId: symbol == 'AAPL' ? 1 : 2,
+            canonicalInstrumentId: '$symbol@NASDAQ',
+            issuerId: 'issuer:$symbol',
+            symbol: symbol,
+            exchange: 'NASDAQ',
+            exchangeShortName: 'NASDAQ',
+            currency: 'EUR',
+            sourceProvider: 'verified_catalog',
+            retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+            resolutionMethod: 'symbol_and_exchange_exact',
+            exchangeVerified: true,
+            isRiskReady: true,
+            isWeightingReady: false,
+            recommendationPolicy: 'no_advice',
+            productionEligible: false,
+            automaticTrading: false,
+          ),
+      loadPair: ({
+        required leftInstrumentId,
+        required rightInstrumentId,
+        required sourceProvider,
+        required knowledgeCutoff,
+        observedFrom,
+        observedTo,
+      }) {
+        pairRequests++;
+        if (pairRequests == 1) {
+          oldCutoff = knowledgeCutoff;
+          return oldPair.future;
+        }
+        return Future.value(pair(0.1, knowledgeCutoff));
+      },
+    );
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings(twoListings: true)),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('EUR'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          correlationService: correlation,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(pairRequests, 1);
+    expect(find.text('0.100'), findsNothing);
+
+    session.establish(accessToken: 'owner-a', account: _account(2));
+    await tester.pumpAndSettle();
+    expect(pairRequests, 2);
+    expect(find.text('0.100'), findsOneWidget);
+
+    oldPair.complete(pair(0.8, oldCutoff!));
+    await tester.pumpAndSettle();
+    expect(find.text('0.100'), findsOneWidget);
+    expect(find.text('0.800'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     holdings.dispose();
