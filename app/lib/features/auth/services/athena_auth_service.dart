@@ -157,7 +157,13 @@ class AthenaAuthService {
     if (account is! Map) {
       throw const FormatException('Cuenta autenticada ausente.');
     }
-    return AuthAccount.fromMap(Map<String, dynamic>.from(account));
+    final validated = AuthAccount.fromMap(Map<String, dynamic>.from(account));
+    // A successful HTTP status cannot grant authority to an inactive owner.
+    // Treat this inconsistent /me payload as rejected, not a transient error.
+    if (!validated.isActive) {
+      throw const AuthSessionRejectedException(403);
+    }
+    return validated;
   }
 
   Future<void> changePassword({

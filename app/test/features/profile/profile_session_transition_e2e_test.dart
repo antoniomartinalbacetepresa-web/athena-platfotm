@@ -139,4 +139,62 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     auth.dispose();
   });
+
+  testWidgets('disposed Profile ignores a delayed successful /me without rotating authority',
+      (tester) async {
+    session.establish(accessToken: 'owner-a', account: _account(17));
+    final pending = Completer<http.Response>();
+    var requests = 0;
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) {
+        expect(request.url.path, '/api/v1/auth/me');
+        requests++;
+        return pending.future;
+      }),
+    );
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: ProfilePage(authService: auth)));
+    await tester.pump();
+    expect(requests, 1);
+    final originalAuthority = session.authorityVersion;
+
+    // Navigation removes Profile while its remote account validation is pending.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    pending.complete(http.Response(
+      '{"status":"authenticated","account":{"id":17,"email":"owner17@example.com","displayName":"Owner 17","isActive":true,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}}',
+      200,
+      headers: {'content-type': 'application/json'},
+    ));
+    await tester.pumpAndSettle();
+
+    expect(session.authorityVersion, originalAuthority);
+    expect(session.account?.id, 17);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Profile rejects inactive /me authority instead of keeping a stale owner',
+      (tester) async {
+    session.establish(accessToken: 'owner-a', account: _account(17));
+    final auth = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/auth/me');
+        return http.Response(
+          '{"status":"authenticated","account":{"id":17,"email":"owner17@example.com","displayName":"Owner 17","isActive":false,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: ProfilePage(authService: auth)));
+    await tester.pumpAndSettle();
+    expect(session.isAuthenticated, isFalse);
+    expect(session.accessToken, isNull);
+    expect(find.text('Perfil protegido'), findsOneWidget);
+    expect(find.text('Owner 17'), findsNothing);
+  });
 }

@@ -138,6 +138,23 @@ void main() {
     expect(account.isActive, isTrue);
   });
 
+  test('getMe rejects inactive accounts even with an authenticated HTTP 200', () async {
+    final service = AthenaAuthService(
+      baseUrl: 'https://athena.local',
+      client: MockClient((request) async => http.Response(
+        '{"status":"authenticated","account":{"id":7,"email":"user@example.com","isActive":false,"createdAt":"2026-09-10T10:00:00Z","updatedAt":"2026-09-10T10:00:00Z"}}',
+        200,
+        headers: {'content-type': 'application/json'},
+      )),
+    );
+
+    await expectLater(
+      service.getMe('signed.jwt.token'),
+      throwsA(isA<AuthSessionRejectedException>()),
+    );
+    service.dispose();
+  });
+
   test('changePassword sends normalized bearer and exact password payload', () async {
     late http.Request captured;
     final client = MockClient((request) async {

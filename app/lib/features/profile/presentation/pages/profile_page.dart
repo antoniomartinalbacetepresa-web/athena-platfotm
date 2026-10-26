@@ -96,7 +96,8 @@ class _ProfilePageState extends State<ProfilePage> {
       // A /me response belongs to the credential that initiated this request.
       // If authority changed while it was in flight, never resurrect the old
       // owner or load protected preferences under the replacement session.
-      if (!AuthSession.instance.isAuthenticated ||
+      if (!mounted ||
+          !AuthSession.instance.isAuthenticated ||
           AuthSession.instance.accessToken != token ||
           AuthSession.instance.authorityVersion != authorityVersion) {
         return;
@@ -138,7 +139,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _loadPreferences({String? expectedAccessToken}) async {
-    if (!AuthSession.instance.isAuthenticated) return;
+    if (!mounted || !AuthSession.instance.isAuthenticated) return;
     if (expectedAccessToken != null &&
         AuthSession.instance.accessToken != expectedAccessToken) {
       return;
