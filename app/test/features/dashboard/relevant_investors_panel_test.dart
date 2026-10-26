@@ -284,6 +284,16 @@ void main() {
     expect(find.text('THIRD ISSUER'), findsNothing);
     await tester.tap(find.text('Ver todas las posiciones (3)'));
     await tester.pumpAndSettle();
+    // The details use a lazy list; later SEC holdings require scrolling.
+    await tester.scrollUntilVisible(
+      find.text('THIRD ISSUER'),
+      120,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('investor-holdings-detail-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('THIRD ISSUER'), findsOneWidget);
     expect(find.textContaining('no representan posiciones actuales'), findsOneWidget);
     expect(find.textContaining('expediente 0000123456-26-000001'), findsOneWidget);
