@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
@@ -34,8 +35,8 @@ class RelevantInvestorsPanel extends StatefulWidget {
 class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
   AthenaBackendRelevantInvestorDataSource? _dataSource;
   String? _configurationError;
-  late final List<String> _ciks;
-  late final RelevantInvestorActivityLoader _loader;
+  late List<String> _ciks;
+  late RelevantInvestorActivityLoader _loader;
   late Future<List<RelevantInvestorActivity>> _activitiesFuture;
 
   @override
@@ -45,15 +46,44 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
       widget.configuredCiks ??
           RelevantInvestorsPanel._configuredCiksRaw.split(','),
     );
-    if (widget.loader != null) {
-      _loader = widget.loader!;
-    } else {
-      _dataSource = AthenaBackendRelevantInvestorDataSource(
-        baseUrl: RelevantInvestorsPanel._backendUrl,
-      );
-      _loader = (cik) =>
-          _dataSource!.getLatestInstitutionalHoldings(cik: cik);
+    _setLoader(widget.loader);
+    _activitiesFuture = _loadActivities();
+  }
+
+  void _setLoader(RelevantInvestorActivityLoader? supplied) {
+    _dataSource?.dispose();
+    _dataSource = null;
+    if (supplied != null) {
+      _loader = supplied;
+      return;
     }
+    final source = AthenaBackendRelevantInvestorDataSource(
+      baseUrl: RelevantInvestorsPanel._backendUrl,
+    );
+    _dataSource = source;
+    // In-flight requests retain their original source after a rebind.
+    _loader = (cik) => source.getLatestInstitutionalHoldings(cik: cik);
+  }
+
+  @override
+  void didUpdateWidget(covariant RelevantInvestorsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final previousCiks = _ciks;
+    final previousError = _configurationError;
+    _configurationError = null;
+    final updatedCiks = _normalizeCiks(
+      widget.configuredCiks ??
+          RelevantInvestorsPanel._configuredCiksRaw.split(','),
+    );
+    final loaderChanged = !identical(oldWidget.loader, widget.loader);
+    if (!loaderChanged &&
+        previousError == _configurationError &&
+        listEquals(previousCiks, updatedCiks)) {
+      return;
+    }
+    _ciks = updatedCiks;
+    if (loaderChanged) _setLoader(widget.loader);
+    // Replacing the future prevents stale 13F data from being presented.
     _activitiesFuture = _loadActivities();
   }
 
@@ -81,7 +111,16 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
 
   Future<List<RelevantInvestorActivity>> _loadActivities() async {
     if (_configurationError != null || _ciks.isEmpty) return const [];
-    final activities = await Future.wait(_ciks.map(_loader));
+    final requestedCiks = _ciks;
+    final loader = _loader;
+    final activities = await Future.wait(requestedCiks.map(loader));
+    for (var i = 0; i < activities.length; i++) {
+      if (activities[i].cik != requestedCiks[i]) {
+        throw const FormatException(
+          'La identidad del inversor no coincide con el CIK solicitado.',
+        );
+      }
+    }
     return List.unmodifiable(activities);
   }
 

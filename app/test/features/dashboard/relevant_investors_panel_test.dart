@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -155,4 +157,88 @@ void main() {
     expect(find.text('Actividad no disponible'), findsOneWidget);
     expect(find.textContaining('CIK 123456'), findsNothing);
   });
+  testWidgets('reconfiguring CIKs drops pending evidence from old cohort',
+      (tester) async {
+    final pending = Completer<RelevantInvestorActivity>();
+    Future<RelevantInvestorActivity> loader(String cik) =>
+        cik == '123456' ? pending.future : Future.value(activityFor(cik));
+
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: loader,
+    )));
+    await tester.pump();
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['999999'],
+      loader: loader,
+    )));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('CIK 999999'), findsOneWidget);
+    expect(find.textContaining('CIK 123456'), findsNothing);
+    pending.complete(activityFor('123456'));
+    await tester.pump();
+    expect(find.textContaining('CIK 999999'), findsOneWidget);
+    expect(find.textContaining('CIK 123456'), findsNothing);
+  });
+
+  testWidgets('invalid CIK configuration recovers after live correction',
+      (tester) async {
+    var calls = 0;
+    Future<RelevantInvestorActivity> loader(String cik) async {
+      calls++;
+      return activityFor(cik);
+    }
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['bad-cik'],
+      loader: loader,
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Configuración institucional inválida'), findsOneWidget);
+    expect(calls, 0);
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: loader,
+    )));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('CIK 123456'), findsOneWidget);
+    expect(calls, 1);
+  });
+
+  testWidgets('changing loader rebinds same CIK and rejects stale response',
+      (tester) async {
+    final pending = Completer<RelevantInvestorActivity>();
+    var newCalls = 0;
+    Future<RelevantInvestorActivity> oldLoader(String cik) => pending.future;
+    Future<RelevantInvestorActivity> newLoader(String cik) async {
+      newCalls++;
+      return activityFor(cik);
+    }
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: oldLoader,
+    )));
+    await tester.pump();
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: newLoader,
+    )));
+    await tester.pumpAndSettle();
+    expect(newCalls, 1);
+    expect(find.textContaining('CIK 123456'), findsOneWidget);
+    pending.complete(activityFor('123456'));
+    await tester.pump();
+    expect(find.textContaining('CIK 123456'), findsOneWidget);
+  });
+
+  testWidgets('mismatched CIK returned by loader is never displayed',
+      (tester) async {
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (_) async => activityFor('999999'),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Actividad no disponible'), findsOneWidget);
+    expect(find.textContaining('CIK 999999'), findsNothing);
+  });
+
 }
