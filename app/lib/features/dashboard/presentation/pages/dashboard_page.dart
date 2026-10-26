@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_spacing.dart';
+import '../../../auth/services/auth_session.dart';
 import '../../../recommendations/controllers/athena_synthesis_controller.dart';
 import '../../../recommendations/di/recommendation_dependencies.dart';
 import '../../../recommendations/presentation/athena_synthesis_panel.dart';
@@ -54,6 +55,24 @@ class _DashboardPageState extends State<DashboardPage> {
   int _investorsRefreshEpoch = 0;
   int _researchRefreshEpoch = 0;
   int _readinessRefreshEpoch = 0;
+  late int _observedAuthorityVersion;
+
+  void _onSessionAuthorityChanged() {
+    final version = AuthSession.instance.authorityVersion;
+    if (!mounted || version == _observedAuthorityVersion) return;
+    _observedAuthorityVersion = version;
+    // The Dashboard can remain mounted during logout, account closure, or
+    // owner replacement. Discard owner-derived panels before the next frame,
+    // including when a replacement credential reuses the same token text.
+    // Research and readiness may also reflect the previous owner context.
+    _synthesisController.clear();
+    _synthesisController.loadLatest();
+    setState(() {
+      _ownerRefreshEpoch++;
+      _researchRefreshEpoch++;
+      _readinessRefreshEpoch++;
+    });
+  }
 
   void _refreshAll() {
     if (!mounted) return;
@@ -105,6 +124,8 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+    _observedAuthorityVersion = AuthSession.instance.authorityVersion;
+    AuthSession.instance.addListener(_onSessionAuthorityChanged);
     _ownsRecommendationDependencies = widget.recommendationDependencies == null;
     _recommendationDependencies = widget.recommendationDependencies ??
         RecommendationDependencies.create();
@@ -135,6 +156,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   void dispose() {
+    AuthSession.instance.removeListener(_onSessionAuthorityChanged);
     if (_ownsRecommendationDependencies) {
       _recommendationDependencies.dispose();
     }
