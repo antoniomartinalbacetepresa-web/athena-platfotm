@@ -234,4 +234,26 @@ void main() {
     },
   );
 
+
+  testWidgets('Dashboard refresh is accessible in wide and compact navigation',
+      (tester) async {
+    var refreshes = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: DashboardHeader(onRefresh: () => refreshes++),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Actualizar paneles del Dashboard'));
+    expect(refreshes, 1);
+
+    await tester.binding.setSurfaceSize(const Size(500, 800));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Navegación'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    expect(refreshes, 2);
+  });
+
 }

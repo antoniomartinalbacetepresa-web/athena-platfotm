@@ -331,6 +331,85 @@ void main() {
     expect(find.text('Respuesta tardía'), findsNothing);
     expect(find.text('Síntesis de noticias'), findsOneWidget);
   });
+
+  testWidgets('Dashboard manual refresh clears stale evidence and recovers on retry',
+      (tester) async {
+    var requests = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async {
+        requests++;
+        if (requests == 2) return http.Response('{"detail":"unavailable"}', 503);
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] =
+            requests == 1 ? 'Evidencia anterior' : 'Evidencia renovada';
+        return http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'});
+      }),
+    );
+    final dependencies = _dependencies(source);
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(synthesisDashboard(dependencies));
+    await tester.pumpAndSettle();
+    expect(find.text('Evidencia anterior'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(find.text('Evidencia anterior'), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('athena-synthesis-retry')));
+    await tester.pumpAndSettle();
+    expect(requests, 3);
+    expect(find.text('Evidencia renovada'), findsOneWidget);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsNothing);
+  });
+
+  testWidgets('Dashboard repeated manual refresh ignores late older synthesis',
+      (tester) async {
+    final pending = Completer<http.Response>();
+    var requests = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        requests++;
+        if (requests == 2) return pending.future;
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] =
+            requests == 1 ? 'Evidencia inicial' : 'Evidencia más reciente';
+        return Future.value(http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'}));
+      }),
+    );
+    final dependencies = _dependencies(source);
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(synthesisDashboard(dependencies));
+    await tester.pumpAndSettle();
+    expect(find.text('Evidencia inicial'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    await tester.pump();
+    expect(requests, 2);
+    expect(find.text('Evidencia inicial'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    await tester.pumpAndSettle();
+    expect(requests, 3);
+    expect(find.text('Evidencia más reciente'), findsOneWidget);
+
+    final old = _validPayload();
+    ((old['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Respuesta caducada';
+    pending.complete(http.Response(jsonEncode(old), 200,
+        headers: {'content-type': 'application/json'}));
+    await tester.pump();
+    expect(find.text('Respuesta caducada'), findsNothing);
+    expect(find.text('Evidencia más reciente'), findsOneWidget);
+  });
+
 }
 
 RecommendationDependencies _dependencies(

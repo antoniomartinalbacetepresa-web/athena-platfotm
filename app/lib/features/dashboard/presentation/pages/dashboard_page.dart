@@ -39,6 +39,21 @@ class _DashboardPageState extends State<DashboardPage> {
   int _ownerRefreshEpoch = 0;
   int _marketRefreshEpoch = 0;
   int _newsRefreshEpoch = 0;
+  int _investorsRefreshEpoch = 0;
+
+  void _refreshAll() {
+    if (!mounted) return;
+    // A refresh invalidates any pending canonical response before new evidence
+    // is requested. The independent panels are recreated from their sources.
+    _synthesisController.clear();
+    _synthesisController.loadLatest();
+    setState(() {
+      _ownerRefreshEpoch++;
+      _marketRefreshEpoch++;
+      _newsRefreshEpoch++;
+      _investorsRefreshEpoch++;
+    });
+  }
 
   void _onReturnFromRoute(String route) {
     if (!mounted) return;
@@ -110,7 +125,10 @@ class _DashboardPageState extends State<DashboardPage> {
       body: SafeArea(
         child: Column(
           children: [
-            DashboardHeader(onReturnFromRoute: _onReturnFromRoute),
+            DashboardHeader(
+              onReturnFromRoute: _onReturnFromRoute,
+              onRefresh: _refreshAll,
+            ),
             const SizedBox(height: AthenaSpacing.md),
             Expanded(
               child: SingleChildScrollView(
@@ -148,12 +166,14 @@ class _DashboardPageState extends State<DashboardPage> {
                               ownerRefreshEpoch: _ownerRefreshEpoch,
                               marketRefreshEpoch: _marketRefreshEpoch,
                               newsRefreshEpoch: _newsRefreshEpoch,
+                              investorsRefreshEpoch: _investorsRefreshEpoch,
                             );
                           }
                           return _DesktopDashboard(
                             ownerRefreshEpoch: _ownerRefreshEpoch,
                             marketRefreshEpoch: _marketRefreshEpoch,
                             newsRefreshEpoch: _newsRefreshEpoch,
+                              investorsRefreshEpoch: _investorsRefreshEpoch,
                           );
                         },
                       ),
@@ -174,11 +194,13 @@ class _DesktopDashboard extends StatelessWidget {
     required this.ownerRefreshEpoch,
     required this.marketRefreshEpoch,
     required this.newsRefreshEpoch,
+    required this.investorsRefreshEpoch,
   });
 
   final int ownerRefreshEpoch;
   final int marketRefreshEpoch;
   final int newsRefreshEpoch;
+  final int investorsRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -227,7 +249,12 @@ class _DesktopDashboard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(height: 330, child: RelevantInvestorsPanel()),
+        SizedBox(
+          height: 330,
+          child: RelevantInvestorsPanel(
+            key: ValueKey('dashboard-investors-$investorsRefreshEpoch'),
+          ),
+        ),
       ],
     );
   }
@@ -238,11 +265,13 @@ class _CompactDashboard extends StatelessWidget {
     required this.ownerRefreshEpoch,
     required this.marketRefreshEpoch,
     required this.newsRefreshEpoch,
+    required this.investorsRefreshEpoch,
   });
 
   final int ownerRefreshEpoch;
   final int marketRefreshEpoch;
   final int newsRefreshEpoch;
+  final int investorsRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -269,7 +298,12 @@ class _CompactDashboard extends StatelessWidget {
           child: NewsPanel(key: ValueKey('dashboard-news-$newsRefreshEpoch')),
         ),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(height: 340, child: RelevantInvestorsPanel()),
+        SizedBox(
+          height: 340,
+          child: RelevantInvestorsPanel(
+            key: ValueKey('dashboard-investors-$investorsRefreshEpoch'),
+          ),
+        ),
       ],
     );
   }

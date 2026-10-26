@@ -6,11 +6,14 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../../../../core/routing/app_routes.dart';
 
 class DashboardHeader extends StatelessWidget {
-  const DashboardHeader({super.key, this.onReturnFromRoute});
+  const DashboardHeader({super.key, this.onReturnFromRoute, this.onRefresh});
 
   /// Called after a primary route is popped, so owner-scoped Dashboard
   /// projections can re-read changes made in Profile or Portfolio.
   final ValueChanged<String>? onReturnFromRoute;
+
+  /// Explicitly refreshes Dashboard evidence without changing route or authority.
+  final VoidCallback? onRefresh;
 
   static const double _compactBreakpoint = 620;
 
@@ -79,6 +82,13 @@ class DashboardHeader extends StatelessWidget {
                   icon: Icons.person_outline_rounded,
                 ),
               ],
+              if (onRefresh != null)
+                IconButton(
+                  key: const Key('dashboard-refresh-all'),
+                  tooltip: 'Actualizar paneles del Dashboard',
+                  onPressed: onRefresh,
+                  icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                ),
               const SizedBox(width: 8),
               Container(
                 width: 44,
