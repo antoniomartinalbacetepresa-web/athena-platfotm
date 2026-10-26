@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../../../core/theme/athena_radius.dart';
+import '../../../auth/services/auth_session.dart';
 import '../../../market/di/market_dependencies.dart';
+import 'authenticated_my_space_panel.dart';
 import '../../../portfolio/data/athena_backend_portfolio_correlation_data_source.dart';
 import '../../../portfolio/models/portfolio.dart';
 import '../../../portfolio/models/portfolio_valuation_summary.dart';
@@ -39,6 +43,8 @@ class _MySpacePanelState extends State<MySpacePanel> {
   bool _isLoading = true;
   bool _hasLoadError = false;
   List<String> _staleSymbols = const [];
+  int _loadGeneration = 0;
+  int _authenticatedRefreshEpoch = 0;
 
   @override
   void initState() {
@@ -61,11 +67,42 @@ class _MySpacePanelState extends State<MySpacePanel> {
         loadPair: _correlationDataSource.getPair,
       ),
     )..addListener(_onEvidenceChanged);
-    _loadPortfolio();
+    AuthSession.instance.addListener(_onAuthorityChanged);
+    if (AuthSession.instance.isAuthenticated) {
+      _isLoading = false;
+    } else {
+      unawaited(_loadPortfolio());
+    }
   }
+
+  void _onAuthorityChanged() {
+    // A local guest portfolio is device-wide, not bound to a JWT owner.
+    // Never project it into a signed-in user's Dashboard.
+    _loadGeneration++;
+    _valuationController.clear();
+    _concentrationController.clear();
+    _correlationController.clear();
+    if (!mounted) return;
+    setState(() {
+      _portfolio = null;
+      _staleSymbols = const [];
+      _hasLoadError = false;
+      _isLoading = !AuthSession.instance.isAuthenticated;
+      _authenticatedRefreshEpoch++;
+    });
+    if (!AuthSession.instance.isAuthenticated) {
+      unawaited(_loadPortfolio());
+    }
+  }
+
+  bool _isCurrentGuestLoad(int generation) =>
+      mounted &&
+      !AuthSession.instance.isAuthenticated &&
+      generation == _loadGeneration;
 
   @override
   void dispose() {
+    AuthSession.instance.removeListener(_onAuthorityChanged);
     _valuationController.removeListener(_onEvidenceChanged);
     _concentrationController.removeListener(_onEvidenceChanged);
     _correlationController.removeListener(_onEvidenceChanged);
@@ -113,8 +150,11 @@ class _MySpacePanelState extends State<MySpacePanel> {
   }
 
   Future<void> _loadPortfolio() async {
+    if (AuthSession.instance.isAuthenticated) return;
+    final generation = ++_loadGeneration;
     try {
       await _portfolioService.loadPortfolio();
+      if (!_isCurrentGuestLoad(generation)) return;
 
       var staleSymbols = const <String>[];
       final loaded = _portfolioService.portfolio;
@@ -131,6 +171,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
         }
       }
 
+      if (!_isCurrentGuestLoad(generation)) return;
       final portfolio = _portfolioService.portfolio;
       if (portfolio != null) {
         await _loadEvidence(portfolio);
@@ -140,7 +181,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
         _correlationController.clear();
       }
 
-      if (!mounted) return;
+      if (!_isCurrentGuestLoad(generation)) return;
       setState(() {
         _portfolio = portfolio;
         _staleSymbols = staleSymbols;
@@ -148,7 +189,7 @@ class _MySpacePanelState extends State<MySpacePanel> {
         _hasLoadError = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!_isCurrentGuestLoad(generation)) return;
       _valuationController.clear();
       _concentrationController.clear();
       _correlationController.clear();
@@ -196,7 +237,13 @@ class _MySpacePanelState extends State<MySpacePanel> {
             ),
           ),
           const SizedBox(height: 12),
-          Expanded(child: _buildContent()),
+          Expanded(
+            child: AuthSession.instance.isAuthenticated
+                ? AuthenticatedMySpacePanel(
+                    key: ValueKey('dashboard-owner-$_authenticatedRefreshEpoch'),
+                  )
+                : _buildContent(),
+          ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -204,7 +251,13 @@ class _MySpacePanelState extends State<MySpacePanel> {
             child: ElevatedButton(
               onPressed: () async {
                 await Navigator.pushNamed(context, AppRoutes.portfolio);
-                await _loadPortfolio();
+                if (!mounted) return;
+                if (AuthSession.instance.isAuthenticated) {
+                  // Portfolio may have changed without a session transition.
+                  setState(() => _authenticatedRefreshEpoch++);
+                } else {
+                  await _loadPortfolio();
+                }
               },
               child: const Text('Ver cartera'),
             ),
