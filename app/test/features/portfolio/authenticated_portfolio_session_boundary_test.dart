@@ -93,16 +93,15 @@ void main() {
     final controller = await pumpWithStatus(tester, statusCode: 401);
     await tester.pump();
 
-    expect(controller.status, PortfolioCloudSyncStatus.sessionRejected);
+    // The 401 still revokes the credential. The guest boundary must not
+    // retain the former owner's sync status or its snackbar after revocation.
+    expect(controller.status, PortfolioCloudSyncStatus.idle);
+    expect(controller.message, isNull);
     expect(session.isAuthenticated, isFalse);
     expect(session.accessToken, isNull);
     expect(session.account, isNull);
-    expect(
-      find.text(
-        'Tu sesión ATHENA ya no es válida. Inicia sesión de nuevo antes de sincronizar.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('portfolio-authentication-required')), findsOneWidget);
+    expect(find.textContaining('Tu sesión ATHENA ya no es válida'), findsNothing);
 
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
