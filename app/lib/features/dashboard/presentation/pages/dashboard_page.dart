@@ -40,6 +40,8 @@ class _DashboardPageState extends State<DashboardPage> {
   int _marketRefreshEpoch = 0;
   int _newsRefreshEpoch = 0;
   int _investorsRefreshEpoch = 0;
+  int _researchRefreshEpoch = 0;
+  int _readinessRefreshEpoch = 0;
 
   void _refreshAll() {
     if (!mounted) return;
@@ -52,6 +54,8 @@ class _DashboardPageState extends State<DashboardPage> {
       _marketRefreshEpoch++;
       _newsRefreshEpoch++;
       _investorsRefreshEpoch++;
+      _researchRefreshEpoch++;
+      _readinessRefreshEpoch++;
     });
   }
 
@@ -59,7 +63,11 @@ class _DashboardPageState extends State<DashboardPage> {
     if (!mounted) return;
     if (route == AppRoutes.profile || route == AppRoutes.portfolio) {
       // Owner edits do not necessarily rotate JWT authority.
-      setState(() => _ownerRefreshEpoch++);
+      setState(() {
+        _ownerRefreshEpoch++;
+        // Owner edits can change portfolio-dependent research eligibility.
+        _researchRefreshEpoch++;
+      });
       return;
     }
     if (route != AppRoutes.market && route != AppRoutes.news) return;
@@ -68,6 +76,9 @@ class _DashboardPageState extends State<DashboardPage> {
     _synthesisController.clear();
     _synthesisController.loadLatest();
     setState(() {
+      // Research and readiness may change with new market/news evidence.
+      _researchRefreshEpoch++;
+      _readinessRefreshEpoch++;
       if (route == AppRoutes.market) {
         _marketRefreshEpoch++;
       } else {
@@ -143,7 +154,9 @@ class _DashboardPageState extends State<DashboardPage> {
                     if (widget.renderOperationalPanels) ...[
                       const SizedBox(
                         height: 112,
-                        child: SystemReadinessPanel(),
+                        child: SystemReadinessPanel(
+                          key: ValueKey('dashboard-readiness-$_readinessRefreshEpoch'),
+                        ),
                       ),
                       const SizedBox(height: AthenaSpacing.md),
                       PersonalizedExplanationPanel(
@@ -167,6 +180,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               marketRefreshEpoch: _marketRefreshEpoch,
                               newsRefreshEpoch: _newsRefreshEpoch,
                               investorsRefreshEpoch: _investorsRefreshEpoch,
+                              researchRefreshEpoch: _researchRefreshEpoch,
                             );
                           }
                           return _DesktopDashboard(
@@ -174,6 +188,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             marketRefreshEpoch: _marketRefreshEpoch,
                             newsRefreshEpoch: _newsRefreshEpoch,
                               investorsRefreshEpoch: _investorsRefreshEpoch,
+                              researchRefreshEpoch: _researchRefreshEpoch,
                           );
                         },
                       ),
@@ -195,12 +210,14 @@ class _DesktopDashboard extends StatelessWidget {
     required this.marketRefreshEpoch,
     required this.newsRefreshEpoch,
     required this.investorsRefreshEpoch,
+    required this.researchRefreshEpoch,
   });
 
   final int ownerRefreshEpoch;
   final int marketRefreshEpoch;
   final int newsRefreshEpoch;
   final int investorsRefreshEpoch;
+  final int researchRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -218,7 +235,11 @@ class _DesktopDashboard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: AthenaSpacing.md),
-              const Expanded(child: RecommendationsPanel()),
+              Expanded(
+                child: RecommendationsPanel(
+                  key: ValueKey('dashboard-recommendations-$researchRefreshEpoch'),
+                ),
+              ),
             ],
           ),
         ),
@@ -230,7 +251,9 @@ class _DesktopDashboard extends StatelessWidget {
             children: [
               SizedBox(
                 width: DashboardPage._leftColumnWidth,
-                child: AthenaScorePanel(),
+                child: AthenaScorePanel(
+                  key: ValueKey('dashboard-score-$researchRefreshEpoch'),
+                ),
               ),
               SizedBox(width: AthenaSpacing.md),
               Expanded(
@@ -266,12 +289,14 @@ class _CompactDashboard extends StatelessWidget {
     required this.marketRefreshEpoch,
     required this.newsRefreshEpoch,
     required this.investorsRefreshEpoch,
+    required this.researchRefreshEpoch,
   });
 
   final int ownerRefreshEpoch;
   final int marketRefreshEpoch;
   final int newsRefreshEpoch;
   final int investorsRefreshEpoch;
+  final int researchRefreshEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -284,9 +309,19 @@ class _CompactDashboard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(height: 430, child: RecommendationsPanel()),
+        SizedBox(
+          height: 430,
+          child: RecommendationsPanel(
+            key: ValueKey('dashboard-recommendations-$researchRefreshEpoch'),
+          ),
+        ),
         const SizedBox(height: AthenaSpacing.md),
-        const SizedBox(height: 360, child: AthenaScorePanel()),
+        SizedBox(
+          height: 360,
+          child: AthenaScorePanel(
+            key: ValueKey('dashboard-score-$researchRefreshEpoch'),
+          ),
+        ),
         const SizedBox(height: AthenaSpacing.md),
         SizedBox(
           height: 430,

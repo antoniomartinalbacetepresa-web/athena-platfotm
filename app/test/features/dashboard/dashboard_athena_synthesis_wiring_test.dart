@@ -410,6 +410,96 @@ void main() {
     expect(find.text('Evidencia más reciente'), findsOneWidget);
   });
 
+
+  testWidgets('Dashboard full refresh re-queries every operational and research panel',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(
+        jsonEncode(_validPayload()), 200,
+        headers: {'content-type': 'application/json'},
+      )),
+    ));
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(recommendationDependencies: dependencies),
+    ));
+    await tester.pump();
+
+    for (final panel in const [
+      'readiness', 'recommendations', 'score', 'market', 'news',
+      'investors', 'my-space',
+    ]) {
+      expect(find.byKey(Key('dashboard-$panel-0')), findsOneWidget,
+          reason: '$panel must exist before refresh');
+    }
+
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    await tester.pump();
+    for (final panel in const [
+      'readiness', 'recommendations', 'score', 'market', 'news',
+      'investors', 'my-space',
+    ]) {
+      expect(find.byKey(Key('dashboard-$panel-0')), findsNothing);
+      expect(find.byKey(Key('dashboard-$panel-1')), findsOneWidget,
+          reason: '$panel must be recreated from its evidence source');
+    }
+
+    tester.view.physicalSize = const Size(500, 900);
+    await tester.pump();
+    expect(find.byKey(const Key('dashboard-recommendations-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-score-1')), findsOneWidget);
+  });
+
+  testWidgets('Market and News return refresh research/readiness but preserve owner scope',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(
+        jsonEncode(_validPayload()), 200,
+        headers: {'content-type': 'application/json'},
+      )),
+    ));
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(recommendationDependencies: dependencies),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => Scaffold(body: Text('Abierta: ${settings.name}')),
+      ),
+    ));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Mercado'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Abierta: /market'))).pop();
+    await tester.pump();
+    expect(find.byKey(const Key('dashboard-recommendations-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-score-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-readiness-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-my-space-0')), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Abierta: /news'))).pop();
+    await tester.pump();
+    expect(find.byKey(const Key('dashboard-recommendations-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-score-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-readiness-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-my-space-0')), findsOneWidget);
+  });
+
 }
 
 RecommendationDependencies _dependencies(
