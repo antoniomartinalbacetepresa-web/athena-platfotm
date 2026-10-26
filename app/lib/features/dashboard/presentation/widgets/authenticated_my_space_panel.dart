@@ -6,11 +6,13 @@ import '../../../../core/theme/athena_colors.dart';
 import '../../../auth/services/auth_session.dart';
 import '../../../market/di/market_dependencies.dart';
 import '../../../portfolio/models/authenticated_portfolio_view_position.dart';
+import '../../../portfolio/models/portfolio_correlation_snapshot.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_capital_controller.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_controller.dart';
 import '../../../portfolio/presentation/controllers/authenticated_portfolio_fx_valuation_controller.dart';
 import '../../../portfolio/services/authenticated_portfolio_fx_valuation_service.dart';
 import '../../../portfolio/services/authenticated_portfolio_service.dart';
+import '../../../portfolio/services/authenticated_portfolio_correlation_service.dart';
 import '../../../profile/services/user_preferences_service.dart';
 
 /// Dashboard projection of the same server-owned holdings and encrypted
@@ -22,6 +24,7 @@ class AuthenticatedMySpacePanel extends StatefulWidget {
     this.portfolioController,
     this.capitalController,
     this.fxValuationController,
+    this.correlationService,
   }) : assert(
           (portfolioController == null) == (capitalController == null),
           'Inject both owner-scoped controllers or neither.',
@@ -30,6 +33,7 @@ class AuthenticatedMySpacePanel extends StatefulWidget {
   final AuthenticatedPortfolioController? portfolioController;
   final AuthenticatedPortfolioCapitalController? capitalController;
   final AuthenticatedPortfolioFxValuationController? fxValuationController;
+  final AuthenticatedPortfolioCorrelationService? correlationService;
 
   @override
   State<AuthenticatedMySpacePanel> createState() =>
@@ -48,6 +52,15 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
   String? _fxCurrency;
   int? _fxAuthorityVersion;
   bool _fxRefreshScheduled = false;
+  AuthenticatedPortfolioCorrelationService? _correlation;
+  bool _ownsCorrelation = false;
+  PortfolioCorrelationSnapshot? _correlationSnapshot;
+  List<AuthenticatedPortfolioViewPosition>? _correlationPositions;
+  int? _correlationAuthority;
+  int _correlationGeneration = 0;
+  bool _correlationLoading = false;
+  bool _correlationUnavailable = false;
+  bool _correlationRefreshScheduled = false;
 
   @override
   void initState() {
@@ -89,10 +102,21 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
     } else {
       _fx = widget.fxValuationController;
     }
+    _correlation = widget.correlationService;
+    if (_correlation == null && _ownsControllers) {
+      _correlation = AuthenticatedPortfolioCorrelationService.forBackend(
+        backendUrl: const String.fromEnvironment(
+          'ATHENA_BACKEND_URL',
+          defaultValue: 'http://127.0.0.1:8000',
+        ),
+      );
+      _ownsCorrelation = true;
+    }
     _portfolio.addListener(_onChanged);
     _capital.addListener(_onChanged);
     _fx?.addListener(_onChanged);
     _scheduleFxRefresh();
+    _scheduleCorrelationRefresh();
     if (_ownsControllers && AuthSession.instance.isAuthenticated) {
       unawaited(_portfolio.load());
       unawaited(_capital.load());
@@ -103,6 +127,7 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
     if (!mounted) return;
     setState(() {});
     _scheduleFxRefresh();
+    _scheduleCorrelationRefresh();
   }
 
   void _scheduleFxRefresh() {
@@ -150,8 +175,77 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
     unawaited(fx.load(positions: positions, baseCurrency: currency));
   }
 
+  void _scheduleCorrelationRefresh() {
+    if (_correlation == null || _correlationRefreshScheduled) return;
+    _correlationRefreshScheduled = true;
+    scheduleMicrotask(() {
+      _correlationRefreshScheduled = false;
+      if (mounted) _refreshCorrelation();
+    });
+  }
+
+  void _refreshCorrelation() {
+    final service = _correlation;
+    if (service == null) return;
+    final valid = AuthSession.instance.isAuthenticated &&
+        !_portfolio.isLoading &&
+        !_portfolio.sessionRejected &&
+        _portfolio.error == null &&
+        _portfolio.positions.length >= 2;
+    if (!valid) {
+      _correlationGeneration++;
+      _correlationPositions = null;
+      _correlationAuthority = null;
+      _correlationSnapshot = null;
+      _correlationLoading = false;
+      _correlationUnavailable = false;
+      return;
+    }
+    final positions = _portfolio.positions;
+    final authority = AuthSession.instance.authorityVersion;
+    if (identical(_correlationPositions, positions) &&
+        _correlationAuthority == authority) {
+      return;
+    }
+    _correlationPositions = positions;
+    _correlationAuthority = authority;
+    _correlationSnapshot = null;
+    _correlationUnavailable = false;
+    _correlationLoading = true;
+    final generation = ++_correlationGeneration;
+    unawaited(_loadCorrelation(service, positions, authority, generation));
+  }
+
+  Future<void> _loadCorrelation(
+    AuthenticatedPortfolioCorrelationService service,
+    List<AuthenticatedPortfolioViewPosition> positions,
+    int authority,
+    int generation,
+  ) async {
+    PortfolioCorrelationSnapshot? snapshot;
+    try {
+      snapshot = await service.analyze(positions: positions);
+    } catch (_) {
+      // Missing canonical identity, history or PIT provenance is unavailable,
+      // never a zero-correlation estimate.
+    }
+    if (!mounted ||
+        generation != _correlationGeneration ||
+        authority != AuthSession.instance.authorityVersion ||
+        !identical(_correlationPositions, positions)) {
+      return;
+    }
+    setState(() {
+      _correlationSnapshot = snapshot;
+      _correlationLoading = false;
+      _correlationUnavailable = snapshot == null;
+    });
+  }
+
   @override
   void dispose() {
+    _correlationGeneration++;
+    if (_ownsCorrelation) _correlation?.dispose();
     _portfolio.removeListener(_onChanged);
     _capital.removeListener(_onChanged);
     _fx?.removeListener(_onChanged);
@@ -224,6 +318,12 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
         ? current - invested
         : null;
     final capital = _capital.hasVerifiedCapital ? _capital.availableCapital : null;
+    final correlationCurrent = identical(_correlationPositions, positions) &&
+        _correlationAuthority == AuthSession.instance.authorityVersion &&
+        !_portfolio.isLoading &&
+        !_portfolio.sessionRejected &&
+        _portfolio.error == null;
+    final correlation = correlationCurrent ? _correlationSnapshot : null;
     // Current listing concentration may use verified current FX per holding;
     // it never implies historical PIT FX, issuer exposure or allocation advice.
     final concentration = verifiedFx
@@ -281,6 +381,23 @@ class _AuthenticatedMySpacePanelState extends State<AuthenticatedMySpacePanel> {
                     '${(concentration.largestWeight * 100).toStringAsFixed(1)} %. '
                     'No equivale a concentración por emisor.'
                     '${verifiedFx && fxValuation.usesFx ? ' FX actual verificado; no es PIT histórica.' : ''}',
+          ),
+          const Divider(),
+          _row(
+            'Correlación PIT autenticada',
+            correlation == null
+                ? 'No disponible'
+                : correlation.meanCorrelation.toStringAsFixed(3),
+            correlation == null
+                ? correlationCurrent && _correlationLoading
+                    ? 'Consultando identidades canónicas e historia PIT…'
+                    : _correlationUnavailable
+                        ? 'Identidad, historial o provenance insuficiente; sin estimaciones.'
+                        : 'Requiere al menos dos instrumentos canónicos verificables.'
+                : '${correlation.pairs.length} pares · mínimo '
+                    '${correlation.minimumSampleCount} retornos alineados · '
+                    '${correlation.sourceProvider}. Solo descriptiva: '
+                    'sin recomendación, ponderación ni órdenes.',
           ),
           const Divider(),
           _row(
