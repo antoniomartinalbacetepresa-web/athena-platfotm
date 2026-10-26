@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/dashboard/presentation/pages/dashboard_page.dart';
 import 'package:app/features/recommendations/controllers/athena_synthesis_controller.dart';
 import 'package:app/features/recommendations/data/datasources/athena_backend_professional_dossier_data_source.dart';
@@ -423,6 +425,107 @@ void main() {
     expect(find.text('Evidencia más reciente'), findsOneWidget);
   });
 
+
+  AuthAccount ownerAccount(int id) => AuthAccount(
+    id: id,
+    email: 'owner-$id@example.com',
+    displayName: 'Owner $id',
+    isActive: true,
+    createdAt: DateTime.utc(2026, 10, 1),
+    updatedAt: DateTime.utc(2026, 10, 1),
+  );
+
+  testWidgets(
+      'Dashboard invalidates owner, research and readiness when authenticated authority changes',
+      (tester) async {
+    final session = AuthSession.instance;
+    session.clear();
+    addTearDown(session.clear);
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(
+        jsonEncode(_validPayload()), 200,
+        headers: {'content-type': 'application/json'},
+      )),
+    ));
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder: operationalEpochPanels,
+      ),
+    ));
+    await tester.pump();
+    expect(find.byKey(const Key('dashboard-my-space-0')), findsOneWidget);
+
+    session.establish(accessToken: 'same-token', account: ownerAccount(1));
+    await tester.pump();
+    for (final panel in const ['my-space', 'recommendations', 'score', 'readiness']) {
+      expect(find.byKey(Key('dashboard-$panel-1')), findsOneWidget,
+          reason: '$panel must be recreated for the authenticated owner');
+    }
+    expect(find.byKey(const Key('dashboard-market-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+
+    // Credential text equality does not confer the previous owner's authority.
+    session.establish(accessToken: 'same-token', account: ownerAccount(2));
+    await tester.pump();
+    for (final panel in const ['my-space', 'recommendations', 'score', 'readiness']) {
+      expect(find.byKey(Key('dashboard-$panel-1')), findsNothing);
+      expect(find.byKey(Key('dashboard-$panel-2')), findsOneWidget);
+    }
+    expect(find.byKey(const Key('dashboard-market-0')), findsOneWidget);
+
+    session.clear();
+    await tester.pump();
+    expect(find.byKey(const Key('dashboard-my-space-2')), findsNothing);
+    expect(find.byKey(const Key('dashboard-my-space-3')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-recommendations-3')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'Dashboard ignores pending synthesis from a previous owner after a token-reused switch',
+      (tester) async {
+    final session = AuthSession.instance;
+    session.clear();
+    addTearDown(session.clear);
+    session.establish(accessToken: 'same-token', account: ownerAccount(1));
+    final oldOwnerResponse = Completer<http.Response>();
+    var requests = 0;
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        requests++;
+        if (requests == 1) return oldOwnerResponse.future;
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] = 'Síntesis posterior al cambio';
+        return Future.value(http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'}));
+      }),
+    ));
+    addTearDown(dependencies.dispose);
+    await tester.pumpWidget(synthesisDashboard(dependencies));
+    await tester.pump();
+    expect(requests, 1);
+
+    session.establish(accessToken: 'same-token', account: ownerAccount(2));
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(find.text('Síntesis posterior al cambio'), findsOneWidget);
+
+    final oldPayload = _validPayload();
+    ((oldPayload['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis de otro propietario';
+    oldOwnerResponse.complete(http.Response(jsonEncode(oldPayload), 200,
+        headers: {'content-type': 'application/json'}));
+    await tester.pump();
+    expect(find.text('Síntesis de otro propietario'), findsNothing);
+    expect(find.text('Síntesis posterior al cambio'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('Dashboard full refresh rebinds every operational and research projection',
       (tester) async {
