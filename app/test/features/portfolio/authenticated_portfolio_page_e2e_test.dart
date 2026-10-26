@@ -293,6 +293,61 @@ void main() {
     updatedAt: DateTime.utc(2026, 10, 1),
   );
 
+  testWidgets(
+      'replacing an authenticated owner rebuilds all Portfolio controllers even when token text is reused',
+      (tester) async {
+    session.establish(accessToken: 'reused-token', account: account());
+    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    await tester.pump();
+
+    final original = tester.widget<AuthenticatedPortfolioView>(
+      find.byType(AuthenticatedPortfolioView),
+    ).controller;
+    expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsOneWidget);
+
+    session.establish(accessToken: 'reused-token', account: replacementOwner());
+    await tester.pump();
+
+    final replacement = tester.widget<AuthenticatedPortfolioView>(
+      find.byType(AuthenticatedPortfolioView),
+    ).controller;
+    expect(identical(original, replacement), isFalse);
+    expect(replacement.positions, isEmpty);
+    expect(session.account?.id, 8);
+    expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'authenticated Portfolio offers a coordinated refresh without replacing the owner boundary',
+      (tester) async {
+    session.establish(accessToken: 'owner-token', account: account());
+    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    await tester.pumpAndSettle();
+
+    final controller = tester.widget<AuthenticatedPortfolioView>(
+      find.byType(AuthenticatedPortfolioView),
+    ).controller;
+    final refresh = find.byKey(const Key('portfolio-authenticated-refresh'));
+    expect(refresh, findsOneWidget);
+    expect(find.byTooltip('Actualizar cartera y preferencias'), findsOneWidget);
+    expect(tester.widget<IconButton>(refresh).onPressed, isNotNull);
+
+    await tester.tap(refresh);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsOneWidget);
+    expect(identical(
+      tester.widget<AuthenticatedPortfolioView>(
+        find.byType(AuthenticatedPortfolioView),
+      ).controller,
+      controller,
+    ), isTrue);
+    expect(find.byKey(const Key('portfolio-authenticated-refresh')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('owner change while add-position dialog is open discards old draft',
       (tester) async {
     session.establish(accessToken: 'reused-token', account: account());
