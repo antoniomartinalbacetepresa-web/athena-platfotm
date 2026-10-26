@@ -29,16 +29,19 @@ class AccountLifecycleService {
   final AthenaAuthService _authService;
   final AuthSession _session;
 
-  Future<bool> _clearInvalidatedCredential(String invalidatedToken) async {
+  Future<bool> _clearInvalidatedCredential(
+    String invalidatedToken,
+    int expectedAuthorityVersion,
+  ) async {
     // The remote request may complete after the user has already established a
     // different authenticated session. Never let an old lifecycle operation
     // revoke or delete the replacement authority. The invalidated token is
     // already non-authoritative server-side; only clear local state when it is
     // still the credential that authorized this operation.
-    if (!_session.isAuthenticated || _session.accessToken != invalidatedToken) {
-      return false;
-    }
-    return _session.clearAfterRemoteInvalidation();
+    return _session.clearAfterRemoteInvalidationIfCurrent(
+      invalidatedToken,
+      expectedAuthorityVersion: expectedAuthorityVersion,
+    );
   }
 
   Future<PasswordChangeResult> changeCurrentPassword({
@@ -50,13 +53,15 @@ class AccountLifecycleService {
       throw StateError('No existe una sesión autenticada para cambiar la contraseña.');
     }
 
+    final authorityVersion = _session.authorityVersion;
+
     await _authService.changePassword(
       token: token,
       currentPassword: currentPassword,
       newPassword: newPassword,
     );
 
-    final localCredentialDeleted = await _clearInvalidatedCredential(token);
+    final localCredentialDeleted = await _clearInvalidatedCredential(token, authorityVersion);
     return PasswordChangeResult(
       localCredentialDeleted: localCredentialDeleted,
     );
@@ -76,13 +81,15 @@ class AccountLifecycleService {
       throw StateError('No existe una sesión autenticada para cerrar.');
     }
 
+    final authorityVersion = _session.authorityVersion;
+
     if (allSessions) {
       await _authService.logoutAll(token);
     } else {
       await _authService.logout(token);
     }
 
-    final localCredentialDeleted = await _clearInvalidatedCredential(token);
+    final localCredentialDeleted = await _clearInvalidatedCredential(token, authorityVersion);
     return SessionLogoutResult(
       localCredentialDeleted: localCredentialDeleted,
     );
@@ -95,12 +102,14 @@ class AccountLifecycleService {
     if (token == null || !_session.isAuthenticated) {
       throw StateError('No existe una sesión autenticada para cerrar.');
     }
+    final authorityVersion = _session.authorityVersion;
+
     await _authService.closeAccount(
       token: token,
       currentPassword: currentPassword,
     );
 
-    final localCredentialDeleted = await _clearInvalidatedCredential(token);
+    final localCredentialDeleted = await _clearInvalidatedCredential(token, authorityVersion);
     return AccountClosureResult(
       localCredentialDeleted: localCredentialDeleted,
     );
