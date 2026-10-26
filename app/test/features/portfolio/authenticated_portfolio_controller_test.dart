@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/auth/models/auth_account.dart';
@@ -175,4 +176,21 @@ void main() {
     expect(controller.sessionRejected, isFalse);
     expect(controller.error, isNotNull);
   });
+  test('disposed owner holdings controller ignores late HTTP completion', () async {
+    final response = Completer<http.Response>();
+    final service = AuthenticatedPortfolioService(
+      client: MockClient((_) => response.future),
+      session: session(),
+    );
+    final controller = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _MarketRepository({'AAPL': quote('AAPL')}),
+    );
+    final pending = controller.load();
+    controller.dispose();
+    response.complete(portfolioResponse());
+    await pending;
+    service.dispose();
+  });
+
 }
