@@ -32,6 +32,9 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
     } else {
       _contextController = widget.controller!;
     }
+    // An injected controller can still be loading evidence for a previous
+    // screen. Invalidate that generation before this mount requests data.
+    if (!_ownsController) _contextController.clear();
     _contextController.addListener(_onControllerChanged);
     _contextController.loadGlobalContext();
   }
@@ -57,6 +60,10 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
     } else {
       _contextController = widget.controller!;
     }
+    // loadGlobalContext() returns early when a controller is already busy.
+    // Without clear(), a response started by an older mount could become
+    // authoritative for this page after dependency replacement.
+    if (!_ownsController) _contextController.clear();
     _contextController.addListener(_onControllerChanged);
     _contextController.loadGlobalContext();
   }

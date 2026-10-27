@@ -202,7 +202,11 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
                   );
                 }
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Semantics(
+                    liveRegion: true,
+                    label: 'Consultando actividad institucional SEC 13F.',
+                    child: Center(child: CircularProgressIndicator()),
+                  );
                 }
                 if (snapshot.hasError) {
                   return _InvestorState(
@@ -586,10 +590,13 @@ class _InvestorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Semantics(
+      liveRegion: true,
+      label: '$title. $detail',
+      child: Center(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, color: AthenaColors.textSecondary, size: 34),
             const SizedBox(height: 10),
@@ -616,7 +623,7 @@ class _InvestorState extends StatelessWidget {
               const SizedBox(height: 8),
               TextButton(onPressed: onAction, child: Text(actionLabel!)),
             ],
-          ],
+          ),
         ),
       ),
     );

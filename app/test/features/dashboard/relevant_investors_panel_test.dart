@@ -491,4 +491,44 @@ void main() {
     expect(find.textContaining('No se interpreta como cartera completa'),
         findsOneWidget);
   });
+
+  testWidgets('SEC 13F loading and failure announce status and retry restores verified evidence',
+      (tester) async {
+    final pending = Completer<RelevantInvestorActivity>();
+    var calls = 0;
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) {
+        calls++;
+        return calls == 1 ? pending.future : Future.value(activityFor(cik));
+      },
+    )));
+    await tester.pump();
+
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          widget.properties.liveRegion &&
+          widget.properties.label == 'Consultando actividad institucional SEC 13F.'),
+      findsOneWidget,
+    );
+    pending.completeError(const FormatException('unverified SEC source'));
+    await tester.pumpAndSettle();
+    expect(find.text('Actividad no disponible'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          widget.properties.liveRegion &&
+          widget.properties.label!.startsWith('Actividad no disponible.')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('CIK 123456'), findsNothing);
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.textContaining('CIK 123456'), findsOneWidget);
+    expect(find.text('Actividad no disponible'), findsNothing);
+  });
+
 }

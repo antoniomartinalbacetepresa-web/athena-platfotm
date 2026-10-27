@@ -242,4 +242,72 @@ void main() {
     firstController.dispose();
     secondController.dispose();
   });
+
+  testWidgets('Market mount invalidates an in-flight request on a reused controller',
+      (tester) async {
+    final stale = Completer<GlobalMarketContext>();
+    final service = _ControlledMarketService([
+      stale.future,
+      _context('Contexto del montaje vigente'),
+    ]);
+    final controller = GlobalMarketContextController(service: service);
+    addTearDown(controller.dispose);
+
+    unawaited(controller.loadGlobalContext());
+    expect(service.calls, 1);
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
+    await tester.pumpAndSettle();
+
+    expect(service.calls, 2);
+    expect(find.text('Contexto del montaje vigente'), findsOneWidget);
+    stale.complete(await _context('Contexto de montaje anterior'));
+    await tester.pump();
+    expect(find.text('Contexto de montaje anterior'), findsNothing);
+    expect(find.text('Contexto del montaje vigente'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Market controller rebind rejects a prior pending snapshot after new failure',
+      (tester) async {
+    final first = GlobalMarketContextController(
+      service: _ControlledMarketService([
+        _context('Mercado de la primera fuente'),
+      ]),
+    );
+    final stale = Completer<GlobalMarketContext>();
+    final secondService = _ControlledMarketService([
+      stale.future,
+      Future<GlobalMarketContext>.error(
+        const FormatException('invalid market provenance'),
+      ),
+    ]);
+    final second = GlobalMarketContextController(service: secondService);
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: first)));
+    await tester.pumpAndSettle();
+    expect(find.text('Mercado de la primera fuente'), findsOneWidget);
+
+    unawaited(second.loadGlobalContext());
+    expect(secondService.calls, 1);
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: second)));
+    await tester.pumpAndSettle();
+    expect(secondService.calls, 2);
+    expect(find.text('Mercado de la primera fuente'), findsNothing);
+    expect(find.bySemanticsLabel(
+      'No se pudo actualizar el contexto global del mercado.',
+    ), findsOneWidget);
+
+    stale.complete(await _context('Snapshot anterior sin autoridad'));
+    await tester.pump();
+    expect(find.text('Snapshot anterior sin autoridad'), findsNothing);
+    expect(find.bySemanticsLabel(
+      'No se pudo actualizar el contexto global del mercado.',
+    ), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
 }
