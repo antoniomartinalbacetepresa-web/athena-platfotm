@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -241,4 +242,31 @@ void main() {
     );
   });
 
+
+  test('stalled SEC 13F request times out and a later request can recover',
+      () async {
+    final stalled = Completer<http.Response>();
+    var calls = 0;
+    final source = AthenaBackendRelevantInvestorDataSource(
+      baseUrl: 'https://api.athena.test',
+      requestTimeout: const Duration(milliseconds: 30),
+      client: MockClient((_) {
+        calls++;
+        if (calls == 1) return stalled.future;
+        return Future.value(http.Response(jsonEncode(envelope()), 200));
+      }),
+    );
+    addTearDown(source.dispose);
+
+    await expectLater(
+      source.getLatestInstitutionalHoldings(cik: '123456'),
+      throwsA(isA<TimeoutException>()),
+    );
+    final recovered =
+        await source.getLatestInstitutionalHoldings(cik: '123456');
+    expect(calls, 2);
+    expect(recovered.cik, '123456');
+    expect(recovered.recommendationPolicy, 'no_advice');
+    expect(recovered.productionEligible, isFalse);
+  });
 }
