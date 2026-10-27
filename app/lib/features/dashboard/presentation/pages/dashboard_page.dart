@@ -131,6 +131,10 @@ class _DashboardPageState extends State<DashboardPage> {
     _ownsRecommendationDependencies = widget.recommendationDependencies == null;
     _recommendationDependencies = widget.recommendationDependencies ??
         RecommendationDependencies.create();
+    // An injected controller can already be processing a request from an
+    // earlier screen. Initial mounting must establish a new request generation,
+    // just as dependency replacement does in didUpdateWidget.
+    if (!_ownsRecommendationDependencies) _synthesisController.clear();
     _synthesisController.loadLatest();
   }
 

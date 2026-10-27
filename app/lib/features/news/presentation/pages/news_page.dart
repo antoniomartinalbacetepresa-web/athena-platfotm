@@ -50,6 +50,9 @@ class _NewsPageState extends State<NewsPage> {
     } else {
       _synthesisController = widget.synthesisController!;
     }
+    // A reused controller may still be loading for a previous screen. Do not
+    // inherit that request as authoritative evidence for this new News page.
+    if (!_ownsSynthesisController) _synthesisController.clear();
     _synthesisController.load();
   }
 

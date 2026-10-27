@@ -14,6 +14,51 @@ import 'package:http/testing.dart';
 
 void main() {
 
+
+  testWidgets(
+      'News initial mount invalidates an injected synthesis already in flight',
+      (tester) async {
+    final pending = Completer<http.Response>();
+    var calls = 0;
+    final stale = _synthesisPayload();
+    (((stale['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['items'] as List).first['summary'] =
+        'Síntesis obsoleta del montaje anterior';
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        calls++;
+        if (calls == 1) return pending.future;
+        return Future.value(http.Response(jsonEncode(_synthesisPayload()), 200,
+            headers: {'content-type': 'application/json'}));
+      }),
+    );
+    final controller = NewsSynthesisController(service: service);
+    addTearDown(controller.dispose);
+    addTearDown(service.dispose);
+
+    unawaited(controller.load());
+    await tester.pump();
+    expect(calls, 1);
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        synthesisController: controller,
+        newsFeed: const SizedBox.shrink(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('Síntesis renovada y verificable'), findsOneWidget);
+
+    pending.complete(http.Response(jsonEncode(stale), 200,
+        headers: {'content-type': 'application/json'}));
+    await tester.pump();
+    expect(find.text('Síntesis obsoleta del montaje anterior'), findsNothing);
+    expect(find.text('Síntesis renovada y verificable'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
       'News rebind invalidates a pending request already owned by the new controller',
       (tester) async {

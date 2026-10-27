@@ -89,6 +89,47 @@ void main() {
         ),
       );
 
+
+  testWidgets(
+      'Dashboard initial mount invalidates an injected synthesis already in flight',
+      (tester) async {
+    final pending = Completer<http.Response>();
+    var requests = 0;
+    final stale = _validPayload();
+    ((stale['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis anterior al montaje';
+    final fresh = _validPayload();
+    ((fresh['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis del montaje actual';
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        requests++;
+        if (requests == 1) return pending.future;
+        return Future.value(http.Response(jsonEncode(fresh), 200,
+            headers: {'content-type': 'application/json'}));
+      }),
+    ));
+    addTearDown(dependencies.dispose);
+
+    unawaited(dependencies.synthesisController.loadLatest());
+    await tester.pump();
+    expect(requests, 1);
+
+    await tester.pumpWidget(synthesisDashboard(dependencies));
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(find.text('Síntesis del montaje actual'), findsOneWidget);
+
+    pending.complete(http.Response(jsonEncode(stale), 200,
+        headers: {'content-type': 'application/json'}));
+    await tester.pump();
+    expect(find.text('Síntesis anterior al montaje'), findsNothing);
+    expect(find.text('Síntesis del montaje actual'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('Dashboard loads latest canonical ATHENA synthesis without cycle hash', (tester) async {
     late Uri requested;
     final client = MockClient((request) async {
