@@ -276,11 +276,10 @@ void main() {
       ]),
     );
     final stale = Completer<GlobalMarketContext>();
+    final failedRefresh = Completer<GlobalMarketContext>();
     final secondService = _ControlledMarketService([
       stale.future,
-      Future<GlobalMarketContext>.error(
-        const FormatException('invalid market provenance'),
-      ),
+      failedRefresh.future,
     ]);
     final second = GlobalMarketContextController(service: secondService);
     addTearDown(first.dispose);
@@ -293,6 +292,8 @@ void main() {
     unawaited(second.loadGlobalContext());
     expect(secondService.calls, 1);
     await tester.pumpWidget(MaterialApp(home: MarketPage(controller: second)));
+    // Attach the controller's error handler before the provider rejects.
+    failedRefresh.completeError(const FormatException('invalid market provenance'));
     await tester.pumpAndSettle();
     expect(secondService.calls, 2);
     expect(find.text('Mercado de la primera fuente'), findsNothing);

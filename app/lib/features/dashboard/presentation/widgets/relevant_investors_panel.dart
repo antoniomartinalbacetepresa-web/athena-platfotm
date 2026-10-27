@@ -202,10 +202,10 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
                   );
                 }
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Semantics(
+                  return Semantics(
                     liveRegion: true,
                     label: 'Consultando actividad institucional SEC 13F.',
-                    child: Center(child: CircularProgressIndicator()),
+                    child: const Center(child: CircularProgressIndicator()),
                   );
                 }
                 if (snapshot.hasError) {
