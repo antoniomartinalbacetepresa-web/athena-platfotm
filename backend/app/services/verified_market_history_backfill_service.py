@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sqlite3
+import tempfile
+from contextlib import closing
+from pathlib import Path
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -178,33 +182,47 @@ class VerifiedMarketHistoryBackfillService:
         self._database.initialize()
         sweep_day = self._today_provider()
         cutoff = datetime.combine(sweep_day, time.max, tzinfo=timezone.utc)
-        gap_service = MarketHistoryGapService(database=self._database)
-        initial = gap_service.get_report(
-            as_of=cutoff,
-            limit=min(max_items, MarketHistoryGapService.MAX_LIMIT),
-            offset=0,
-        )
-        # Freeze every requested ID before any provider writes. Pagination
-        # against a shrinking queue would silently skip unresolved symbols.
-        frozen = list(initial.items)
-        target_count = min(initial.total_blocking_count, max_items)
-        while len(frozen) < target_count:
-            page = gap_service.get_report(
+        # Freeze the worklist from ONE consistent SQLite backup, not from
+        # successive live queries. A concurrent ingestion or universe refresh
+        # can reorder an offset-paginated blocker queue without changing its
+        # total count, silently skipping instruments.
+        with tempfile.TemporaryDirectory(prefix="athena-backfill-worklist-") as directory:
+            frozen_path = Path(directory) / "frozen-worklist.db"
+            source_path = self._database.database_path.resolve()
+            with closing(sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)) as source:
+                with closing(sqlite3.connect(frozen_path)) as destination:
+                    source.backup(destination)
+            with closing(sqlite3.connect(frozen_path)) as frozen_connection:
+                integrity = frozen_connection.execute("PRAGMA quick_check").fetchone()
+            if integrity is None or integrity[0] != "ok":
+                raise RuntimeError("La copia de la cola histórica no supera la integridad SQLite.")
+            frozen_database = AthenaDatabase(frozen_path)
+            frozen_database.initialize()
+            gap_service = MarketHistoryGapService(database=frozen_database)
+            initial = gap_service.get_report(
                 as_of=cutoff,
-                limit=min(MarketHistoryGapService.MAX_LIMIT, target_count - len(frozen)),
-                offset=len(frozen),
+                limit=min(max_items, MarketHistoryGapService.MAX_LIMIT),
+                offset=0,
             )
-            if (
-                page.total_blocking_count != initial.total_blocking_count
-                or page.as_of != initial.as_of
-                or page.minimum_history_days != initial.minimum_history_days
-                or page.maximum_source_gap_days != initial.maximum_source_gap_days
-                or not page.items
-            ):
-                raise RuntimeError(
-                    "La lista de bloqueos cambió durante la congelación del barrido."
+            frozen = list(initial.items)
+            target_count = min(initial.total_blocking_count, max_items)
+            while len(frozen) < target_count:
+                page = gap_service.get_report(
+                    as_of=cutoff,
+                    limit=min(MarketHistoryGapService.MAX_LIMIT, target_count - len(frozen)),
+                    offset=len(frozen),
                 )
-            frozen.extend(page.items)
+                if (
+                    page.total_blocking_count != initial.total_blocking_count
+                    or page.as_of != initial.as_of
+                    or page.minimum_history_days != initial.minimum_history_days
+                    or page.maximum_source_gap_days != initial.maximum_source_gap_days
+                    or not page.items
+                ):
+                    raise RuntimeError(
+                        "La lista de bloqueos cambió durante la congelación del barrido."
+                    )
+                frozen.extend(page.items)
         instrument_ids = tuple(item.instrument_id for item in frozen)
         if len(instrument_ids) != len(set(instrument_ids)):
             raise RuntimeError("La lista inicial de bloqueos contiene IDs duplicados.")
