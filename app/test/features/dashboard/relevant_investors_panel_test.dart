@@ -604,4 +604,32 @@ void main() {
         findsOneWidget);
   });
 
+
+  testWidgets('SEC 13F timeout fails closed and retry restores verified filing',
+      (tester) async {
+    final stalled = Completer<RelevantInvestorActivity>();
+    var calls = 0;
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) {
+        calls++;
+        if (calls == 1) {
+          return stalled.future.timeout(const Duration(milliseconds: 30));
+        }
+        return Future.value(activityFor(cik));
+      },
+    )));
+    await tester.pump(const Duration(milliseconds: 40));
+    await tester.pump();
+
+    expect(find.text('Actividad no disponible'), findsOneWidget);
+    expect(find.textContaining('CIK 123456'), findsNothing);
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+
+    expect(calls, 2);
+    expect(find.textContaining('CIK 123456'), findsOneWidget);
+    expect(find.textContaining('evidencia separada; no altera el score ATHENA'),
+        findsOneWidget);
+  });
 }
