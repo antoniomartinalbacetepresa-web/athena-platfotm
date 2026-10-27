@@ -53,6 +53,13 @@ def copy_verified_backup(
     if manifest != DatabaseBackupService.manifest_path_for(source).resolve():
         raise ValueError("El manifiesto debe corresponder al backup indicado.")
 
+    # Preserve the public CLI contract for a malformed digest while the
+    # full verifier below checks all manifest fields and SQLite integrity.
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    expected_sha = str(payload.get("sha256") or "").strip().lower()
+    if len(expected_sha) != 64 or any(ch not in "0123456789abcdef" for ch in expected_sha):
+        raise ValueError("El manifiesto no contiene un SHA-256 válido.")
+
     with tempfile.TemporaryDirectory(prefix="athena-secondary-verify-") as temp_dir:
         verifier_root = Path(temp_dir)
         verifier = DatabaseBackupService(
@@ -98,7 +105,6 @@ def copy_verified_backup(
         "restore_drill": drill.to_dict(),
         "policy": {
             "secondaryCopyVerified": True,
-            "secondaryRestoreDrillVerified": True,
             "offsiteLocationOperatorAttested": offsite_attested is True,
             "offsiteLocationVerified": False,
             "scheduledExecutionVerified": False,

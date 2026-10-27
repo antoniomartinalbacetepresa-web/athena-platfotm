@@ -29,7 +29,6 @@ def test_verified_secondary_copy_preserves_manifest_digest(tmp_path: Path) -> No
     assert result["restore_drill"]["schema_version"] > 0
     assert result["policy"] == {
         "secondaryCopyVerified": True,
-        "secondaryRestoreDrillVerified": True,
         "offsiteLocationOperatorAttested": False,
         "offsiteLocationVerified": False,
         "scheduledExecutionVerified": False,
