@@ -131,21 +131,29 @@ void main() {
 
   testWidgets('Market error exposes an accessible inline retry and recovers safely',
       (tester) async {
+    final failing = Completer<GlobalMarketContext>();
     final service = _ControlledMarketService([
-      Future<GlobalMarketContext>.error(
-        const FormatException('private provider token=must-not-leak'),
-      ),
+      failing.future,
       _context('Contexto después del reintento'),
     ]);
     final controller = GlobalMarketContextController(service: service);
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
+    await tester.pump();
+    // Attach the controller's error handler before rejecting the provider.
+    failing.completeError(
+      const FormatException('private provider token=must-not-leak'),
+    );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-retry')), findsOneWidget);
     expect(find.textContaining('must-not-leak'), findsNothing);
     expect(
-      find.bySemanticsLabel('No se pudo actualizar el contexto global del mercado.'),
+      find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          widget.properties.liveRegion == true &&
+          widget.properties.label ==
+              'No se pudo actualizar el contexto global del mercado.'),
       findsOneWidget,
     );
 
