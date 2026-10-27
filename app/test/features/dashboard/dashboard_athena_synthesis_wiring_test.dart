@@ -819,8 +819,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Abierta: /portfolio'), findsOneWidget);
     Navigator.of(tester.element(find.text('Abierta: /portfolio'))).pop();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
+    // The failed request settles immediately, so finish the route's reverse
+    // transition before tapping the Dashboard retry control.
+    await tester.pumpAndSettle();
     expect(requests, 3);
     expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
     expect(find.text('Síntesis verificada 1'), findsNothing);
