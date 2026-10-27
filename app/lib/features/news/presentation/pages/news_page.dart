@@ -73,7 +73,10 @@ class _NewsPageState extends State<NewsPage> {
       _synthesisController = widget.synthesisController!;
     }
 
-    // Rebind immediately: never render the former controller's synthesis.
+    // The injected controller may still have a request from a prior mount.
+    // Clear its request generation before loading for this News page; a plain
+    // load() would return early and allow the old response to become visible.
+    _synthesisController.clear();
     _synthesisController.load();
     if (previouslyOwned) {
       previousController.dispose();

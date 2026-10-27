@@ -153,6 +153,55 @@ void main() {
     newDependencies.dispose();
   });
 
+
+  testWidgets(
+      'Dashboard rebinding invalidates an already loading injected synthesis',
+      (tester) async {
+    final oldDependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async =>
+          http.Response(jsonEncode(_validPayload()), 200)),
+    ));
+    final pendingPriorMount = Completer<http.Response>();
+    var reboundCalls = 0;
+    final fresh = _validPayload();
+    ((fresh['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis de la nueva vinculación';
+    final stale = _validPayload();
+    ((stale['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Síntesis del montaje anterior';
+    final reboundDependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        reboundCalls++;
+        if (reboundCalls == 1) return pendingPriorMount.future;
+        return Future.value(http.Response(jsonEncode(fresh), 200));
+      }),
+    ));
+
+    await tester.pumpWidget(synthesisDashboard(oldDependencies));
+    await tester.pumpAndSettle();
+    unawaited(reboundDependencies.synthesisController.loadLatest());
+    await tester.pump();
+    expect(reboundCalls, 1);
+
+    await tester.pumpWidget(synthesisDashboard(reboundDependencies));
+    await tester.pumpAndSettle();
+    expect(reboundCalls, 2);
+    expect(find.text('Síntesis de la nueva vinculación'), findsOneWidget);
+    expect(find.text('Síntesis del montaje anterior'), findsNothing);
+
+    pendingPriorMount.complete(http.Response(jsonEncode(stale), 200));
+    await tester.pump();
+    expect(find.text('Síntesis de la nueva vinculación'), findsOneWidget);
+    expect(find.text('Síntesis del montaje anterior'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    oldDependencies.dispose();
+    reboundDependencies.dispose();
+  });
+
   testWidgets('Dashboard rejects ATHENA synthesis that escalates operational authority', (tester) async {
     final payload = _validPayload();
     (payload['data'] as Map<String, dynamic>)['automaticTrading'] = true;

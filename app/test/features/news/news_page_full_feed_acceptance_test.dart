@@ -13,6 +13,72 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+
+  testWidgets(
+      'News rebind invalidates a pending request already owned by the new controller',
+      (tester) async {
+    final previousService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async =>
+          http.Response('{"detail":"unavailable"}', 503)),
+    );
+    final previousController = NewsSynthesisController(service: previousService);
+    final pendingPriorMount = Completer<http.Response>();
+    var reboundCalls = 0;
+    final stale = _synthesisPayload();
+    final staleSynthesis =
+        (stale['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>;
+    ((staleSynthesis['items'] as List).first
+        as Map<String, dynamic>)['summary'] = 'Síntesis anterior en vuelo';
+    final reboundService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        reboundCalls++;
+        if (reboundCalls == 1) return pendingPriorMount.future;
+        return Future.value(http.Response(
+          jsonEncode(_synthesisPayload()), 200,
+          headers: {'content-type': 'application/json'},
+        ));
+      }),
+    );
+    final reboundController = NewsSynthesisController(service: reboundService);
+
+    Widget page(NewsSynthesisController controller) => MaterialApp(
+      home: NewsPage(
+        synthesisController: controller,
+        newsFeed: const SizedBox.shrink(),
+      ),
+    );
+
+    await tester.pumpWidget(page(previousController));
+    await tester.pumpAndSettle();
+    unawaited(reboundController.load());
+    await tester.pump();
+    expect(reboundCalls, 1);
+
+    await tester.pumpWidget(page(reboundController));
+    await tester.pumpAndSettle();
+    expect(reboundCalls, 2);
+    expect(find.text('Síntesis renovada y verificable'), findsOneWidget);
+    expect(find.text('Síntesis anterior en vuelo'), findsNothing);
+
+    pendingPriorMount.complete(http.Response(
+      jsonEncode(stale), 200,
+      headers: {'content-type': 'application/json'},
+    ));
+    await tester.pump();
+    expect(find.text('Síntesis renovada y verificable'), findsOneWidget);
+    expect(find.text('Síntesis anterior en vuelo'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    previousController.dispose();
+    previousService.dispose();
+    reboundController.dispose();
+    reboundService.dispose();
+  });
+
   testWidgets('standalone News renders all verified articles in a scrollable page',
       (tester) async {
     final service = AthenaBackendNewsSynthesisService(

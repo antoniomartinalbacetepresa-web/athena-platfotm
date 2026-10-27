@@ -149,7 +149,10 @@ class _DashboardPageState extends State<DashboardPage> {
         RecommendationDependencies.create();
 
     // The Dashboard must immediately bind to the new canonical source.
-    // An old synthesis must never remain visible after dependencies change.
+    // An injected controller may already be loading evidence for a previous
+    // mount or owner. Invalidate that request before binding this Dashboard.
+    // loadLatest alone returns early while loading and would accept its result.
+    _synthesisController.clear();
     _synthesisController.loadLatest();
     if (previouslyOwned) {
       previousDependencies.dispose();
