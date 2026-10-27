@@ -7,9 +7,12 @@ default Flutter test runner. This is a mandatory part of the
 when this browser lane fails.
 
 The browser suite covers Dashboard / ATHENA synthesis, Market, News,
-SEC 13F Investors and the Dashboard–Portfolio boundary. It exercises
-navigation, selective refresh, stale-response isolation, provider failure,
-recovery and accessibility semantics using controlled HTTP providers.
+SEC 13F Investors, the Dashboard–Portfolio boundary, Profile and protected
+Personalization. It exercises navigation, selective refresh, stale-response
+isolation, provider failure, recovery and accessibility semantics using
+controlled HTTP providers. The Profile lane additionally checks guest and
+revoked-session boundaries, account-closure behavior, unsaved preference
+reloads, protected personalization policy and owner-session isolation.
 The test log is uploaded as `flutter-chrome-acceptance.log`.
 
 ## Evidence boundary
@@ -28,3 +31,20 @@ owner isolation, provider evidence and failures, and verify the remaining
 operational gates independently. Fixtures must never be presented as
 production evidence. No recommendation weighting, learning promotion or
 automatic trading is authorized by this browser gate.
+
+## Browser gate scope (non-production)
+
+The Chrome lane includes `profile_page_test.dart` and
+`profile_personalization_shell_test.dart` alongside the Dashboard, Market,
+News, Investors and Dashboard–Portfolio tests. A failing Profile or
+Personalization browser test fails the Flutter validation job and therefore
+the release validation gate. These are widget-level browser tests with
+controlled transport and memory token stores; they do **not** demonstrate
+real secure-storage persistence, real SMTP recovery, a deployed session,
+production owner isolation or a complete cross-route E2E.
+
+The next acceptance step is a deployed, authorized AuthSession–Profile–
+Portfolio–Dashboard journey using two real test accounts and an explicit
+logout/revocation boundary, with independently captured request/response
+contracts, accessibility findings and exact build SHA. Do not capture
+credentials, access tokens, capital or personal data in CI artifacts.
