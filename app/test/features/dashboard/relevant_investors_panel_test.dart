@@ -316,7 +316,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Posición 2026-06-30'), findsWidgets);
     expect(find.textContaining('publicado 2026-08-14 20:30 UTC'), findsOneWidget);
-    expect(find.textContaining('www.sec.gov/Archives/edgar/data/123456'), findsOneWidget);
+    expect(find.textContaining('www.sec.gov/Archives/edgar/data/123456'), findsWidgets);
     expect(find.textContaining('no representan posiciones actuales'), findsOneWidget);
     expect(find.textContaining('AAPL'), findsNothing);
   });

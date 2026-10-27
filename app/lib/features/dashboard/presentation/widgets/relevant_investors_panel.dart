@@ -114,7 +114,14 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
     if (_configurationError != null || _ciks.isEmpty) return const [];
     final requestedCiks = _ciks;
     final loader = _loader;
-    final activities = await Future.wait(requestedCiks.map(loader));
+    // Convert synchronous provider exceptions into failed futures before
+    // Future.wait subscribes. Otherwise an injected loader can throw during
+    // setState on retry instead of showing the fail-closed error state.
+    final activities = await Future.wait(
+      requestedCiks.map(
+        (cik) => Future<RelevantInvestorActivity>.sync(() => loader(cik)),
+      ),
+    );
     for (var i = 0; i < activities.length; i++) {
       if (activities[i].cik != requestedCiks[i]) {
         throw const FormatException(
