@@ -74,6 +74,14 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
     }
   }
 
+  void _refreshContext() {
+    // A stalled provider request must not disable recovery indefinitely.
+    // clear() revokes the previous request generation, so a late response
+    // cannot overwrite evidence from this explicit refresh.
+    _contextController.clear();
+    _contextController.loadGlobalContext();
+  }
+
   @override
   void dispose() {
     _contextController.removeListener(_onControllerChanged);
@@ -107,9 +115,7 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
             ),
             IconButton(
               tooltip: 'Actualizar mercado',
-              onPressed: _contextController.isLoading
-                  ? null
-                  : _contextController.loadGlobalContext,
+              onPressed: _refreshContext,
               icon: const Icon(
                 Icons.refresh,
                 color: AthenaColors.textSecondary,
@@ -137,9 +143,21 @@ class _GlobalMarketPanelState extends State<GlobalMarketPanel> {
         label: 'No se pudo actualizar el contexto global del mercado.',
         child: Align(
           alignment: Alignment.topLeft,
-          child: Text(
-            _contextController.error!,
-            style: const TextStyle(color: AthenaColors.danger, fontSize: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _contextController.error!,
+                style: const TextStyle(color: AthenaColors.danger, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                key: const Key('market-retry'),
+                onPressed: _refreshContext,
+                child: const Text('Reintentar mercado'),
+              ),
+            ],
           ),
         ),
       );

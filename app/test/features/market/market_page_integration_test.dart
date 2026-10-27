@@ -99,6 +99,66 @@ Future<GlobalMarketContext> _context(String summary) async {
 }
 
 void main() {
+
+  testWidgets('Market explicit refresh supersedes a stalled request and rejects late evidence',
+      (tester) async {
+    final stalled = Completer<GlobalMarketContext>();
+    final service = _ControlledMarketService([
+      stalled.future,
+      _context('Contexto recuperado vigente'),
+    ]);
+    final controller = GlobalMarketContextController(service: service);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
+    await tester.pump();
+    expect(service.calls, 1);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    // Refresh remains available while the original provider is still pending.
+    await tester.tap(find.byTooltip('Actualizar mercado'));
+    await tester.pumpAndSettle();
+    expect(service.calls, 2);
+    expect(find.text('Contexto recuperado vigente'), findsOneWidget);
+
+    stalled.complete(await _context('Respuesta anterior sin autoridad'));
+    await tester.pump();
+    expect(find.text('Respuesta anterior sin autoridad'), findsNothing);
+    expect(find.text('Contexto recuperado vigente'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Market error exposes an accessible inline retry and recovers safely',
+      (tester) async {
+    final service = _ControlledMarketService([
+      Future<GlobalMarketContext>.error(
+        const FormatException('private provider token=must-not-leak'),
+      ),
+      _context('Contexto después del reintento'),
+    ]);
+    final controller = GlobalMarketContextController(service: service);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-retry')), findsOneWidget);
+    expect(find.textContaining('must-not-leak'), findsNothing);
+    expect(
+      find.bySemanticsLabel('No se pudo actualizar el contexto global del mercado.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('market-retry')));
+    await tester.pumpAndSettle();
+    expect(service.calls, 2);
+    expect(find.byKey(const Key('market-retry')), findsNothing);
+    expect(find.text('Contexto después del reintento'), findsOneWidget);
+    expect(find.textContaining('must-not-leak'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('Market page exposes the informational contract before data resolves', (tester) async {
     final pending = Completer<GlobalMarketContext>();
     final service = _ControlledMarketService([pending.future]);
