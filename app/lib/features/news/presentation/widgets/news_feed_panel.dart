@@ -55,7 +55,12 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
   }
 
   void _reload() {
-    setState(() => _feedFuture = _load());
+    // Never return a Future from setState. Normalize synchronous loader
+    // failures into the same fail-closed FutureBuilder error state.
+    final next = Future<VerifiedNewsFeed>.sync(_load);
+    setState(() {
+      _feedFuture = next;
+    });
   }
 
   @override

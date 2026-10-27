@@ -258,10 +258,13 @@ void main() {
 
     const url = 'https://example.com/article/1';
     expect(find.text(url), findsOneWidget);
-    expect(
-      find.bySemanticsLabel('Enlace HTTPS de la noticia: $url'),
-      findsOneWidget,
+    final sourceSemantics = tester.widget<Semantics>(
+      find.ancestor(
+        of: find.text(url),
+        matching: find.byType(Semantics),
+      ).first,
     );
+    expect(sourceSemantics.properties.label, 'Enlace HTTPS de la noticia: $url');
     expect(
       find.byTooltip('Copiar enlace de Noticia verificada 1'),
       findsOneWidget,
