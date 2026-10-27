@@ -293,12 +293,13 @@ void main() {
     expect(secondService.calls, 1);
     await tester.pumpWidget(MaterialApp(home: MarketPage(controller: second)));
     // Attach the controller's error handler before the provider rejects.
-    failedRefresh.completeError(const FormatException('invalid market provenance'));
+    failedRefresh.completeError(const FormatException('invalid market provenance; token=secret-value'));
     await tester.pumpAndSettle();
     expect(secondService.calls, 2);
     expect(find.text('Mercado de la primera fuente'), findsNothing);
     expect(second.context, isNull);
-    expect(second.error, contains('invalid market provenance'));
+    expect(second.error, 'No se pudo verificar el contexto global del mercado. Reintenta la consulta.');
+    expect(find.textContaining('secret-value'), findsNothing);
     expect(
       find.byWidgetPredicate((widget) =>
           widget is Semantics &&
@@ -312,7 +313,8 @@ void main() {
     await tester.pump();
     expect(find.text('Snapshot anterior sin autoridad'), findsNothing);
     expect(second.context, isNull);
-    expect(second.error, contains('invalid market provenance'));
+    expect(second.error, 'No se pudo verificar el contexto global del mercado. Reintenta la consulta.');
+    expect(find.textContaining('secret-value'), findsNothing);
     expect(
       find.byWidgetPredicate((widget) =>
           widget is Semantics &&

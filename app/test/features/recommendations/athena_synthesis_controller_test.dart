@@ -121,6 +121,32 @@ void main() {
     expect(controller.cycleHash, cycleHash);
   });
 
+  test('research-cycle failure does not expose private provider diagnostics and retry recovers', () async {
+    var calls = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.test',
+      client: MockClient((_) {
+        calls++;
+        if (calls == 1) {
+          return Future<http.Response>.error(
+            StateError('internal URL with token=secret-value'),
+          );
+        }
+        return Future.value(http.Response(jsonEncode(validPayload()), 200));
+      }),
+    );
+    final controller = AthenaSynthesisController(dataSource: source);
+    await controller.load(cycleHash);
+    expect(controller.hasData, isFalse);
+    expect(controller.error, 'No se pudo verificar la síntesis ATHENA. Reintenta la consulta.');
+    expect(controller.error, isNot(contains('secret-value')));
+    await controller.retry();
+    expect(calls, 2);
+    expect(controller.error, isNull);
+    expect(controller.hasData, isTrue);
+    controller.dispose();
+  });
+
   test('clear invalidates an older latest response after a new latest request', () async {
     final older = Completer<http.Response>();
     final newer = Completer<http.Response>();

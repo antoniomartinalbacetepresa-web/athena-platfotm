@@ -718,6 +718,42 @@ void main() {
     expect(find.byKey(const Key('dashboard-my-space-0')), findsOneWidget);
   });
 
+
+  testWidgets('Dashboard ATHENA hides provider diagnostics and recovers on retry',
+      (tester) async {
+    var calls = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        calls++;
+        if (calls == 1) {
+          return Future<http.Response>.error(
+            StateError('provider URL contains token=secret-value'),
+          );
+        }
+        return Future.value(http.Response(
+          jsonEncode(_validPayload()),
+          200,
+          headers: {'content-type': 'application/json'},
+        ));
+      }),
+    );
+    final dependencies = _dependencies(source);
+    addTearDown(dependencies.dispose);
+
+    await tester.pumpWidget(synthesisDashboard(dependencies));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+    expect(find.textContaining('secret-value'), findsNothing);
+    expect(find.textContaining('No se pudo verificar'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('athena-synthesis-retry')));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-content')), findsOneWidget);
+  });
+
 }
 
 RecommendationDependencies _dependencies(

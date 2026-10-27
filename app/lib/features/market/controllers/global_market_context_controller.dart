@@ -41,13 +41,12 @@ class GlobalMarketContextController extends ChangeNotifier {
       if (!_disposed && requestVersion == _requestVersion) {
         _context = nextContext;
       }
-    } catch (error, stackTrace) {
-      debugPrint('ERROR AL OBTENER EL CONTEXTO GLOBAL DEL MERCADO:');
-      debugPrint(error.toString());
-      debugPrint(stackTrace.toString());
+    } catch (_) {
+      // Provider exceptions may contain request URLs, credentials or private
+      // diagnostics. Never expose their raw text through the UI or logs.
       if (!_disposed && requestVersion == _requestVersion) {
         _context = null;
-        _error = 'Error: ${error.toString()}';
+        _error = 'No se pudo verificar el contexto global del mercado. Reintenta la consulta.';
       }
     } finally {
       if (!_disposed && requestVersion == _requestVersion) {

@@ -35,13 +35,12 @@ class AthenaSynthesisController extends ChangeNotifier {
       final result = await dataSource.getLatest();
       if (_disposed || requestVersion != _requestVersion || !_latestRequested) return;
       _synthesis = result;
-    } catch (error, stackTrace) {
-      debugPrint('ERROR AL OBTENER LA ÚLTIMA SÍNTESIS CANÓNICA DE ATHENA:');
-      debugPrint(error.toString());
-      debugPrint(stackTrace.toString());
+    } catch (_) {
+      // Fail closed without publishing raw provider errors (which may include
+      // credential-bearing URLs or internal infrastructure details).
       if (!_disposed && requestVersion == _requestVersion && _latestRequested) {
         _synthesis = null;
-        _error = 'No se pudo verificar la síntesis ATHENA: ${error.toString()}';
+        _error = 'No se pudo verificar la síntesis ATHENA. Reintenta la consulta.';
       }
     } finally {
       if (!_disposed && requestVersion == _requestVersion && _latestRequested) {
@@ -70,14 +69,13 @@ class AthenaSynthesisController extends ChangeNotifier {
         return;
       }
       _synthesis = result;
-    } catch (error, stackTrace) {
-      debugPrint('ERROR AL OBTENER LA SÍNTESIS CANÓNICA DE ATHENA:');
-      debugPrint(error.toString());
-      debugPrint(stackTrace.toString());
+    } catch (_) {
+      // A failed research-cycle request has the same no-leakage boundary as
+      // latest synthesis; keep the request-generation checks intact.
       if (!_disposed && requestVersion == _requestVersion &&
           _cycleHash == requestedCycle && !_latestRequested) {
         _synthesis = null;
-        _error = 'No se pudo verificar la síntesis ATHENA: ${error.toString()}';
+        _error = 'No se pudo verificar la síntesis ATHENA. Reintenta la consulta.';
       }
     } finally {
       if (!_disposed && requestVersion == _requestVersion &&
