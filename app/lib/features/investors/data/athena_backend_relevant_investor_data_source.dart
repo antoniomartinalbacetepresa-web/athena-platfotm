@@ -7,11 +7,14 @@ import '../models/relevant_investor_activity.dart';
 class AthenaBackendRelevantInvestorDataSource {
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
   AthenaBackendRelevantInvestorDataSource({
     required this.baseUrl,
     http.Client? client,
-  }) : client = client ?? http.Client();
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   Future<RelevantInvestorActivity> getLatestInstitutionalHoldings({
     required String cik,
@@ -23,7 +26,9 @@ class AthenaBackendRelevantInvestorDataSource {
 
     final uri = Uri.parse('$baseUrl/api/v1/sec/institutional-holdings/latest')
         .replace(queryParameters: {'cik': normalizedCik});
-    final response = await client.get(uri);
+    // A stalled SEC/backend request must fail closed and allow the user to retry.
+    // Never present an incomplete 13F cohort as verified evidence.
+    final response = await client.get(uri).timeout(requestTimeout);
     if (response.statusCode == 404) {
       throw StateError('No hay filings 13F recientes para este CIK.');
     }
