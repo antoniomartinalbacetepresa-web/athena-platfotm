@@ -574,12 +574,14 @@ void main() {
   testWidgets('failed SEC refresh hides filing link until verified retry',
       (tester) async {
     var calls = 0;
+    final failedRefresh = Completer<RelevantInvestorActivity>();
     await tester.pumpWidget(host(RelevantInvestorsPanel(
       configuredCiks: const ['123456'],
-      loader: (cik) async {
+      loader: (cik) {
         calls++;
-        if (calls == 2) throw StateError('SEC temporarily unavailable');
-        return activityFor(cik);
+        return calls == 2
+            ? failedRefresh.future
+            : Future.value(activityFor(cik));
       },
     )));
     await tester.pumpAndSettle();
@@ -587,6 +589,9 @@ void main() {
         findsOneWidget);
 
     await tester.tap(find.byTooltip('Actualizar actividad SEC 13F'));
+    await tester.pump();
+    expect(find.byKey(const Key('investor-copy-filing-123456')), findsNothing);
+    failedRefresh.completeError(StateError('SEC temporarily unavailable'));
     await tester.pumpAndSettle();
     expect(find.text('Actividad no disponible'), findsOneWidget);
     expect(find.byKey(const Key('investor-copy-filing-123456')), findsNothing);
