@@ -19,10 +19,54 @@ import 'package:app/features/news/models/verified_news_feed.dart';
 import 'package:app/features/news/presentation/news_synthesis_controller.dart';
 import 'package:app/features/news/presentation/pages/news_page.dart';
 import 'package:app/features/news/services/athena_backend_news_synthesis_service.dart';
+import 'package:app/features/market/controllers/global_market_context_controller.dart';
+import 'package:app/features/market/models/global_market_context.dart';
+import 'package:app/features/market/models/market_region.dart';
+import 'package:app/features/market/models/market_universe_asset.dart';
+import 'package:app/features/market/models/regional_market_context.dart';
+import 'package:app/features/market/presentation/pages/market_page.dart';
+import 'package:app/features/market/repositories/market_universe_repository.dart';
+import 'package:app/features/market/services/global_market_context_service.dart';
+import 'package:app/features/market/services/global_market_data_service.dart';
+import 'package:app/features/market/services/regional_market_context_service.dart';
+import 'package:app/features/market/services/regional_market_weight_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+
+class _UnusedMarketRegionService implements RegionalMarketContextService {
+  @override
+  Future<RegionalMarketContext> getRegionalContext({
+    required MarketRegion region,
+  }) async => throw UnimplementedError();
+}
+
+class _UnusedMarketUniverse implements MarketUniverseRepository {
+  const _UnusedMarketUniverse();
+
+  @override
+  Future<List<MarketUniverseAsset>> getUniverse() async => const [];
+}
+
+class _UnavailableMarketService extends GlobalMarketDataService {
+  _UnavailableMarketService()
+      : super(
+          regionalMarketContextService: _UnusedMarketRegionService(),
+          globalMarketContextService: const GlobalMarketContextService(),
+          marketUniverseRepository: const _UnusedMarketUniverse(),
+          regionalMarketWeightService: const RegionalMarketWeightService(),
+        );
+
+  int calls = 0;
+
+  @override
+  Future<GlobalMarketContext> getGlobalContext() async {
+    calls++;
+    throw StateError('private market provider token=must-not-leak');
+  }
+}
 
 void main() {
 
@@ -772,6 +816,9 @@ void main() {
     var investorRequests = 0;
     var newsSynthesisRequests = 0;
     var feedRequests = 0;
+    final marketService = _UnavailableMarketService();
+    final marketController = GlobalMarketContextController(service: marketService);
+    addTearDown(marketController.dispose);
     final synthesisSource = AthenaBackendSynthesisDataSource(
       baseUrl: 'https://athena.example',
       client: MockClient((_) async {
@@ -869,9 +916,7 @@ void main() {
         if (settings.name == AppRoutes.market) {
           return MaterialPageRoute<void>(
             settings: settings,
-            builder: (_) => const Scaffold(
-              body: Center(child: Text('Mercado abierto')),
-            ),
+            builder: (_) => MarketPage(controller: marketController),
           );
         }
         return null;
@@ -892,8 +937,15 @@ void main() {
 
     await tester.tap(find.byTooltip('Mercado'));
     await tester.pumpAndSettle();
-    expect(find.text('Mercado abierto'), findsOneWidget);
-    Navigator.of(tester.element(find.text('Mercado abierto'))).pop();
+    expect(marketService.calls, 1);
+    expect(find.text('MERCADO'), findsOneWidget);
+    expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('No se pudo actualizar el contexto global del mercado.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('must-not-leak'), findsNothing);
+    Navigator.of(tester.element(find.text('MERCADO'))).pop();
     await tester.pumpAndSettle();
     expect(athenaRequests, 2);
     expect(find.text('ATHENA evidencia vigente 1'), findsNothing);
