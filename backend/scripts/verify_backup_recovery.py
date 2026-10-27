@@ -34,14 +34,16 @@ def _verify_managed_sqlite_backup(source: Path) -> None:
 
     # The service verifies manifest format, size, SHA-256, SQLite integrity and
     # schema version before creating an isolated restored copy.
-    database = AthenaDatabase(source.parent / ".athena-recovery-verifier-source.db")
-    service = DatabaseBackupService(database)
-    service.verify_backup(source)
-
+    # The backup may be on a read-only/off-site mount. Keep every writable
+    # verifier path in isolated temporary storage, never beside the artifact.
     with tempfile.TemporaryDirectory(prefix="athena-recovery-") as directory:
+        verifier_root = Path(directory)
+        database = AthenaDatabase(verifier_root / "verifier-source.db")
+        service = DatabaseBackupService(database)
+        service.verify_backup(source)
         result = service.run_restore_drill(
             source,
-            working_directory=Path(directory),
+            working_directory=verifier_root / "restore",
         )
         if result.schema_version <= 0:
             raise RuntimeError("Restored ATHENA schema version is invalid")

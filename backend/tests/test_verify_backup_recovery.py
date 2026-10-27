@@ -38,6 +38,30 @@ def test_verify_backup_restores_managed_sqlite_into_isolated_database(
     assert metadata.schema_version == AthenaDatabase.SCHEMA_VERSION
 
 
+def test_verify_backup_leaves_external_backup_directory_unchanged(
+    tmp_path: Path,
+) -> None:
+    external_directory = tmp_path / "external-read-only-store"
+    external_directory.mkdir()
+    backup = _managed_backup(external_directory)
+    original_files = {
+        entry.name: entry.read_bytes()
+        for entry in external_directory.iterdir()
+        if entry.is_file()
+    }
+
+    verify_backup(backup, database_url="sqlite:///production.db")
+
+    # Verification and restore drill must never create temporary database or
+    # journal files beside an immutable/off-site backup and its manifest.
+    assert {
+        entry.name: entry.read_bytes()
+        for entry in external_directory.iterdir()
+        if entry.is_file()
+    } == original_files
+    assert not (external_directory / ".athena-recovery-verifier-source.db").exists()
+
+
 def test_verify_backup_rejects_sqlite_without_athena_manifest(tmp_path: Path) -> None:
     backup = _managed_backup(tmp_path)
     DatabaseBackupService.manifest_path_for(backup).unlink()
