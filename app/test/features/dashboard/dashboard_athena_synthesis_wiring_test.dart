@@ -1240,7 +1240,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
     Navigator.of(tester.element(find.text('MERCADO'))).pop();
-    await tester.pumpAndSettle();
+    // The Market-triggered ATHENA request intentionally remains pending:
+    // pumpAndSettle would wait forever on its loading indicator.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(athenaRequests, 2);
     expect(find.text('ATHENA verificada 1'), findsNothing);
     expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
