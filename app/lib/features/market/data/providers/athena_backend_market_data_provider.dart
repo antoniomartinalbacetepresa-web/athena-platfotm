@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -16,9 +17,14 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
 
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
-  AthenaBackendMarketDataProvider({required this.baseUrl, http.Client? client})
-      : client = client ?? http.Client();
+  AthenaBackendMarketDataProvider({
+    required this.baseUrl,
+    http.Client? client,
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   @override
   String get providerId => _providerId;
@@ -31,7 +37,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       '$baseUrl/api/v1/market/quote',
     ).replace(queryParameters: {'symbol': normalizedSymbol});
 
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
     _validateResponse(response);
 
     final decoded = _decodeObject(response.body);
@@ -72,7 +78,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       '$baseUrl/api/v1/market/history',
     ).replace(queryParameters: queryParameters);
 
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
     _validateResponse(response);
 
     final decoded = _decodeObject(response.body);

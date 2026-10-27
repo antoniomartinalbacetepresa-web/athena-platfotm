@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -144,4 +145,42 @@ void main() {
     );
     expect(() => source.getLatest(), throwsA(isA<FormatException>()));
   });
+  test('latest ATHENA synthesis times out and a retry recovers verified provenance', () async {
+    final stalled = Completer<http.Response>();
+    var calls = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      requestTimeout: const Duration(milliseconds: 20),
+      client: MockClient((_) {
+        calls++;
+        if (calls == 1) return stalled.future;
+        return Future.value(http.Response(responseBody(), 200));
+      }),
+    );
+    await expectLater(source.getLatest(), throwsA(isA<TimeoutException>()));
+    final recovered = await source.getLatest();
+    expect(calls, 2);
+    expect(recovered.isSafe, isTrue);
+    expect(recovered.provenance.hasNews, isTrue);
+    expect(recovered.provenance.hasInvestors, isTrue);
+    stalled.complete(http.Response('{"detail":"old"}', 503));
+    source.dispose();
+  });
+
+  test('research-cycle ATHENA synthesis times out without promoting evidence', () async {
+    final stalled = Completer<http.Response>();
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      requestTimeout: const Duration(milliseconds: 20),
+      client: MockClient((_) => stalled.future),
+    );
+    await expectLater(
+      source.getForResearchCycle(hashB),
+      throwsA(isA<TimeoutException>()),
+    );
+    stalled.complete(http.Response(responseBody(), 200));
+    source.dispose();
+  });
+
+
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -41,16 +42,19 @@ class AthenaSynthesisView {
 class AthenaBackendSynthesisDataSource {
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
   AthenaBackendSynthesisDataSource({
     required this.baseUrl,
     http.Client? client,
-  }) : client = client ?? http.Client();
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   Future<AthenaSynthesisView> getLatest() async {
     final response = await client.get(Uri.parse(
       '$baseUrl/api/v1/recommendations/professional-research/athena-synthesis/latest',
-    ));
+    )).timeout(requestTimeout);
     return _decodeResponse(response);
   }
 
@@ -61,7 +65,7 @@ class AthenaBackendSynthesisDataSource {
     }
     final response = await client.get(Uri.parse(
       '$baseUrl/api/v1/recommendations/professional-research/research-cycle/$hash/athena-synthesis',
-    ));
+    )).timeout(requestTimeout);
     return _decodeResponse(response);
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -20,15 +21,18 @@ class AthenaBackendMarketUniverseDataSource
     implements MarketUniverseStatusProvider {
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
   AthenaBackendMarketUniverseDataSource({
     required this.baseUrl,
     http.Client? client,
-  }) : client = client ?? http.Client();
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   Future<List<MarketUniverseAsset>> getUniverse() async {
     final uri = Uri.parse('$baseUrl/api/v1/market/universe');
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
 
     _validateResponse(response, resourceLabel: 'el universo de mercado');
 
@@ -67,7 +71,7 @@ class AthenaBackendMarketUniverseDataSource
   @override
   Future<MarketUniverseStatus> getStatus() async {
     final uri = Uri.parse('$baseUrl/api/v1/market/universe/status');
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
 
     _validateResponse(
       response,

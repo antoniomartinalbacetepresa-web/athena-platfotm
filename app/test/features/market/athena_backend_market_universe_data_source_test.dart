@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -313,5 +314,47 @@ void main() {
 
       expect(dataSource.getUniverse, throwsException);
     });
+    test('universe and status time out and retry without stale evidence', () async {
+      final staleUniverse = Completer<http.Response>();
+      final staleStatus = Completer<http.Response>();
+      var universeCalls = 0;
+      var statusCalls = 0;
+      final source = AthenaBackendMarketUniverseDataSource(
+        baseUrl: 'https://api.athena.test',
+        requestTimeout: const Duration(milliseconds: 20),
+        client: MockClient((request) {
+          if (request.url.path.endsWith('/status')) {
+            statusCalls++;
+            if (statusCalls == 1) return staleStatus.future;
+            return Future.value(http.Response(jsonEncode({
+              'data': {
+                'activeCount': 1,
+                'globallyUsableCount': 0,
+                'isWeightingReady': false,
+              },
+            }), 200));
+          }
+          universeCalls++;
+          if (universeCalls == 1) return staleUniverse.future;
+          return Future.value(http.Response(jsonEncode({
+            'data': [
+              {'symbol': 'AAA', 'companyName': 'Verified listing'},
+            ],
+          }), 200));
+        }),
+      );
+      await expectLater(source.getUniverse(), throwsA(isA<TimeoutException>()));
+      await expectLater(source.getStatus(), throwsA(isA<TimeoutException>()));
+      final recoveredUniverse = await source.getUniverse();
+      final recoveredStatus = await source.getStatus();
+      expect(universeCalls, 2);
+      expect(statusCalls, 2);
+      expect(recoveredUniverse.single.symbol, 'AAA');
+      expect(recoveredStatus.isWeightingReady, isFalse);
+      staleUniverse.complete(http.Response('{"data":[]}', 200));
+      staleStatus.complete(http.Response('{"data":null}', 200));
+      source.dispose();
+    });
+
   });
 }

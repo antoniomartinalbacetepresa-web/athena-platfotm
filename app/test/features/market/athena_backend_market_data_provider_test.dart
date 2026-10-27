@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -245,5 +246,48 @@ void main() {
 
       expect(() => provider.getQuote('AAPL'), throwsFormatException);
     });
+    test('quote timeout fails closed and a later request recovers', () async {
+      final stalled = Completer<http.Response>();
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        requestTimeout: const Duration(milliseconds: 20),
+        client: MockClient((_) {
+          calls++;
+          if (calls == 1) return stalled.future;
+          return Future.value(http.Response(jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-10-27T11:00:00Z',
+              'sourceProvider': 'yahoo',
+              'close': 250.0,
+            },
+          }), 200));
+        }),
+      );
+      await expectLater(provider.getQuote('AAPL'), throwsA(isA<TimeoutException>()));
+      final recovered = await provider.getQuote('AAPL');
+      expect(calls, 2);
+      expect(recovered?.close, 250.0);
+      expect(recovered?.sourceProvider, 'yahoo');
+      stalled.complete(http.Response('{"data":null}', 200));
+      provider.dispose();
+    });
+
+    test('historical request times out instead of hanging indefinitely', () async {
+      final stalled = Completer<http.Response>();
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        requestTimeout: const Duration(milliseconds: 20),
+        client: MockClient((_) => stalled.future),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsA(isA<TimeoutException>()),
+      );
+      stalled.complete(http.Response('{"data":[]}', 200));
+      provider.dispose();
+    });
+
   });
 }
