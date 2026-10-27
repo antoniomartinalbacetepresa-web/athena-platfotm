@@ -13,6 +13,12 @@ import 'package:app/features/recommendations/data/datasources/athena_backend_rec
 import 'package:app/features/recommendations/data/datasources/athena_backend_synthesis_data_source.dart';
 import 'package:app/features/recommendations/di/recommendation_dependencies.dart';
 import 'package:app/features/recommendations/controllers/recommendation_learning_controller.dart';
+import 'package:app/features/dashboard/presentation/widgets/relevant_investors_panel.dart';
+import 'package:app/features/investors/models/relevant_investor_activity.dart';
+import 'package:app/features/news/models/verified_news_feed.dart';
+import 'package:app/features/news/presentation/news_synthesis_controller.dart';
+import 'package:app/features/news/presentation/pages/news_page.dart';
+import 'package:app/features/news/services/athena_backend_news_synthesis_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -752,6 +758,183 @@ void main() {
     expect(calls, 2);
     expect(find.byKey(const Key('athena-synthesis-error')), findsNothing);
     expect(find.byKey(const Key('athena-synthesis-content')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Dashboard Market News Investors ATHENA route lifecycle keeps selective evidence and fail-closed boundaries',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    var athenaRequests = 0;
+    var investorRequests = 0;
+    var newsSynthesisRequests = 0;
+    var feedRequests = 0;
+    final synthesisSource = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async {
+        athenaRequests++;
+        if (athenaRequests == 2) {
+          return http.Response('{"detail":"unavailable"}', 503);
+        }
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] =
+            'ATHENA evidencia vigente $athenaRequests';
+        return http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'});
+      }),
+    );
+    final dependencies = _dependencies(synthesisSource);
+    addTearDown(dependencies.dispose);
+    final newsService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async {
+        newsSynthesisRequests++;
+        return http.Response('{"detail":"unavailable"}', 503);
+      }),
+    );
+    final newsController = NewsSynthesisController(service: newsService);
+    addTearDown(newsController.dispose);
+    addTearDown(newsService.dispose);
+
+    Future<RelevantInvestorActivity> investorLoader(String cik) async {
+      investorRequests++;
+      return RelevantInvestorActivity(
+        cik: cik,
+        form: '13F-HR',
+        accessionNumber: '0000123456-26-000001',
+        positionDate: DateTime.utc(2026, 6, 30),
+        filingDate: DateTime.utc(2026, 8, 14),
+        publicationDateTime: DateTime.utc(2026, 8, 14, 20),
+        retrievedAt: DateTime.utc(2026, 9, 4, 20),
+        sourceUrl: 'https://www.sec.gov/Archives/edgar/data/123456/filing.xml',
+        sourceProvider: 'SEC EDGAR',
+        valueUnit: 'thousands_usd_as_reported_by_sec_13f',
+        holdings: const [],
+      );
+    }
+
+    Future<VerifiedNewsFeed> newsLoader(int limit) async {
+      feedRequests++;
+      return VerifiedNewsFeed(
+        query: 'mercado',
+        sourceProvider: 'google_news_rss',
+        retrievedAt: DateTime.utc(2026, 9, 4, 20),
+        items: [
+          VerifiedNewsItem(
+            title: 'Noticia verificable independiente',
+            publisher: 'Publicador verificado',
+            publisherUrl: 'https://example.com',
+            articleUrl: 'https://example.com/noticia',
+            publishedAt: DateTime.utc(2026, 9, 4, 19),
+            retrievedAt: DateTime.utc(2026, 9, 4, 20),
+            sourceProvider: 'google_news_rss',
+          ),
+        ],
+      );
+    }
+
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder:
+            (owner, market, news, investors, research, readiness) => Column(
+          children: [
+            operationalEpochPanels(
+                owner, market, news, investors, research, readiness),
+            SizedBox(
+              height: 340,
+              child: RelevantInvestorsPanel(
+                key: ValueKey('investors-epoch-$investors'),
+                configuredCiks: const ['123456'],
+                loader: investorLoader,
+              ),
+            ),
+          ],
+        ),
+      ),
+      onGenerateRoute: (settings) {
+        if (settings.name == AppRoutes.news) {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => NewsPage(
+              synthesisController: newsController,
+              feedLoader: newsLoader,
+            ),
+          );
+        }
+        if (settings.name == AppRoutes.market) {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => const Scaffold(
+              body: Center(child: Text('Mercado abierto')),
+            ),
+          );
+        }
+        return null;
+      },
+    ));
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 1);
+    expect(investorRequests, 1);
+    expect(find.text('ATHENA evidencia vigente 1'), findsOneWidget);
+    expect(find.textContaining('CIK 123456'), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Evidencia institucional point-in-time de SEC 13F. Es informativa y separada: no altera el score ATHENA, no genera recomendaciones y no ejecuta órdenes.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Mercado'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mercado abierto'), findsOneWidget);
+    Navigator.of(tester.element(find.text('Mercado abierto'))).pop();
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 2);
+    expect(find.text('ATHENA evidencia vigente 1'), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+    expect(investorRequests, 1);
+
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pumpAndSettle();
+    expect(newsSynthesisRequests, 1);
+    expect(feedRequests, 1);
+    expect(find.text('Noticia verificable independiente'), findsOneWidget);
+    expect(find.text('https://example.com/noticia'), findsOneWidget);
+    expect(find.text('ANÁLISIS ATHENA DE NOTICIAS'), findsNothing);
+    expect(find.text('Reintentar'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Noticias verificadas no disponibles.'),
+      findsNothing,
+    );
+    Navigator.of(tester.element(find.text('NOTICIAS'))).pop();
+    await tester.pumpAndSettle();
+
+    expect(athenaRequests, 3);
+    expect(find.text('ATHENA evidencia vigente 3'), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+    expect(investorRequests, 1);
+
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 4);
+    expect(investorRequests, 2);
+    expect(find.text('ATHENA evidencia vigente 4'), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-my-space-1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
 }
