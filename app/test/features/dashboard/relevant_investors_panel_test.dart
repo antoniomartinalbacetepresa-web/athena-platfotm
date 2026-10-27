@@ -508,7 +508,7 @@ void main() {
     expect(
       find.byWidgetPredicate((widget) =>
           widget is Semantics &&
-          widget.properties.liveRegion &&
+          widget.properties.liveRegion == true &&
           widget.properties.label == 'Consultando actividad institucional SEC 13F.'),
       findsOneWidget,
     );
@@ -518,7 +518,7 @@ void main() {
     expect(
       find.byWidgetPredicate((widget) =>
           widget is Semantics &&
-          widget.properties.liveRegion &&
+          widget.properties.liveRegion == true &&
           widget.properties.label!.startsWith('Actividad no disponible.')),
       findsOneWidget,
     );

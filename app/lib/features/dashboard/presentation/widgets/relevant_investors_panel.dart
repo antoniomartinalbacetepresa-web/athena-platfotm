@@ -597,31 +597,32 @@ class _InvestorState extends StatelessWidget {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: AthenaColors.textSecondary, size: 34),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AthenaColors.text,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+            children: [
+              Icon(icon, color: AthenaColors.textSecondary, size: 34),
+              const SizedBox(height: 10),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AthenaColors.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              detail,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AthenaColors.textSecondary,
-                fontSize: 11,
-                height: 1.35,
+              const SizedBox(height: 6),
+              Text(
+                detail,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AthenaColors.textSecondary,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
               ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 8),
-              TextButton(onPressed: onAction, child: Text(actionLabel!)),
+              if (actionLabel != null && onAction != null) ...[
+                const SizedBox(height: 8),
+                TextButton(onPressed: onAction, child: Text(actionLabel!)),
+              ],
             ],
           ),
         ),
