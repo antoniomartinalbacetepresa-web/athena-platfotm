@@ -27,7 +27,10 @@ def owners():
             module.TestOwner("b@test.invalid", "not-a-real-secret", 22, "USD"))
 
 
-def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=False, missing_athena=False):
+def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=False,
+              missing_athena=False, shared_extra_position=False,
+              personalization_leak=False, personalization_escalation=False,
+              fallback_market=False, empty_market=False):
     revoked = set()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -35,7 +38,10 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
         if path == "/health":
             return httpx.Response(200, json={"status": "ok", "service": "athena-tyche-backend"})
         if path == "/api/v1/market/universe/status":
-            return httpx.Response(200, json={"data": {"activeCount": 2}})
+            return httpx.Response(200, json={"data": {
+                "activeCount": 0 if empty_market else 2,
+                "usingFallback": fallback_market,
+            }})
         if path.endswith("/athena-synthesis/latest"):
             if missing_athena:
                 return httpx.Response(404, json={"detail": "not ready"})
@@ -72,8 +78,23 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
             return httpx.Response(200, json={"status": "configured", "data": {"preferences": {"baseCurrency": "EUR" if is_a else "USD"}},
                                              "policy": {"ownerDerivedFromAuthenticatedToken": True,
                                                         "clientSuppliedOwnerAccepted": False, "automaticTrading": False}})
+        if path == "/api/v1/user/profile/personalization":
+            policy = {"presentationOnly": True, "recommendationScoringInfluence": False,
+                      "canonicalWeightingInfluence": False, "automaticLearningPromotion": False,
+                      "automaticTrading": False, "sensitiveValuesIncluded": False}
+            if personalization_escalation:
+                policy["automaticLearningPromotion"] = True
+            projection = {"schema": "athena.user-personalization.v1", "fingerprint": HASH,
+                          "presentation": {"detailLevel": "standard", "explanationStyle": "balanced",
+                                           "riskEmphasis": "standard", "horizonEmphasis": "long_term",
+                                           "liquidityEmphasis": "unspecified", "objectiveFocus": "long_term_growth"},
+                          "policy": policy}
+            if personalization_leak:
+                projection["availableCapital"] = 100000
+            return httpx.Response(200, json={"status": "configured", "data": projection})
         if path == "/api/v1/user/portfolio":
-            ids = [11, 22] if cross_owner else ([11] if is_a else [22])
+            ids = ([11, 33] if is_a else [22, 33]) if shared_extra_position else (
+                [11, 22] if cross_owner else ([11] if is_a else [22]))
             return httpx.Response(200, json={"data": {"positions": [{"id": n} for n in ids], "positionCount": len(ids)},
                                              "policy": {"ownerDerivedFromAuthenticatedToken": True,
                                                         "clientSuppliedOwnerAccepted": False, "automaticTrading": False}})
@@ -92,9 +113,15 @@ def test_two_owner_canonical_and_revocation_success():
     assert report["deployedApiContractsVerified"] is True
     assert report["deployedFlutterBrowserE2EVerified"] is False
     assert report["operationalHistory365DaysVerified"] is False
+    assert report["ownerScopedPersonalizationVerified"] is True
+    assert report["persistedMarketUniverseVerified"] is True
 
 
-@pytest.mark.parametrize("fault", ["missing_athena", "mismatched_news", "cross_owner", "revoked_accepted"])
+@pytest.mark.parametrize("fault", [
+    "missing_athena", "mismatched_news", "cross_owner", "revoked_accepted",
+    "shared_extra_position", "personalization_leak", "personalization_escalation",
+    "fallback_market", "empty_market",
+])
 def test_deployed_acceptance_fails_closed(fault):
     with pytest.raises(module.AcceptanceFailure):
         check(**{fault: True})
