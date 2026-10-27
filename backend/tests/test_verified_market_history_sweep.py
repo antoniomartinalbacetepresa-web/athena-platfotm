@@ -229,3 +229,42 @@ def test_sweep_fails_closed_if_blocker_worklist_changes_during_freeze(
     with pytest.raises(RuntimeError, match="congelación"):
         service.run_sweep(limit=500, max_batches=3)
     assert attempted == []
+
+
+def test_sweep_freezes_consistent_worklist_when_live_universe_changes_between_pages(
+    tmp_path, monkeypatch,
+):
+    """A new alphabetically earlier live blocker must not displace a frozen ID."""
+    database = make_database(tmp_path, "BBB", "CCC", "DDD")
+    today = datetime.now(timezone.utc).date()
+    provider = FakeHistoryProvider({})
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider, today_provider=lambda: today,
+    )
+    gap_class = sweep_module.MarketHistoryGapService
+    original = gap_class.get_report
+    monkeypatch.setattr(gap_class, "MAX_LIMIT", 2)
+    inserted = False
+
+    def concurrent_universe_change(self, **kwargs):
+        nonlocal inserted
+        result = original(self, **kwargs)
+        if not inserted and kwargs.get("offset") == 0:
+            inserted = True
+            InstrumentRepository(database=database).upsert({
+                "symbol": "AAA", "companyName": "AAA",
+                "country": "United States", "regionKey": "america",
+                "exchangeShortName": "NASDAQ", "instrumentType": "common_stock",
+            })
+        return result
+
+    monkeypatch.setattr(gap_class, "get_report", concurrent_universe_change)
+    report = service.run_sweep(limit=1, max_batches=3)
+
+    assert inserted is True
+    assert provider.calls == ["BBB", "CCC", "DDD"]
+    assert report["initialBlockingCount"] == 3
+    assert report["attemptedInstrumentCount"] == 3
+    assert report["remainingBlockingCount"] == 4
+    assert report["historyReady"] is False
+    assert report["policy"]["productionEvidenceClaimed"] is False
