@@ -1116,6 +1116,176 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+
+  testWidgets(
+      'Dashboard rejects a late Market synthesis after News navigation and preserves independent SEC evidence',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final pendingMarketReturn = Completer<http.Response>();
+    var athenaRequests = 0;
+    var investorRequests = 0;
+    var newsFeedRequests = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        athenaRequests++;
+        if (athenaRequests == 2) return pendingMarketReturn.future;
+        final payload = _validPayload();
+        ((payload['data'] as Map<String, dynamic>)['synthesis']
+            as Map<String, dynamic>)['summary'] =
+            'ATHENA verificada $athenaRequests';
+        return Future.value(http.Response(jsonEncode(payload), 200,
+            headers: {'content-type': 'application/json'}));
+      }),
+    );
+    final dependencies = _dependencies(source);
+    addTearDown(dependencies.dispose);
+    final marketController = GlobalMarketContextController(
+      service: _UnavailableMarketService(),
+    );
+    addTearDown(marketController.dispose);
+    final newsService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response('{"detail":"unavailable"}', 503)),
+    );
+    final newsController = NewsSynthesisController(service: newsService);
+    addTearDown(newsController.dispose);
+    addTearDown(newsService.dispose);
+
+    Future<RelevantInvestorActivity> investorLoader(String cik) async {
+      investorRequests++;
+      return RelevantInvestorActivity(
+        cik: cik,
+        form: '13F-HR',
+        accessionNumber: '0000123456-26-000001',
+        positionDate: DateTime.utc(2026, 6, 30),
+        filingDate: DateTime.utc(2026, 8, 14),
+        publicationDateTime: DateTime.utc(2026, 8, 14, 20),
+        retrievedAt: DateTime.utc(2026, 9, 4, 20),
+        sourceUrl: 'https://www.sec.gov/Archives/edgar/data/123456/filing.xml',
+        sourceProvider: 'SEC EDGAR',
+        valueUnit: 'thousands_usd_as_reported_by_sec_13f',
+        holdings: const [],
+      );
+    }
+
+    Future<VerifiedNewsFeed> feedLoader(int limit) async {
+      newsFeedRequests++;
+      return VerifiedNewsFeed(
+        query: 'mercado',
+        sourceProvider: 'google_news_rss',
+        retrievedAt: DateTime.utc(2026, 9, 4, 20),
+        items: [
+          VerifiedNewsItem(
+            title: 'Feed independiente durante síntesis pendiente',
+            publisher: 'Fuente verificada',
+            publisherUrl: 'https://example.com',
+            articleUrl: 'https://example.com/news',
+            publishedAt: DateTime.utc(2026, 9, 4, 19),
+            retrievedAt: DateTime.utc(2026, 9, 4, 20),
+            sourceProvider: 'google_news_rss',
+          ),
+        ],
+      );
+    }
+
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder:
+            (owner, market, news, investors, research, readiness) => Column(
+          children: [
+            operationalEpochPanels(
+                owner, market, news, investors, research, readiness),
+            SizedBox(
+              height: 340,
+              child: RelevantInvestorsPanel(
+                key: ValueKey('investors-epoch-$investors'),
+                configuredCiks: const ['123456'],
+                loader: investorLoader,
+              ),
+            ),
+          ],
+        ),
+      ),
+      onGenerateRoute: (settings) {
+        if (settings.name == AppRoutes.market) {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => MarketPage(controller: marketController),
+          );
+        }
+        if (settings.name == AppRoutes.news) {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => NewsPage(
+              synthesisController: newsController,
+              feedLoader: feedLoader,
+            ),
+          );
+        }
+        return null;
+      },
+    ));
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 1);
+    expect(investorRequests, 1);
+    expect(find.text('ATHENA verificada 1'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Mercado'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+    Navigator.of(tester.element(find.text('MERCADO'))).pop();
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 2);
+    expect(find.text('ATHENA verificada 1'), findsNothing);
+    expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+
+    // Leave the Market-triggered synthesis unresolved while visiting News.
+    await tester.tap(find.byTooltip('Noticias'));
+    await tester.pumpAndSettle();
+    expect(newsFeedRequests, 1);
+    expect(find.text('Feed independiente durante síntesis pendiente'),
+        findsOneWidget);
+    expect(find.text('https://example.com/news'), findsOneWidget);
+    expect(find.byKey(const Key('news-page-heading')), findsOneWidget);
+    Navigator.of(tester.element(find.byKey(const Key('news-page-heading')))).pop();
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 3);
+    expect(find.text('ATHENA verificada 3'), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-1')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+    expect(investorRequests, 1);
+
+    final stale = _validPayload();
+    ((stale['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] =
+        'ATHENA obsoleta del retorno de Mercado';
+    pendingMarketReturn.complete(http.Response(jsonEncode(stale), 200,
+        headers: {'content-type': 'application/json'}));
+    await tester.pump();
+    expect(find.text('ATHENA obsoleta del retorno de Mercado'), findsNothing);
+    expect(find.text('ATHENA verificada 3'), findsOneWidget);
+    expect(investorRequests, 1);
+
+    await tester.tap(find.byKey(const Key('dashboard-refresh-all')));
+    await tester.pumpAndSettle();
+    expect(athenaRequests, 4);
+    expect(investorRequests, 2);
+    expect(find.text('ATHENA verificada 4'), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }
 
 RecommendationDependencies _dependencies(
