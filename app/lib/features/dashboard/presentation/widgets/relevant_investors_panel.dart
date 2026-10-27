@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../../investors/data/athena_backend_relevant_investor_data_source.dart';
@@ -254,6 +255,16 @@ class _InvestorActivityItem extends StatelessWidget {
 
   const _InvestorActivityItem({required this.activity});
 
+  Future<void> _copyFilingSource(BuildContext context) async {
+    // SEC provenance is informational and never authorizes an order.
+    await Clipboard.setData(ClipboardData(text: activity.sourceUrl));
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Enlace SEC 13F copiado')),
+      );
+    }
+  }
+
   void _showHoldings(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -324,6 +335,36 @@ class _InvestorActivityItem extends StatelessWidget {
             color: AthenaColors.textSecondary,
             fontSize: 10,
           ),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                label: 'Fuente SEC 13F verificada: ${activity.sourceUrl}',
+                child: ExcludeSemantics(
+                  child: Text(
+                    activity.sourceUrl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AthenaColors.textSecondary,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              key: Key('investor-copy-filing-${activity.cik}'),
+              tooltip: 'Copiar enlace SEC 13F de CIK ${activity.cik}',
+              onPressed: () => _copyFilingSource(context),
+              icon: const Icon(
+                Icons.copy_outlined,
+                color: AthenaColors.textSecondary,
+                size: 18,
+              ),
+            ),
+          ],
         ),
         TextButton(
           key: Key('investor-holdings-detail-${activity.cik}'),

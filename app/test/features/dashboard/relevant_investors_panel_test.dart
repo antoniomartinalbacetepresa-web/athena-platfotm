@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/features/dashboard/presentation/widgets/relevant_investors_panel.dart';
@@ -529,6 +530,73 @@ void main() {
     expect(calls, 2);
     expect(find.textContaining('CIK 123456'), findsOneWidget);
     expect(find.text('Actividad no disponible'), findsNothing);
+  });
+
+  testWidgets('SEC 13F exposes and copies original filing provenance without advice',
+      (tester) async {
+    const url =
+        'https://www.sec.gov/Archives/edgar/data/123456/000012345626000001/table.xml';
+    String? copied;
+    final messenger = TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() =>
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async => activityFor(cik),
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.text(url), findsOneWidget);
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          widget.properties.label == 'Fuente SEC 13F verificada: $url'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('investor-copy-filing-123456')),
+        findsOneWidget);
+    await tester.tap(find.byTooltip('Copiar enlace SEC 13F de CIK 123456'));
+    await tester.pump();
+    expect(copied, url);
+    expect(find.text('Enlace SEC 13F copiado'), findsOneWidget);
+    expect(find.textContaining('no altera el score ATHENA'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed SEC refresh hides filing link until verified retry',
+      (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(host(RelevantInvestorsPanel(
+      configuredCiks: const ['123456'],
+      loader: (cik) async {
+        calls++;
+        if (calls == 2) throw StateError('SEC temporarily unavailable');
+        return activityFor(cik);
+      },
+    )));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('investor-copy-filing-123456')),
+        findsOneWidget);
+
+    await tester.tap(find.byTooltip('Actualizar actividad SEC 13F'));
+    await tester.pumpAndSettle();
+    expect(find.text('Actividad no disponible'), findsOneWidget);
+    expect(find.byKey(const Key('investor-copy-filing-123456')), findsNothing);
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(calls, 3);
+    expect(find.text('Actividad no disponible'), findsNothing);
+    expect(find.byKey(const Key('investor-copy-filing-123456')),
+        findsOneWidget);
   });
 
 }
