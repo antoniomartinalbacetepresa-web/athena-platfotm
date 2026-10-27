@@ -31,7 +31,9 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
   void initState() {
     super.initState();
     _service = AthenaBackendNewsService();
-    _feedFuture = _load();
+    // A supplied loader can throw before returning a Future. Convert that
+    // failure into the same fail-closed UI state as an asynchronous failure.
+    _feedFuture = Future<VerifiedNewsFeed>.sync(_load);
   }
 
   Future<VerifiedNewsFeed> _load() =>
@@ -44,7 +46,8 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
     if (oldWidget.limit != widget.limit ||
         !identical(oldWidget.loadFeed, widget.loadFeed)) {
       // A replaced future cannot publish a stale result from an old source.
-      _feedFuture = _load();
+      // A synchronous failure in the replacement must not retain old articles.
+      _feedFuture = Future<VerifiedNewsFeed>.sync(_load);
     }
   }
 

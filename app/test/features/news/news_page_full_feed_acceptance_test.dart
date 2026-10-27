@@ -326,6 +326,94 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+
+  testWidgets(
+      'standalone News keeps verified synthesis when feed loader throws synchronously and retry recovers',
+      (tester) async {
+    var attempts = 0;
+    final service = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response(
+        jsonEncode(_synthesisPayload()),
+        200,
+        headers: {'content-type': 'application/json'},
+      )),
+    );
+    final controller = NewsSynthesisController(service: service);
+    addTearDown(() {
+      controller.dispose();
+      service.dispose();
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        synthesisController: controller,
+        feedLoader: (_) {
+          attempts++;
+          if (attempts == 1) {
+            throw StateError('synchronous feed failure');
+          }
+          return Future.value(_feed(1, prefix: 'Recuperada'));
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(attempts, 1);
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+    expect(find.text('Síntesis renovada y verificable'), findsOneWidget);
+    expect(find.text('Recuperada 1'), findsNothing);
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(attempts, 2);
+    expect(find.text('Noticias no disponibles'), findsNothing);
+    expect(find.text('Recuperada 1'), findsOneWidget);
+    expect(find.text('Síntesis renovada y verificable'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'replacing a pending feed with a synchronously failing source hides old articles and permits recovery',
+      (tester) async {
+    final pendingOldFeed = Completer<VerifiedNewsFeed>();
+    Future<VerifiedNewsFeed> oldLoader(int _) => pendingOldFeed.future;
+    Future<VerifiedNewsFeed> brokenLoader(int _) {
+      throw StateError('replacement source failed synchronously');
+    }
+    Future<VerifiedNewsFeed> recoveredLoader(int _) async =>
+        _feed(1, prefix: 'Nueva evidencia');
+
+    Widget host(Future<VerifiedNewsFeed> Function(int) loader) => MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 400,
+          height: 340,
+          child: NewsFeedPanel(limit: 1, loadFeed: loader),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(host(oldLoader));
+    await tester.pump();
+    await tester.pumpWidget(host(brokenLoader));
+    await tester.pumpAndSettle();
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+    expect(find.text('Noticia antigua 1'), findsNothing);
+
+    pendingOldFeed.complete(_feed(1, prefix: 'Noticia antigua'));
+    await tester.pump();
+    expect(find.text('Noticia antigua 1'), findsNothing);
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+
+    await tester.pumpWidget(host(recoveredLoader));
+    await tester.pumpAndSettle();
+    expect(find.text('Noticias no disponibles'), findsNothing);
+    expect(find.text('Nueva evidencia 1'), findsOneWidget);
+    expect(find.text('Noticia antigua 1'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
 }
 
 VerifiedNewsFeed _feed(int count, {String prefix = 'Noticia verificada'}) {
