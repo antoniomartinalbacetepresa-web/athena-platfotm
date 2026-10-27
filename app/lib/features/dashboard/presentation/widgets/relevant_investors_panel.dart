@@ -114,9 +114,8 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
     if (_configurationError != null || _ciks.isEmpty) return const [];
     final requestedCiks = _ciks;
     final loader = _loader;
-    // Convert synchronous provider exceptions into failed futures before
-    // Future.wait subscribes. Otherwise an injected loader can throw during
-    // setState on retry instead of showing the fail-closed error state.
+    // Normalize synchronous provider exceptions before aggregating results.
+    // One unverified filing invalidates the entire configured cohort.
     final activities = await Future.wait(
       requestedCiks.map(
         (cik) => Future<RelevantInvestorActivity>.sync(() => loader(cik)),
@@ -133,8 +132,11 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
   }
 
   void _reload() {
+    // Start the request outside setState; synchronous provider failures must
+    // be represented by the FutureBuilder's error state, not escape the tap.
+    final next = Future<List<RelevantInvestorActivity>>.sync(_loadActivities);
     setState(() {
-      _activitiesFuture = _loadActivities();
+      _activitiesFuture = next;
     });
   }
 
