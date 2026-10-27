@@ -4,6 +4,7 @@ import pytest
 
 from app.database.athena_database import AthenaDatabase
 from app.services.database_backup_service import DatabaseBackupService
+from scripts import verify_backup_recovery as recovery_script
 from scripts.verify_backup_recovery import main, verify_backup
 
 
@@ -39,11 +40,20 @@ def test_verify_backup_restores_managed_sqlite_into_isolated_database(
 
 
 def test_verify_backup_leaves_external_backup_directory_unchanged(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     external_directory = tmp_path / "external-read-only-store"
     external_directory.mkdir()
     backup = _managed_backup(external_directory)
+
+    class RequireIsolatedVerifier(DatabaseBackupService):
+        def __init__(self, database: AthenaDatabase) -> None:
+            # This must fail against the previous implementation, which bound
+            # the verifier to a fake database path beside the backup artifact.
+            assert database.database_path.parent.resolve() != external_directory.resolve()
+            super().__init__(database)
+
+    monkeypatch.setattr(recovery_script, "DatabaseBackupService", RequireIsolatedVerifier)
     original_files = {
         entry.name: entry.read_bytes()
         for entry in external_directory.iterdir()
