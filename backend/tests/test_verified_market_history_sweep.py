@@ -268,3 +268,74 @@ def test_sweep_freezes_consistent_worklist_when_live_universe_changes_between_pa
     assert report["remainingBlockingCount"] == 4
     assert report["historyReady"] is False
     assert report["policy"]["productionEvidenceClaimed"] is False
+
+
+def test_sweep_empty_frozen_queue_never_writes_new_live_blockers(
+    tmp_path, monkeypatch,
+):
+    """An instrument appearing after freeze is not authorized for this sweep."""
+    database = make_database(tmp_path)
+    today = datetime.now(timezone.utc).date()
+    provider = FakeHistoryProvider({"AAA": history(today)})
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider, today_provider=lambda: today,
+    )
+    original = sweep_module.MarketHistoryGapService.get_report
+    inserted = False
+
+    def insert_after_frozen_query(self, **kwargs):
+        nonlocal inserted
+        result = original(self, **kwargs)
+        if not inserted and result.total_blocking_count == 0:
+            inserted = True
+            InstrumentRepository(database=database).upsert({
+                "symbol": "AAA", "companyName": "AAA",
+                "country": "United States", "regionKey": "america",
+                "exchangeShortName": "NASDAQ", "instrumentType": "common_stock",
+            })
+        return result
+
+    monkeypatch.setattr(
+        sweep_module.MarketHistoryGapService, "get_report",
+        insert_after_frozen_query,
+    )
+    report = service.run_sweep(limit=2, max_batches=1)
+
+    assert inserted is True
+    assert provider.calls == []
+    assert report["initialBlockingCount"] == 0
+    assert report["attemptedInstrumentCount"] == 0
+    assert report["batchCount"] == 0
+    assert report["batches"] == []
+    assert report["remainingBlockingCount"] == 1
+    assert report["historyReady"] is False
+    assert report["policy"]["productionEvidenceClaimed"] is False
+
+
+def test_sweep_no_initial_blockers_is_read_only_and_still_checks_depth(tmp_path):
+    """An already complete worklist should not fetch or persist more history."""
+    from app.repositories.market_observation_repository import MarketObservationRepository
+
+    database = make_database(tmp_path, "AAA")
+    today = datetime.now(timezone.utc).date()
+    instrument = InstrumentRepository(database=database).list_active(limit=1, offset=0)[0]
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=int(instrument["id"]),
+        observations=history(today),
+        source_provider="yahoo",
+        retrieved_at=datetime.now(timezone.utc),
+    )
+    provider = FakeHistoryProvider({"AAA": []})
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider, today_provider=lambda: today,
+    )
+    report = service.run_sweep(limit=2, max_batches=1)
+
+    assert provider.calls == []
+    assert report["initialBlockingCount"] == 0
+    assert report["attemptedInstrumentCount"] == 0
+    assert report["remainingBlockingCount"] == 0
+    assert report["batchCount"] == 0
+    assert report["batches"] == []
+    assert report["historyReady"] is True
+    assert report["policy"]["productionEvidenceClaimed"] is False

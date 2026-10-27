@@ -239,18 +239,32 @@ class VerifiedMarketHistoryBackfillService:
                 to_date=to_date,
                 _instrument_ids=batch,
             ))
-        if not reports:
-            # Preserve the nonempty-universe and current-depth acceptance
-            # checks even when there are no historical blockers to fetch.
-            reports.append(self.run(
-                limit=limit, from_date=from_date, to_date=to_date
-            ))
+        # An empty frozen worklist must NEVER fall back to run() against the
+        # live queue: a newly added instrument could then be fetched/written
+        # despite not belonging to the authorized frozen selection, while the
+        # report incorrectly claims zero attempted instruments.
+        if self._today_provider() != sweep_day:
+            raise RuntimeError("El corte UTC cambió durante el barrido histórico.")
+        if reports:
+            remaining_blockers = reports[-1].blockers_after
+            depth_ready = reports[-1].history_ready
+        else:
+            coverage = MarketObservationCoverageService(
+                database=self._database
+            ).get_report(as_of=cutoff)
+            remaining_blockers = self._blocking_count(cutoff)
+            depth_ready = (
+                coverage.history_eligible_instrument_count > 0
+                and remaining_blockers == 0
+                and coverage.current_deep_history_instrument_count
+                == coverage.history_eligible_instrument_count
+                and coverage.current_history_depth_ready
+            )
 
-        final = reports[-1]
         unattempted = max(0, initial.total_blocking_count - len(instrument_ids))
         history_ready = (
             unattempted == 0
-            and final.history_ready
+            and depth_ready
             and all(report.backfill.failed_count == 0 for report in reports)
         )
         return {
@@ -263,7 +277,7 @@ class VerifiedMarketHistoryBackfillService:
             "initialBlockingCount": initial.total_blocking_count,
             "attemptedInstrumentCount": len(instrument_ids),
             "unattemptedInstrumentCount": unattempted,
-            "remainingBlockingCount": final.blockers_after,
+            "remainingBlockingCount": remaining_blockers,
             "batchCount": len(reports),
             "completeWorklistProcessed": unattempted == 0,
             "batches": [report.to_api_dict() for report in reports],
