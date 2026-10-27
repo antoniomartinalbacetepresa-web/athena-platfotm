@@ -78,6 +78,17 @@ jobs:
           set -o pipefail
           flutter test 2>&1 | tee flutter-test.log
 
+      - name: Browser cross-surface acceptance (Chrome)
+        run: |
+          set -o pipefail
+          flutter test --platform chrome \
+            test/features/dashboard/dashboard_athena_synthesis_wiring_test.dart \
+            test/features/market/market_page_integration_test.dart \
+            test/features/news/news_page_full_feed_acceptance_test.dart \
+            test/features/dashboard/relevant_investors_panel_test.dart \
+            test/features/portfolio/dashboard_portfolio_cross_surface_e2e_test.dart \
+            2>&1 | tee flutter-chrome-acceptance.log
+
       - name: Build release web bundle
         if: success()
         run: flutter build web --release
@@ -90,6 +101,7 @@ jobs:
           path: |
             app/flutter-analyze.log
             app/flutter-test.log
+            app/flutter-chrome-acceptance.log
             app/pubspec.lock
           if-no-files-found: warn
           retention-days: 7
