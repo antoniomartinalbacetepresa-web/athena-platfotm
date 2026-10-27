@@ -815,7 +815,9 @@ void main() {
     expect(find.text('Síntesis verificada 1'), findsNothing);
 
     await tester.tap(find.byTooltip('Cartera'));
-    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Abierta: /portfolio'), findsOneWidget);
     Navigator.of(tester.element(find.text('Abierta: /portfolio'))).pop();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
