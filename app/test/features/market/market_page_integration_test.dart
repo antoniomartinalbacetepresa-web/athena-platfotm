@@ -297,16 +297,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(secondService.calls, 2);
     expect(find.text('Mercado de la primera fuente'), findsNothing);
-    expect(find.bySemanticsLabel(
-      'No se pudo actualizar el contexto global del mercado.',
-    ), findsOneWidget);
+    expect(second.context, isNull);
+    expect(second.error, contains('invalid market provenance'));
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          widget.properties.liveRegion == true &&
+          widget.properties.label ==
+              'No se pudo actualizar el contexto global del mercado.'),
+      findsOneWidget,
+    );
 
     stale.complete(await _context('Snapshot anterior sin autoridad'));
     await tester.pump();
     expect(find.text('Snapshot anterior sin autoridad'), findsNothing);
-    expect(find.bySemanticsLabel(
-      'No se pudo actualizar el contexto global del mercado.',
-    ), findsOneWidget);
+    expect(second.context, isNull);
+    expect(second.error, contains('invalid market provenance'));
+    expect(
+      find.byWidgetPredicate((widget) =>
+          widget is Semantics &&
+          widget.properties.liveRegion == true &&
+          widget.properties.label ==
+              'No se pudo actualizar el contexto global del mercado.'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
