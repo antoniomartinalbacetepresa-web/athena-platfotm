@@ -8,6 +8,7 @@ from typing import Sequence
 
 from app.database.athena_database import AthenaDatabase
 from app.services.database_backup_service import DatabaseBackupService
+from scripts.copy_verified_backup_secondary import copy_verified_backup
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--keep-last", type=int, default=7)
     parser.add_argument("--prefix", default="athena-")
+    parser.add_argument("--secondary-directory", type=Path, default=None)
+    parser.add_argument("--offsite-attestation", action="store_true")
     return parser
 
 
@@ -31,11 +34,24 @@ def run_cycle(
     keep_last: int,
     prefix: str,
     now: datetime | None = None,
+    secondary_directory: Path | None = None,
+    offsite_attested: bool = False,
 ) -> dict[str, object]:
     if keep_last < 1:
         raise ValueError("La retención debe conservar al menos un backup.")
     if not prefix or Path(prefix).name != prefix:
         raise ValueError("El prefijo de backup no es válido.")
+    if offsite_attested and secondary_directory is None:
+        raise ValueError("La declaración off-site requiere destino secundario.")
+    if secondary_directory is not None:
+        primary_root = backup_directory.expanduser().resolve()
+        secondary_root = secondary_directory.expanduser().resolve()
+        if (
+            primary_root == secondary_root
+            or primary_root in secondary_root.parents
+            or secondary_root in primary_root.parents
+        ):
+            raise ValueError("El destino secundario debe ser independiente del directorio primario.")
 
     database = AthenaDatabase(database_path)
     service = DatabaseBackupService(database)
@@ -50,6 +66,17 @@ def run_cycle(
         raise RuntimeError("La verificación no conserva los metadatos del backup creado.")
 
     drill = service.run_restore_drill(backup_path)
+
+    # Retention must run AFTER secondary verification and its isolated restore.
+    # On any secondary failure, older primary recovery points remain intact.
+    secondary = None
+    if secondary_directory is not None:
+        secondary = copy_verified_backup(
+            backup_path=backup_path,
+            manifest_path=service.manifest_path_for(backup_path),
+            destination_directory=secondary_directory,
+            offsite_attested=offsite_attested,
+        )
     retention = service.apply_retention(
         backup_directory,
         keep_last=keep_last,
@@ -58,6 +85,7 @@ def run_cycle(
 
     return {
         "status": "verified_backup_cycle_passed",
+        "secondary": secondary,
         "backup": str(backup_path),
         "manifest": str(service.manifest_path_for(backup_path)),
         "metadata": verified.to_dict(),
@@ -80,6 +108,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         backup_directory=args.directory,
         keep_last=args.keep_last,
         prefix=args.prefix,
+        secondary_directory=args.secondary_directory,
+        offsite_attested=args.offsite_attestation,
     )
     print(json.dumps(result, sort_keys=True))
     return 0

@@ -4,10 +4,10 @@ This runbook defines the deployment boundary for ATHENA database recovery. It is
 
 ## Required deployment flow
 
-1. Schedule `backend/scripts/run_verified_backup_cycle.py` outside the application process. The scheduler must provide the live database path, a dedicated primary backup directory, retention, and a stable prefix.
-2. Treat a non-zero exit as a failed backup cycle. The cycle creates the SQLite backup, verifies its manifest and SHA-256, executes an isolated restore drill, and only then applies retention.
-3. After a successful primary cycle, copy the generated backup and manifest to a physically or administratively independent destination with `backend/scripts/copy_verified_backup_secondary.py`.
-4. Treat the secondary copy as valid only when that command exits successfully. It verifies the primary against its manifest before copying and verifies the copied bytes afterward.
+1. Schedule `backend/scripts/run_verified_backup_cycle.py` outside the application process. Supply the live database path, dedicated primary directory, independent secondary directory, retention and stable prefix. The scheduler itself is not provided or verified by this repository.
+2. Use the integrated `--secondary-directory` option: create the primary SQLite backup, verify manifest/SHA-256/integrity, run an isolated primary restore, copy to secondary, verify secondary integrity and run an isolated secondary restore **before primary retention**. Any failed step must produce a nonzero exit and leave older primary recovery points untouched.
+3. The standalone `backend/scripts/copy_verified_backup_secondary.py` remains available for copying existing verified backups. Do not use a two-command primary-then-secondary sequence with aggressive retention: the first command can delete an older primary backup before the secondary copy succeeds.
+4. Treat the secondary copy as valid only when the integrated or standalone command exits successfully. Neither proves physical off-site independence.
 5. The secondary-copy script deliberately reports `offsiteLocationVerified=false`. Deployment tooling or a human operator must establish that the configured destination is genuinely off-site/independent; the application must not infer this from a filesystem path.
 6. Feed measured operational evidence into the production-recovery readiness diagnostic: last successful backup, last restore drill, scheduler enabled state, verified off-site state, measured RPO, and measured RTO.
 7. Production recovery is not ready unless every readiness check passes. CI fixtures and local test directories are never production evidence.
@@ -19,15 +19,14 @@ A production scheduler should invoke the verified cycle at least as frequently a
 Example command shape:
 
 ```text
-python -m scripts.run_verified_backup_cycle --database <LIVE_DB> --directory <PRIMARY_BACKUP_DIR> --keep-last 7
-python -m scripts.copy_verified_backup_secondary --backup <CREATED_BACKUP> --manifest <CREATED_MANIFEST> --destination <INDEPENDENT_DESTINATION>
+python -m scripts.run_verified_backup_cycle --database <LIVE_DB> --directory <PRIMARY_BACKUP_DIR> --secondary-directory <INDEPENDENT_DESTINATION> --keep-last 7
 ```
 
 Placeholders above are intentional. Do not commit production paths, credentials, bucket tokens, mount secrets, or encryption keys.
 
 ## Failure policy
 
-Do not delete the primary backup merely because the secondary copy fails. Alert on any failed cycle or failed secondary verification. Never overwrite existing backup evidence with the same name. Do not mark `scheduledBackupEnabled`, `offsiteCopyVerified`, RPO, or RTO as satisfied until the deployment/operator has measured those facts.
+Do not delete the primary backup merely because the secondary copy fails. The integrated cycle deliberately skips primary retention on secondary-copy or secondary-restore failure; the newly created primary backup may remain for investigation. Alert on any failed cycle or failed secondary verification. Never overwrite existing backup evidence with the same name. Do not mark `scheduledBackupEnabled`, `offsiteCopyVerified`, RPO, or RTO as satisfied until the deployment/operator has measured those facts. The optional `--offsite-attestation` is only an operator declaration and never changes `offsiteLocationVerified=false`.
 
 ## Recovery acceptance
 
