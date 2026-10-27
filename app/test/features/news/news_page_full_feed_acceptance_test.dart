@@ -257,6 +257,16 @@ void main() {
     await tester.pumpAndSettle();
 
     const url = 'https://example.com/article/1';
+    String? copied;
+    final messenger = TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(SystemChannels.platform, null));
     expect(find.text(url), findsOneWidget);
     final sourceSemantics = tester.widget<Semantics>(
       find.ancestor(
@@ -271,7 +281,7 @@ void main() {
     );
     await tester.tap(find.byTooltip('Copiar enlace de Noticia verificada 1'));
     await tester.pump();
-    expect((await Clipboard.getData('text/plain'))?.text, url);
+    expect(copied, url);
     expect(find.text('Enlace de noticia copiado'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
