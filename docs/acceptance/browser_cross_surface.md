@@ -48,3 +48,24 @@ Portfolio–Dashboard journey using two real test accounts and an explicit
 logout/revocation boundary, with independently captured request/response
 contracts, accessibility findings and exact build SHA. Do not capture
 credentials, access tokens, capital or personal data in CI artifacts.
+
+## AuthSession–Profile–Portfolio browser acceptance
+
+The mandatory Chrome lane also executes these existing integration tests:
+
+- `profile_session_transition_e2e_test.dart`: a mounted Profile rejects
+  obsolete `/auth/me` responses when the authenticated owner or authority
+  generation changes, including same-token replacement.
+- `profile_portfolio_logout_cross_surface_e2e_test.dart`: confirmed Profile
+  logout removes Portfolio capabilities across real Flutter routes; a later
+  owner starts with fresh authority.
+- `authenticated_portfolio_page_e2e_test.dart`: authenticated Portfolio
+  UI exercises bearer-scoped sync/history, rejected sessions, guest controls,
+  owner replacement, and its presentation-only/no-order accessibility boundary.
+
+These tests use controlled HTTP responses and mocked credential storage;
+they are not evidence that the deployed browser's secure storage, real
+accounts, backend revocation, or owner-scoped database have been verified.
+The release gate must remain red if any of these Chrome tests fail. A
+deployed two-account lifecycle and an independent API/database isolation
+check are still required before marking owner isolation production-accepted.
