@@ -65,10 +65,10 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Semantics(
                 header: true,
-                child: Text(
+                child: const Text(
                   'NOTICIAS',
                   style: TextStyle(
                     color: AthenaColors.text,
@@ -103,10 +103,10 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
             future: _feedFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Semantics(
+                return Semantics(
                   liveRegion: true,
                   label: 'Consultando noticias verificadas.',
-                  child: Center(child: CircularProgressIndicator()),
+                  child: const Center(child: CircularProgressIndicator()),
                 );
               }
               if (snapshot.hasError) {
