@@ -67,16 +67,21 @@ The release gate must remain red if any of these Chrome tests fail. A
 deployed two-account lifecycle and an independent API/database isolation
 check are still required before marking owner isolation production-accepted.
 
-### Portfolio Chrome gap discovered 2026-10-27
+### Portfolio Chrome revalidation — 2026-10-27
 
-The complete `authenticated_portfolio_page_e2e_test.dart` remains mandatory
-in the default Flutter test lane, where all its tests passed. Adding that
-entire file to Chrome produced **three Chrome-only failures** (coordinated
-refresh, owner change during add-position dialog, and owner change during
-remove confirmation), while 94 other Chrome tests passed. The exact failure
-mechanism is not established by the CI log. Do not claim Chrome acceptance
-for those three cases or weaken their assertions merely to turn CI green.
-The whole file is withheld from the Chrome lane pending diagnosis with
-expanded failure reporting and a browser-specific reproduction; no test
-or product functionality was deleted. Profile session transitions and the
-Profile-to-Portfolio logout lifecycle remain required in Chrome.
+An earlier Chrome attempt passed 94 cases and failed three Portfolio cases:
+coordinated refresh, owner change during add-position, and owner change during
+remove confirmation. The captured workflow log contained failure summaries but
+not the underlying exceptions; a specific browser defect was not established.
+
+Those three tests previously created the default authenticated services, which
+can attempt HTTP requests to the development backend. They now inject controlled
+authenticated HTTP transports, while retaining the real Portfolio widget,
+controller, owner-authority generation and dialog lifecycle. The tests additionally
+assert that no account mutations are sent and that coordinated refresh requests
+both owner-scoped resources. All twelve Portfolio cases are once again required
+by the Chrome lane, and a failure blocks the release gate.
+
+A green exact-SHA CI is required before this browser regression is considered
+closed. Even then, this is **not** deployed E2E, a production backend test, or
+proof of real owner isolation. The deployed two-account acceptance remains open.

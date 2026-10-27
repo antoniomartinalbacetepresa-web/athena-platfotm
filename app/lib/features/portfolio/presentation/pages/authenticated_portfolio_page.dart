@@ -23,11 +23,25 @@ import 'portfolio_page.dart';
 typedef PortfolioPositionsLoader = Future<List<PortfolioPosition>> Function();
 
 class AuthenticatedPortfolioPage extends StatefulWidget {
-  const AuthenticatedPortfolioPage({super.key, this.positionsLoader, this.syncController, this.historyService, this.child});
+  const AuthenticatedPortfolioPage({
+    super.key,
+    this.positionsLoader,
+    this.syncController,
+    this.historyService,
+    this.child,
+    this.authenticatedServiceFactory,
+    this.preferencesServiceFactory,
+  });
   final PortfolioPositionsLoader? positionsLoader;
   final PortfolioCloudSyncController? syncController;
   final AuthenticatedPortfolioService? historyService;
   final Widget? child;
+
+  /// Controlled authenticated transports for cross-surface tests.
+  /// Production continues to create the default owner-scoped services.
+  final AuthenticatedPortfolioService Function()? authenticatedServiceFactory;
+  final UserPreferencesService Function()? preferencesServiceFactory;
+
   @override
   State<AuthenticatedPortfolioPage> createState() => _AuthenticatedPortfolioPageState();
 }
@@ -62,9 +76,9 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
   void _ensureAuthenticatedBoundary() {
     if (_usesLegacyInjectedBoundary || !AuthSession.instance.isAuthenticated || _authenticatedController != null) return;
     final market = MarketDependencies.create();
-    final service = AuthenticatedPortfolioService();
+    final service = widget.authenticatedServiceFactory?.call() ?? AuthenticatedPortfolioService();
     final controller = AuthenticatedPortfolioController(portfolioService: service, marketRepository: market.repository);
-    final preferencesService = UserPreferencesService();
+    final preferencesService = widget.preferencesServiceFactory?.call() ?? UserPreferencesService();
     final capitalController = AuthenticatedPortfolioCapitalController(preferencesService: preferencesService);
     final fxDataSource = market.backendFxDataSource;
     final fxController = fxDataSource == null ? null : AuthenticatedPortfolioFxValuationController(

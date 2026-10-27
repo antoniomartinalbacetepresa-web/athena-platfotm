@@ -91,6 +91,7 @@ jobs:
             test/features/profile/profile_personalization_shell_test.dart \
             test/features/profile/profile_session_transition_e2e_test.dart \
             test/features/portfolio/profile_portfolio_logout_cross_surface_e2e_test.dart \
+            test/features/portfolio/authenticated_portfolio_page_e2e_test.dart \
             2>&1 | tee flutter-chrome-acceptance.log
 
       - name: Build release web bundle

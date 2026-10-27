@@ -11,6 +11,7 @@ import 'package:app/features/portfolio/presentation/controllers/portfolio_cloud_
 import 'package:app/features/portfolio/presentation/pages/authenticated_portfolio_page.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
 import 'package:app/features/portfolio/services/authenticated_portfolio_sync_service.dart';
+import 'package:app/features/profile/services/user_preferences_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -284,6 +285,40 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  // Keep the authenticated Portfolio boundary real while controlling only
+  // the HTTP transport. Browser tests must not wait for localhost backend
+  // calls, and they must still reject owner-crossing mutations.
+  AuthenticatedPortfolioPage controlledOwnerPage({
+    void Function(http.Request)? onRequest,
+  }) {
+    return AuthenticatedPortfolioPage(
+      authenticatedServiceFactory: () => AuthenticatedPortfolioService(
+        baseUrl: 'http://athena.local',
+        session: session,
+        client: MockClient((request) async {
+          onRequest?.call(request);
+          if (request.method == 'GET' &&
+              request.url.path == '/api/v1/user/portfolio') {
+            return http.Response('{"data":{"positions":[]}}', 200);
+          }
+          return http.Response('{}', 500);
+        }),
+      ),
+      preferencesServiceFactory: () => UserPreferencesService(
+        baseUrl: 'http://athena.local',
+        session: session,
+        client: MockClient((request) async {
+          onRequest?.call(request);
+          if (request.method == 'GET' &&
+              request.url.path == '/api/v1/user/profile/preferences') {
+            return http.Response('{"status":"not_configured","data":null}', 200);
+          }
+          return http.Response('{}', 500);
+        }),
+      ),
+    );
+  }
+
   AuthAccount replacementOwner() => AuthAccount(
     id: 8,
     email: 'replacement@example.com',
@@ -323,9 +358,21 @@ void main() {
       'authenticated Portfolio offers a coordinated refresh without replacing the owner boundary',
       (tester) async {
     session.establish(accessToken: 'owner-token', account: account());
-    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    var portfolioReads = 0;
+    var preferenceReads = 0;
+    var writes = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: controlledOwnerPage(onRequest: (request) {
+        expect(request.headers['Authorization'], 'Bearer owner-token');
+        if (request.method != 'GET') writes++;
+        if (request.url.path == '/api/v1/user/portfolio') portfolioReads++;
+        if (request.url.path == '/api/v1/user/profile/preferences') preferenceReads++;
+      }),
+    ));
     await tester.pumpAndSettle();
 
+    expect(portfolioReads, 1);
+    expect(preferenceReads, 1);
     final controller = tester.widget<AuthenticatedPortfolioView>(
       find.byType(AuthenticatedPortfolioView),
     ).controller;
@@ -336,6 +383,9 @@ void main() {
 
     await tester.tap(refresh);
     await tester.pumpAndSettle();
+    expect(portfolioReads, 2);
+    expect(preferenceReads, 2);
+    expect(writes, 0);
 
     expect(find.byKey(const Key('portfolio-authoritative-boundary')), findsOneWidget);
     expect(identical(
@@ -351,7 +401,13 @@ void main() {
   testWidgets('owner change while add-position dialog is open discards old draft',
       (tester) async {
     session.establish(accessToken: 'reused-token', account: account());
-    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    var writes = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: controlledOwnerPage(onRequest: (request) {
+        expect(request.headers['Authorization'], 'Bearer reused-token');
+        if (request.method != 'GET') writes++;
+      }),
+    ));
     final view = tester.widget<AuthenticatedPortfolioView>(
       find.byType(AuthenticatedPortfolioView),
     );
@@ -383,6 +439,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(session.account?.id, 8);
+    expect(writes, 0);
     expect(find.textContaining('No se pudo guardar la posición'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -390,7 +447,13 @@ void main() {
   testWidgets('owner change during remove confirmation cannot delete replacement holding',
       (tester) async {
     session.establish(accessToken: 'reused-token', account: account());
-    await tester.pumpWidget(const MaterialApp(home: AuthenticatedPortfolioPage()));
+    var writes = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: controlledOwnerPage(onRequest: (request) {
+        expect(request.headers['Authorization'], 'Bearer reused-token');
+        if (request.method != 'GET') writes++;
+      }),
+    ));
     final view = tester.widget<AuthenticatedPortfolioView>(
       find.byType(AuthenticatedPortfolioView),
     );
@@ -418,6 +481,7 @@ void main() {
     await tester.tap(find.text('Eliminar'));
     await tester.pumpAndSettle();
     expect(session.account?.id, 8);
+    expect(writes, 0);
     expect(find.textContaining('No se pudo eliminar la posición'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
