@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Sequence
+
+from app.database.athena_database import AthenaDatabase
+from app.services.database_backup_service import DatabaseBackupService
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,14 +32,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def copy_verified_backup(
     *,
     backup_path: Path,
@@ -53,37 +48,57 @@ def copy_verified_backup(
     if destination == source.parent:
         raise ValueError("El destino secundario no puede ser el directorio del backup primario.")
 
-    payload = json.loads(manifest.read_text(encoding="utf-8"))
-    expected_sha = str(payload.get("sha256") or "").strip().lower()
-    if len(expected_sha) != 64 or any(ch not in "0123456789abcdef" for ch in expected_sha):
-        raise ValueError("El manifiesto no contiene un SHA-256 válido.")
+    # A matching SHA alone does not prove that this is an ATHENA backup:
+    # enforce the canonical adjacent manifest, schema and SQLite integrity.
+    if manifest != DatabaseBackupService.manifest_path_for(source).resolve():
+        raise ValueError("El manifiesto debe corresponder al backup indicado.")
 
-    source_sha = _sha256(source)
-    if source_sha != expected_sha:
-        raise RuntimeError("El backup primario no coincide con su manifiesto.")
+    with tempfile.TemporaryDirectory(prefix="athena-secondary-verify-") as temp_dir:
+        verifier_root = Path(temp_dir)
+        verifier = DatabaseBackupService(
+            AthenaDatabase(verifier_root / "verifier-source.db")
+        )
+        metadata = verifier.verify_backup(source)
 
-    destination.mkdir(parents=True, exist_ok=True)
-    copied_backup = destination / source.name
-    copied_manifest = destination / manifest.name
-    if copied_backup.exists() or copied_manifest.exists():
-        raise FileExistsError("El destino ya contiene este backup o manifiesto.")
+        destination.mkdir(parents=True, exist_ok=True)
+        copied_backup = destination / source.name
+        copied_manifest = destination / manifest.name
+        if (copied_backup.exists() or copied_backup.is_symlink()
+                or copied_manifest.exists() or copied_manifest.is_symlink()):
+            raise FileExistsError("El destino ya contiene este backup o manifiesto.")
 
-    shutil.copy2(source, copied_backup)
-    shutil.copy2(manifest, copied_manifest)
+        # Exclusive creation prevents overwriting pre-existing evidence,
+        # including symlinks. The manifest is published only after the DB.
+        created: list[Path] = []
+        try:
+            with source.open("rb") as reader, copied_backup.open("xb") as writer:
+                created.append(copied_backup)
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            with manifest.open("rb") as reader, copied_manifest.open("xb") as writer:
+                created.append(copied_manifest)
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
 
-    copied_sha = _sha256(copied_backup)
-    if copied_sha != expected_sha:
-        copied_backup.unlink(missing_ok=True)
-        copied_manifest.unlink(missing_ok=True)
-        raise RuntimeError("La copia secundaria no supera la verificación SHA-256.")
+            copied_metadata = verifier.verify_backup(copied_backup)
+            if copied_metadata != metadata:
+                raise RuntimeError("La copia secundaria no conserva los metadatos.")
+            drill = verifier.run_restore_drill(
+                copied_backup,
+                working_directory=verifier_root / "restore",
+            )
+        except Exception:
+            for created_path in reversed(created):
+                created_path.unlink(missing_ok=True)
+            raise
 
     return {
         "status": "secondary_copy_verified",
         "backup": str(copied_backup),
         "manifest": str(copied_manifest),
-        "sha256": expected_sha,
+        "sha256": metadata.sha256,
+        "restore_drill": drill.to_dict(),
         "policy": {
             "secondaryCopyVerified": True,
+            "secondaryRestoreDrillVerified": True,
             "offsiteLocationOperatorAttested": offsite_attested is True,
             "offsiteLocationVerified": False,
             "scheduledExecutionVerified": False,

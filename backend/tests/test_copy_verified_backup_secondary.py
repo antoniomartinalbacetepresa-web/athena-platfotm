@@ -26,8 +26,10 @@ def test_verified_secondary_copy_preserves_manifest_digest(tmp_path: Path) -> No
     assert Path(result["backup"]).read_bytes() == backup.read_bytes()
     assert Path(result["manifest"]).read_text() == manifest.read_text()
     assert result["sha256"] == json.loads(manifest.read_text())["sha256"]
+    assert result["restore_drill"]["schema_version"] > 0
     assert result["policy"] == {
         "secondaryCopyVerified": True,
+        "secondaryRestoreDrillVerified": True,
         "offsiteLocationOperatorAttested": False,
         "offsiteLocationVerified": False,
         "scheduledExecutionVerified": False,
@@ -81,3 +83,69 @@ def test_secondary_copy_does_not_infer_offsite_from_different_path(tmp_path: Pat
     )
     assert result["policy"]["offsiteLocationOperatorAttested"] is False
     assert result["policy"]["offsiteLocationVerified"] is False
+
+
+def test_secondary_copy_rejects_manifest_schema_mismatch_before_publication(tmp_path: Path) -> None:
+    backup, manifest = _backup(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["schema_version"] += 1
+    manifest.write_text(json.dumps(payload))
+    destination = tmp_path / "secondary"
+    with pytest.raises(RuntimeError, match="versión de esquema"):
+        copy_verified_backup(
+            backup_path=backup,
+            manifest_path=manifest,
+            destination_directory=destination,
+        )
+    assert not destination.exists()
+
+
+def test_secondary_copy_rejects_invalid_sqlite_even_with_matching_checksum(tmp_path: Path) -> None:
+    import hashlib
+
+    backup, manifest = _backup(tmp_path)
+    backup.write_bytes(b"not an ATHENA SQLite database")
+    payload = json.loads(manifest.read_text())
+    payload["sha256"] = hashlib.sha256(backup.read_bytes()).hexdigest()
+    payload["size_bytes"] = backup.stat().st_size
+    manifest.write_text(json.dumps(payload))
+    destination = tmp_path / "secondary"
+    with pytest.raises(RuntimeError, match="SQLite"):
+        copy_verified_backup(
+            backup_path=backup,
+            manifest_path=manifest,
+            destination_directory=destination,
+        )
+    assert not destination.exists()
+
+
+def test_secondary_copy_rolls_back_both_files_when_restore_drill_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup, manifest = _backup(tmp_path)
+    destination = tmp_path / "secondary"
+
+    def reject_drill(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("isolated restore failed")
+
+    monkeypatch.setattr(DatabaseBackupService, "run_restore_drill", reject_drill)
+    with pytest.raises(RuntimeError, match="isolated restore failed"):
+        copy_verified_backup(
+            backup_path=backup,
+            manifest_path=manifest,
+            destination_directory=destination,
+        )
+    assert not (destination / backup.name).exists()
+    assert not (destination / manifest.name).exists()
+
+
+def test_secondary_copy_requires_adjacent_canonical_manifest(tmp_path: Path) -> None:
+    backup, manifest = _backup(tmp_path)
+    detached_manifest = tmp_path / "detached.manifest.json"
+    detached_manifest.write_bytes(manifest.read_bytes())
+    with pytest.raises(ValueError, match="manifiesto debe corresponder"):
+        copy_verified_backup(
+            backup_path=backup,
+            manifest_path=detached_manifest,
+            destination_directory=tmp_path / "secondary",
+        )
