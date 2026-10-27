@@ -761,6 +761,87 @@ void main() {
     }
   });
 
+  testWidgets(
+      'Profile and Portfolio returns invalidate old ATHENA responses, fail closed and recover selectively',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final pendingProfile = Completer<http.Response>();
+    var requests = 0;
+    http.Response verifiedResponse(String summary) {
+      final payload = _validPayload();
+      ((payload['data'] as Map<String, dynamic>)['synthesis']
+          as Map<String, dynamic>)['summary'] = summary;
+      return http.Response(jsonEncode(payload), 200,
+          headers: {'content-type': 'application/json'});
+    }
+
+    final dependencies = _dependencies(AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        requests++;
+        if (requests == 2) return pendingProfile.future;
+        if (requests == 3) {
+          return Future.value(http.Response('{"detail":"unavailable"}', 503));
+        }
+        return Future.value(verifiedResponse('Síntesis verificada $requests'));
+      }),
+    ));
+    addTearDown(dependencies.dispose);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        recommendationDependencies: dependencies,
+        operationalPanelsBuilder: operationalEpochPanels,
+      ),
+      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => Scaffold(body: Text('Abierta: ${settings.name}')),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(requests, 1);
+    expect(find.text('Síntesis verificada 1'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Perfil'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Abierta: /profile'))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(requests, 2);
+    expect(find.text('Síntesis verificada 1'), findsNothing);
+
+    await tester.tap(find.byTooltip('Cartera'));
+    await tester.pump(const Duration(milliseconds: 350));
+    Navigator.of(tester.element(find.text('Abierta: /portfolio'))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(requests, 3);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+    expect(find.text('Síntesis verificada 1'), findsNothing);
+
+    pendingProfile.complete(verifiedResponse('Síntesis obsoleta de Perfil'));
+    await tester.pump();
+    expect(find.text('Síntesis obsoleta de Perfil'), findsNothing);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('athena-synthesis-retry')));
+    await tester.pumpAndSettle();
+    expect(requests, 4);
+    expect(find.text('Síntesis verificada 4'), findsOneWidget);
+    expect(find.byKey(const Key('athena-synthesis-error')), findsNothing);
+    expect(find.byKey(const Key('dashboard-my-space-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-recommendations-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-readiness-2')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-market-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-news-0')), findsOneWidget);
+    expect(find.byKey(const Key('dashboard-investors-0')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Market and News return refresh research/readiness but preserve owner scope',
       (tester) async {
     tester.view.physicalSize = const Size(1400, 900);

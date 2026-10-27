@@ -93,7 +93,11 @@ class _DashboardPageState extends State<DashboardPage> {
   void _onReturnFromRoute(String route) {
     if (!mounted) return;
     if (route == AppRoutes.profile || route == AppRoutes.portfolio) {
-      // Owner edits do not necessarily rotate JWT authority.
+      // Owner edits do not necessarily rotate JWT authority. Any in-flight
+      // synthesis belongs to the previous Dashboard view and must not regain
+      // authority after a Profile or Portfolio edit.
+      _synthesisController.clear();
+      _synthesisController.loadLatest();
       setState(() {
         _ownerRefreshEpoch++;
         // Owner edits can change portfolio-dependent research eligibility.
