@@ -86,6 +86,35 @@ def _owner_snapshot(client: httpx.Client, token: str, owner: TestOwner, label: s
     _expect(policy.get("ownerDerivedFromAuthenticatedToken") is True and
             policy.get("clientSuppliedOwnerAccepted") is False and
             policy.get("automaticTrading") is False, label + " profile policy")
+    personalization_response = _get(
+        client, "/api/v1/user/profile/personalization",
+        label + " personalization", token=token,
+    )
+    _expect(personalization_response.get("status") == "configured", label + " personalization configured")
+    personalization = _object(personalization_response.get("data"), label + " personalization")
+    _expect(set(personalization) == {"schema", "fingerprint", "presentation", "policy"}
+            and personalization.get("schema") == "athena.user-personalization.v1",
+            label + " personalization contract")
+    fingerprint = personalization.get("fingerprint")
+    _expect(isinstance(fingerprint, str) and len(fingerprint) == 64
+            and all(c in "0123456789abcdef" for c in fingerprint),
+            label + " personalization fingerprint")
+    presentation = _object(personalization.get("presentation"), label + " presentation")
+    _expect(set(presentation) == {
+        "detailLevel", "explanationStyle", "riskEmphasis", "horizonEmphasis",
+        "liquidityEmphasis", "objectiveFocus",
+    } and all(isinstance(value, str) for value in presentation.values()),
+            label + " non-sensitive presentation")
+    personalization_policy = _object(personalization.get("policy"), label + " personalization policy")
+    _expect(
+        personalization_policy.get("presentationOnly") is True
+        and personalization_policy.get("recommendationScoringInfluence") is False
+        and personalization_policy.get("canonicalWeightingInfluence") is False
+        and personalization_policy.get("automaticLearningPromotion") is False
+        and personalization_policy.get("automaticTrading") is False
+        and personalization_policy.get("sensitiveValuesIncluded") is False,
+        label + " personalization no-authority and privacy",
+    )
     portfolio = _get(client, "/api/v1/user/portfolio", label + " portfolio", token=token)
     data = _object(portfolio.get("data"), label + " portfolio data")
     positions = data.get("positions")
@@ -113,7 +142,10 @@ def verify_deployed_api(client: httpx.Client, owner_a: TestOwner, owner_b: TestO
     health = _get(client, "/health", "health")
     _expect(health.get("status") == "ok" and health.get("service") == "athena-tyche-backend", "health")
     market = _get(client, "/api/v1/market/universe/status", "market universe")
-    _expect(isinstance(market.get("data"), dict), "market universe")
+    universe = _object(market.get("data"), "market universe")
+    _expect(type(universe.get("activeCount")) is int and universe["activeCount"] > 0
+            and universe.get("usingFallback") is False,
+            "persisted non-fallback market universe")
     root = "/api/v1/recommendations/professional-research"
     athena = _object(_get(client, root + "/athena-synthesis/latest", "athena").get("data"), "athena data")
     _expect(athena.get("artifactBindingVerified") is True, "athena canonical binding")
@@ -150,11 +182,14 @@ def verify_deployed_api(client: httpx.Client, owner_a: TestOwner, owner_b: TestO
         identity_b, positions_b = _owner_snapshot(client, token_b, owner_b, "owner B")
         _expect(identity_a != identity_b and owner_a.position_id != owner_b.position_id,
                 "distinct owner fixtures")
-        _expect(owner_b.position_id not in positions_a and owner_a.position_id not in positions_b,
-                "owner position isolation")
+        _expect(positions_a.isdisjoint(positions_b)
+                and owner_b.position_id not in positions_a
+                and owner_a.position_id not in positions_b,
+                "complete owner position isolation")
         _post(client, "/api/v1/auth/logout", "owner A logout", token=token_a, status=204)
         for path, label in (("/api/v1/auth/me", "revoked me"),
                             ("/api/v1/user/profile/preferences", "revoked profile"),
+                            ("/api/v1/user/profile/personalization", "revoked personalization"),
                             ("/api/v1/user/portfolio", "revoked portfolio")):
             try:
                 response = client.get(path, headers={"Authorization": f"Bearer {token_a}"})
@@ -163,7 +198,12 @@ def verify_deployed_api(client: httpx.Client, owner_a: TestOwner, owner_b: TestO
             _expect(response.status_code == 401, label)
         _expect(_get(client, "/api/v1/auth/me", "owner B after A logout", token=token_b).get("status") == "authenticated",
                 "independent owner session")
+        _expect(_get(client, "/api/v1/user/profile/personalization",
+                     "owner B personalization after A logout", token=token_b).get("status") == "configured",
+                "independent owner personalization")
         return {"status": "passed", "deployedApiContractsVerified": True,
+                "persistedMarketUniverseVerified": True,
+                "ownerScopedPersonalizationVerified": True,
                 "deployedFlutterBrowserE2EVerified": False, "operationalHistory365DaysVerified": False,
                 "crossSurfaceCanonicalBindingVerified": True, "twoOwnerIsolationAndRevocationVerified": True,
                 "automaticTradingAuthorized": False}
