@@ -274,7 +274,7 @@ class DatabaseBackupService:
 
         try:
             source_connection = sqlite3.connect(
-                f"file:{source.as_posix()}?mode=ro",
+                source.resolve().as_uri() + "?mode=ro&immutable=1",
                 uri=True,
             )
             target_connection = sqlite3.connect(
@@ -458,7 +458,7 @@ class DatabaseBackupService:
         database_path: Path,
     ) -> int:
         connection = sqlite3.connect(
-            f"file:{database_path.as_posix()}?mode=ro",
+            database_path.resolve().as_uri() + "?mode=ro&immutable=1",
             uri=True,
         )
         connection.row_factory = sqlite3.Row
