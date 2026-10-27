@@ -940,8 +940,10 @@ void main() {
     expect(marketService.calls, 1);
     expect(find.text('MERCADO'), findsOneWidget);
     expect(find.byKey(const Key('market-information-boundary')), findsOneWidget);
+    expect(marketController.error,
+        'No se pudo verificar el contexto global del mercado. Reintenta la consulta.');
     expect(
-      find.bySemanticsLabel('No se pudo actualizar el contexto global del mercado.'),
+      find.textContaining('No se pudo verificar el contexto global del mercado.'),
       findsOneWidget,
     );
     expect(find.textContaining('must-not-leak'), findsNothing);
