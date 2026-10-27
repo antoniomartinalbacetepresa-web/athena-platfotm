@@ -915,7 +915,7 @@ void main() {
       find.bySemanticsLabel('Noticias verificadas no disponibles.'),
       findsNothing,
     );
-    Navigator.of(tester.element(find.text('NOTICIAS'))).pop();
+    Navigator.of(tester.element(find.byKey(const Key('news-page-heading')))).pop();
     await tester.pumpAndSettle();
 
     expect(athenaRequests, 3);
