@@ -25,8 +25,9 @@ def _aware_iso(value: str | None) -> datetime:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Lista corporate actions visibles PIT que todavía carecen de dos familias "
-            "de proveedor técnicamente independientes."
+            "Lista corporate actions PIT con familias independientes ausentes, "
+            "unidades económicas incompletas o valores en conflicto. "
+            "Es un diagnóstico, no una aprobación de producción."
         )
     )
     parser.add_argument("--as-of", dest="as_of", help="Corte ISO-8601 con zona horaria.")
