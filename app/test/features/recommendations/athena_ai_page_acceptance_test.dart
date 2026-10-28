@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:app/core/routing/app_routes.dart';
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/recommendations/controllers/athena_synthesis_controller.dart';
 import 'package:app/features/recommendations/data/datasources/athena_backend_synthesis_data_source.dart';
 import 'package:app/features/recommendations/presentation/pages/athena_ai_page.dart';
@@ -82,6 +85,115 @@ void main() {
     expect(find.text('Evidencia obsoleta'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('verified ATHENA provenance navigates and revalidates on return',
+      (tester) async {
+    var calls = 0;
+    final visited = <String>[];
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async {
+        calls++;
+        return http.Response(
+          jsonEncode(calls == 1
+              ? _payload('Síntesis inicial')
+              : _payloadWithInvestors('Síntesis revalidada')),
+          200,
+        );
+      }),
+    );
+    final controller = AthenaSynthesisController(dataSource: source);
+    addTearDown(controller.dispose);
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: AthenaAiPage(controller: controller),
+      onGenerateRoute: (settings) {
+        visited.add(settings.name!);
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => const Scaffold(
+            body: Center(child: Text('Superficie independiente', key: Key('evidence-route'))),
+          ),
+        );
+      },
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('athena-ai-open-market')), findsOneWidget);
+    expect(find.byKey(const Key('athena-ai-open-news')), findsOneWidget);
+    expect(find.byKey(const Key('athena-ai-open-investors')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('athena-ai-open-news')));
+    await tester.pumpAndSettle();
+    expect(visited.last, AppRoutes.news);
+    Navigator.of(tester.element(find.byKey(const Key('evidence-route')))).pop();
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('Síntesis revalidada'), findsOneWidget);
+    expect(find.byKey(const Key('athena-ai-open-investors')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('athena-ai-open-investors')));
+    await tester.pumpAndSettle();
+    expect(visited.last, AppRoutes.investors);
+    Navigator.of(tester.element(find.byKey(const Key('evidence-route')))).pop();
+    await tester.pumpAndSettle();
+    expect(calls, 3);
+
+    await tester.tap(find.byKey(const Key('athena-ai-open-market')));
+    await tester.pumpAndSettle();
+    expect(visited.last, AppRoutes.market);
+    Navigator.of(tester.element(find.byKey(const Key('evidence-route')))).pop();
+    await tester.pumpAndSettle();
+    expect(calls, 4);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('owner replacement invalidates in-flight ATHENA AI evidence',
+      (tester) async {
+    final session = AuthSession.instance;
+    session.clear();
+    addTearDown(session.clear);
+    AuthAccount account(int id) => AuthAccount(
+          id: id,
+          email: 'owner$id@example.com',
+          isActive: true,
+          createdAt: DateTime.utc(2026, 10, 1),
+          updatedAt: DateTime.utc(2026, 10, 1),
+        );
+    session.establish(accessToken: 'owner-a.jwt', account: account(1));
+    final oldResponse = Completer<http.Response>();
+    final newResponse = Completer<http.Response>();
+    var calls = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) {
+        calls++;
+        return calls == 1 ? oldResponse.future : newResponse.future;
+      }),
+    );
+    final controller = AthenaSynthesisController(dataSource: source);
+    addTearDown(controller.dispose);
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(home: AthenaAiPage(controller: controller)));
+    await tester.pump();
+    expect(calls, 1);
+
+    session.establish(accessToken: 'owner-b.jwt', account: account(2));
+    await tester.pump();
+    expect(calls, 2);
+    expect(find.byKey(const Key('athena-synthesis-loading')), findsOneWidget);
+    expect(find.byKey(const Key('athena-ai-open-news')), findsNothing);
+
+    newResponse.complete(http.Response(jsonEncode(_payload('Evidencia de B')), 200));
+    await tester.pumpAndSettle();
+    expect(find.text('Evidencia de B'), findsOneWidget);
+
+    oldResponse.complete(http.Response(jsonEncode(_payload('Evidencia de A')), 200));
+    await tester.pumpAndSettle();
+    expect(find.text('Evidencia de A'), findsNothing);
+    expect(find.text('Evidencia de B'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Map<String, dynamic> _payload(String summary) => {
@@ -117,3 +229,25 @@ Map<String, dynamic> _payload(String summary) => {
         },
       },
     };
+
+Map<String, dynamic> _payloadWithInvestors(String summary) {
+  final payload = _payload(summary);
+  final data = payload['data'] as Map<String, dynamic>;
+  final synthesis = data['synthesis'] as Map<String, dynamic>;
+  (synthesis['evidenceIds'] as List<String>).add('investor-evidence-1');
+  final provenance = data['provenance'] as Map<String, dynamic>;
+  provenance['investors'] = {
+    'artifactHash': 'd' * 64,
+    'userFacingTraceability': true,
+    'recommendationInfluence': false,
+    'automaticTrading': false,
+    'assessmentBindings': [
+      {
+        'evidenceId': 'investor-evidence-1',
+        'assessmentFingerprint': 'e' * 64,
+        'sourceRef': 'https://www.sec.gov/Archives/edgar/data/123456/filing.xml',
+      },
+    ],
+  };
+  return payload;
+}

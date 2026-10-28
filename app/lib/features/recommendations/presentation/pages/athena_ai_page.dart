@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
+import '../../../auth/services/auth_session.dart';
 import '../../controllers/athena_synthesis_controller.dart';
 import '../../data/datasources/athena_backend_synthesis_data_source.dart';
 import '../athena_synthesis_panel.dart';
@@ -24,6 +26,21 @@ class _AthenaAiPageState extends State<AthenaAiPage> {
   AthenaBackendSynthesisDataSource? _ownedSource;
   late AthenaSynthesisController _controller;
   late bool _ownsController;
+  late int _observedAuthorityVersion;
+
+  void _onAuthorityChanged() {
+    final version = AuthSession.instance.authorityVersion;
+    if (!mounted || version == _observedAuthorityVersion) return;
+    _observedAuthorityVersion = version;
+    // Discard evidence requested under the previous session immediately.
+    _refresh();
+  }
+
+  Future<void> _openEvidence(String route) async {
+    await Navigator.of(context).pushNamed<void>(route);
+    // Returning from a source surface requires fresh canonical evidence.
+    if (mounted) _refresh();
+  }
 
   void _bindController() {
     _ownsController = widget.controller == null;
@@ -49,6 +66,8 @@ class _AthenaAiPageState extends State<AthenaAiPage> {
   @override
   void initState() {
     super.initState();
+    _observedAuthorityVersion = AuthSession.instance.authorityVersion;
+    AuthSession.instance.addListener(_onAuthorityChanged);
     _bindController();
   }
 
@@ -68,6 +87,7 @@ class _AthenaAiPageState extends State<AthenaAiPage> {
 
   @override
   void dispose() {
+    AuthSession.instance.removeListener(_onAuthorityChanged);
     if (_ownsController) {
       _controller.dispose();
       _ownedSource?.dispose();
@@ -116,6 +136,41 @@ class _AthenaAiPageState extends State<AthenaAiPage> {
                         style: TextStyle(color: AthenaColors.textSecondary),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, _) {
+                      final provenance = _controller.synthesis?.provenance;
+                      if (provenance == null) return const SizedBox.shrink();
+                      return Wrap(
+                        key: const Key('athena-ai-evidence-navigation'),
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            key: const Key('athena-ai-open-market'),
+                            onPressed: () => _openEvidence(AppRoutes.market),
+                            icon: const Icon(Icons.public_outlined),
+                            label: const Text('Explorar mercado'),
+                          ),
+                          if (provenance.hasNews)
+                            OutlinedButton.icon(
+                              key: const Key('athena-ai-open-news'),
+                              onPressed: () => _openEvidence(AppRoutes.news),
+                              icon: const Icon(Icons.article_outlined),
+                              label: const Text('Ver noticias vinculadas'),
+                            ),
+                          if (provenance.hasInvestors)
+                            OutlinedButton.icon(
+                              key: const Key('athena-ai-open-investors'),
+                              onPressed: () => _openEvidence(AppRoutes.investors),
+                              icon: const Icon(Icons.account_balance_outlined),
+                              label: const Text('Ver inversores vinculados'),
+                            ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   Expanded(child: AthenaSynthesisPanel(controller: _controller)),
