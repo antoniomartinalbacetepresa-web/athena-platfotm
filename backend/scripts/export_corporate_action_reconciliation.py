@@ -16,7 +16,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.database.athena_database import AthenaDatabase
+from app.database.read_only_snapshot_database import ReadOnlySnapshotDatabase
 from app.services.corporate_action_reconciliation_worklist_service import (
     CorporateActionReconciliationWorklistService,
 )
@@ -76,7 +76,7 @@ def export_worklist(
     with tempfile.TemporaryDirectory(prefix="athena-ca-snapshot-") as work:
         snapshot = Path(work) / "snapshot.db"
         snapshot_sha = _consistent_copy(source, snapshot)
-        worklist = CorporateActionReconciliationWorklistService(AthenaDatabase(snapshot))
+        worklist = CorporateActionReconciliationWorklistService(ReadOnlySnapshotDatabase(snapshot))
         first = worklist.get_worklist(as_of=cutoff, limit=PAGE_SIZE, offset=0)
         incomplete = first.total_incomplete_event_count
         conflicts = first.total_conflict_event_count

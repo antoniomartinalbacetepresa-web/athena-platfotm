@@ -14,7 +14,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from app.database.athena_database import AthenaDatabase
+from app.database.read_only_snapshot_database import ReadOnlySnapshotDatabase
 from app.services.market_history_gap_service import MarketHistoryGapService
 from app.services.market_observation_coverage_service import MarketObservationCoverageService
 from scripts.export_corporate_action_reconciliation import (
@@ -52,7 +52,7 @@ def export_history_gaps(
     with tempfile.TemporaryDirectory(prefix="athena-history-snapshot-") as work:
         snapshot = Path(work) / "snapshot.db"
         snapshot_sha = _consistent_copy(source, snapshot)
-        database = AthenaDatabase(snapshot)
+        database = ReadOnlySnapshotDatabase(snapshot)
         coverage = MarketObservationCoverageService(database).get_report(as_of=cutoff)
         gaps = MarketHistoryGapService(database)
         first = gaps.get_report(as_of=cutoff, limit=page_size, offset=0)

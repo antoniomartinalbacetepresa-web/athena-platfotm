@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -10,9 +11,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.database.athena_database import AthenaDatabase
+from app.database.read_only_snapshot_database import ReadOnlySnapshotDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
 from app.services.market_history_gap_service import MarketHistoryGapService
+from app.services.market_observation_coverage_service import MarketObservationCoverageService
+from scripts.export_corporate_action_reconciliation import _consistent_copy, _sha256_file
 from scripts.export_market_history_gaps import export_history_gaps
 
 
@@ -113,3 +117,33 @@ def test_history_gap_export_never_publishes_inconsistent_pages(tmp_path, monkeyp
             as_of=cutoff, page_size=1,
         )
     assert not output.exists()
+
+
+def test_history_snapshot_diagnostics_are_read_only_and_schema_checked(tmp_path):
+    database, cutoff = _seed(tmp_path)
+    snapshot = tmp_path / "immutable-snapshot.db"
+    initial_sha = _consistent_copy(database.database_path, snapshot)
+    diagnostic = ReadOnlySnapshotDatabase(snapshot)
+
+    # Coverage and each gap page used to call the normal schema initializer,
+    # which updates schema_metadata and can change the snapshot SHA mid-export.
+    for _ in range(3):
+        MarketObservationCoverageService(diagnostic).get_report(as_of=cutoff)
+        MarketHistoryGapService(diagnostic).get_report(
+            as_of=cutoff, limit=1, offset=0
+        )
+    assert _sha256_file(snapshot) == initial_sha
+    with diagnostic.connect() as connection:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute(
+                "UPDATE schema_metadata SET value='0' WHERE key='schema_version'"
+            )
+    assert _sha256_file(snapshot) == initial_sha
+
+    # Outdated snapshots must be rejected, never migrated by a diagnostic.
+    with sqlite3.connect(snapshot) as connection:
+        connection.execute(
+            "UPDATE schema_metadata SET value='8' WHERE key='schema_version'"
+        )
+    with pytest.raises(RuntimeError, match="schema version"):
+        diagnostic.initialize()
