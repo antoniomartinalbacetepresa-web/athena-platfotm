@@ -160,6 +160,34 @@ jobs:
           ATHENA_ACCEPTANCE_B_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_B_CURRENCY }}
         run: python backend/scripts/deployed_cross_surface_acceptance.py
 
+  deployed-flutter-browser-acceptance:
+    name: Deployed Flutter Web guest research browser (opt-in)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev/real-market-backend' && vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging-acceptance
+    steps:
+      - name: Checkout exact SHA
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned browser runner
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium
+
+      - name: Verify deployed Flutter Web guest journey
+        env:
+          ATHENA_ACCEPTANCE_WEB_URL: ${{ secrets.ATHENA_ACCEPTANCE_WEB_URL }}
+          ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA }}
+        run: python backend/scripts/deployed_flutter_browser_acceptance.py
+
   release-validation-gate:
     name: Release validation gate
     if: always()
@@ -167,6 +195,7 @@ jobs:
       - backend-tests
       - flutter-validation
       - deployed-api-acceptance
+      - deployed-flutter-browser-acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -176,9 +205,14 @@ jobs:
           FLUTTER_RESULT: ${{ needs.flutter-validation.result }}
           DEPLOYED_RESULT: ${{ needs.deployed-api-acceptance.result }}
           DEPLOYED_ENABLED: ${{ vars.ATHENA_DEPLOYED_ACCEPTANCE_ENABLED }}
+          BROWSER_RESULT: ${{ needs.deployed-flutter-browser-acceptance.result }}
+          BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED }}
         run: |
           test "$BACKEND_RESULT" = "success"
           test "$FLUTTER_RESULT" = "success"
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$DEPLOYED_ENABLED" = "true" ]; then
             test "$DEPLOYED_RESULT" = "success"
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$BROWSER_ENABLED" = "true" ]; then
+            test "$BROWSER_RESULT" = "success"
           fi

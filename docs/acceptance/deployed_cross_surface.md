@@ -14,3 +14,33 @@ Never count mocked test fixtures or a green standard CI run as operational proof
 The probe requires: HTTPS, health, a **non-empty persisted Market universe without fallback** (not 365-day coverage), News/Investors/ATHENA canonical cycle and hash bindings, presentation-only/no-trading policies, two independent real authenticated owners, owner-specific encrypted Profile currency and Portfolio position markers, and the **authenticated owner-scoped personalization projection**. The personalization projection must exclude sensitive fields and cannot influence recommendations, weighting, learning or trading. The entire returned position-ID sets must be disjoint, not merely the two seeded marker IDs. After A logout, all four protected API routes (me, preferences, personalization, portfolio) must reject A while B's account and personalization remain accessible. It only writes to the session-revocation store via logout; it does not edit Profile, Portfolio, recommendations or orders. Issued tokens are best-effort revoked on exit. It logs no account identity, token, password, position details or profile values.
 
 **Fail closed:** missing deployment, secrets, pre-seeded accounts, canonical synthesis, consistent cycle, markers or revocation returns nonzero. This opt-in job is not currently active because the required deployment/environment evidence is unavailable. A passing result is **deployed API contract evidence only**, not Flutter Web E2E, UI accessibility, full selective-refresh/stale-response behavior, real 365-day history, OOS proof, SMTP delivery, backup/restore or release authorization. Those remain separate acceptance criteria. The administrator must configure branch protection and required checks independently.
+
+
+## Deployed Flutter Web guest research browser — separate opt-in gate
+
+The deployed API probe above is **not** a Flutter browser E2E. The optional
+`Deployed Flutter Web guest research browser (opt-in)` push job runs real
+headless Chromium against the **deployed Web origin**, not widget-test Chrome.
+It checks Dashboard → Market → News → Investors → ATHENA AI in wide layout,
+live canonical HTTP responses, visible verified provenance, browser-injected
+HTTP 503 fail-closed removal and recovery, and compact Dashboard → Market
+navigation. The HTTP 503 is a controlled browser fault, **not** evidence
+that a live provider failed. No personal account or position is modified.
+
+Deploy the exact `dev/real-market-backend` Flutter Web build to HTTPS,
+compiled with an accessible HTTPS `ATHENA_BACKEND_URL` via
+`--dart-define`. Seed verified canonical News/ATHENA synthesis and real
+SEC 13F CIK evidence in staging. Set `ATHENA_ACCEPTANCE_WEB_URL` as an
+environment **secret** and `ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA` as an
+environment **variable** in `staging-acceptance`. The SHA variable is
+only an operator assertion; retain independent deployment attestation.
+Set repository variable `ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED=true`
+**only after** continuous deployment keeps the web build synchronized
+with every push. When enabled, the push release gate requires this job
+to succeed; PR checks remain independent. Without configuration, the
+browser job is skipped and must not be counted as passed.
+
+Even a passing guest browser job does **not** close two-owner Flutter
+session isolation, stale-response ordering, selective refresh, a full
+accessibility audit, 365-day operational history, OOS, SMTP, backups,
+or production release authorization. Never upload screenshots or secrets.
