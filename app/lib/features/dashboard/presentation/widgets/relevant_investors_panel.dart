@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -132,15 +134,20 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
   }
 
   void _reload() {
-    // Defer provider work until after the new FutureBuilder subscribes.
-    // An immediately rejected provider must become a fail-closed UI error,
-    // never an unhandled exception during the user's retry tap.
-    final next = Future<List<RelevantInvestorActivity>>.delayed(
-      Duration.zero,
-      _loadActivities,
-    );
+    // Install the pending future before invoking any provider. The callback
+    // runs after FutureBuilder has subscribed, so immediate failures and
+    // already-rejected futures are displayed instead of escaping the tap.
+    final pending = Completer<List<RelevantInvestorActivity>>();
     setState(() {
-      _activitiesFuture = next;
+      _activitiesFuture = pending.future;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        pending.complete(await _loadActivities());
+      } catch (error, stackTrace) {
+        pending.completeError(error, stackTrace);
+      }
     });
   }
 
