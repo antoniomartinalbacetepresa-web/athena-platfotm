@@ -1,0 +1,102 @@
+import 'dart:async';
+
+import 'package:app/features/analysis/presentation/pages/professional_stock_research_page.dart';
+import 'package:app/features/recommendations/data/datasources/athena_backend_professional_dossier_data_source.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+class _PendingDossierSource extends AthenaBackendProfessionalDossierDataSource {
+  _PendingDossierSource() : super(baseUrl: 'https://athena.example');
+
+  final Map<String, Completer<ProfessionalDossier>> pending = {};
+  final List<String> requested = [];
+
+  @override
+  Future<ProfessionalDossier> getLatest({
+    DateTime? asOf,
+    String? symbol,
+    int? instrumentId,
+  }) {
+    requested.add(symbol!);
+    return pending.putIfAbsent(symbol, Completer<ProfessionalDossier>.new).future;
+  }
+}
+
+ProfessionalDossier _dossier(String symbol) => ProfessionalDossier(
+      asOf: DateTime.utc(2026, 9, 7),
+      symbol: symbol,
+      advisoryStatus: 'no_advice',
+      productionEligible: false,
+      allocationEligible: false,
+      executionEligible: false,
+      orderRoutingEligible: false,
+      automaticTrading: false,
+      readOnly: true,
+      modules: {
+        for (final name in ProfessionalDossier.moduleNames)
+          name: ProfessionalModuleState(
+            status: 'not_yet_evidenced',
+            productionEligible: false,
+            reason: 'Evidencia del símbolo $symbol',
+          ),
+      },
+    );
+
+void main() {
+  testWidgets('changing a research symbol cannot show the old dossier',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    expect(source.requested, ['AAPL']);
+
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'MSFT', dataSource: source),
+    ));
+    await tester.pump();
+    expect(source.requested, ['AAPL', 'MSFT']);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    source.pending['MSFT']!.complete(_dossier('MSFT'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Evidencia del símbolo MSFT'), findsWidgets);
+    expect(find.textContaining('Evidencia del símbolo AAPL'), findsNothing);
+
+    source.pending['AAPL']!.complete(_dossier('AAPL'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Evidencia del símbolo MSFT'), findsWidgets);
+    expect(find.textContaining('Evidencia del símbolo AAPL'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('replacing the research source invalidates its old response',
+      (tester) async {
+    final oldSource = _PendingDossierSource();
+    final newSource = _PendingDossierSource();
+    addTearDown(oldSource.dispose);
+    addTearDown(newSource.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: oldSource),
+    ));
+    await tester.pump();
+
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: newSource),
+    ));
+    await tester.pump();
+    expect(newSource.requested, ['AAPL']);
+
+    newSource.pending['AAPL']!.complete(_dossier('NEW'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Evidencia del símbolo NEW'), findsWidgets);
+
+    oldSource.pending['AAPL']!.complete(_dossier('OLD'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Evidencia del símbolo NEW'), findsWidgets);
+    expect(find.textContaining('Evidencia del símbolo OLD'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+}

@@ -155,4 +155,36 @@ void main() {
       expect(unknownSource.getLatest(), throwsFormatException);
     });
   });
+    test('rechaza un dossier de otro símbolo incluso si sus módulos son seguros',
+        () async {
+      final data = _dossier()..['symbol'] = 'MSFT';
+      final source = AthenaBackendProfessionalDossierDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient(
+          (_) async => http.Response(jsonEncode({'data': data}), 200),
+        ),
+      );
+      addTearDown(source.dispose);
+
+      expect(source.getLatest(symbol: 'AAPL'), throwsFormatException);
+    });
+
+    test('rechaza un instrumento distinto y una identidad ausente',
+        () async {
+      for (final identity in [8, null]) {
+        final data = _dossier()..['instrumentId'] = identity;
+        final source = AthenaBackendProfessionalDossierDataSource(
+          baseUrl: 'https://api.athena.test',
+          client: MockClient(
+            (_) async => http.Response(jsonEncode({'data': data}), 200),
+          ),
+        );
+        addTearDown(source.dispose);
+        expect(
+          source.getLatest(symbol: 'AAPL', instrumentId: 7),
+          throwsFormatException,
+        );
+      }
+    });
+
 }

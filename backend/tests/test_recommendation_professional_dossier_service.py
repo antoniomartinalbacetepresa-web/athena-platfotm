@@ -155,3 +155,32 @@ def test_professional_dossier_exposes_dividend_total_return_as_pit_diagnostic_on
     assert result["executionEligible"] is False
     assert result["orderRoutingEligible"] is False
     assert result["automaticTrading"] is False
+
+
+
+def test_rejects_a_sealed_decision_for_another_requested_symbol() -> None:
+    with pytest.raises(ValueError, match="symbol"):
+        _service(_state()).build(
+            as_of=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+            symbol="MSFT",
+        )
+
+
+def test_rejects_a_mismatched_resolved_state_symbol() -> None:
+    state = _state()
+    state["symbol"] = "MSFT"
+    with pytest.raises(ValueError, match="symbol|identidad"):
+        _service(state).build(
+            as_of=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+            symbol="AAPL",
+        )
+
+
+def test_rejects_a_production_decision_without_symbol() -> None:
+    state = _state()
+    state["recommendation"]["symbol"] = None
+    with pytest.raises(ValueError, match="symbol"):
+        _service(state).build(
+            as_of=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+            symbol="AAPL",
+        )

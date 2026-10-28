@@ -28,6 +28,28 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
     _future = _load();
   }
 
+  @override
+  void didUpdateWidget(covariant ProfessionalStockResearchPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final sourceChanged = !identical(oldWidget.dataSource, widget.dataSource);
+    if (!sourceChanged && oldWidget.symbol == widget.symbol) return;
+
+    final oldDependencies = _dependencies;
+    if (sourceChanged) {
+      if (widget.dataSource != null) {
+        _dependencies = null;
+        _dataSource = widget.dataSource!;
+      } else {
+        _dependencies = RecommendationDependencies.create();
+        _dataSource = _dependencies!.professionalDossierDataSource;
+      }
+    }
+    // FutureBuilder must subscribe to the new identity/source generation.
+    // An old response cannot become the dossier under a new page heading.
+    setState(() => _future = _load());
+    if (sourceChanged) oldDependencies?.dispose();
+  }
+
   Future<ProfessionalDossier> _load() {
     final symbol = widget.symbol.trim().toUpperCase();
     if (symbol.isEmpty) {

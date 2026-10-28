@@ -56,9 +56,24 @@ class RecommendationProfessionalDossierService:
             }
             for name in self.PROFESSIONAL_MODULES
         }
-        resolved_symbol = str(
-            (recommendation or {}).get("symbol") if isinstance(recommendation, dict) else state.get("symbol") or symbol or ""
-        ).strip().upper()
+        # Never label another instrument's sealed decision as the requested one.
+        # A missing decision symbol is not the literal ticker "NONE".
+        state_symbol = str(state.get("symbol") or "").strip().upper()
+        decision_symbol = (
+            str(recommendation.get("symbol") or "").strip().upper()
+            if isinstance(recommendation, dict)
+            else ""
+        )
+        requested_symbol = str(symbol or "").strip().upper()
+        if recommendation is not None and not decision_symbol:
+            raise ValueError("La recomendación productiva no identifica symbol.")
+        if requested_symbol and state_symbol and state_symbol != requested_symbol:
+            raise ValueError("El estado productivo cambió symbol respecto a la consulta.")
+        if requested_symbol and decision_symbol and decision_symbol != requested_symbol:
+            raise ValueError("La recomendación productiva cambió symbol respecto a la consulta.")
+        if state_symbol and decision_symbol and state_symbol != decision_symbol:
+            raise ValueError("La identidad del dossier y la recomendación no coincide.")
+        resolved_symbol = decision_symbol or state_symbol or requested_symbol
         if resolved_symbol:
             dividend_contract = self._dividend_evidence_service.evaluate(
                 symbol=resolved_symbol,

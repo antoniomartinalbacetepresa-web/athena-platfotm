@@ -36,6 +36,9 @@ class ProfessionalDossier {
   };
 
   final DateTime asOf;
+  /// Canonical identity echoed by the verified backend response.
+  final String? symbol;
+  final int? instrumentId;
   final String advisoryStatus;
   final bool productionEligible;
   final bool allocationEligible;
@@ -47,6 +50,8 @@ class ProfessionalDossier {
 
   const ProfessionalDossier({
     required this.asOf,
+    this.symbol,
+    this.instrumentId,
     required this.advisoryStatus,
     required this.productionEligible,
     required this.allocationEligible,
@@ -115,11 +120,29 @@ class AthenaBackendProfessionalDossierDataSource {
         'La respuesta del dossier profesional no respeta el contrato de ATHENA.',
       );
     }
-    return _mapDossier(Map<String, dynamic>.from(decoded['data'] as Map));
+    final dossier = _mapDossier(
+      Map<String, dynamic>.from(decoded['data'] as Map),
+    );
+    final requestedSymbol = symbol?.trim().toUpperCase();
+    if (requestedSymbol != null &&
+        requestedSymbol.isNotEmpty &&
+        dossier.symbol != requestedSymbol) {
+      throw const FormatException(
+        'El dossier profesional no corresponde al símbolo solicitado.',
+      );
+    }
+    if (instrumentId != null && dossier.instrumentId != instrumentId) {
+      throw const FormatException(
+        'El dossier profesional no corresponde al instrumento solicitado.',
+      );
+    }
+    return dossier;
   }
 
   ProfessionalDossier _mapDossier(Map<String, dynamic> json) {
     final cutoff = _utc(json['asOf'], 'asOf');
+    final dossierSymbol = _optionalSymbol(json['symbol']);
+    final dossierInstrumentId = _optionalInstrumentId(json['instrumentId']);
     final advisoryStatus = _string(json['advisoryStatus'], 'advisoryStatus');
     final productionEligible =
         _bool(json['productionEligible'], 'productionEligible');
@@ -228,6 +251,8 @@ class AthenaBackendProfessionalDossierDataSource {
 
     final dossier = ProfessionalDossier(
       asOf: cutoff,
+      symbol: dossierSymbol,
+      instrumentId: dossierInstrumentId,
       advisoryStatus: advisoryStatus,
       productionEligible: productionEligible,
       allocationEligible: allocationEligible,
@@ -241,6 +266,25 @@ class AthenaBackendProfessionalDossierDataSource {
       throw const FormatException('Dossier profesional inconsistente.');
     }
     return dossier;
+  }
+
+  String? _optionalSymbol(dynamic value) {
+    if (value == null) return null;
+    if (value is! String || value.trim().isEmpty) {
+      throw const FormatException('symbol del dossier no es válido.');
+    }
+    return value.trim().toUpperCase();
+  }
+
+  int? _optionalInstrumentId(dynamic value) {
+    if (value == null) return null;
+    final parsed = value is int
+        ? value
+        : value is String ? int.tryParse(value) : null;
+    if (parsed == null || parsed <= 0) {
+      throw const FormatException('instrumentId del dossier no es válido.');
+    }
+    return parsed;
   }
 
   DateTime _utc(dynamic value, String field) {
