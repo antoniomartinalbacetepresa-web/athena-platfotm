@@ -12,6 +12,8 @@ import json
 import os
 import sqlite3
 import tempfile
+from contextlib import closing
+from itertools import chain
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,20 +29,28 @@ def _cutoff(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def _consistent_copy(source: Path, destination: Path) -> str:
     """SQLite online backup includes committed WAL data without writing to source."""
     if not source.is_file():
         raise FileNotFoundError("Authorized source SQLite database does not exist")
-    with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as reader:
+    with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
         # Reject a wrong/empty database instead of initializing it as ATHENA.
         reader.execute("SELECT 1 FROM instruments LIMIT 1")
         reader.execute("SELECT 1 FROM corporate_actions LIMIT 1")
-        with sqlite3.connect(destination) as writer:
+        with closing(sqlite3.connect(destination)) as writer:
             reader.backup(writer)
             integrity = writer.execute("PRAGMA quick_check").fetchone()
             if integrity is None or integrity[0] != "ok":
                 raise RuntimeError("Consistent SQLite snapshot failed integrity check")
-    return hashlib.sha256(destination.read_bytes()).hexdigest()
+    return _sha256_file(destination)
 
 
 def export_worklist(
@@ -101,7 +111,7 @@ def export_worklist(
                 dir=output.parent, delete=False,
             ) as handle:
                 staged = Path(handle.name)
-                for row in (metadata, *(item.to_api_dict() for item in report.items)):
+                for row in chain((metadata,), (item.to_api_dict() for item in report.items)):
                     line = (
                         json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
                         + "\n"
