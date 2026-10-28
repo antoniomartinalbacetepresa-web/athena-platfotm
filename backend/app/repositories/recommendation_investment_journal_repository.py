@@ -49,6 +49,14 @@ class RecommendationInvestmentJournalRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_investment_journal_head
                 ON athena_investment_journal_snapshots(journal_id, id);
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_investment_journal_single_root
+                ON athena_investment_journal_snapshots(journal_id)
+                WHERE prior_snapshot_hash IS NULL;
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_investment_journal_single_successor
+                ON athena_investment_journal_snapshots(journal_id, prior_snapshot_hash)
+                WHERE prior_snapshot_hash IS NOT NULL;
                 """
             )
 
@@ -65,6 +73,21 @@ class RecommendationInvestmentJournalRepository:
         created_at = datetime.now().astimezone().isoformat()
 
         with self._database.connect() as connection:
+            # Serialize the head check and insert across independent SQLite writers.
+            connection.execute("BEGIN IMMEDIATE")
+            chain_rows = connection.execute(
+                """SELECT * FROM athena_investment_journal_snapshots
+                   WHERE journal_id = ? ORDER BY id ASC""",
+                (journal_id,),
+            ).fetchall()
+            existing_chain: list[dict[str, Any]] = []
+            for chain_row in chain_rows:
+                chain_record = self._row(chain_row)
+                if chain_record is None:
+                    raise ValueError("El lineage persistido contiene una revisión ilegible.")
+                existing_chain.append(chain_record)
+            self._validate_chain(existing_chain)
+
             existing_revision = connection.execute(
                 """
                 SELECT * FROM athena_investment_journal_snapshots
@@ -166,29 +189,9 @@ class RecommendationInvestmentJournalRepository:
         if not records:
             raise ValueError("No existe un journal persistido con ese journal_id.")
 
-        previous_hash: str | None = None
-        previous_recorded_at: datetime | None = None
+        self._validate_chain(records)
+        previous_hash = records[-1]["snapshot_hash"]
         symbol = records[0]["symbol"]
-        seen_revisions: set[str] = set()
-        seen_hashes: set[str] = set()
-        for index, record in enumerate(records):
-            revision_id = record["revision_id"]
-            snapshot_hash = record["snapshot_hash"]
-            if revision_id in seen_revisions or snapshot_hash in seen_hashes:
-                raise ValueError("El lineage contiene identidades o hashes duplicados.")
-            seen_revisions.add(revision_id)
-            seen_hashes.add(snapshot_hash)
-            if record["symbol"] != symbol:
-                raise ValueError("El lineage cambió de símbolo.")
-            if record["prior_snapshot_hash"] != previous_hash:
-                raise ValueError("El lineage persistido está roto o contiene una bifurcación.")
-            recorded_at = self._aware_iso(record["recorded_at"], "recorded_at")
-            if previous_recorded_at is not None and recorded_at < previous_recorded_at:
-                raise ValueError("El lineage retrocede temporalmente.")
-            previous_recorded_at = recorded_at
-            previous_hash = snapshot_hash
-            if index == 0 and record["prior_snapshot_hash"] is not None:
-                raise ValueError("La primera revisión no puede tener prior_snapshot_hash.")
 
         return {
             "status": "lineage_verified",
@@ -207,6 +210,32 @@ class RecommendationInvestmentJournalRepository:
                 "automaticProductionPromotion": False,
             },
         }
+
+    def _validate_chain(self, records: list[dict[str, Any]]) -> None:
+        previous_hash: str | None = None
+        previous_recorded_at: datetime | None = None
+        symbol = records[0]["symbol"] if records else None
+        seen_revisions: set[str] = set()
+        seen_hashes: set[str] = set()
+        for index, record in enumerate(records):
+            self.validate_record(record)
+            revision_id = record["revision_id"]
+            snapshot_hash = record["snapshot_hash"]
+            if revision_id in seen_revisions or snapshot_hash in seen_hashes:
+                raise ValueError("El lineage contiene identidades o hashes duplicados.")
+            seen_revisions.add(revision_id)
+            seen_hashes.add(snapshot_hash)
+            if record["symbol"] != symbol:
+                raise ValueError("El lineage cambió de símbolo.")
+            if record["prior_snapshot_hash"] != previous_hash:
+                raise ValueError("El lineage persistido está roto o contiene una bifurcación.")
+            recorded_at = self._aware_iso(record["recorded_at"], "recorded_at")
+            if previous_recorded_at is not None and recorded_at < previous_recorded_at:
+                raise ValueError("El lineage retrocede temporalmente.")
+            previous_recorded_at = recorded_at
+            previous_hash = snapshot_hash
+            if index == 0 and record["prior_snapshot_hash"] is not None:
+                raise ValueError("La primera revisión no puede tener prior_snapshot_hash.")
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(record, dict):

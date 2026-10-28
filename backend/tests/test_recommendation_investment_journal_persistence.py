@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -293,3 +296,108 @@ def test_persisted_snapshot_api_fails_closed_on_automatic_trading(monkeypatch: p
 
     assert response.status_code == 500
     assert "automatismos prohibidos" in response.json()["detail"]
+
+
+def test_append_rejects_tampered_ancestor_without_persisting_new_revision(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    first = _snapshot()
+    repository.append(snapshot=first)
+    second = _snapshot(
+        revision_id="revision-2",
+        recorded_at=RECORDED_AT + timedelta(hours=1),
+        prior_snapshot_hash=first.snapshot_hash,
+    )
+    repository.append(snapshot=second)
+
+    with repository._database.connect() as connection:
+        row = connection.execute(
+            "SELECT snapshot_json FROM athena_investment_journal_snapshots WHERE revision_id = ?",
+            ("revision-1",),
+        ).fetchone()
+        payload = json.loads(str(row["snapshot_json"]))
+        payload["thesis"] = "Tampered ancestor."
+        connection.execute(
+            "UPDATE athena_investment_journal_snapshots SET snapshot_json = ? WHERE revision_id = ?",
+            (json.dumps(payload), "revision-1"),
+        )
+
+    with pytest.raises(ValueError, match="snapshot_hash canónico"):
+        repository.append(
+            snapshot=_snapshot(
+                revision_id="revision-3",
+                recorded_at=RECORDED_AT + timedelta(hours=2),
+                prior_snapshot_hash=second.snapshot_hash,
+            )
+        )
+    with repository._database.connect() as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM athena_investment_journal_snapshots WHERE journal_id = ?",
+            ("journal-aapl-1",),
+        ).fetchone()[0]
+    assert count == 2
+
+
+def test_independent_writers_cannot_fork_same_journal_head(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    first = _snapshot()
+    repository.append(snapshot=first)
+    barrier = Barrier(2)
+
+    def append_concurrently(revision_id: str) -> str:
+        writer = _repository(tmp_path)
+        candidate = _snapshot(
+            revision_id=revision_id,
+            recorded_at=RECORDED_AT + timedelta(hours=1),
+            prior_snapshot_hash=first.snapshot_hash,
+        )
+        barrier.wait(timeout=10)
+        try:
+            writer.append(snapshot=candidate)
+        except ValueError as exc:
+            assert "head persistido" in str(exc)
+            return "rejected"
+        return "inserted"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(append_concurrently, ("revision-2", "revision-3")))
+
+    assert sorted(outcomes) == ["inserted", "rejected"]
+    assert repository.verify_lineage(journal_id="journal-aapl-1")["revisionCount"] == 2
+
+
+def test_database_unique_successor_blocks_forks_even_without_repository_append(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    first = _snapshot()
+    repository.append(snapshot=first)
+    second = _snapshot(
+        revision_id="revision-2",
+        recorded_at=RECORDED_AT + timedelta(hours=1),
+        prior_snapshot_hash=first.snapshot_hash,
+    )
+    repository.append(snapshot=second)
+    competing = _snapshot(
+        revision_id="revision-3",
+        recorded_at=RECORDED_AT + timedelta(hours=1),
+        prior_snapshot_hash=first.snapshot_hash,
+    )
+
+    with repository._database.connect() as connection:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """INSERT INTO athena_investment_journal_snapshots
+                   (journal_id, revision_id, symbol, recorded_at, as_of,
+                    prior_snapshot_hash, snapshot_hash, snapshot_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    competing.journal_id,
+                    competing.revision_id,
+                    competing.symbol,
+                    competing.recorded_at,
+                    competing.as_of,
+                    competing.prior_snapshot_hash,
+                    competing.snapshot_hash,
+                    json.dumps(competing.to_api_dict()),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+    assert repository.verify_lineage(journal_id="journal-aapl-1")["revisionCount"] == 2

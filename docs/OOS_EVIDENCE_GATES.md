@@ -430,3 +430,21 @@ period-diversity scalar or a mismatched horizon allocation fails closed.
 Legacy synthetic test inputs without period maps remain supported, but they
 cannot be cited as operational evidence. This does not establish independent
 samples, model skill, deployment readiness or production promotion.
+
+
+## Investment Journal append-only integrity and prospective evidence
+
+Persisted Investment Journal revisions are serialized under a SQLite
+`BEGIN IMMEDIATE` write transaction. The complete existing hash lineage is
+revalidated before appending, including earlier revisions rather than only the
+current head. Database-level unique root and successor indexes reject forks
+even if a competing writer bypasses the repository append method. Corrupt
+historical revisions block further writes; they are never silently repaired.
+
+These protections establish transactional consistency for the local SQLite
+journal, **not** independent prospective precommitment evidence. The client
+supplies `recordedAt` and reference availability timestamps, which alone do
+not prove when evidence first existed. A journal hash or its server-side
+persistence is not an externally anchored timestamp, signed WORM record,
+measured real OOS outcome, or production authorization. The separate sealed
+forecast-specification and mature-horizon OOS gates remain mandatory.
