@@ -43,11 +43,16 @@ class DashboardHeader extends StatelessWidget {
                   ),
                 )
               else
-                SvgPicture.asset(
-                  'assets/branding/athena_logo_wordmark.svg',
-                  height: 42,
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: SvgPicture.asset(
+                      'assets/branding/athena_logo_wordmark.svg',
+                      height: 42,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
                 ),
-              if (!compact) const Spacer(),
               if (compact)
                 PopupMenuButton<String>(
                   tooltip: 'Navegación',

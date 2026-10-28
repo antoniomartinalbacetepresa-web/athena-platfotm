@@ -132,9 +132,13 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
   }
 
   void _reload() {
-    // Start the request outside setState; synchronous provider failures must
-    // be represented by the FutureBuilder's error state, not escape the tap.
-    final next = Future<List<RelevantInvestorActivity>>.sync(_loadActivities);
+    // Defer provider work until after the new FutureBuilder subscribes.
+    // An immediately rejected provider must become a fail-closed UI error,
+    // never an unhandled exception during the user's retry tap.
+    final next = Future<List<RelevantInvestorActivity>>.delayed(
+      Duration.zero,
+      _loadActivities,
+    );
     setState(() {
       _activitiesFuture = next;
     });
