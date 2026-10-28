@@ -81,7 +81,11 @@ jobs:
       - name: Browser cross-surface acceptance (Chrome)
         run: |
           set -o pipefail
-          flutter test --platform chrome \
+          # Keep all existing Chrome acceptance files. Bound a stalled browser
+          # process before the 30-minute job timeout and preserve failure via
+          # pipefail; limiting concurrent Chrome instances reduces runner load.
+          timeout --signal=TERM --kill-after=15s 12m \
+            flutter test --platform chrome --concurrency=2 --reporter expanded \
             test/features/dashboard/dashboard_athena_synthesis_wiring_test.dart \
             test/features/market/market_page_integration_test.dart \
             test/features/news/news_page_full_feed_acceptance_test.dart \
