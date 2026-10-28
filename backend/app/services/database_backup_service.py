@@ -101,76 +101,52 @@ class DatabaseBackupService:
             exist_ok=True,
         )
 
-        temporary_backup = destination.with_name(
-            f".{destination.name}.tmp"
-        )
-        temporary_manifest = manifest_path.with_name(
-            f".{manifest_path.name}.tmp"
-        )
 
-        self._remove_if_exists(
-            temporary_backup
-        )
-        self._remove_if_exists(
-            temporary_manifest
-        )
+        # Each invocation gets its own staging directory on the destination
+        # filesystem. A deterministic .tmp path could be clobbered by another
+        # backup process, and os.replace could overwrite a concurrent backup.
+        with tempfile.TemporaryDirectory(
+            prefix=f".{destination.name}.staging-",
+            dir=destination.parent,
+        ) as staging:
+            temporary_backup = Path(staging) / destination.name
+            temporary_manifest = Path(staging) / manifest_path.name
 
-        try:
             with self._database.connect() as source:
-                target = sqlite3.connect(
-                    temporary_backup
-                )
+                target = sqlite3.connect(temporary_backup)
                 try:
-                    source.backup(
-                        target
-                    )
+                    source.backup(target)
                     target.commit()
                 finally:
                     target.close()
 
-            schema_version = self._validate_database_file(
-                temporary_backup
-            )
-            digest = self._sha256(
-                temporary_backup
-            )
+            schema_version = self._validate_database_file(temporary_backup)
             metadata = DatabaseBackupMetadata(
                 format_version=self.FORMAT_VERSION,
-                created_at_utc=datetime.now(
-                    timezone.utc
-                ).isoformat(),
+                created_at_utc=datetime.now(timezone.utc).isoformat(),
                 schema_version=schema_version,
-                sha256=digest,
+                sha256=self._sha256(temporary_backup),
                 size_bytes=temporary_backup.stat().st_size,
             )
-
             temporary_manifest.write_text(
-                json.dumps(
-                    metadata.to_dict(),
-                    indent=2,
-                    sort_keys=True,
-                ) + "\n",
+                json.dumps(metadata.to_dict(), indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
 
-            os.replace(
-                temporary_backup,
-                destination,
-            )
-            os.replace(
-                temporary_manifest,
-                manifest_path,
-            )
-
+            # Hard-link publication is atomic and fails if the destination
+            # already exists, including a dangling symlink. Staging is on the
+            # same filesystem; unsupported hard links fail closed.
+            os.link(temporary_backup, destination)
+            try:
+                os.link(temporary_manifest, manifest_path)
+            except Exception:
+                # Only remove the database inode published by this invocation.
+                if destination.exists() and os.path.samefile(
+                    temporary_backup, destination
+                ):
+                    destination.unlink()
+                raise
             return metadata
-        except Exception:
-            self._remove_if_exists(
-                temporary_backup
-            )
-            self._remove_if_exists(
-                temporary_manifest
-            )
-            raise
 
     def verify_backup(
         self,
@@ -265,49 +241,34 @@ class DatabaseBackupService:
             exist_ok=True,
         )
 
-        temporary_destination = destination.with_name(
-            f".{destination.name}.tmp"
-        )
-        self._remove_if_exists(
-            temporary_destination
-        )
 
-        try:
+        # Use unique same-filesystem staging and exclusive publication. An
+        # existing destination created after the preflight must never be lost.
+        with tempfile.TemporaryDirectory(
+            prefix=f".{destination.name}.restore-",
+            dir=destination.parent,
+        ) as staging:
+            temporary_destination = Path(staging) / destination.name
             source_connection = sqlite3.connect(
                 source.resolve().as_uri() + "?mode=ro&immutable=1",
                 uri=True,
             )
-            target_connection = sqlite3.connect(
-                temporary_destination
-            )
+            target_connection = sqlite3.connect(temporary_destination)
             try:
-                source_connection.backup(
-                    target_connection
-                )
+                source_connection.backup(target_connection)
                 target_connection.commit()
             finally:
                 target_connection.close()
                 source_connection.close()
 
-            restored_schema = self._validate_database_file(
-                temporary_destination
-            )
+            restored_schema = self._validate_database_file(temporary_destination)
             if restored_schema != metadata.schema_version:
                 raise RuntimeError(
                     "La restauración no conserva la versión de esquema esperada."
                 )
 
-            os.replace(
-                temporary_destination,
-                destination,
-            )
-
+            os.link(temporary_destination, destination)
             return metadata
-        except Exception:
-            self._remove_if_exists(
-                temporary_destination
-            )
-            raise
 
     def run_restore_drill(
         self,
@@ -386,6 +347,14 @@ class DatabaseBackupService:
             raise FileNotFoundError(
                 "El directorio de backups no existe."
             )
+
+        # An interrupted publication can leave an orphaned database. Never
+        # delete older verified recovery points while such a gap exists.
+        for backup_path in directory.glob(f"{filename_prefix}*.db"):
+            if not self.manifest_path_for(backup_path).is_file():
+                raise RuntimeError(
+                    "Existe un backup administrado sin manifiesto; retención bloqueada."
+                )
 
         manifests = sorted(
             directory.glob(

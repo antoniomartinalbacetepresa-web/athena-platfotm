@@ -466,3 +466,103 @@ def test_verify_backup_rejects_malformed_manifest_evidence(
 
     with pytest.raises(RuntimeError, match=message):
         service.verify_backup(backup_path)
+
+
+def test_create_backup_preserves_concurrent_destination_and_cleans_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    from app.services import database_backup_service as module
+
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup = tmp_path / "backups" / "athena-race.db"
+    real_link = os.link
+
+    def concurrent_writer(source: Path, target: Path) -> None:
+        if Path(target) == backup:
+            backup.write_bytes(b"another-process")
+        real_link(source, target)
+
+    monkeypatch.setattr(module.os, "link", concurrent_writer)
+    with pytest.raises(FileExistsError):
+        service.create_backup(backup)
+    assert backup.read_bytes() == b"another-process"
+    assert not service.manifest_path_for(backup).exists()
+    assert not list(backup.parent.glob(".*.staging-*"))
+
+
+def test_create_backup_preserves_concurrent_manifest_and_rolls_back_own_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    from app.services import database_backup_service as module
+
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup = tmp_path / "backups" / "athena-race.db"
+    manifest = service.manifest_path_for(backup)
+    real_link = os.link
+
+    def concurrent_writer(source: Path, target: Path) -> None:
+        if Path(target) == manifest:
+            manifest.write_text("another-process", encoding="utf-8")
+        real_link(source, target)
+
+    monkeypatch.setattr(module.os, "link", concurrent_writer)
+    with pytest.raises(FileExistsError):
+        service.create_backup(backup)
+    assert not backup.exists()
+    assert manifest.read_text(encoding="utf-8") == "another-process"
+    assert not list(backup.parent.glob(".*.staging-*"))
+
+
+def test_restore_preserves_destination_created_after_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    from app.services import database_backup_service as module
+
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    backup = tmp_path / "backups" / "athena.db"
+    service.create_backup(backup)
+    restored = tmp_path / "restore" / "athena.db"
+    real_link = os.link
+
+    def concurrent_writer(source: Path, target: Path) -> None:
+        if Path(target) == restored:
+            restored.write_bytes(b"another-process")
+        real_link(source, target)
+
+    monkeypatch.setattr(module.os, "link", concurrent_writer)
+    with pytest.raises(FileExistsError):
+        service.restore_backup(backup, restored)
+    assert restored.read_bytes() == b"another-process"
+    assert not list(restored.parent.glob(".*.restore-*"))
+
+
+def test_retention_blocks_on_orphaned_managed_backup_without_deleting_older(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    directory = tmp_path / "backups"
+    old = directory / "athena-old.db"
+    recent = directory / "athena-recent.db"
+    service.create_backup(old)
+    service.create_backup(recent)
+    orphan = directory / "athena-orphan.db"
+    orphan.write_bytes(b"incomplete-publication")
+
+    with pytest.raises(RuntimeError, match="sin manifiesto"):
+        service.apply_retention(directory, keep_last=1)
+    assert old.is_file()
+    assert recent.is_file()
+    assert service.manifest_path_for(old).is_file()
+    assert service.manifest_path_for(recent).is_file()
+    assert orphan.read_bytes() == b"incomplete-publication"
