@@ -167,7 +167,7 @@ def test_sweep_freezes_more_than_1000_blockers_before_writing(tmp_path, monkeypa
         ids = range(offset + 1, min(1001, offset + limit) + 1)
         return SimpleNamespace(
             total_blocking_count=1001,
-            items=tuple(SimpleNamespace(instrument_id=i) for i in ids),
+            items=tuple(SimpleNamespace(instrument_id=i, symbol=f"TEST{i:04d}") for i in ids),
             as_of=as_of.isoformat(),
             minimum_history_days=365,
             maximum_source_gap_days=7,
@@ -180,9 +180,10 @@ def test_sweep_freezes_more_than_1000_blockers_before_writing(tmp_path, monkeypa
     )
     attempted = []
 
-    def run(*, limit, offset, from_date, to_date, _instrument_ids):
+    def run(*, limit, offset, from_date, to_date, _instrument_ids, _expected_symbols):
         assert offset == 0
-        assert limit == len(_instrument_ids)
+        assert limit == len(_instrument_ids) == len(_expected_symbols)
+        assert _expected_symbols == tuple(f"TEST{i:04d}" for i in _instrument_ids)
         attempted.extend(_instrument_ids)
         return SimpleNamespace(
             blockers_after=1001,
@@ -212,7 +213,7 @@ def test_sweep_fails_closed_if_blocker_worklist_changes_during_freeze(
     def get_report(_self, *, limit, offset, as_of):
         return SimpleNamespace(
             total_blocking_count=1001 if offset == 0 else 1002,
-            items=tuple(SimpleNamespace(instrument_id=i) for i in
+            items=tuple(SimpleNamespace(instrument_id=i, symbol=f"TEST{i:04d}") for i in
                         range(offset + 1, min(1001, offset + limit) + 1)),
             as_of=as_of.isoformat(),
             minimum_history_days=365,
