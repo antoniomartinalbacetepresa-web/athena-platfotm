@@ -46,7 +46,8 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
     }
     // FutureBuilder must subscribe to the new identity/source generation.
     // An old response cannot become the dossier under a new page heading.
-    setState(() => _future = _load());
+    // didUpdateWidget is followed by a build; no setState is required here.
+    _future = _load();
     if (sourceChanged) oldDependencies?.dispose();
   }
 
