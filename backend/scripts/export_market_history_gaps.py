@@ -17,7 +17,9 @@ from pathlib import Path
 from app.database.athena_database import AthenaDatabase
 from app.services.market_history_gap_service import MarketHistoryGapService
 from app.services.market_observation_coverage_service import MarketObservationCoverageService
-from scripts.export_corporate_action_reconciliation import _consistent_copy, _cutoff
+from scripts.export_corporate_action_reconciliation import (
+    _consistent_copy, _cutoff, _sha256_file,
+)
 
 
 PAGE_SIZE = 500
@@ -148,6 +150,9 @@ def export_history_gaps(
                     raise RuntimeError("Incomplete history gap export")
                 handle.flush()
                 os.fsync(handle.fileno())
+            # The reported SHA must describe the exact snapshot actually queried.
+            if _sha256_file(snapshot) != snapshot_sha:
+                raise RuntimeError("History snapshot changed during diagnostic")
             # Exclusive publication: never replace another operator's evidence.
             os.link(staged, output)
         finally:
