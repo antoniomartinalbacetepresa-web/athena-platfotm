@@ -107,6 +107,18 @@ class _DashboardPageState extends State<DashboardPage> {
       });
       return;
     }
+    if (route == AppRoutes.investors) {
+      // SEC 13F evidence can change independently. Revalidate the canonical
+      // synthesis and research, but retain owner, Market and News generations.
+      _synthesisController.clear();
+      _synthesisController.loadLatest();
+      setState(() {
+        _investorsRefreshEpoch++;
+        _researchRefreshEpoch++;
+        _readinessRefreshEpoch++;
+      });
+      return;
+    }
     if (route != AppRoutes.market && route != AppRoutes.news) return;
     // Public evidence may have changed while Dashboard was hidden.
     // Clear the previous synthesis and invalidate any in-flight request.

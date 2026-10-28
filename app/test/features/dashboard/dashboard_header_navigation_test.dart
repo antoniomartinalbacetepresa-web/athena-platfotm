@@ -45,6 +45,7 @@ void main() {
 
     expect(find.byTooltip('Mercado'), findsOneWidget);
     expect(find.byTooltip('Noticias'), findsOneWidget);
+    expect(find.byTooltip('Inversores'), findsOneWidget);
     expect(find.byTooltip('Cartera'), findsOneWidget);
     expect(find.byTooltip('Perfil'), findsOneWidget);
   });
@@ -74,6 +75,7 @@ void main() {
     for (final entry in const <String, String>{
       'Mercado': AppRoutes.market,
       'Noticias': AppRoutes.news,
+      'Inversores': AppRoutes.investors,
       'Cartera': AppRoutes.portfolio,
       'Perfil': AppRoutes.profile,
     }.entries) {
@@ -111,6 +113,7 @@ void main() {
     for (final entry in const <String, String>{
       'Mercado': AppRoutes.market,
       'Noticias': AppRoutes.news,
+      'Inversores': AppRoutes.investors,
       'Cartera': AppRoutes.portfolio,
       'Perfil': AppRoutes.profile,
     }.entries) {
