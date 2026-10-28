@@ -45,8 +45,16 @@ def copy_verified_backup(
 
     if not source.is_file() or not manifest.is_file():
         raise FileNotFoundError("El backup y su manifiesto deben existir.")
-    if destination == source.parent:
-        raise ValueError("El destino secundario no puede ser el directorio del backup primario.")
+    # Resolve symlink aliases and reject both directions of nesting. A
+    # secondary directory inside (or containing) the primary is not an
+    # independent recovery boundary, even when the paths differ.
+    primary_directory = source.parent
+    if (
+        destination == primary_directory
+        or primary_directory in destination.parents
+        or destination in primary_directory.parents
+    ):
+        raise ValueError("El destino secundario debe ser independiente del directorio primario.")
 
     # A matching SHA alone does not prove that this is an ATHENA backup:
     # enforce the canonical adjacent manifest, schema and SQLite integrity.

@@ -137,3 +137,26 @@ def test_integrated_cycle_rejects_offsite_attestation_without_copy(tmp_path: Pat
             keep_last=1, prefix="athena-", offsite_attested=True,
         )
     assert not primary.exists()
+
+
+def test_integrated_cycle_rejects_live_database_directory_before_writing(tmp_path: Path) -> None:
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    with pytest.raises(ValueError, match="backup primario"):
+        run_cycle(
+            database_path=database_path, backup_directory=database_path.parent,
+            keep_last=1, prefix="athena-",
+        )
+    assert not list(database_path.parent.glob("athena-*.db"))
+
+
+def test_integrated_cycle_rejects_secondary_in_live_database_directory_before_writing(tmp_path: Path) -> None:
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary = tmp_path / "primary"
+    with pytest.raises(ValueError, match="destino secundario"):
+        run_cycle(
+            database_path=database_path, backup_directory=primary,
+            secondary_directory=database_path.parent, keep_last=1, prefix="athena-",
+        )
+    assert not primary.exists()

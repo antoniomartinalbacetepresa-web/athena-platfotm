@@ -148,3 +148,21 @@ def test_secondary_copy_requires_adjacent_canonical_manifest(tmp_path: Path) -> 
             manifest_path=detached_manifest,
             destination_directory=tmp_path / "secondary",
         )
+
+
+@pytest.mark.parametrize("relative_destination", ["ancestor", "nested"])
+def test_secondary_copy_rejects_ancestor_or_nested_primary_destination(
+    tmp_path: Path, relative_destination: str,
+) -> None:
+    backup, manifest = _backup(tmp_path)
+    destination = (
+        tmp_path if relative_destination == "ancestor"
+        else backup.parent / "nested"
+    )
+    with pytest.raises(ValueError, match="independiente"):
+        copy_verified_backup(
+            backup_path=backup,
+            manifest_path=manifest,
+            destination_directory=destination,
+        )
+    assert not (destination / backup.name).exists()

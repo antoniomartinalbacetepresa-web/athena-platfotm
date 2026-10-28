@@ -43,9 +43,19 @@ def run_cycle(
         raise ValueError("El prefijo de backup no es válido.")
     if offsite_attested and secondary_directory is None:
         raise ValueError("La declaración off-site requiere destino secundario.")
+
+    # Reject unsafe layouts before creating any backup or applying retention.
+    # A backup stored beside the live SQLite file can be mistaken for live
+    # database state and shares its failure boundary.
+    database = AthenaDatabase(database_path)
+    live_root = database.database_path.expanduser().resolve().parent
+    primary_root = backup_directory.expanduser().resolve()
+    if primary_root == live_root:
+        raise ValueError("El backup primario no puede compartir directorio con la base activa.")
     if secondary_directory is not None:
-        primary_root = backup_directory.expanduser().resolve()
         secondary_root = secondary_directory.expanduser().resolve()
+        if secondary_root == live_root:
+            raise ValueError("El destino secundario no puede compartir directorio con la base activa.")
         if (
             primary_root == secondary_root
             or primary_root in secondary_root.parents
@@ -53,7 +63,6 @@ def run_cycle(
         ):
             raise ValueError("El destino secundario debe ser independiente del directorio primario.")
 
-    database = AthenaDatabase(database_path)
     service = DatabaseBackupService(database)
     backup_directory.mkdir(parents=True, exist_ok=True)
 
