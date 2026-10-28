@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import sqlite3
@@ -15,7 +16,7 @@ from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
 from app.services.market_history_gap_service import MarketHistoryGapService
-from scripts.market_history_acceptance_snapshot import main, parse_cutoff, run_snapshot
+from scripts.market_history_acceptance_snapshot import export_blockers_csv, main, parse_cutoff, run_snapshot
 
 
 def _database(tmp_path: Path) -> tuple[Path, AthenaDatabase]:
@@ -286,3 +287,74 @@ def test_cli_history_gate_is_diagnostic_not_production_authority(
     assert output["blockingItems"] == []
     assert output["productionCoverageClaimed"] is False
     assert output["operationalEvidenceVerified"] is False
+
+
+def test_cli_exports_complete_pit_csv_without_modifying_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path, database = _database(tmp_path)
+    for symbol in ("ZZZ", "AAA", "MMM"):
+        _instrument(database, symbol)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    output = tmp_path / "gaps.csv"
+    monkeypatch.setattr("sys.argv", [
+        "market_history_acceptance_snapshot", "--database", str(path),
+        "--all-blockers", "--blocker-limit", "1",
+        "--blocking-csv", str(output), "--require-history-ready",
+    ])
+    assert main() == 3
+    report = json.loads(capsys.readouterr().out)
+    with output.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [row["symbol"] for row in rows] == ["AAA", "MMM", "ZZZ"]
+    assert len(rows) == report["totalBlockingCount"] == 3
+    assert all(row["asOf"] == report["asOf"] for row in rows)
+    assert all(row["snapshotSha256"] == report["snapshotSha256"] for row in rows)
+    assert all(row["evidenceStatus"] == "diagnostic_only"
+               and row["productionCoverageClaimed"] == "false" for row in rows)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    assert not list(tmp_path.glob(".athena-history-gaps-*"))
+
+
+def test_csv_export_never_overwrites_prior_evidence(tmp_path: Path) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database)
+    report = run_snapshot(path, all_blockers=True)
+    target = tmp_path / "existing.csv"
+    target.write_text("previous evidence", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        export_blockers_csv(report, target)
+    assert target.read_text(encoding="utf-8") == "previous evidence"
+    assert not list(tmp_path.glob(".athena-history-gaps-*"))
+
+
+def test_csv_export_rejects_partial_report_and_spreadsheet_formulas(tmp_path: Path) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database)
+    partial = run_snapshot(path)
+    with pytest.raises(ValueError, match="íntegra"):
+        export_blockers_csv(partial, tmp_path / "partial.csv")
+    assert not (tmp_path / "partial.csv").exists()
+    complete = run_snapshot(path, all_blockers=True)
+    complete["blockingItems"][0]["symbol"] = "=HYPERLINK(\\"https://evil.example\\")"
+    target = tmp_path / "safe.csv"
+    export_blockers_csv(complete, target)
+    with target.open(newline="", encoding="utf-8") as stream:
+        row = next(csv.DictReader(stream))
+    assert row["symbol"].startswith("'=HYPERLINK(")
+
+
+def test_cli_requires_complete_export_for_csv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database)
+    target = tmp_path / "should-not-exist.csv"
+    monkeypatch.setattr("sys.argv", [
+        "market_history_acceptance_snapshot", "--database", str(path),
+        "--blocking-csv", str(target),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert not target.exists()

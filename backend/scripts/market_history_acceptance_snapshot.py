@@ -8,7 +8,10 @@ ATHENA's schema initialization and queries run only against that copy.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import os
+import tempfile
 import json
 import sqlite3
 import tempfile
@@ -174,6 +177,75 @@ def run_snapshot(
     }
 
 
+
+CSV_FIELDS = (
+    "evidenceStatus", "productionCoverageClaimed", "asOf", "snapshotSha256",
+    "instrumentId", "symbol", "reason", "sourceCount", "bestSourceProvider",
+    "bestHistorySpanDays", "bestMaximumGapDays",
+)
+
+
+def _safe_csv_text(value: object) -> object:
+    """Keep untrusted instrument/provider labels from becoming spreadsheet formulas."""
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
+    if isinstance(value, str) and value[:1] in ("\\t", "\\r", "\\n"):
+        return "'" + value
+    return value
+
+
+def export_blockers_csv(result: dict[str, Any], destination: Path) -> None:
+    """Atomically publish a complete PIT worklist without overwriting evidence.
+
+    This is a diagnostic export, not evidence that the input DB was operational.
+    The CSV shares the snapshot fingerprint and PIT cutoff with the JSON report.
+    """
+    items = result.get("blockingItems")
+    total = result.get("totalBlockingCount")
+    if (
+        result.get("blockingExportComplete") is not True
+        or result.get("productionCoverageClaimed") is not False
+        or result.get("operationalEvidenceVerified") is not False
+        or not isinstance(items, list)
+        or type(total) is not int
+        or total < 0
+        or len(items) != total
+        or len({item.get("instrumentId") for item in items if isinstance(item, dict)}) != total
+        or not isinstance(result.get("snapshotSha256"), str)
+        or len(result["snapshotSha256"]) != 64
+        or not isinstance(result.get("asOf"), str)
+    ):
+        raise ValueError("Solo puede exportarse una lista PIT íntegra y diagnóstica.")
+    path = Path(destination)
+    # Create in the destination directory, then link atomically with no-replace.
+    # A failed validation or existing destination never truncates earlier evidence.
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline="", dir=path.parent,
+        prefix=".athena-history-gaps-", suffix=".tmp", delete=False,
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+        try:
+            writer = csv.DictWriter(temporary, fieldnames=CSV_FIELDS)
+            writer.writeheader()
+            for item in items:
+                writer.writerow({
+                    "evidenceStatus": "diagnostic_only",
+                    "productionCoverageClaimed": "false",
+                    "asOf": result["asOf"],
+                    "snapshotSha256": result["snapshotSha256"],
+                    **{field: _safe_csv_text(item.get(field)) for field in CSV_FIELDS[4:]},
+                })
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+    try:
+        os.link(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -197,18 +269,26 @@ def main() -> int:
         help="Exporta todos los bloqueos desde una sola copia consistente; --blocker-limit es el tamaño de página interno.",
     )
     parser.add_argument(
+        "--blocking-csv", type=Path,
+        help="CSV diagnóstico íntegro; requiere --all-blockers. No sobrescribe archivos.",
+    )
+    parser.add_argument(
         "--require-history-ready", action="store_true",
         help="Devuelve código 3 si la cobertura histórica diagnóstica no cumple 365 días para todo el universo elegible.",
     )
     args = parser.parse_args()
     try:
+        if args.blocking_csv is not None and not args.all_blockers:
+            raise ValueError("--blocking-csv requiere --all-blockers.")
         cutoff = parse_cutoff(args.as_of) if args.as_of else None
         result = run_snapshot(
             args.database, as_of=cutoff,
             blocker_limit=args.blocker_limit, blocker_offset=args.blocker_offset,
             all_blockers=args.all_blockers,
         )
-    except (FileNotFoundError, ValueError, sqlite3.Error, RuntimeError) as exc:
+        if args.blocking_csv is not None:
+            export_blockers_csv(result, args.blocking_csv)
+    except (OSError, ValueError, sqlite3.Error, RuntimeError) as exc:
         parser.exit(2, f"Diagnóstico no disponible: {type(exc).__name__}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 3 if args.require_history_ready and not result["diagnosticReady"] else 0
