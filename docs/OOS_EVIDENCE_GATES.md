@@ -415,3 +415,18 @@ issuer-level counts across every exact horizon. Inflated issuer diversity and
 inconsistent horizon allocations cannot satisfy acceptance. Legacy synthetic
 measurements without these maps retain their test-only contract and are not
 operational evidence. No thresholds, learning promotion or trading are enabled.
+
+
+## Measured evaluation-period distribution
+
+The OOS diagnostic now exposes `periodEndErrorCounts` at cohort and exact-horizon
+level, using canonical UTC period-end instants and the number of actually measured
+forecast errors maturing at each instant. Empty horizons expose an empty map.
+When present, the human-approved longitudinal sufficiency gate reconciles the
+global map against total measured errors, distinct period count, first/last
+matured period, and the sum of per-horizon distributions. Per-horizon counts,
+distinct periods, endpoints and elapsed spans must also match. An inflated
+period-diversity scalar or a mismatched horizon allocation fails closed.
+Legacy synthetic test inputs without period maps remain supported, but they
+cannot be cited as operational evidence. This does not establish independent
+samples, model skill, deployment readiness or production promotion.

@@ -335,3 +335,35 @@ def test_cohort_horizon_must_be_mature_at_cohort_cutoff_not_only_diagnostic_cuto
         RecommendationResearchForecastErrorOosService().evaluate(
             as_of=AS_OF, cohort_record=cohort, error_records=[],
         )
+
+
+
+def test_forecast_error_oos_reports_measured_period_distribution_per_horizon() -> None:
+    first = _row(
+        seed="a", instrument_id="instrument-a", symbol="AAA",
+        issuer_id="issuer-a", horizon_seconds=HORIZON_30, total_return=0.08,
+    )
+    second = _row(
+        seed="b", instrument_id="instrument-b", symbol="BBB",
+        issuer_id="issuer-b", horizon_seconds=HORIZON_30, total_return=0.04,
+    )
+    third = _row(
+        seed="c", instrument_id="instrument-c", symbol="CCC",
+        issuer_id="issuer-c", horizon_seconds=HORIZON_90, total_return=0.02,
+    )
+    result = RecommendationResearchForecastErrorOosService().evaluate(
+        as_of=AS_OF,
+        cohort_record=_cohort([first, second, third]),
+        error_records=[
+            _error(first, error_seed="1", expected=0.1),
+            _error(second, error_seed="2", expected=0.1),
+            _error(third, error_seed="3", expected=0.1),
+        ],
+    )
+    end_30 = str(first["periodEnd"])
+    end_90 = str(third["periodEnd"])
+    assert result["periodEndErrorCounts"] == {end_30: 2, end_90: 1}
+    assert result["distinctEvaluationPeriodCount"] == 2
+    assert result["horizons"][str(HORIZON_30)]["periodEndErrorCounts"] == {end_30: 2}
+    assert result["horizons"][str(HORIZON_90)]["periodEndErrorCounts"] == {end_90: 1}
+    assert result["productionLearningEligible"] is False

@@ -148,6 +148,65 @@ class LongitudinalOosSufficiencyPolicyService:
                     for issuer, count in per_horizon.items():
                         aggregate[issuer] = aggregate.get(issuer, 0) + count
             checks.append(horizons_consistent and aggregate == counts)
+        # Reconcile the distinct evaluation periods with observed matured
+        # forecast errors.  A scalar period count alone cannot prove diversity.
+        # Legacy synthetic inputs may omit this map; operational diagnostics
+        # always include it and are checked across exact horizons.
+        if "periodEndErrorCounts" in measurement:
+            periods = self._period_end_error_counts(
+                measurement["periodEndErrorCounts"], "measurement.periodEndErrorCounts"
+            )
+            period_ends = sorted(self._iso(key, "measurement.periodEndErrorCounts") for key in periods)
+            checks.append(
+                sum(periods.values()) == forecast_errors
+                and len(periods) == distinct_periods
+                and (period_ends[0] if period_ends else None) == first_evaluation
+                and (period_ends[-1] if period_ends else None) == last_evaluation
+            )
+            aggregated: dict[str, int] = {}
+            consistent = isinstance(horizons, dict)
+            if isinstance(horizons, dict):
+                for key, payload in horizons.items():
+                    if not isinstance(payload, dict):
+                        consistent = False
+                        continue
+                    observed = self._period_end_error_counts(
+                        payload.get("periodEndErrorCounts"),
+                        f"measurement.horizons.{key}.periodEndErrorCounts",
+                    )
+                    horizon_count = self._measurement_nonnegative_int(
+                        payload.get("forecastErrorCount"),
+                        f"measurement.horizons.{key}.forecastErrorCount",
+                    )
+                    horizon_distinct = self._measurement_nonnegative_int(
+                        payload.get("distinctEvaluationPeriodCount"),
+                        f"measurement.horizons.{key}.distinctEvaluationPeriodCount",
+                    )
+                    first_horizon = self._optional_iso(
+                        payload.get("firstEvaluationPeriodEnd"),
+                        f"measurement.horizons.{key}.firstEvaluationPeriodEnd",
+                    )
+                    last_horizon = self._optional_iso(
+                        payload.get("lastEvaluationPeriodEnd"),
+                        f"measurement.horizons.{key}.lastEvaluationPeriodEnd",
+                    )
+                    horizon_span = self._measurement_nonnegative_number(
+                        payload.get("evaluationSpanDays"),
+                        f"measurement.horizons.{key}.evaluationSpanDays",
+                    )
+                    ends = sorted(self._iso(end, "horizon.periodEndErrorCounts") for end in observed)
+                    actual_span = (ends[-1] - ends[0]).total_seconds() / 86400.0 if ends else 0.0
+                    if (
+                        sum(observed.values()) != horizon_count
+                        or len(observed) != horizon_distinct
+                        or (ends[0] if ends else None) != first_horizon
+                        or (ends[-1] if ends else None) != last_horizon
+                        or not math.isclose(horizon_span, actual_span, rel_tol=1e-9, abs_tol=1e-9)
+                    ):
+                        consistent = False
+                    for end, count in observed.items():
+                        aggregated[end] = aggregated.get(end, 0) + count
+            checks.append(consistent and aggregated == periods)
         checks.append(temporal_precommitment_verified)
         satisfied = all(checks)
         return self._result(normalized, fingerprint, "precommitted_policy_satisfied" if satisfied else "precommitted_policy_not_satisfied", True, satisfied, checks, temporal_precommitment_verified)
@@ -162,6 +221,19 @@ class LongitudinalOosSufficiencyPolicyService:
                 or isinstance(count, bool) or not isinstance(count, int) or count <= 0
             ):
                 raise ValueError(f"{field} contiene una identidad o recuento inválido.")
+        return dict(value)
+
+    def _period_end_error_counts(self, value: Any, field: str) -> dict[str, int]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} debe ser un mapa de periodos medidos.")
+        for end, count in value.items():
+            if not isinstance(end, str) or not end:
+                raise ValueError(f"{field} contiene un periodo inválido.")
+            canonical = self._iso(end, field).isoformat()
+            if end != canonical:
+                raise ValueError(f"{field} exige instantes UTC canónicos.")
+            if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+                raise ValueError(f"{field} contiene un recuento inválido.")
         return dict(value)
 
     def _result(self, policy: dict[str, Any], fingerprint: str, status: str, approved: bool, verified: bool, checks: list[bool], temporal_precommitment_verified: bool) -> dict[str, Any]:

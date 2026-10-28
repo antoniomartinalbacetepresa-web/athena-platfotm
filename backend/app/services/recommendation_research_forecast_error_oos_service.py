@@ -209,6 +209,7 @@ class RecommendationResearchForecastErrorOosService:
             "firstEvaluationPeriodEnd": None,
             "lastEvaluationPeriodEnd": None,
             "distinctEvaluationPeriodCount": 0,
+            "periodEndErrorCounts": {},
             "evaluationSpanDays": 0.0,
             "longitudinalEvidenceStatus": "no_evaluated_periods",
             "longitudinalSufficiency": {
@@ -249,6 +250,7 @@ class RecommendationResearchForecastErrorOosService:
                 "firstEvaluationPeriodEnd": None,
                 "lastEvaluationPeriodEnd": None,
                 "distinctEvaluationPeriodCount": 0,
+                "periodEndErrorCounts": {},
                 "evaluationSpanDays": 0.0,
                 "longitudinalEvidenceStatus": "no_evaluated_periods",
             }
@@ -257,6 +259,10 @@ class RecommendationResearchForecastErrorOosService:
                 self._aware_iso(item.get("periodEnd"), "error.periodEnd")
                 for item in rows
             }
+        )
+        period_counts = Counter(
+            self._aware_iso(item.get("periodEnd"), "error.periodEnd").isoformat()
+            for item in rows
         )
         first = period_ends[0]
         last = period_ends[-1]
@@ -268,6 +274,7 @@ class RecommendationResearchForecastErrorOosService:
             "firstEvaluationPeriodEnd": first.isoformat(),
             "lastEvaluationPeriodEnd": last.isoformat(),
             "distinctEvaluationPeriodCount": len(period_ends),
+            "periodEndErrorCounts": dict(sorted(period_counts.items())),
             "evaluationSpanDays": span_days,
             "longitudinalEvidenceStatus": (
                 "multiple_evaluation_periods_observed"

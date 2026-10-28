@@ -341,3 +341,53 @@ def test_issuer_error_counts_reject_boolean_and_missing_horizon_provenance() -> 
     measurement["issuerErrorCounts"] = {"A": 12}
     with pytest.raises(ValueError, match="issuerErrorCounts"):
         _evaluate_measurement(measurement)
+
+
+
+def _measurement_with_period_evidence() -> dict[str, object]:
+    measurement = _measurement()
+    ends = [
+        "2026-01-02T00:00:00+00:00",
+        "2026-01-12T00:00:00+00:00",
+        "2026-01-22T00:00:00+00:00",
+        "2026-02-11T00:00:00+00:00",
+    ]
+    measurement["periodEndErrorCounts"] = {end: 3 for end in ends}
+    measurement["horizons"]["604800"].update({
+        "periodEndErrorCounts": {ends[0]: 3, ends[1]: 3},
+        "distinctEvaluationPeriodCount": 2,
+        "firstEvaluationPeriodEnd": ends[0],
+        "lastEvaluationPeriodEnd": ends[1],
+        "evaluationSpanDays": 10.0,
+    })
+    measurement["horizons"]["2592000"].update({
+        "periodEndErrorCounts": {ends[2]: 3, ends[3]: 3},
+        "distinctEvaluationPeriodCount": 2,
+        "firstEvaluationPeriodEnd": ends[2],
+        "lastEvaluationPeriodEnd": ends[3],
+        "evaluationSpanDays": 20.0,
+    })
+    return measurement
+
+
+def test_measured_period_distribution_reconciles_across_horizons() -> None:
+    measurement = _measurement_with_period_evidence()
+    assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is True
+    measurement["distinctEvaluationPeriodCount"] = 5
+    assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is False
+    measurement["distinctEvaluationPeriodCount"] = 4
+    measurement["horizons"]["604800"]["periodEndErrorCounts"] = {
+        "2026-01-02T00:00:00+00:00": 2,
+        "2026-01-12T00:00:00+00:00": 4,
+    }
+    assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is False
+
+
+def test_measured_period_distribution_rejects_noncanonical_or_boolean_counts() -> None:
+    measurement = _measurement_with_period_evidence()
+    measurement["periodEndErrorCounts"] = {"2026-01-02T00:00:00Z": 12}
+    with pytest.raises(ValueError, match="canónicos"):
+        _evaluate_measurement(measurement)
+    measurement["periodEndErrorCounts"] = {"2026-01-02T00:00:00+00:00": True}
+    with pytest.raises(ValueError, match="recuento inválido"):
+        _evaluate_measurement(measurement)
