@@ -390,3 +390,27 @@ def test_market_observation_repository_rejects_legacy_future_source_timestamp(
     assert repository.list_for_instrument(
         instrument_id, knowledge_cutoff=retrieved + timedelta(days=2)
     ) == []
+
+
+def test_expected_listing_identity_is_checked_under_the_sqlite_writer_lock(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    selected = InstrumentRepository(database=database).get_by_id(instrument_id)
+    assert selected is not None
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE instruments SET exchange_short_name = ? WHERE id = ?",
+            ("NYSE", instrument_id),
+        )
+
+    with pytest.raises(ValueError, match="identidad"):
+        MarketObservationRepository(database=database).save_many(
+            instrument_id=instrument_id,
+            observations=[{"timestamp": "2026-01-02T21:00:00+00:00", "close": 100.0}],
+            source_provider="yahoo",
+            retrieved_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            expected_identity=selected,
+        )
+    assert MarketObservationRepository(database=database).list_for_instrument(instrument_id) == []

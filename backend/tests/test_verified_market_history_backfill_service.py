@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_observation_repository import MarketObservationRepository
@@ -199,3 +201,30 @@ def test_verified_backfill_default_cutoff_uses_utc_not_host_local_day(
     assert report.history_ready is False
     assert report.backfill.effective_to_date == "2026-10-25"
     assert provider.calls == [("AAA", "2025-09-20", "2026-10-25")]
+
+
+def test_sweep_rejects_symbol_reassignment_after_freezing_worklist(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _insert(instruments, "AAA")
+    second_id = _insert(instruments, "BBB")
+
+    class MutatingProvider(FakeHistoryProvider):
+        def get_history(self, symbol, from_date=None, to_date=None):
+            self.calls.append((symbol, from_date, to_date))
+            if symbol == "AAA":
+                with database.connect() as connection:
+                    connection.execute(
+                        "UPDATE instruments SET symbol = ? WHERE id = ?",
+                        ("ZZZ", second_id),
+                    )
+            return []
+
+    provider = MutatingProvider({})
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 10, 28),
+    )
+    with pytest.raises(RuntimeError, match="identidad congelada"):
+        service.run_sweep(limit=1, max_batches=2)
+    assert [call[0] for call in provider.calls] == ["AAA"]

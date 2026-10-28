@@ -115,6 +115,7 @@ class VerifiedMarketHistoryBackfillService:
         from_date: str | None = None,
         to_date: str | None = None,
         _instrument_ids: tuple[int, ...] | None = None,
+        _expected_symbols: tuple[str, ...] | None = None,
     ) -> VerifiedMarketHistoryBackfillReport:
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
@@ -132,6 +133,7 @@ class VerifiedMarketHistoryBackfillService:
             to_date=to_date,
             blocking_only=True,
             _instrument_ids=_instrument_ids,
+            _expected_symbols=_expected_symbols,
         )
         blockers_after = self._blocking_count(verification_cutoff)
         coverage_after = MarketObservationCoverageService(database=self._database).get_report(
@@ -224,6 +226,7 @@ class VerifiedMarketHistoryBackfillService:
                     )
                 frozen.extend(page.items)
         instrument_ids = tuple(item.instrument_id for item in frozen)
+        frozen_symbols = tuple(item.symbol for item in frozen)
         if len(instrument_ids) != len(set(instrument_ids)):
             raise RuntimeError("La lista inicial de bloqueos contiene IDs duplicados.")
 
@@ -238,6 +241,7 @@ class VerifiedMarketHistoryBackfillService:
                 from_date=from_date,
                 to_date=to_date,
                 _instrument_ids=batch,
+                _expected_symbols=frozen_symbols[index:index + limit],
             ))
         # An empty frozen worklist must NEVER fall back to run() against the
         # live queue: a newly added instrument could then be fetched/written

@@ -30,6 +30,7 @@ class MarketObservationRepository:
         observations: Iterable[dict[str, Any]],
         source_provider: str,
         retrieved_at: datetime,
+        expected_identity: dict[str, Any] | None = None,
     ) -> MarketObservationSaveStats:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
@@ -43,6 +44,22 @@ class MarketObservationRepository:
 
         inserted = 0
         with self._database.connect() as connection:
+            if expected_identity is not None:
+                # The identity check and INSERT share one SQLite writer lock.
+                # A universe refresh cannot reassign the listing between them.
+                connection.execute("BEGIN IMMEDIATE")
+                fields = (
+                    "symbol", "exchange_short_name", "instrument_type",
+                    "issuer_id", "instrument_id", "currency", "is_active",
+                )
+                current = connection.execute(
+                    "SELECT * FROM instruments WHERE id = ?", (instrument_id,)
+                ).fetchone()
+                if (type(expected_identity.get("id")) is not int
+                    or expected_identity["id"] != instrument_id
+                    or current is None or not bool(current["is_active"])
+                    or any(current[field] != expected_identity.get(field) for field in fields)):
+                    raise ValueError("La identidad del instrumento cambió durante el backfill.")
             for observation in buffered:
                 normalized = self._normalize_observation(observation)
                 observed_dt = datetime.fromisoformat(normalized["observed_at"])

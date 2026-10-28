@@ -105,6 +105,7 @@ class MarketObservationBackfillService:
         source_provider: str = YahooMarketService.PROVIDER_ID,
         blocking_only: bool = False,
         _instrument_ids: tuple[int, ...] | None = None,
+        _expected_symbols: tuple[str, ...] | None = None,
     ) -> MarketObservationBackfillReport:
         if _instrument_ids is not None:
             if not blocking_only or offset != 0:
@@ -117,6 +118,18 @@ class MarketObservationBackfillService:
                 or len(set(_instrument_ids)) != len(_instrument_ids)
             ):
                 raise ValueError("La selección fija debe contener IDs únicos, positivos y acotados.")
+        if _expected_symbols is not None and (
+            _instrument_ids is None
+            or not isinstance(_expected_symbols, tuple)
+            or len(_expected_symbols) != len(_instrument_ids)
+            or any(
+                not isinstance(symbol, str)
+                or not symbol
+                or symbol != symbol.strip().upper()
+                for symbol in _expected_symbols
+            )
+        ):
+            raise ValueError("La selección fija requiere símbolos congelados válidos.")
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
         if offset < 0:
@@ -144,6 +157,7 @@ class MarketObservationBackfillService:
             offset=offset,
             blocking_only=blocking_only,
             instrument_ids=_instrument_ids,
+            expected_symbols=_expected_symbols,
             as_of_date=(
                 self._parse_iso_date(effective_to_date, field="to_date")
                 if effective_to_date is not None
@@ -179,11 +193,14 @@ class MarketObservationBackfillService:
                 continue
 
             try:
+                self._assert_selected_identity(row)
                 history = self._history_provider.get_history(
                     symbol=symbol,
                     from_date=effective_from_date,
                     to_date=effective_to_date,
                 )
+                # A concurrent universe refresh can change a listing during I/O.
+                self._assert_selected_identity(row)
                 if not history:
                     no_history += 1
                     self._emit(
@@ -208,6 +225,7 @@ class MarketObservationBackfillService:
                     observations=history,
                     source_provider=provider,
                     retrieved_at=retrieved_at,
+                    expected_identity=row,
                 )
                 persisted_instruments += 1
                 received += stats.received
@@ -343,14 +361,20 @@ class MarketObservationBackfillService:
         offset: int,
         blocking_only: bool,
         instrument_ids: tuple[int, ...] | None,
+        expected_symbols: tuple[str, ...] | None,
         as_of_date: date,
     ) -> list[dict[str, Any]]:
         if instrument_ids is not None:
             rows: list[dict[str, Any]] = []
-            for instrument_id in instrument_ids:
+            for index, instrument_id in enumerate(instrument_ids):
                 row = self._instruments.get_by_id(instrument_id)
                 if row is None or not bool(row.get("is_active")):
                     raise RuntimeError("Un instrumento del lote fijo ya no está activo.")
+                if str(row.get("instrument_type") or "").strip().lower() in self._EXCLUDED_TYPES:
+                    raise RuntimeError("Un instrumento del lote fijo dejó de ser elegible.")
+                if (expected_symbols is not None and
+                    str(row.get("symbol") or "").strip().upper() != expected_symbols[index]):
+                    raise RuntimeError("La identidad congelada del instrumento cambió.")
                 rows.append(row)
             return rows
         if not blocking_only:
@@ -370,6 +394,16 @@ class MarketObservationBackfillService:
                 )
             rows.append(row)
         return rows
+
+    def _assert_selected_identity(self, selected: dict[str, Any]) -> None:
+        current = self._instruments.get_by_id(int(selected["id"]))
+        fields = (
+            "symbol", "exchange_short_name", "instrument_type", "issuer_id",
+            "instrument_id", "currency", "is_active",
+        )
+        if (current is None or not bool(current.get("is_active")) or
+            any(current.get(field) != selected.get(field) for field in fields)):
+            raise RuntimeError("La identidad del instrumento cambió durante el backfill.")
 
     def _emit(
         self,

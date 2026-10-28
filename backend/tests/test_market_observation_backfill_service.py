@@ -643,3 +643,49 @@ def test_backfill_records_knowledge_time_after_each_provider_response(
     assert first["retrieved_at"] == "2026-01-02T20:01:00+00:00"
     assert second["retrieved_at"] == "2026-01-02T20:02:00+00:00"
     assert provider.calls == ["AAA", "BBB"]
+
+
+def test_backfill_rejects_listing_mutation_during_provider_request(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA", instrument_type="common_stock",
+    )
+
+    class MutatingProvider(FakeHistoryProvider):
+        def get_history(self, symbol, from_date=None, to_date=None):
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE instruments SET exchange_short_name = ? WHERE id = ?",
+                    ("NYSE", instrument_id),
+                )
+            return [{"timestamp": "2026-01-02T21:00:00+00:00", "close": 100.0}]
+
+    report = MarketObservationBackfillService(
+        database=database, history_provider=MutatingProvider({}),
+    ).run(limit=1)
+
+    assert report.failed_count == 1
+    assert "identidad" in report.failures[0]["error"]
+    assert report.observations_inserted == 0
+    assert MarketObservationRepository(database=database).list_for_instrument(instrument_id) == []
+
+
+def test_frozen_backfill_rejects_symbol_remap_before_network(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA", instrument_type="common_stock",
+    )
+    with database.connect() as connection:
+        connection.execute("UPDATE instruments SET symbol = ? WHERE id = ?", ("ZZZ", instrument_id))
+    provider = FakeHistoryProvider({"ZZZ": []})
+
+    with pytest.raises(RuntimeError, match="identidad congelada"):
+        MarketObservationBackfillService(
+            database=database, history_provider=provider,
+        ).run(
+            limit=1, blocking_only=True, _instrument_ids=(instrument_id,),
+            _expected_symbols=("AAA",),
+        )
+    assert provider.calls == []
