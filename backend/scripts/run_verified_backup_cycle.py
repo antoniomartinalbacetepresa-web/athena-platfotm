@@ -50,12 +50,20 @@ def run_cycle(
     database = AthenaDatabase(database_path)
     live_root = database.database_path.expanduser().resolve().parent
     primary_root = backup_directory.expanduser().resolve()
-    if primary_root == live_root:
-        raise ValueError("El backup primario no puede compartir directorio con la base activa.")
+    if (
+        primary_root == live_root
+        or primary_root in live_root.parents
+        or live_root in primary_root.parents
+    ):
+        raise ValueError("El backup primario no puede compartir el árbol de directorios con la base activa.")
     if secondary_directory is not None:
         secondary_root = secondary_directory.expanduser().resolve()
-        if secondary_root == live_root:
-            raise ValueError("El destino secundario no puede compartir directorio con la base activa.")
+        if (
+            secondary_root == live_root
+            or secondary_root in live_root.parents
+            or live_root in secondary_root.parents
+        ):
+            raise ValueError("El destino secundario no puede compartir el árbol de directorios con la base activa.")
         if (
             primary_root == secondary_root
             or primary_root in secondary_root.parents

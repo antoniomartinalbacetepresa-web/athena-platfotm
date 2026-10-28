@@ -160,3 +160,40 @@ def test_integrated_cycle_rejects_secondary_in_live_database_directory_before_wr
             secondary_directory=database_path.parent, keep_last=1, prefix="athena-",
         )
     assert not primary.exists()
+
+
+@pytest.mark.parametrize("relative_primary", ["shared", "shared/live/backups"])
+def test_cycle_rejects_primary_ancestor_or_descendant_of_live_directory(
+    tmp_path: Path, relative_primary: str,
+) -> None:
+    database_path = tmp_path / "shared" / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary = tmp_path / relative_primary
+
+    with pytest.raises(ValueError, match="backup primario"):
+        run_cycle(
+            database_path=database_path, backup_directory=primary,
+            keep_last=1, prefix="athena-",
+        )
+
+    assert not list(tmp_path.rglob("athena-*.db"))
+    assert not (primary / "athena-20260920T100000Z.db").exists()
+
+
+@pytest.mark.parametrize("relative_secondary", ["shared", "shared/live/secondary"])
+def test_cycle_rejects_secondary_ancestor_or_descendant_of_live_directory(
+    tmp_path: Path, relative_secondary: str,
+) -> None:
+    database_path = tmp_path / "shared" / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary = tmp_path / "primary"
+    secondary = tmp_path / relative_secondary
+
+    with pytest.raises(ValueError, match="destino secundario"):
+        run_cycle(
+            database_path=database_path, backup_directory=primary,
+            secondary_directory=secondary, keep_last=1, prefix="athena-",
+        )
+
+    assert not primary.exists()
+    assert not list(tmp_path.rglob("athena-*.db"))
