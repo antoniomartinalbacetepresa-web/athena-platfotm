@@ -308,3 +308,36 @@ def test_valid_measured_span_and_reconciled_horizons_remain_accepted() -> None:
     assert result["temporalPrecommitmentVerified"] is True
     assert result["acceptanceEvidenceVerified"] is True
     assert result["productionSufficiencyClaimed"] is False
+
+
+def test_measured_issuer_diversity_reconciles_across_horizons() -> None:
+    measurement = _measurement()
+    measurement["issuerErrorCounts"] = {"A": 3, "B": 3, "C": 2, "D": 2, "E": 2}
+    measurement["resolvedIssuerErrorCount"] = 12
+    measurement["maximumErrorsPerResolvedIssuer"] = 3
+    measurement["horizons"]["604800"].update({
+        "resolvedIssuerErrorCount": 6,
+        "issuerErrorCounts": {"A": 2, "B": 2, "C": 1, "D": 1},
+    })
+    measurement["horizons"]["2592000"].update({
+        "resolvedIssuerErrorCount": 6,
+        "issuerErrorCounts": {"A": 1, "B": 1, "C": 1, "D": 1, "E": 2},
+    })
+    assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is True
+    measurement["distinctResolvedIssuerCount"] = 6
+    assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is False
+    measurement["distinctResolvedIssuerCount"] = 5
+    measurement["horizons"]["604800"]["issuerErrorCounts"]["A"] = 3
+    assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is False
+
+
+def test_issuer_error_counts_reject_boolean_and_missing_horizon_provenance() -> None:
+    measurement = _measurement()
+    measurement["issuerErrorCounts"] = {"A": True}
+    measurement["resolvedIssuerErrorCount"] = 1
+    measurement["maximumErrorsPerResolvedIssuer"] = 1
+    with pytest.raises(ValueError, match="issuerErrorCounts"):
+        _evaluate_measurement(measurement)
+    measurement["issuerErrorCounts"] = {"A": 12}
+    with pytest.raises(ValueError, match="issuerErrorCounts"):
+        _evaluate_measurement(measurement)

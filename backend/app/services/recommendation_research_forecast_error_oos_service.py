@@ -155,6 +155,7 @@ class RecommendationResearchForecastErrorOosService:
             "unresolvedIssuerErrorCount": len(normalized_errors) - len(all_resolved),
             "distinctResolvedIssuerCount": len(issuer_counts),
             "maximumErrorsPerResolvedIssuer": max(issuer_counts.values(), default=0),
+            "issuerErrorCounts": dict(sorted(issuer_counts.items())),
             **self._longitudinal_summary(normalized_errors),
             "longitudinalSufficiency": {
                 "status": "policy_not_precommitted",
@@ -203,6 +204,7 @@ class RecommendationResearchForecastErrorOosService:
             "unresolvedIssuerErrorCount": 0,
             "distinctResolvedIssuerCount": 0,
             "maximumErrorsPerResolvedIssuer": 0,
+            "issuerErrorCounts": {},
             "firstEvaluationPeriodStart": None,
             "firstEvaluationPeriodEnd": None,
             "lastEvaluationPeriodEnd": None,

@@ -405,3 +405,13 @@ Compose this runner with the existing internal model executor and
 `generate_and_persist`; do not expose artifact selection through HTTP. This
 implementation is not a validated model: real calibrated artifacts, prospective
 cohorts, natural horizon maturity and governed OOS evidence remain required.
+
+## Measured issuer diversity at longitudinal sufficiency
+
+The OOS error diagnostic reports measured issuer-error counts, including an
+empty map when no errors exist. When present, the approved sufficiency gate
+reconciles the global count, distinct issuers, maximum concentration and
+issuer-level counts across every exact horizon. Inflated issuer diversity and
+inconsistent horizon allocations cannot satisfy acceptance. Legacy synthetic
+measurements without these maps retain their test-only contract and are not
+operational evidence. No thresholds, learning promotion or trading are enabled.

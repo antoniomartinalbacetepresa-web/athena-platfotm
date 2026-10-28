@@ -104,9 +104,65 @@ class LongitudinalOosSufficiencyPolicyService:
                 and sum(horizon_counts.values()) == forecast_errors
                 and all(horizon_counts.get(str(horizon), 0) > 0 for horizon in c["requiredHorizonSeconds"])
             )
+        # Reconcile measured issuer diversity, not merely a summary scalar.
+        # Real OOS diagnostics provide this map; legacy test-only inputs may not.
+        if "issuerErrorCounts" in measurement:
+            counts = self._issuer_error_counts(
+                measurement["issuerErrorCounts"], "measurement.issuerErrorCounts"
+            )
+            resolved = self._measurement_nonnegative_int(
+                measurement.get("resolvedIssuerErrorCount"),
+                "measurement.resolvedIssuerErrorCount",
+            )
+            maximum = self._measurement_nonnegative_int(
+                measurement.get("maximumErrorsPerResolvedIssuer"),
+                "measurement.maximumErrorsPerResolvedIssuer",
+            )
+            checks.append(
+                sum(counts.values()) == resolved
+                and len(counts) == resolved_issuers
+                and resolved <= forecast_errors
+                and max(counts.values(), default=0) == maximum
+            )
+            aggregate: dict[str, int] = {}
+            horizons_consistent = isinstance(horizons, dict)
+            if isinstance(horizons, dict):
+                for key, payload in horizons.items():
+                    if not isinstance(payload, dict):
+                        horizons_consistent = False
+                        continue
+                    per_horizon = self._issuer_error_counts(
+                        payload.get("issuerErrorCounts"),
+                        f"measurement.horizons.{key}.issuerErrorCounts",
+                    )
+                    resolved_horizon = self._measurement_nonnegative_int(
+                        payload.get("resolvedIssuerErrorCount"),
+                        f"measurement.horizons.{key}.resolvedIssuerErrorCount",
+                    )
+                    measured_horizon = self._measurement_nonnegative_int(
+                        payload.get("forecastErrorCount"),
+                        f"measurement.horizons.{key}.forecastErrorCount",
+                    )
+                    if sum(per_horizon.values()) != resolved_horizon or resolved_horizon > measured_horizon:
+                        horizons_consistent = False
+                    for issuer, count in per_horizon.items():
+                        aggregate[issuer] = aggregate.get(issuer, 0) + count
+            checks.append(horizons_consistent and aggregate == counts)
         checks.append(temporal_precommitment_verified)
         satisfied = all(checks)
         return self._result(normalized, fingerprint, "precommitted_policy_satisfied" if satisfied else "precommitted_policy_not_satisfied", True, satisfied, checks, temporal_precommitment_verified)
+
+    @staticmethod
+    def _issuer_error_counts(value: Any, field: str) -> dict[str, int]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} debe ser un mapa de emisores medidos.")
+        for issuer, count in value.items():
+            if (
+                not isinstance(issuer, str) or not issuer.strip()
+                or isinstance(count, bool) or not isinstance(count, int) or count <= 0
+            ):
+                raise ValueError(f"{field} contiene una identidad o recuento inválido.")
+        return dict(value)
 
     def _result(self, policy: dict[str, Any], fingerprint: str, status: str, approved: bool, verified: bool, checks: list[bool], temporal_precommitment_verified: bool) -> dict[str, Any]:
         return {"status": status, "policyId": policy["policyId"], "policyVersion": policy["version"], "policyFingerprint": fingerprint, "policyApproved": approved, "acceptanceEvidenceVerified": verified, "temporalPrecommitmentVerified": temporal_precommitment_verified, "productionSufficiencyClaimed": False, "criteriaCheckCount": len(checks), "satisfiedCriteriaCount": sum(1 for value in checks if value), "automaticApproval": False, "automaticProductionPromotion": False}
