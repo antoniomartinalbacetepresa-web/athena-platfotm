@@ -25,7 +25,8 @@ def valid_public_recovery_url(value: str) -> bool:
         return False
     if parsed.username is not None or parsed.password is not None:
         return False
-    if parsed.query or parsed.fragment or parsed.netloc.endswith(":"):
+    # Empty query/fragment delimiters also break the single-token URL contract.
+    if "?" in value or "#" in value or parsed.netloc.endswith(":"):
         return False
     if "%" in parsed.netloc:
         return False
