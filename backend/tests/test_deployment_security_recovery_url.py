@@ -15,6 +15,12 @@ def test_recovery_public_url_requires_absolute_https_endpoint() -> None:
         "https:///reset",
         "https://user:secret@athena.example/reset",
         "https://athena.example:99999/reset",
+        "https://athena.example/reset?redirect=https://other.example",
+        "https://athena.example/reset#token",
+        "https://athena.example\\\\@other.example/reset",
+        "https://athena.example/reset with spaces",
+        "https://athena.example:/reset",
+        "https://athena.example/%0A?token=already-present",
     )
 
     for value in valid:

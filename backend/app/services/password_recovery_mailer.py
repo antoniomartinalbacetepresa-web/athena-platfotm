@@ -6,6 +6,8 @@ import ssl
 from email.message import EmailMessage
 from urllib.parse import urlencode
 
+from app.security.recovery_url import valid_public_recovery_url
+
 from app.services.password_recovery_service import PasswordRecoveryChallenge
 
 
@@ -37,10 +39,12 @@ class PasswordRecoveryMailer:
         }
         if not self._host or not self._sender or not self._base_url:
             raise RuntimeError("El canal de recuperación SMTP no está configurado.")
-        if not self._base_url.lower().startswith("https://"):
-            raise RuntimeError("ATHENA_RECOVERY_PUBLIC_URL debe usar HTTPS.")
+        if not valid_public_recovery_url(self._base_url):
+            raise RuntimeError("ATHENA_RECOVERY_PUBLIC_URL requiere una URL HTTPS segura sin consulta ni fragmento.")
         if self._port <= 0 or self._port > 65535:
             raise RuntimeError("ATHENA_RECOVERY_SMTP_PORT no es válido.")
+        if bool(self._username) != bool(self._password):
+            raise RuntimeError("Las credenciales SMTP deben configurarse juntas.")
         if not self._use_starttls:
             raise RuntimeError(
                 "ATHENA_RECOVERY_SMTP_STARTTLS no puede desactivarse para tokens de recuperación."
@@ -48,8 +52,7 @@ class PasswordRecoveryMailer:
 
     def send(self, challenge: PasswordRecoveryChallenge) -> None:
         try:
-            separator = "&" if "?" in self._base_url else "?"
-            recovery_url = f"{self._base_url}{separator}{urlencode({'token': challenge.token})}"
+            recovery_url = f"{self._base_url}?{urlencode({'token': challenge.token})}"
             message = EmailMessage()
             message["Subject"] = "Recuperación de acceso a ATHENA TYCHE"
             message["From"] = self._sender
@@ -69,7 +72,9 @@ class PasswordRecoveryMailer:
                 if self._username:
                     smtp.login(self._username, self._password)
                 smtp.send_message(message)
-        except Exception as exc:
+        except Exception:
+            # SMTP errors may contain server-supplied text. Never chain them
+            # into a traceback that could expose a recovery bearer token.
             raise PasswordRecoveryDeliveryError(
                 "No se pudo entregar la recuperación de cuenta."
-            ) from exc
+            ) from None

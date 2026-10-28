@@ -68,3 +68,46 @@ def test_recovery_mailer_upgrades_modern_tls_before_sending(monkeypatch) -> None
     )
 
     assert events == ["ehlo", "starttls", "ehlo", "send"]
+
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.test/recover#fragment",
+    "https://example.test/recover?redirect=https://other.test",
+    "https://user:password@example.test/recover",
+    "https://example.test\\\\@other.test/recover",
+    "https://example.test/recover with spaces",
+])
+def test_recovery_mailer_rejects_ambiguous_token_destination(monkeypatch, url: str) -> None:
+    _configure(monkeypatch)
+    monkeypatch.setenv("ATHENA_RECOVERY_PUBLIC_URL", url)
+    with pytest.raises(RuntimeError, match="URL HTTPS segura"):
+        PasswordRecoveryMailer()
+
+
+def test_recovery_mailer_rejects_partial_smtp_credentials(monkeypatch) -> None:
+    _configure(monkeypatch)
+    monkeypatch.setenv("ATHENA_RECOVERY_SMTP_PASSWORD", "orphan-password")
+    with pytest.raises(RuntimeError, match="credenciales SMTP"):
+        PasswordRecoveryMailer()
+
+
+def test_recovery_mailer_does_not_chain_smtp_server_errors(monkeypatch) -> None:
+    _configure(monkeypatch)
+
+    class FailingSMTP:
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("SMTP server echoed sensitive message content")
+
+    monkeypatch.setattr("app.services.password_recovery_mailer.smtplib.SMTP", FailingSMTP)
+    mailer = PasswordRecoveryMailer()
+    with pytest.raises(Exception) as captured:
+        mailer.send(PasswordRecoveryChallenge(
+            email="owner@example.test",
+            token="secret-recovery-token-1234567890",
+            expires_at=datetime(2026, 9, 15, 13, 0, tzinfo=timezone.utc),
+        ))
+    assert type(captured.value).__name__ == "PasswordRecoveryDeliveryError"
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    assert "sensitive" not in str(captured.value)

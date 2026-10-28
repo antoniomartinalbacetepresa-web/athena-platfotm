@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from app.security.recovery_url import valid_public_recovery_url
 
 from app.database.athena_database import AthenaDatabase
 
@@ -217,20 +217,7 @@ class DeploymentSecurityReadinessService:
 
     @staticmethod
     def _valid_public_recovery_url(value: str) -> bool:
-        if not value:
-            return False
-        try:
-            parsed = urlparse(value)
-            port = parsed.port
-        except ValueError:
-            return False
-        if parsed.scheme.lower() != "https" or not parsed.hostname:
-            return False
-        if parsed.username is not None or parsed.password is not None:
-            return False
-        if port is not None and not 1 <= port <= 65535:
-            return False
-        return True
+        return valid_public_recovery_url(value)
 
     @staticmethod
     def _decode_32_byte_key(value: str) -> bytes | None:
