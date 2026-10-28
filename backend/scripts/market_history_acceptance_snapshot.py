@@ -10,9 +10,8 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
-import os
-import tempfile
 import json
+import os
 import sqlite3
 import tempfile
 from contextlib import closing
@@ -219,12 +218,13 @@ def export_blockers_csv(result: dict[str, Any], destination: Path) -> None:
     path = Path(destination)
     # Create in the destination directory, then link atomically with no-replace.
     # A failed validation or existing destination never truncates earlier evidence.
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", newline="", dir=path.parent,
-        prefix=".athena-history-gaps-", suffix=".tmp", delete=False,
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-        try:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="", dir=path.parent,
+            prefix=".athena-history-gaps-", suffix=".tmp", delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
             writer = csv.DictWriter(temporary, fieldnames=CSV_FIELDS)
             writer.writeheader()
             for item in items:
@@ -237,13 +237,12 @@ def export_blockers_csv(result: dict[str, Any], destination: Path) -> None:
                 })
             temporary.flush()
             os.fsync(temporary.fileno())
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-    try:
+        # Hard-link creation is atomic and fails if the destination exists.
         os.link(temporary_path, path)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        # Close the temporary file before removing it (also on Windows).
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def main() -> int:
