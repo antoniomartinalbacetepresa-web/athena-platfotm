@@ -63,6 +63,9 @@ class ProfessionalDossier {
   });
 
   bool get isSafe =>
+      advisoryStatus == 'no_advice' &&
+      !productionEligible &&
+      !allocationEligible &&
       readOnly &&
       !automaticTrading &&
       !executionEligible &&
@@ -161,10 +164,11 @@ class AthenaBackendProfessionalDossierDataSource {
         'El dossier profesional viola el contrato seguro de ATHENA.',
       );
     }
-    if (advisoryStatus == 'no_advice' &&
-        (productionEligible || allocationEligible)) {
+    if (advisoryStatus != 'no_advice' ||
+        productionEligible ||
+        allocationEligible) {
       throw const FormatException(
-        'Un dossier no_advice no puede declararse elegible para producción o allocation.',
+        'El dossier profesional debe ser no_advice y no elegible para producción o allocation.',
       );
     }
 

@@ -113,6 +113,18 @@ void main() {
       }
     });
 
+    test('rechaza un advisoryStatus distinto de no_advice aunque los flags sean falsos', () async {
+      final data = _dossier()..['advisoryStatus'] = 'advice';
+      final source = AthenaBackendProfessionalDossierDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient(
+          (_) async => http.Response(jsonEncode({'data': data}), 200),
+        ),
+      );
+      addTearDown(source.dispose);
+      expect(source.getLatest(symbol: 'AAPL'), throwsFormatException);
+    });
+
     test('rechaza no_advice si se intenta elevar elegibilidad', () async {
       for (final field in ['productionEligible', 'allocationEligible']) {
         final data = _dossier();

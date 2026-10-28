@@ -22,7 +22,7 @@ class _PendingDossierSource extends AthenaBackendProfessionalDossierDataSource {
   }
 }
 
-ProfessionalDossier _dossier(String symbol) => ProfessionalDossier(
+ProfessionalDossier _dossier(String symbol, {String? evidenceTag}) => ProfessionalDossier(
       asOf: DateTime.utc(2026, 9, 7),
       symbol: symbol,
       advisoryStatus: 'no_advice',
@@ -37,7 +37,7 @@ ProfessionalDossier _dossier(String symbol) => ProfessionalDossier(
           name: ProfessionalModuleState(
             status: 'not_yet_evidenced',
             productionEligible: false,
-            reason: 'Evidencia del símbolo $symbol',
+            reason: 'Evidencia del símbolo ${evidenceTag ?? symbol}',
           ),
       },
     );
@@ -72,6 +72,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a mismatched dossier from an injected source fails closed',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    source.pending['AAPL']!.complete(_dossier('MSFT'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-error')), findsOneWidget);
+    expect(find.byKey(const Key('professional-research-content')), findsNothing);
+    expect(find.textContaining('Evidencia del símbolo MSFT'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('replacing the research source invalidates its old response',
       (tester) async {
     final oldSource = _PendingDossierSource();
@@ -89,11 +105,11 @@ void main() {
     await tester.pump();
     expect(newSource.requested, ['AAPL']);
 
-    newSource.pending['AAPL']!.complete(_dossier('NEW'));
+    newSource.pending['AAPL']!.complete(_dossier('AAPL', evidenceTag: 'NEW'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Evidencia del símbolo NEW'), findsWidgets);
 
-    oldSource.pending['AAPL']!.complete(_dossier('OLD'));
+    oldSource.pending['AAPL']!.complete(_dossier('AAPL', evidenceTag: 'OLD'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Evidencia del símbolo NEW'), findsWidgets);
     expect(find.textContaining('Evidencia del símbolo OLD'), findsNothing);

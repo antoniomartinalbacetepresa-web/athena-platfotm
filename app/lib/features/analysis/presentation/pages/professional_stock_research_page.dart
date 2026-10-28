@@ -90,7 +90,10 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
                 ),
               );
             }
-            if (snapshot.hasError || !snapshot.hasData || !snapshot.data!.isSafe) {
+            if (snapshot.hasError ||
+                !snapshot.hasData ||
+                !snapshot.data!.isSafe ||
+                snapshot.data!.symbol != symbol) {
               return _ResearchError(onRetry: _retry);
             }
             return _ResearchBody(symbol: symbol, dossier: snapshot.data!);
