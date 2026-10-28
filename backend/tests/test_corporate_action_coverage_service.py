@@ -7,6 +7,9 @@ import pytest
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.services.corporate_action_coverage_service import CorporateActionCoverageService
+from app.services.corporate_action_reconciliation_worklist_service import (
+    CorporateActionReconciliationWorklistService,
+)
 
 
 AS_OF = datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)
@@ -167,12 +170,36 @@ def test_unclassified_provenance_blocks_readiness_even_when_classified_families_
     _save_dividend(database, provider="yahoo", amount=0.25)
     _save_dividend(database, provider="exchange_notice", amount=0.25)
     _save_dividend(database, provider="mystery_feed", amount=0.30)
-    report = CorporateActionCoverageService(database=database, provider_families={"yahoo": "yahoo", "exchange_notice": "exchange"}).get_report(as_of=AS_OF)
+    families = {"yahoo": "yahoo", "exchange_notice": "exchange"}
+    report = CorporateActionCoverageService(database=database, provider_families=families).get_report(as_of=AS_OF)
+    worklist = CorporateActionReconciliationWorklistService(database, provider_families=families).get_worklist(as_of=AS_OF)
     assert report.event_count == 1
-    assert report.agreed_event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.conflict_event_count == 0
+    assert report.incomplete_event_count == 1
+    assert report.agreement_coverage == 0.0
+    assert worklist.total_incomplete_event_count == report.incomplete_event_count
+    assert worklist.total_conflict_event_count == report.conflict_event_count
     assert report.unclassified_source_providers == ("mystery_feed",)
     assert report.cross_provider_reconciliation_ready is False
     assert report.to_api_dict()["crossProviderReconciliationReady"] is False
+
+
+def test_unclassified_matching_third_source_cannot_inflate_agreed_coverage(tmp_path) -> None:
+    database = _database(tmp_path)
+    for provider in ("yahoo", "alpha_vantage", "mystery_feed"):
+        _save_dividend(database, provider=provider, amount=0.25)
+
+    report = CorporateActionCoverageService(database=database).get_report(as_of=AS_OF)
+    worklist = CorporateActionReconciliationWorklistService(database).get_worklist(as_of=AS_OF)
+
+    assert report.event_count == 1
+    assert report.agreed_event_count == 0
+    assert report.incomplete_event_count == 1
+    assert report.agreement_coverage == 0.0
+    assert report.cross_provider_reconciliation_ready is False
+    assert worklist.total_incomplete_event_count == 1
+    assert worklist.items[0].unclassified_providers == ("mystery_feed",)
 
 
 def test_disagreement_between_independent_families_fails_closed(tmp_path) -> None:

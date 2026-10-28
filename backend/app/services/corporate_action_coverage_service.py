@@ -144,6 +144,12 @@ class CorporateActionCoverageService:
                 if event_key in ambiguous_event_keys:
                     conflicts += 1
                     continue
+                # A provider with unknown lineage is unresolved evidence, even if
+                # two classified families agree. The worklist must not disagree
+                # with the aggregate reconciliation counts for this event.
+                if any(provider not in self._provider_families for provider in by_provider):
+                    incomplete += 1
+                    continue
                 # Agreement on a number without its economic unit is not usable
                 # reconciliation evidence. In particular, equal dividend amounts with
                 # unknown currency must remain incomplete rather than becoming "ready".
