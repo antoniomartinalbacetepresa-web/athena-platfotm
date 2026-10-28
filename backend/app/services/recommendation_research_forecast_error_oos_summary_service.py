@@ -15,6 +15,7 @@ from app.services.recommendation_research_evaluation_specification_service impor
 from app.services.recommendation_research_forecast_error_service import (
     RecommendationResearchForecastErrorService,
 )
+from app.services.research_oos_overlap import count_overlapping_period_pairs
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -181,15 +182,15 @@ class RecommendationResearchForecastErrorOosSummaryService:
         rmse = self._finite(math.sqrt(sum(squared_values) / count), "rootMeanSquaredError")
         median_absolute_error = self._finite(median(absolute_values), "medianAbsoluteError")
 
-        overlap_pairs = 0
-        for index, left in enumerate(rows):
-            left_start = self._aware_iso(left["periodStart"], "row.periodStart")
-            left_end = self._aware_iso(left["periodEnd"], "row.periodEnd")
-            for right in rows[index + 1 :]:
-                right_start = self._aware_iso(right["periodStart"], "row.periodStart")
-                right_end = self._aware_iso(right["periodEnd"], "row.periodEnd")
-                if max(left_start, right_start) < min(left_end, right_end):
-                    overlap_pairs += 1
+        overlap_pairs = count_overlapping_period_pairs(
+            [
+                (
+                    self._aware_iso(row["periodStart"], "row.periodStart"),
+                    self._aware_iso(row["periodEnd"], "row.periodEnd"),
+                )
+                for row in rows
+            ]
+        )
 
         instrument_counts = Counter(str(row["instrumentId"]) for row in rows)
         method = next(iter(methods))

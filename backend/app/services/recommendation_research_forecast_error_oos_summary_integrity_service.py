@@ -10,6 +10,7 @@ from typing import Any
 from app.services.recommendation_research_forecast_error_oos_summary_service import (
     RecommendationResearchForecastErrorOosSummaryService,
 )
+from app.services.research_oos_overlap import count_overlapping_period_pairs
 
 
 class RecommendationResearchForecastErrorOosSummaryIntegrityService:
@@ -107,11 +108,7 @@ class RecommendationResearchForecastErrorOosSummaryIntegrityService:
         if validated.get("maximumObservationsPerInstrument") != max(counts.values(), default=0):
             raise ValueError("maximumObservationsPerInstrument no coincide con rows.")
 
-        overlap_pairs = 0
-        for index, (left_start, left_end) in enumerate(normalized_periods):
-            for right_start, right_end in normalized_periods[index + 1 :]:
-                if max(left_start, right_start) < min(left_end, right_end):
-                    overlap_pairs += 1
+        overlap_pairs = count_overlapping_period_pairs(normalized_periods)
         if validated.get("overlappingPeriodPairCount") != overlap_pairs:
             raise ValueError("overlappingPeriodPairCount no coincide con rows.")
 
