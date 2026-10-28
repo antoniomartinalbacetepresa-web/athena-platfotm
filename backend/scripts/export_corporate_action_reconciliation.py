@@ -13,7 +13,6 @@ import os
 import sqlite3
 import tempfile
 from contextlib import closing
-from itertools import chain
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,10 +22,16 @@ from app.services.corporate_action_reconciliation_worklist_service import (
 )
 
 
+PAGE_SIZE = 500
+
+
 def _cutoff(value: datetime) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("as_of must include a timezone")
-    return value.astimezone(timezone.utc)
+    cutoff = value.astimezone(timezone.utc)
+    if cutoff > datetime.now(timezone.utc):
+        raise ValueError("as_of cannot be in the future")
+    return cutoff
 
 
 def _sha256_file(path: Path) -> str:
@@ -71,25 +76,11 @@ def export_worklist(
     with tempfile.TemporaryDirectory(prefix="athena-ca-snapshot-") as work:
         snapshot = Path(work) / "snapshot.db"
         snapshot_sha = _consistent_copy(source, snapshot)
-        report = CorporateActionReconciliationWorklistService(
-            AthenaDatabase(snapshot)
-        ).get_worklist(as_of=cutoff, limit=2**31 - 1, offset=0)
-        incomplete = report.total_incomplete_event_count
-        conflicts = report.total_conflict_event_count
+        worklist = CorporateActionReconciliationWorklistService(AthenaDatabase(snapshot))
+        first = worklist.get_worklist(as_of=cutoff, limit=PAGE_SIZE, offset=0)
+        incomplete = first.total_incomplete_event_count
+        conflicts = first.total_conflict_event_count
         total = incomplete + conflicts
-        if len(report.items) != total:
-            raise RuntimeError("Worklist is truncated; refusing partial export")
-        if sum(item.reconciliation_status == "incomplete" for item in report.items) != incomplete:
-            raise RuntimeError("Incomplete-event count mismatch")
-        if sum(item.reconciliation_status == "conflict" for item in report.items) != conflicts:
-            raise RuntimeError("Conflict-event count mismatch")
-        identities = [
-            (item.instrument_id, item.action_type, item.effective_at)
-            for item in report.items
-        ]
-        if len(set(identities)) != total:
-            raise RuntimeError("Duplicate economic events in worklist")
-
         metadata = {
             "recordType": "metadata",
             "status": "complete_pit_reconciliation_diagnostic",
@@ -111,13 +102,51 @@ def export_worklist(
                 dir=output.parent, delete=False,
             ) as handle:
                 staged = Path(handle.name)
-                for row in chain((metadata,), (item.to_api_dict() for item in report.items)):
+
+                def write_record(row: dict[str, object]) -> None:
                     line = (
                         json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-                        + "\n"
+                        + "\\n"
                     ).encode("utf-8")
                     handle.write(line)
                     digest.update(line)
+
+                write_record(metadata)
+                offset = 0
+                previous_identity: tuple[int, str, str] | None = None
+                observed_incomplete = 0
+                observed_conflicts = 0
+                while offset < total:
+                    # Each page is reconstructed from the SAME immutable snapshot.
+                    # The worklist retains only the requested page in memory.
+                    page = first if offset == 0 else worklist.get_worklist(
+                        as_of=cutoff, limit=PAGE_SIZE, offset=offset
+                    )
+                    expected_size = min(PAGE_SIZE, total - offset)
+                    if (
+                        page.as_of != cutoff
+                        or page.offset != offset
+                        or page.limit != PAGE_SIZE
+                        or page.total_incomplete_event_count != incomplete
+                        or page.total_conflict_event_count != conflicts
+                        or len(page.items) != expected_size
+                    ):
+                        raise RuntimeError("Inconsistent corporate-action worklist page")
+                    for item in page.items:
+                        identity = (item.instrument_id, item.action_type, item.effective_at)
+                        if previous_identity is not None and identity <= previous_identity:
+                            raise RuntimeError("Duplicate or out-of-order economic event")
+                        previous_identity = identity
+                        if item.reconciliation_status == "incomplete":
+                            observed_incomplete += 1
+                        elif item.reconciliation_status == "conflict":
+                            observed_conflicts += 1
+                        else:
+                            raise RuntimeError("Unexpected reconciled event in worklist")
+                        write_record(item.to_api_dict())
+                    offset += len(page.items)
+                if observed_incomplete != incomplete or observed_conflicts != conflicts:
+                    raise RuntimeError("Corporate-action worklist totals changed during export")
                 handle.flush()
                 os.fsync(handle.fileno())
             # Exclusive publication: a concurrent export cannot be overwritten.
