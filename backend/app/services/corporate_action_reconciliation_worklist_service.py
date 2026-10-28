@@ -78,7 +78,7 @@ class CorporateActionReconciliationWorklist:
 
 
 class CorporateActionReconciliationWorklistService:
-    """List exact PIT corporate-action events still missing a second source family."""
+    """List PIT corporate actions with missing independent evidence or conflicting values."""
 
     _EXCLUDED_TYPES = ("etf", "fund")
 
