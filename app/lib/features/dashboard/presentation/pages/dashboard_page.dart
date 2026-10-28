@@ -107,6 +107,12 @@ class _DashboardPageState extends State<DashboardPage> {
       });
       return;
     }
+    if (route == AppRoutes.athenaAi) {
+      // Revalidate canonical evidence without reloading independent panels.
+      _synthesisController.clear();
+      _synthesisController.loadLatest();
+      return;
+    }
     if (route == AppRoutes.investors) {
       // SEC 13F evidence can change independently. Revalidate the canonical
       // synthesis and research, but retain owner, Market and News generations.

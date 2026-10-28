@@ -13,6 +13,7 @@ void main() {
       AppRoutes.market,
       AppRoutes.stockResearch,
       AppRoutes.news,
+      AppRoutes.athenaAi,
       AppRoutes.investors,
       AppRoutes.portfolio,
       AppRoutes.profile,

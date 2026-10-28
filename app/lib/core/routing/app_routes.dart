@@ -7,6 +7,7 @@ class AppRoutes {
   static const market = '/market';
   static const stockResearch = '/analysis/stock';
   static const news = '/news';
+  static const athenaAi = '/athena-ai';
   static const investors = '/investors';
   static const portfolio = '/portfolio';
   static const profile = '/profile';

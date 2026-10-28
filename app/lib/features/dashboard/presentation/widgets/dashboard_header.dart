@@ -61,6 +61,7 @@ class DashboardHeader extends StatelessWidget {
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: AppRoutes.market, child: Text('Mercado')),
                     PopupMenuItem(value: AppRoutes.news, child: Text('Noticias')),
+                    PopupMenuItem(value: AppRoutes.athenaAi, child: Text('ATHENA AI')),
                     PopupMenuItem(value: AppRoutes.investors, child: Text('Inversores')),
                     PopupMenuItem(value: AppRoutes.portfolio, child: Text('Cartera')),
                     PopupMenuItem(value: AppRoutes.profile, child: Text('Perfil')),
@@ -76,6 +77,11 @@ class DashboardHeader extends StatelessWidget {
                   tooltip: 'Noticias',
                   onPressed: () => unawaited(_navigate(context, AppRoutes.news)),
                   icon: Icons.article_outlined,
+                ),
+                _RouteButton(
+                  tooltip: 'ATHENA AI',
+                  onPressed: () => unawaited(_navigate(context, AppRoutes.athenaAi)),
+                  icon: Icons.auto_awesome_outlined,
                 ),
                 _RouteButton(
                   tooltip: 'Inversores',

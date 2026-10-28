@@ -5,6 +5,7 @@ import '../../features/auth/presentation/pages/password_recovery_page.dart';
 import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/analysis/presentation/pages/professional_stock_research_page.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
+import '../../features/recommendations/presentation/pages/athena_ai_page.dart';
 import '../../features/investors/presentation/pages/investors_page.dart';
 import '../../features/market/presentation/pages/market_page.dart';
 import '../../features/news/presentation/pages/news_page.dart';
@@ -70,6 +71,12 @@ class AppRouter {
         return MaterialPageRoute(
           settings: settings,
           builder: (_) => const NewsPage(),
+        );
+
+      case AppRoutes.athenaAi:
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (_) => const AthenaAiPage(),
         );
 
       case AppRoutes.investors:
