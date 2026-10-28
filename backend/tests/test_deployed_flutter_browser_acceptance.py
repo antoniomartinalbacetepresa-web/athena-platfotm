@@ -55,3 +55,68 @@ def test_missing_config_never_logs_secrets(monkeypatch, capsys):
     monkeypatch.setenv("ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA", "secret-not-to-log")
     assert module.main() == 2
     assert "secret-not-to-log" not in capsys.readouterr().out
+
+
+class _ManifestResponse:
+    def __init__(self, payload, *, status=200, url="https://staging.example.test/athena-build.json"):
+        self.payload = payload
+        self.status = status
+        self.url = url
+
+    def json(self):
+        return self.payload
+
+
+class _ManifestPage:
+    def __init__(self, response):
+        self.request = self
+        self.response = response
+        self.requested_url = None
+        self.headers = None
+
+    def get(self, url, *, headers, timeout):
+        self.requested_url = url
+        self.headers = headers
+        assert timeout == 15000
+        return self.response
+
+
+def _check_manifest(response):
+    page = _ManifestPage(response)
+    module.verify_deployed_web_build(
+        page, expected_sha=SHA, expected_origin="https://staging.example.test/",
+    )
+    return page
+
+
+def test_deployed_build_identity_uses_real_same_origin_manifest():
+    page = _check_manifest(_ManifestResponse({
+        "schema": "athena.web-build.v1", "sourceSha": SHA,
+    }))
+    assert page.requested_url.startswith("athena-build.json?")
+    assert page.headers["Cache-Control"] == "no-cache"
+
+
+@pytest.mark.parametrize("payload", [
+    {},
+    {"schema": "athena.web-build.v1", "sourceSha": "b" * 40},
+    {"schema": "wrong", "sourceSha": SHA},
+    {"schema": "athena.web-build.v1", "sourceSha": SHA, "extra": True},
+    ["athena.web-build.v1", SHA],
+])
+def test_deployed_build_identity_rejects_wrong_or_ambiguous_manifest(payload):
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        _check_manifest(_ManifestResponse(payload))
+
+
+@pytest.mark.parametrize("status,url", [
+    (404, "https://staging.example.test/athena-build.json"),
+    (200, "https://other.example.test/athena-build.json"),
+    (200, "http://staging.example.test/athena-build.json"),
+    (200, "https://staging.example.test/other.json"),
+])
+def test_deployed_build_identity_rejects_missing_or_redirected_manifest(status, url):
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        _check_manifest(_ManifestResponse({
+            "schema": "athena.web-build.v1", "sourceSha": SHA,
+        }, status=status, url=url))

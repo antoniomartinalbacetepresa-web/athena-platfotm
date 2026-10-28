@@ -40,6 +40,39 @@ def validate_config(environment: dict[str, str]) -> BrowserConfig:
     return BrowserConfig(base_url=base.rstrip("/") + "/", deployed_sha=deployed)
 
 
+def verify_deployed_web_build(page, *, expected_sha: str, expected_origin: str) -> None:
+    """Read the actual deployed bundle marker, not only the operator's SHA variable.
+
+    This is a same-origin build identity check, not a signed deployment attestation.
+    """
+    try:
+        response = page.request.get(
+            "athena-build.json?athena_acceptance_sha=" + expected_sha,
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            timeout=15000,
+        )
+        location = urlsplit(response.url)
+        origin = urlsplit(expected_origin)
+        if (
+            response.status != 200
+            or location.scheme != "https"
+            or location.netloc != origin.netloc
+            or location.path != "/athena-build.json"
+        ):
+            raise BrowserAcceptanceFailure("Deployed web build identity unavailable")
+        manifest = response.json()
+    except Exception:
+        # Transport and parsing exceptions can contain staging URLs.
+        raise BrowserAcceptanceFailure("Deployed web build identity unavailable") from None
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema", "sourceSha"}
+        or manifest.get("schema") != "athena.web-build.v1"
+        or manifest.get("sourceSha") != expected_sha
+    ):
+        raise BrowserAcceptanceFailure("Deployed web build SHA mismatch")
+
+
 def _heading(page, label: str) -> None:
     page.get_by_role("heading", name=label, exact=True).first.wait_for(
         state="visible", timeout=30000
@@ -160,8 +193,14 @@ def main() -> int:
                     viewport={"width": 1440, "height": 900},
                     service_workers="block",
                 )
+                page = context.new_page()
+                stage = "deployed-web-build-identity"
+                verify_deployed_web_build(
+                    page, expected_sha=config.deployed_sha,
+                    expected_origin=config.base_url,
+                )
                 stage = "guest-research"
-                result = verify_guest_research(context.new_page())
+                result = verify_guest_research(page)
                 context.close()
             finally:
                 browser.close()
@@ -174,6 +213,7 @@ def main() -> int:
     print(json.dumps({
         "status": "passed", **result,
         "deployedFlutterGuestResearchVerified": True,
+        "deployedWebBuildIdentityVerified": True,
         "deployedFlutterBrowserE2EVerified": False,
         "twoOwnerBrowserIsolationVerified": False,
         "staleResponseOrderingVerified": False,

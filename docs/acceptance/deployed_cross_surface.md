@@ -34,6 +34,18 @@ SEC 13F CIK evidence in staging. Set `ATHENA_ACCEPTANCE_WEB_URL` as an
 environment **secret** and `ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA` as an
 environment **variable** in `staging-acceptance`. The SHA variable is
 only an operator assertion; retain independent deployment attestation.
+The push CI release artifact now includes `athena-build.json` stamped with
+the exact `GITHUB_SHA` after `flutter build web --release`. Deploy the
+complete **push** release artifact without replacing this marker. Before
+opening the app, the browser probe fetches the deployed marker over HTTPS
+from the **same web origin**, bypasses ordinary caches, and rejects missing,
+redirected, malformed or mismatched SHA evidence. This closes the previous
+gap where the operator-provided SHA variable alone could agree with CI while
+the served web bundle belonged to another commit. The marker is still
+self-reported by the deployed artifact, not a signed attestation or proof
+that the backend runs the same SHA; retain independent deployment logs and
+artifact provenance.
+
 Set repository variable `ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED=true`
 **only after** continuous deployment keeps the web build synchronized
 with every push. When enabled, the push release gate requires this job

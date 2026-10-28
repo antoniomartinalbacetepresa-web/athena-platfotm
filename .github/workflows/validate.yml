@@ -102,6 +102,30 @@ jobs:
         if: success()
         run: flutter build web --release
 
+      - name: Stamp release bundle with exact source SHA
+        if: success()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+
+          sha = os.environ["GITHUB_SHA"].lower()
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("Invalid source SHA")
+          manifest = pathlib.Path("build/web/athena-build.json")
+          if not manifest.parent.is_dir():
+              raise SystemExit("Release web bundle missing")
+          manifest.write_text(
+              json.dumps(
+                  {"schema": "athena.web-build.v1", "sourceSha": sha},
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Upload Flutter validation logs
         if: always()
         uses: actions/upload-artifact@v4
