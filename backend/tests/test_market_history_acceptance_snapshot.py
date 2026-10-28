@@ -336,7 +336,7 @@ def test_csv_export_rejects_partial_report_and_spreadsheet_formulas(tmp_path: Pa
         export_blockers_csv(partial, tmp_path / "partial.csv")
     assert not (tmp_path / "partial.csv").exists()
     complete = run_snapshot(path, all_blockers=True)
-    complete["blockingItems"][0]["symbol"] = "=HYPERLINK(\\"https://evil.example\\")"
+    complete["blockingItems"][0]["symbol"] = "=HYPERLINK(1)"
     target = tmp_path / "safe.csv"
     export_blockers_csv(complete, target)
     with target.open(newline="", encoding="utf-8") as stream:

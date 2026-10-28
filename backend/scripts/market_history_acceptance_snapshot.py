@@ -189,7 +189,7 @@ def _safe_csv_text(value: object) -> object:
     """Keep untrusted instrument/provider labels from becoming spreadsheet formulas."""
     if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
         return "'" + value
-    if isinstance(value, str) and value[:1] in ("\\t", "\\r", "\\n"):
+    if isinstance(value, str) and value[:1].isspace():
         return "'" + value
     return value
 
