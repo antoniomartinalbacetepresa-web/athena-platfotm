@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
+from app.services.corporate_action_reconciliation_worklist_service import (
+    CorporateActionReconciliationWorklistService,
+)
+from scripts import export_corporate_action_reconciliation as exporter
 from scripts.export_corporate_action_reconciliation import export_worklist
 
 
@@ -41,7 +46,7 @@ def _dividend(
     )
 
 
-def test_full_export_uses_read_only_consistent_snapshot_and_includes_conflicts(tmp_path) -> None:
+def test_full_export_uses_read_only_consistent_snapshot_and_includes_conflicts(tmp_path, monkeypatch) -> None:
     source = tmp_path / "source.db"
     database = AthenaDatabase(source)
     database.initialize()
@@ -55,6 +60,8 @@ def test_full_export_uses_read_only_consistent_snapshot_and_includes_conflicts(t
     _dividend(database, agreed, "yahoo", 0.25, observed)
     _dividend(database, agreed, "alpha_vantage", 0.25, observed)
 
+    # Force multiple pages with different statuses; no unbounded worklist.
+    monkeypatch.setattr(exporter, "PAGE_SIZE", 1)
     before = hashlib.sha256(source.read_bytes()).hexdigest()
     output = tmp_path / "complete.jsonl"
     summary = export_worklist(database_path=source, output_path=output, as_of=AS_OF)
@@ -108,3 +115,46 @@ def test_export_rejects_invalid_source_or_naive_cutoff_without_output(tmp_path) 
         )
     assert not output.exists()
     assert not (tmp_path / "missing.db").exists()
+
+def test_future_pit_cutoff_is_rejected_before_snapshot_or_export(tmp_path) -> None:
+    source = tmp_path / "source.db"
+    database = AthenaDatabase(source)
+    database.initialize()
+    output = tmp_path / "future.jsonl"
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="future"):
+        export_worklist(
+            database_path=source, output_path=output,
+            as_of=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+    assert not output.exists()
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+
+
+def test_changed_page_totals_fail_without_publishing_partial_export(
+    tmp_path, monkeypatch,
+) -> None:
+    source = tmp_path / "source.db"
+    database = AthenaDatabase(source)
+    database.initialize()
+    for symbol in ("ONE", "TWO"):
+        instrument_id = _instrument(database, symbol)
+        _dividend(database, instrument_id, "yahoo", 0.25, AS_OF - timedelta(days=1))
+    monkeypatch.setattr(exporter, "PAGE_SIZE", 1)
+    original = CorporateActionReconciliationWorklistService.get_worklist
+
+    def inconsistent(self, *, as_of, limit=100, offset=0):
+        page = original(self, as_of=as_of, limit=limit, offset=offset)
+        return (
+            replace(page, total_incomplete_event_count=page.total_incomplete_event_count + 1)
+            if offset else page
+        )
+
+    monkeypatch.setattr(
+        CorporateActionReconciliationWorklistService, "get_worklist", inconsistent
+    )
+    output = tmp_path / "must-not-exist.jsonl"
+    with pytest.raises(RuntimeError, match="Inconsistent"):
+        export_worklist(database_path=source, output_path=output, as_of=AS_OF)
+    assert not output.exists()
+    assert not list(tmp_path.glob(".athena-ca-export-*"))
