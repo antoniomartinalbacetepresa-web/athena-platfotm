@@ -202,3 +202,69 @@ def test_worklist_pagination_and_aware_cutoff_are_fail_closed(tmp_path) -> None:
         service.get_worklist(as_of=AS_OF, limit=0)
     with pytest.raises(ValueError, match="offset"):
         service.get_worklist(as_of=AS_OF, offset=-1)
+
+
+def test_conflicting_two_family_dividend_remains_in_actionable_worklist(tmp_path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "CONFLICT")
+    effective = AS_OF - timedelta(days=30)
+    retrieved = AS_OF - timedelta(days=20)
+    _save(database, instrument_id=instrument_id, provider="yahoo",
+          effective_at=effective, retrieved_at=retrieved, amount=0.25)
+    _save(database, instrument_id=instrument_id, provider="alpha_vantage",
+          effective_at=effective, retrieved_at=retrieved, amount=0.30)
+
+    worklist = CorporateActionReconciliationWorklistService(database).get_worklist(
+        as_of=AS_OF
+    )
+    payload = worklist.to_api_dict()
+    assert payload["totalIncompleteEventCount"] == 0
+    assert payload["totalConflictEventCount"] == 1
+    assert payload["totalUnresolvedEventCount"] == 1
+    assert payload["items"][0]["reconciliationStatus"] == "conflict"
+    assert payload["items"][0]["missingIndependentFamilyCount"] == 0
+    assert payload["items"][0]["automaticCanonicalization"] is False
+
+
+def test_conflicts_and_missing_family_events_share_correct_pagination(tmp_path) -> None:
+    database = _database(tmp_path)
+    missing = _instrument(database, "MISSING")
+    conflicting = _instrument(database, "CONFLICT")
+    effective = AS_OF - timedelta(days=30)
+    retrieved = AS_OF - timedelta(days=20)
+    _save(database, instrument_id=missing, provider="yahoo",
+          effective_at=effective, retrieved_at=retrieved)
+    _save(database, instrument_id=conflicting, provider="yahoo",
+          effective_at=effective, retrieved_at=retrieved, amount=0.25)
+    _save(database, instrument_id=conflicting, provider="alpha_vantage",
+          effective_at=effective, retrieved_at=retrieved, amount=0.50)
+
+    service = CorporateActionReconciliationWorklistService(database)
+    first = service.get_worklist(as_of=AS_OF, limit=1).to_api_dict()
+    second = service.get_worklist(as_of=AS_OF, limit=1, offset=1).to_api_dict()
+    assert first["totalIncompleteEventCount"] == 1
+    assert first["totalConflictEventCount"] == 1
+    assert first["totalUnresolvedEventCount"] == 2
+    assert first["hasMore"] is True
+    assert second["hasMore"] is False
+    assert [first["items"][0]["symbol"], second["items"][0]["symbol"]] == [
+        "MISSING", "CONFLICT"
+    ]
+
+
+def test_unclassified_provenance_does_not_disappear_when_two_families_agree(tmp_path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "UNKNOWN")
+    effective = AS_OF - timedelta(days=30)
+    retrieved = AS_OF - timedelta(days=20)
+    for provider in ("yahoo", "alpha_vantage", "unclassified_feed"):
+        _save(database, instrument_id=instrument_id, provider=provider,
+              effective_at=effective, retrieved_at=retrieved)
+
+    payload = CorporateActionReconciliationWorklistService(database).get_worklist(
+        as_of=AS_OF
+    ).to_api_dict()
+    assert payload["totalIncompleteEventCount"] == 1
+    assert payload["totalConflictEventCount"] == 0
+    assert payload["items"][0]["unclassifiedProviders"] == ["unclassified_feed"]
+    assert payload["items"][0]["reconciliationStatus"] == "incomplete"
