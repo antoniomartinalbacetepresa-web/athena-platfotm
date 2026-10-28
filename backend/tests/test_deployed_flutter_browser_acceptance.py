@@ -120,3 +120,27 @@ def test_deployed_build_identity_rejects_missing_or_redirected_manifest(status, 
         _check_manifest(_ManifestResponse({
             "schema": "athena.web-build.v1", "sourceSha": SHA,
         }, status=status, url=url))
+
+
+@pytest.mark.parametrize("selective,paths", [
+    (True, ["/api/v1/recommendations/professional-research/news-synthesis/latest"]),
+    (False, [
+        "/api/v1/recommendations/professional-research/news-synthesis/latest",
+        "/api/v1/news/feed",
+    ]),
+])
+def test_news_refresh_requires_exact_network_scope(selective, paths):
+    module._require_news_refresh_requests(paths, selective=selective)
+
+
+@pytest.mark.parametrize("selective,paths", [
+    (True, []),
+    (True, ["/api/v1/news/feed",
+            "/api/v1/recommendations/professional-research/news-synthesis/latest"]),
+    (True, ["/api/v1/recommendations/professional-research/news-synthesis/latest"] * 2),
+    (False, ["/api/v1/recommendations/professional-research/news-synthesis/latest"]),
+    (False, ["/api/v1/news/feed"]),
+])
+def test_news_refresh_rejects_missing_extra_or_cross_surface_requests(selective, paths):
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        module._require_news_refresh_requests(paths, selective=selective)

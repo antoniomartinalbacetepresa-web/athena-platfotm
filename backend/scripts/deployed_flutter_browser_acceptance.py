@@ -90,6 +90,67 @@ def _visit(page, button: str, heading: str) -> None:
     _heading(page, heading)
 
 
+def _require_news_refresh_requests(paths: list[str], *, selective: bool) -> None:
+    """Require the intended live endpoints, never an unrelated cached response."""
+    synthesis = "/api/v1/recommendations/professional-research/news-synthesis/latest"
+    feed = "/api/v1/news/feed"
+    expected = {synthesis: 1, feed: 0 if selective else 1}
+    if any(paths.count(path) != count for path, count in expected.items()):
+        raise BrowserAcceptanceFailure("News refresh request scope mismatch")
+
+
+def verify_news_refresh_scope(page) -> None:
+    """Exercise independent News synthesis refresh and full News refresh in staging.
+
+    Network requests are observed, not mocked. The existing Flutter UI must
+    render canonical synthesis after both refreshes. This is not a claim that
+    the underlying news provider is available outside this staging run.
+    """
+    synthesis = "/api/v1/recommendations/professional-research/news-synthesis/latest"
+    feed = "/api/v1/news/feed"
+    page.get_by_text(
+        re.compile(r"artículos ·|Sin noticias verificadas|Noticias no disponibles")
+    ).first.wait_for(state="visible", timeout=30000)
+    requested: list[str] = []
+
+    def record(request) -> None:
+        path = urlsplit(request.url).path
+        if path in (synthesis, feed):
+            requested.append(path)
+
+    page.on("request", record)
+    try:
+        with page.expect_response(
+            lambda response: urlsplit(response.url).path == synthesis,
+            timeout=30000,
+        ) as synthesis_response:
+            page.get_by_role(
+                "button", name="Actualizar análisis ATHENA de noticias", exact=True
+            ).click(timeout=15000)
+        if synthesis_response.value.status != 200:
+            raise BrowserAcceptanceFailure("News selective refresh unavailable")
+        _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
+        _require_news_refresh_requests(requested, selective=True)
+
+        requested.clear()
+        with page.expect_response(
+            lambda response: urlsplit(response.url).path == synthesis,
+            timeout=30000,
+        ) as synthesis_response, page.expect_response(
+            lambda response: urlsplit(response.url).path == feed,
+            timeout=30000,
+        ) as feed_response:
+            page.get_by_role(
+                "button", name="Actualizar noticias y análisis ATHENA", exact=True
+            ).click(timeout=15000)
+        if synthesis_response.value.status != 200 or feed_response.value.status != 200:
+            raise BrowserAcceptanceFailure("News full refresh unavailable")
+        _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
+        _require_news_refresh_requests(requested, selective=False)
+    finally:
+        page.remove_listener("request", record)
+
+
 def verify_guest_research(page) -> dict[str, bool]:
     """Check real deployed navigation and explicitly scoped fault recovery."""
     seen: set[str] = set()
@@ -120,6 +181,7 @@ def verify_guest_research(page) -> dict[str, bool]:
     _back(page)
     _visit(page, "Noticias", "NOTICIAS")
     _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
+    verify_news_refresh_scope(page)
     _back(page)
     _visit(page, "Inversores", "INVERSORES")
     _heading(page, "ACTIVIDAD DE INVERSORES RELEVANTES")
@@ -171,6 +233,7 @@ def verify_guest_research(page) -> dict[str, bool]:
         "guestNavigationWideAndCompactVerified": True,
         "verifiedProvenanceVisible": True,
         "controlledFaultRecoveryVerified": True,
+        "newsSelectiveAndFullRefreshVerified": True,
     }
 
 

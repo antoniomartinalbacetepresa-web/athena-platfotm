@@ -22,7 +22,9 @@ The deployed API probe above is **not** a Flutter browser E2E. The optional
 `Deployed Flutter Web guest research browser (opt-in)` push job runs real
 headless Chromium against the **deployed Web origin**, not widget-test Chrome.
 It checks Dashboard → Market → News → Investors → ATHENA AI in wide layout,
-live canonical HTTP responses, visible verified provenance, browser-injected
+live canonical HTTP responses, visible verified provenance, **real News
+synthesis-only refresh without reloading the independent news feed, and
+full News refresh requiring both endpoints**; browser-injected
 HTTP 503 fail-closed removal and recovery, and compact Dashboard → Market
 navigation. The HTTP 503 is a controlled browser fault, **not** evidence
 that a live provider failed. No personal account or position is modified.
@@ -53,6 +55,6 @@ to succeed; PR checks remain independent. Without configuration, the
 browser job is skipped and must not be counted as passed.
 
 Even a passing guest browser job does **not** close two-owner Flutter
-session isolation, stale-response ordering, selective refresh, a full
+session isolation, stale-response ordering, Dashboard-wide selective refresh or stale-response ordering, a full
 accessibility audit, 365-day operational history, OOS, SMTP, backups,
 or production release authorization. Never upload screenshots or secrets.
