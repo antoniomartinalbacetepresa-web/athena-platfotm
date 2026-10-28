@@ -269,13 +269,14 @@ class VerifiedCorporateActionSecondaryBackfillService:
             verification_cutoff = cutoff
         after_worklist = worklist_service.get_worklist(
             as_of=verification_cutoff,
-            limit=max(1, before_worklist.total_incomplete_event_count + len(selected_items) + 100),
+            limit=max(1, before_worklist.total_incomplete_event_count + before_worklist.total_conflict_event_count + len(selected_items) + 100),
             offset=0,
         )
         after_coverage = coverage_service.get_report(as_of=verification_cutoff)
         remaining_keys = {
             (item.instrument_id, item.action_type, item.effective_at)
             for item in after_worklist.items
+            if item.reconciliation_status == "incomplete"
         }
         selected_remaining = len(selected_event_keys & remaining_keys)
         selected_conflicting = self._count_selected_conflicts(
