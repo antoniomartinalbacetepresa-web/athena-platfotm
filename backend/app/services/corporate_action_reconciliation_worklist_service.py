@@ -127,7 +127,10 @@ class CorporateActionReconciliationWorklistService:
                 """
             ).fetchall()
 
-        unresolved: list[CorporateActionReconciliationItem] = []
+        # Retain only the requested page. A full-universe diagnostic must not
+        # materialize every unresolved event just to return a small page.
+        page_items: list[CorporateActionReconciliationItem] = []
+        unresolved_count = 0
         incomplete_count = 0
         conflict_count = 0
         for instrument in instruments:
@@ -234,8 +237,8 @@ class CorporateActionReconciliationWorklistService:
                     conflict_count += 1
                 else:
                     incomplete_count += 1
-                unresolved.append(
-                    CorporateActionReconciliationItem(
+                if offset <= unresolved_count < offset + limit:
+                    page_items.append(CorporateActionReconciliationItem(
                         instrument_id=instrument_id,
                         symbol=symbol,
                         action_type=action_type,
@@ -246,10 +249,10 @@ class CorporateActionReconciliationWorklistService:
                         unclassified_providers=unclassified,
                         missing_independent_family_count=max(0, 2 - len(families)),
                         suggested_provider=self._suggest_provider(families),
-                    )
-                )
+                    ))
+                unresolved_count += 1
 
-        page = tuple(unresolved[offset : offset + limit])
+        page = tuple(page_items)
         return CorporateActionReconciliationWorklist(
             as_of=cutoff,
             total_incomplete_event_count=incomplete_count,
