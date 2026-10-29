@@ -1,5 +1,15 @@
 # Forecast-error OOS evidence gates
 
+## Challenger numeric integrity (research only)
+
+The external challenger adapter rejects finite inputs whose subtraction or squared
+error overflows to nonfinite values, including the paired baseline. Longitudinal
+MAE/RMSE uses finite normalized means before square roots so a representable
+average is not lost to overflow of an intermediate raw sum. Replayed mutable
+error dictionaries are rechecked before aggregation. These are software
+integrity safeguards, not real forecast observations, measured skill, policy
+approval, model promotion or investment authority.
+
 ## Manual prospective operations
 
 From `backend`, use `PYTHONPATH=. python scripts/prospective_cohort.py` with

@@ -233,6 +233,17 @@ class GovernedForecastErrorOosService:
         baseline = self._finite(challenger.get("baselineValue"), "challenger.baselineValue")
         model_error = forecast - actual
         baseline_error = baseline - actual
+        derived = {
+            "signedError": model_error,
+            "absoluteError": abs(model_error),
+            "squaredError": model_error * model_error,
+            "baselineSignedError": baseline_error,
+            "baselineAbsoluteError": abs(baseline_error),
+            "baselineSquaredError": baseline_error * baseline_error,
+            "absoluteErrorDeltaVsBaseline": abs(model_error) - abs(baseline_error),
+        }
+        if not all(math.isfinite(value) for value in derived.values()):
+            raise ValueError("external challenger derived errors must be finite.")
         return {
             "module": "external_forecast_challenger_realized_error",
             "provider": self._text(challenger.get("provider"), "challenger.provider"),
@@ -252,13 +263,7 @@ class GovernedForecastErrorOosService:
             "forecastValue": forecast,
             "baselineName": self._text(challenger.get("baselineName"), "challenger.baselineName"),
             "baselineValue": baseline,
-            "signedError": model_error,
-            "absoluteError": abs(model_error),
-            "squaredError": model_error * model_error,
-            "baselineSignedError": baseline_error,
-            "baselineAbsoluteError": abs(baseline_error),
-            "baselineSquaredError": baseline_error * baseline_error,
-            "absoluteErrorDeltaVsBaseline": abs(model_error) - abs(baseline_error),
+            **derived,
             "singleObservationSkillClaimed": False,
             "productionLearningEligible": False,
             "productionEligible": False,
@@ -386,6 +391,8 @@ class GovernedForecastErrorOosService:
                 "baselineSquaredError": baseline_err * baseline_err,
                 "absoluteErrorDeltaVsBaseline": abs(signed) - abs(baseline_err),
             }
+            if not all(math.isfinite(value) for value in expected.values()):
+                raise ValueError("error record derived metrics must be finite.")
             for field, value in expected.items():
                 stored = self._finite(record.get(field), f"error.{field}")
                 if not math.isclose(stored, value, rel_tol=1e-12, abs_tol=1e-12):
@@ -406,8 +413,8 @@ class GovernedForecastErrorOosService:
 
         assert identity is not None
         count = len(model_abs)
-        mae = sum(model_abs) / count
-        baseline_mae = sum(baseline_abs) / count
+        mae = self._mean_finite(model_abs, "meanAbsoluteError")
+        baseline_mae = self._mean_finite(baseline_abs, "baselineMeanAbsoluteError")
         return {
             "module": "external_forecast_challenger_longitudinal_diagnostic",
             "provider": identity[0],
@@ -418,11 +425,13 @@ class GovernedForecastErrorOosService:
             "observationCount": count,
             "distinctForecastOriginCount": len(forecast_origins),
             "meanAbsoluteError": mae,
-            "rootMeanSquaredError": math.sqrt(sum(model_sq) / count),
-            "meanSignedError": sum(model_signed) / count,
+            "rootMeanSquaredError": math.sqrt(self._mean_finite(model_sq, "meanSquaredError")),
+            "meanSignedError": self._mean_finite(model_signed, "meanSignedError"),
             "baselineMeanAbsoluteError": baseline_mae,
-            "baselineRootMeanSquaredError": math.sqrt(sum(baseline_sq) / count),
-            "baselineMeanSignedError": sum(baseline_signed) / count,
+            "baselineRootMeanSquaredError": math.sqrt(
+                self._mean_finite(baseline_sq, "baselineMeanSquaredError")
+            ),
+            "baselineMeanSignedError": self._mean_finite(baseline_signed, "baselineMeanSignedError"),
             "meanAbsoluteErrorDeltaVsBaseline": mae - baseline_mae,
             "wins": wins,
             "ties": ties,
@@ -456,10 +465,25 @@ class GovernedForecastErrorOosService:
         return self._aware(parsed, field)
 
     @staticmethod
+    def _mean_finite(values: list[float], field: str) -> float:
+        # Normalize before summing: two finite squared errors may overflow
+        # their raw sum even when their arithmetic mean is representable.
+        try:
+            mean = math.fsum(value / len(values) for value in values)
+        except OverflowError:
+            raise ValueError(f"{field} overflowed finite aggregation.") from None
+        if not math.isfinite(mean):
+            raise ValueError(f"{field} overflowed finite aggregation.")
+        return mean
+
+    @staticmethod
     def _finite(value: Any, field: str) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{field} must be finite.")
-        number = float(value)
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            raise ValueError(f"{field} must be finite.") from None
         if not math.isfinite(number):
             raise ValueError(f"{field} must be finite.")
         return number

@@ -792,3 +792,103 @@ def test_challenger_longitudinal_summary_revalidates_pit_after_measurement(
 
     with pytest.raises(ValueError, match=expected):
         service.summarize_external_challenger_outcomes(error_records=[error])
+
+
+@pytest.mark.parametrize(
+    "forecast,baseline,actual",
+    [
+        (1e308, 0.0, -1e308),  # finite inputs, infinite signed error
+        (1e155, 0.0, 0.0),  # finite signed error, infinite square
+        (0.0, 1e155, 0.0),  # baseline square also must remain finite
+    ],
+)
+def test_challenger_rejects_overflowing_derived_errors(
+    tmp_path, forecast: float, baseline: float, actual: float
+) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    challenger["forecastValue"] = forecast
+    challenger["baselineValue"] = baseline
+    observed = origin + timedelta(days=1)
+    with pytest.raises(ValueError, match="derived errors must be finite"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=actual,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
+
+
+def test_challenger_summary_rejects_recomputed_overflow_after_tampering(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    observed = origin + timedelta(days=1)
+    error = service.measure_external_challenger_outcome(
+        challenger=_external_challenger(service, origin),
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    error["forecastValue"] = 1e155
+    error["outcomeValue"] = 0.0
+    with pytest.raises(ValueError, match="derived metrics must be finite"):
+        service.summarize_external_challenger_outcomes(error_records=[error])
+
+
+def test_challenger_longitudinal_rms_uses_finite_mean_before_square_root(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    errors = []
+    for day in (0, 1):
+        origin = datetime(2026, 9, 20 + day, 18, 0, tzinfo=timezone.utc)
+        challenger = _external_challenger(service, origin)
+        challenger["forecastValue"] = 1e154
+        challenger["baselineValue"] = 0.0
+        observed = origin + timedelta(days=1)
+        errors.append(service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=0.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        ))
+    summary = service.summarize_external_challenger_outcomes(error_records=errors)
+    assert summary["observationCount"] == 2
+    assert summary["meanAbsoluteError"] == 1e154
+    assert summary["rootMeanSquaredError"] == 1e154
+    assert summary["baselineRootMeanSquaredError"] == 0.0
+    assert summary["skillClaimed"] is False
+
+
+def test_challenger_rejects_unrepresentable_numeric_input(tmp_path) -> None:
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    challenger["forecastValue"] = 10 ** 1000
+    observed = origin + timedelta(days=1)
+    with pytest.raises(ValueError, match="forecastValue must be finite"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger,
+            as_of=observed + timedelta(minutes=2),
+            outcome_value=104.0,
+            outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
