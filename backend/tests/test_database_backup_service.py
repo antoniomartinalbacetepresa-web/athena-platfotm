@@ -590,3 +590,23 @@ def test_retention_rejects_unsafe_glob_prefix_without_deleting(
     for backup in (older, newer):
         assert backup.is_file()
         assert service.manifest_path_for(backup).is_file()
+
+
+def test_online_backup_does_not_open_writable_athena_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+
+    def forbid_writable_connection() -> None:
+        raise AssertionError("Online backup must not configure live database WAL")
+
+    monkeypatch.setattr(database, "connect", forbid_writable_connection)
+    service = DatabaseBackupService(database)
+    destination = tmp_path / "backup" / "readonly-source.db"
+    created = service.create_backup(destination)
+    assert service.verify_backup(destination) == created
+    with sqlite3.connect(destination) as restored:
+        assert restored.execute(
+            "SELECT value FROM backup_probe WHERE id = 1"
+        ).fetchone()[0] == "persisted-before-backup"
