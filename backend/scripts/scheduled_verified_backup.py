@@ -21,6 +21,7 @@ class ScheduledBackupConfig:
     primary: Path
     secondary: Path
     keep_last: int
+    secondary_keep_last: int | None = None
 
 
 def load_config(environment: Mapping[str, str]) -> ScheduledBackupConfig:
@@ -42,11 +43,20 @@ def load_config(environment: Mapping[str, str]) -> ScheduledBackupConfig:
         raise ValueError("Invalid backup retention") from None
     if not 2 <= keep_last <= 365:
         raise ValueError("Backup retention must be between 2 and 365")
+    secondary_raw = environment.get("ATHENA_BACKUP_SECONDARY_KEEP_LAST")
+    secondary_keep_last = None
+    if secondary_raw is not None:
+        try:
+            secondary_keep_last = int(secondary_raw)
+        except ValueError:
+            raise ValueError("Invalid secondary backup retention") from None
+        if not keep_last <= secondary_keep_last <= 8760:
+            raise ValueError("Secondary retention must be at least primary retention and at most 8760")
     if environment.get("ATHENA_BACKUP_ENCRYPTED_STORAGE_CONFIRMED") != "true":
         raise ValueError("Encrypted secondary storage operator confirmation required")
     if not database.is_file() or not primary.is_dir() or not secondary.is_dir():
         raise ValueError("Backup database and pre-provisioned directories must exist")
-    return ScheduledBackupConfig(database, primary, secondary, keep_last)
+    return ScheduledBackupConfig(database, primary, secondary, keep_last, secondary_keep_last)
 
 
 def require_independent_mount(config: ScheduledBackupConfig) -> None:
@@ -78,6 +88,7 @@ def run_scheduled_cycle(
             backup_directory=config.primary,
             secondary_directory=config.secondary,
             keep_last=config.keep_last,
+            secondary_keep_last=config.secondary_keep_last,
             prefix="athena-",
         )
         secondary = result.get("secondary")
@@ -94,6 +105,8 @@ def run_scheduled_cycle(
             "status": "scheduled_entrypoint_cycle_passed",
             "backupSha256": result["metadata"]["sha256"],
             "secondaryCopyAndRestoreVerified": True,
+            "secondaryRetentionConfigured": config.secondary_keep_last is not None,
+            "secondaryRetentionDeleted": len(result.get("secondary_retention", {}).get("deleted", [])) if isinstance(result.get("secondary_retention"), dict) else 0,
             "independentFilesystemMountChecked": True,
             "offsiteLocationVerified": False,
             "scheduledExecutionVerified": False,
