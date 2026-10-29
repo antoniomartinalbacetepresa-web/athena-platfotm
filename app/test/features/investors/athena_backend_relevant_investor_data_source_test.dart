@@ -186,8 +186,12 @@ void main() {
       null,
     ]) {
       final payload = envelope();
-      (payload['selectedFiling'] as Map<String, Object?>)['acceptanceDateTime'] =
-          acceptance;
+      final selected = payload['selectedFiling'] as Map<String, Object?>;
+      if (acceptance == null) {
+        selected.remove('acceptanceDateTime');
+      } else {
+        selected['acceptanceDateTime'] = acceptance;
+      }
       final source = AthenaBackendRelevantInvestorDataSource(
         baseUrl: 'https://api.athena.test',
         client: MockClient((_) async => http.Response(jsonEncode(payload), 200)),
