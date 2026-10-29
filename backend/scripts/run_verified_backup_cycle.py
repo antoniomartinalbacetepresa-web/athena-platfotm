@@ -21,6 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--database", type=Path, default=None)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--keep-last", type=int, default=7)
+    parser.add_argument("--secondary-keep-last", type=int, default=None,
+                        help="Opt-in independent secondary retention; must be >= primary retention")
     parser.add_argument("--prefix", default="athena-")
     parser.add_argument("--secondary-directory", type=Path, default=None)
     parser.add_argument("--offsite-attestation", action="store_true")
@@ -35,6 +37,7 @@ def run_cycle(
     prefix: str,
     now: datetime | None = None,
     secondary_directory: Path | None = None,
+    secondary_keep_last: int | None = None,
     offsite_attested: bool = False,
 ) -> dict[str, object]:
     if keep_last < 1:
@@ -42,6 +45,11 @@ def run_cycle(
     DatabaseBackupService.validate_filename_prefix(prefix)
     if offsite_attested and secondary_directory is None:
         raise ValueError("La declaración off-site requiere destino secundario.")
+    if secondary_keep_last is not None:
+        if secondary_directory is None:
+            raise ValueError("La retención secundaria requiere destino secundario.")
+        if not keep_last <= secondary_keep_last <= 8760:
+            raise ValueError("La retención secundaria debe conservar al menos la primaria y no superar 8760 copias.")
 
     # Reject unsafe layouts before creating any backup or applying retention.
     # A backup stored beside the live SQLite file can be mistaken for live
@@ -86,6 +94,7 @@ def run_cycle(
     # Retention must run AFTER secondary verification and its isolated restore.
     # On any secondary failure, older primary recovery points remain intact.
     secondary = None
+    secondary_retention = None
     if secondary_directory is not None:
         secondary = copy_verified_backup(
             backup_path=backup_path,
@@ -93,6 +102,14 @@ def run_cycle(
             destination_directory=secondary_directory,
             offsite_attested=offsite_attested,
         )
+        # Prune only verified managed secondary copies. If verification or
+        # secondary retention fails, preserve every older primary recovery point.
+        if secondary_keep_last is not None:
+            secondary_retention = service.apply_retention(
+                secondary_directory,
+                keep_last=secondary_keep_last,
+                filename_prefix=prefix,
+            )
     retention = service.apply_retention(
         backup_directory,
         keep_last=keep_last,
@@ -102,6 +119,9 @@ def run_cycle(
     return {
         "status": "verified_backup_cycle_passed",
         "secondary": secondary,
+        "secondary_retention": (
+            secondary_retention.to_dict() if secondary_retention is not None else None
+        ),
         "backup": str(backup_path),
         "manifest": str(service.manifest_path_for(backup_path)),
         "metadata": verified.to_dict(),
@@ -125,6 +145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         keep_last=args.keep_last,
         prefix=args.prefix,
         secondary_directory=args.secondary_directory,
+        secondary_keep_last=args.secondary_keep_last,
         offsite_attested=args.offsite_attestation,
     )
     print(json.dumps(result, sort_keys=True))
