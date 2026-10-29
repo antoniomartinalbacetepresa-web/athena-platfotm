@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -138,10 +138,36 @@ class RecommendationResearchOutcomeAttributionRepository:
             raise ValueError("Outcome attribution perdió seguridad FX.")
         if policy.get("identity") != "outcome_hash_binds_cycle_hash_and_exact_attribution_payload":
             raise ValueError("Outcome attribution perdió identidad canónica.")
+        if policy.get("integrity") != "outcome_hash_binds_cycle_hash_and_exact_attribution_payload":
+            raise ValueError("Outcome attribution perdió integridad declarada.")
+        if policy.get("posteriorObservation") != (
+            "period_starts_at_or_after_frozen_cycle_and_evidence_available_after_period_end"
+        ):
+            raise ValueError("Outcome attribution perdió política de observación posterior.")
+        if policy.get("residualInterpretation") != "unexplained_not_automatic_stock_selection_alpha":
+            raise ValueError("Outcome attribution intentó convertir residual en alpha.")
 
         attribution = payload.get("attribution")
         if not isinstance(attribution, dict):
             raise ValueError("Outcome attribution perdió Performance Attribution anidado.")
+        if (
+            attribution.get("module") != "performance_attribution"
+            or attribution.get("advisoryStatus") != "no_advice"
+            or attribution.get("productionEligible") is not False
+            or attribution.get("isWeightingReady") is not False
+        ):
+            raise ValueError("Performance Attribution anidado perdió límites de autoridad.")
+        nested_policy = attribution.get("policy")
+        if not isinstance(nested_policy, dict) or any((
+            nested_policy.get("automaticTrading") is not False,
+            nested_policy.get("automaticProductionPromotion") is not False,
+            nested_policy.get("causalClaim") != "forbidden_arithmetic_attribution_only",
+            nested_policy.get("residualInterpretation") != "unexplained_not_automatic_stock_selection_alpha",
+            nested_policy.get("fx") != "explicit_currency_pair_bound_fail_closed",
+            nested_policy.get("identity") != "deterministic_sha256_attribution_key",
+            nested_policy.get("benchmark") != "explicit_market_contribution_identity",
+        )):
+            raise ValueError("Performance Attribution anidado perdió política de investigación.")
         attribution_key = self._sha256(payload.get("attributionKey"), "attributionKey")
         if self._sha256(attribution.get("attributionKey"), "attribution.attributionKey") != attribution_key:
             raise ValueError("attributionKey no coincide con Performance Attribution anidado.")
@@ -153,6 +179,32 @@ class RecommendationResearchOutcomeAttributionRepository:
         attribution_currency = self._currency_contract(attribution.get("currency"), "attribution.currency")
         if currency != attribution_currency:
             raise ValueError("El contrato de moneda no coincide con Performance Attribution anidado.")
+
+        instrument_id = self._text(payload.get("instrumentId"), "instrumentId")
+        symbol = self._text(payload.get("symbol"), "symbol").upper()
+        if (
+            self._text(attribution.get("instrumentId"), "attribution.instrumentId") != instrument_id
+            or self._text(attribution.get("symbol"), "attribution.symbol").upper() != symbol
+        ):
+            raise ValueError("La identidad del instrumento no coincide con Performance Attribution anidado.")
+        cycle_time = self._aware_utc(payload.get("cycleAsOf"), "cycleAsOf")
+        outcome_time = self._aware_utc(payload.get("asOf"), "asOf")
+        period_start = self._aware_utc(payload.get("periodStart"), "periodStart")
+        period_end = self._aware_utc(payload.get("periodEnd"), "periodEnd")
+        for key, outer in (
+            ("asOf", outcome_time),
+            ("periodStart", period_start),
+            ("periodEnd", period_end),
+        ):
+            if self._aware_utc(attribution.get(key), f"attribution.{key}") != outer:
+                raise ValueError(f"{key} no coincide con Performance Attribution anidado.")
+        if (
+            outcome_time <= cycle_time
+            or period_start < cycle_time
+            or period_end <= period_start
+            or period_end > outcome_time
+        ):
+            raise ValueError("El periodo posterior del outcome es temporalmente inválido.")
 
         cycle_hash = self._sha256(payload.get("cycleHash"), "cycleHash")
         outcome_hash = self._sha256(payload.get("outcomeHash"), "outcomeHash")
@@ -245,6 +297,18 @@ class RecommendationResearchOutcomeAttributionRepository:
         if _CURRENCY_RE.fullmatch(text) is None:
             raise ValueError(f"{field} debe ser código de moneda de tres letras.")
         return text
+
+    @staticmethod
+    def _aware_utc(value: object, field: str) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} debe ser fecha ISO con zona horaria.")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} debe ser fecha ISO válida.") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return parsed.astimezone(timezone.utc)
 
     def _text(self, value: object, field: str) -> str:
         text = str(value or "").strip()

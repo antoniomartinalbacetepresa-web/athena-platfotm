@@ -300,3 +300,80 @@ def test_outcome_routes_are_registered() -> None:
     paths = app.openapi()["paths"]
     assert "/api/v1/recommendations/professional-research/research-cycle/{cycle_hash}/outcome-attribution" in paths
     assert "/api/v1/recommendations/professional-research/research-cycle/outcome-attribution/{outcome_hash}" in paths
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("asOf", (OUTCOME_AS_OF - timedelta(hours=1)).isoformat()),
+        ("periodStart", (PERIOD_START + timedelta(days=1)).isoformat()),
+        ("periodEnd", (PERIOD_END - timedelta(days=1)).isoformat()),
+        ("instrumentId", "instrument-msft"),
+        ("symbol", "MSFT"),
+    ],
+)
+def test_outcome_repository_rejects_unhashed_projection_tampering(
+    tmp_path: Path, field: str, replacement: str,
+) -> None:
+    database = AthenaDatabase(tmp_path / "projection.db")
+    cycle = _cycle_record(RecommendationProfessionalResearchCycleRepository(database))
+    payload = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="projection-v1", cycle_record=cycle, attribution_payload=_attribution()
+    )
+    payload[field] = replacement
+    with pytest.raises(ValueError, match="no coincide"):
+        RecommendationResearchOutcomeAttributionRepository(database).validate_payload(payload)
+
+
+def test_outcome_repository_rejects_backdated_persisted_row_even_with_unchanged_hash(
+    tmp_path: Path,
+) -> None:
+    database = AthenaDatabase(tmp_path / "backdated.db")
+    cycle = _cycle_record(RecommendationProfessionalResearchCycleRepository(database))
+    payload = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="backdated-v1", cycle_record=cycle, attribution_payload=_attribution()
+    )
+    repository = RecommendationResearchOutcomeAttributionRepository(database)
+    stored = repository.append(payload=payload)
+    backdated = (OUTCOME_AS_OF - timedelta(hours=1)).isoformat()
+    payload["asOf"] = backdated
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_research_outcome_attributions "
+            "SET payload_json = ?, outcome_as_of = ? WHERE outcome_hash = ?",
+            (json.dumps(payload, sort_keys=True, separators=(",", ":")),
+             backdated, stored["outcome_hash"]),
+        )
+    with pytest.raises(ValueError, match="asOf no coincide"):
+        repository.get_by_hash(outcome_hash=stored["outcome_hash"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("integrity", "unverified"),
+        ("posteriorObservation", "unverified"),
+        ("residualInterpretation", "automatic_alpha"),
+    ],
+)
+def test_outcome_repository_rejects_mutated_unhashed_policy(
+    tmp_path: Path, field: str, value: str,
+) -> None:
+    database = AthenaDatabase(tmp_path / "policy.db")
+    cycle = _cycle_record(RecommendationProfessionalResearchCycleRepository(database))
+    payload = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="policy-v1", cycle_record=cycle, attribution_payload=_attribution()
+    )
+    payload["policy"][field] = value
+    with pytest.raises(ValueError, match="perdió|alpha"):
+        RecommendationResearchOutcomeAttributionRepository(database).validate_payload(payload)
+
+
+def test_outcome_repository_rejects_nested_authority_escalation(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "nested.db")
+    cycle = _cycle_record(RecommendationProfessionalResearchCycleRepository(database))
+    payload = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="nested-v1", cycle_record=cycle, attribution_payload=_attribution()
+    )
+    payload["attribution"]["policy"]["automaticTrading"] = True
+    with pytest.raises(ValueError, match="anidado perdió política"):
+        RecommendationResearchOutcomeAttributionRepository(database).validate_payload(payload)

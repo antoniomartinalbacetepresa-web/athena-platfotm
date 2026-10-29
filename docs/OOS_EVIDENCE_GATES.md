@@ -468,3 +468,16 @@ not prove when evidence first existed. A journal hash or its server-side
 persistence is not an externally anchored timestamp, signed WORM record,
 measured real OOS outcome, or production authorization. The separate sealed
 forecast-specification and mature-horizon OOS gates remain mandatory.
+
+## Persisted posterior outcome identity and temporal projection
+
+The append-only Research Cycle outcome repository rechecks the un-hashed outer
+projection against the exact attribution already bound by `outcomeHash`:
+canonical instrument identity, UTC-aware outcome timestamp, observation window,
+benchmark, currency pair and attribution key. An operator or storage corruption
+cannot backdate the outer outcome or alter its instrument while keeping the
+nested attribution and hash unchanged. The repository also revalidates the
+nested no-advice/no-order research policy and the outer PIT/integrity policy on
+both append and read. Existing hashes are not rewritten; this is a fail-closed
+read/write integrity check, not proof of external source availability or
+prospective precommitment. Real matured OOS evidence remains mandatory.
