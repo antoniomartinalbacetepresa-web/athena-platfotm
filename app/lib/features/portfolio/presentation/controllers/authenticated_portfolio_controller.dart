@@ -74,20 +74,26 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
         marketRepository: _marketRepository,
       );
       if (generation != _authorityGeneration ||
-          loadGeneration != _loadGeneration) return;
+          loadGeneration != _loadGeneration) {
+        return;
+      }
       _positions = List.unmodifiable(
         valued.map(AuthenticatedPortfolioViewPosition.fromValuedPosition),
       );
       _sessionRejected = false;
     } on AuthSessionRejectedException {
       if (generation != _authorityGeneration ||
-          loadGeneration != _loadGeneration) return;
+          loadGeneration != _loadGeneration) {
+        return;
+      }
       _positions = const [];
       _sessionRejected = true;
       _error = null;
     } catch (_) {
       if (generation != _authorityGeneration ||
-          loadGeneration != _loadGeneration) return;
+          loadGeneration != _loadGeneration) {
+        return;
+      }
       _positions = const [];
       _sessionRejected = false;
       _error = 'No se pudo cargar la cartera autenticada con datos verificables.';

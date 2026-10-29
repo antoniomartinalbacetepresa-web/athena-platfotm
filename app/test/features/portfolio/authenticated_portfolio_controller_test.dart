@@ -220,6 +220,7 @@ void main() {
       session: auth,
     );
     final oldLoad = controller.load();
+    await Future<void>.delayed(Duration.zero);
     expect(reads, 1);
 
     final saved = await controller.upsert(symbol: 'AAPL', quantity: 9);
@@ -262,6 +263,7 @@ void main() {
       session: auth,
     );
     final oldLoad = controller.load();
+    await Future<void>.delayed(Duration.zero);
     expect(reads, 1);
 
     expect(await controller.upsert(symbol: 'AAPL', quantity: 9), isFalse);

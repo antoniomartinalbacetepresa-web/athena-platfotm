@@ -244,6 +244,7 @@ void main() {
     final nextCycle = 'f' * 64;
     final oldLoad = controller.load(cycleHash);
     final newLoad = controller.load(nextCycle);
+    await Future<void>.delayed(Duration.zero);
     expect(calls, 2);
     expect(controller.cycleHash, nextCycle);
     expect(controller.hasData, isFalse);
@@ -277,6 +278,7 @@ void main() {
     final controller = AthenaSynthesisController(dataSource: source);
     final oldLoad = controller.load(cycleHash);
     final latestLoad = controller.loadLatest();
+    await Future<void>.delayed(Duration.zero);
     expect(calls, 2);
     expect(controller.cycleHash, isNull);
 
