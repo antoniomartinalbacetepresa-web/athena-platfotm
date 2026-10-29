@@ -50,6 +50,8 @@ ATHENA_BACKUP_DATABASE=/srv/athena/data/athena.db
 ATHENA_BACKUP_PRIMARY_DIRECTORY=/var/lib/athena-backups
 ATHENA_BACKUP_SECONDARY_DIRECTORY=/mnt/athena-independent-backups
 ATHENA_BACKUP_KEEP_LAST=7
+# Optional, explicit independent retention policy (e.g. 168 hourly copies):
+ATHENA_BACKUP_SECONDARY_KEEP_LAST=168
 ATHENA_BACKUP_ENCRYPTED_STORAGE_CONFIRMED=true
 ```
 
@@ -88,3 +90,29 @@ The online backup now opens the live SQLite source with `mode=ro` instead of inv
 service-readable path outside protected home directories. It logs only
 sanitized status, backup SHA-256 and conservative policy flags, not secrets
 or database paths.
+
+
+## Secondary retention safety boundary
+
+Secondary copies were previously retained indefinitely. The hourly scheduler
+now supports `ATHENA_BACKUP_SECONDARY_KEEP_LAST` as an **opt-in** independent
+retention limit. When omitted, secondary copies are never automatically pruned
+(the existing behavior); operators must monitor storage capacity. When set,
+the value must be at least `ATHENA_BACKUP_KEEP_LAST` and at most 8760 copies.
+The standalone cycle supports `--secondary-keep-last` with the same rules.
+
+A successful cycle verifies the new primary backup, isolated primary restore,
+secondary copy and isolated secondary restore **before** checking every managed
+secondary backup and applying secondary retention. Only then may it prune
+older primary backups. Any invalid/corrupt managed secondary pair or secondary
+retention failure stops the cycle before primary retention. The scheduler
+reports whether secondary retention was configured and how many old secondary
+copies were deleted, without disclosing paths or credentials.
+
+This policy is a count of *verified copies*, not an age guarantee. For hourly
+scheduling, 168 copies is approximately seven days only when executions
+succeed consistently; define recovery-point retention, capacity alerts,
+legal holds and immutable/off-site snapshots independently. **Never enable
+pruning before reviewing retention and incident-recovery requirements.**
+A passing test or configuration setting is not evidence of production
+backup scheduling, off-site independence, encryption or restore readiness.
