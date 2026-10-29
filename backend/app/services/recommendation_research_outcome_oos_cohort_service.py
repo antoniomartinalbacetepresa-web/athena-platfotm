@@ -200,6 +200,11 @@ class RecommendationResearchOutcomeOosCohortService:
             "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
             "causalClaim": "forbidden",
             "fx": "explicit_not_silently_neutralized",
+            "lookAhead": "only_persisted_outcomes_and_identity_evidence_available_at_or_before_cohort_as_of",
+            "outcomeIntegrity": "every_row_bound_to_tamper_verified_persisted_outcome_hash",
+            "issuerDiversity": "resolved_canonical_issuer_counts_reported_separately_from_observation_counts",
+            "unresolvedIssuerIdentity": "explicit_unknown_never_inferred_or_counted_as_distinct",
+            "measurement": "descriptive_posterior_attribution_only",
             "thresholds": "none_selected_here",
         }
         for key, expected in required_policy.items():
@@ -288,7 +293,14 @@ class RecommendationResearchOutcomeOosCohortService:
             raise ValueError("El outcome no está autorizado para uso learning research-only.")
         if policy.get("residualInterpretation") != "unexplained_not_automatic_stock_selection_alpha":
             raise ValueError("El outcome intentó convertir residual en alpha.")
-        if policy.get("fx") != "explicit_not_silently_neutralized":
+        # Real persisted outcomes use the stronger explicit currency-pair
+        # contract. Keep older research artifacts readable, but never mix the
+        # two contracts within one observation.
+        fx_contract = policy.get("fx")
+        if fx_contract not in (
+            "explicit_not_silently_neutralized",
+            "explicit_currency_pair_bound_fail_closed",
+        ):
             raise ValueError("El outcome perdió seguridad FX.")
 
         outcome_hash = self._sha256(payload.get("outcomeHash"), "outcome.outcomeHash")
@@ -303,6 +315,9 @@ class RecommendationResearchOutcomeOosCohortService:
             raise ValueError("La cohorte intentó incluir un outcome posterior a cohort asOf.")
         period_start = self._aware_iso(payload.get("periodStart"), "outcome.periodStart")
         period_end = self._aware_iso(payload.get("periodEnd"), "outcome.periodEnd")
+        cycle_as_of = self._aware_iso(payload.get("cycleAsOf"), "outcome.cycleAsOf")
+        if cycle_as_of > period_start or cycle_as_of >= outcome_as_of:
+            raise ValueError("El outcome comienza antes del Research Cycle congelado.")
         if period_end <= period_start or period_end > outcome_as_of:
             raise ValueError("El outcome contiene un periodo inválido.")
         duration = (period_end - period_start).total_seconds()
@@ -320,14 +335,59 @@ class RecommendationResearchOutcomeOosCohortService:
             raise ValueError("Performance Attribution intentó inferencia causal.")
         if attribution_policy.get("residualInterpretation") != "unexplained_not_automatic_stock_selection_alpha":
             raise ValueError("Performance Attribution intentó interpretar residual como alpha.")
-        if attribution_policy.get("fx") != "explicit_not_silently_neutralized":
+        if attribution_policy.get("fx") != fx_contract:
             raise ValueError("Performance Attribution perdió FX explícito.")
+
+        if fx_contract == "explicit_currency_pair_bound_fail_closed":
+            # The actual outcome producer binds the currency pair, benchmark,
+            # attribution key and observation window. Cohort aggregation must
+            # not silently downgrade those identities to the legacy contract.
+            currency = payload.get("currency")
+            if (
+                not isinstance(currency, dict)
+                or not isinstance(attribution.get("currency"), dict)
+                or currency != attribution["currency"]
+            ):
+                raise ValueError("OOS outcome perdió identidad FX canónica.")
+            base = currency.get("instrumentCurrency")
+            quote = currency.get("reportingCurrency")
+            if (
+                not isinstance(base, str) or re.fullmatch(r"[A-Z]{3}", base) is None
+                or not isinstance(quote, str) or re.fullmatch(r"[A-Z]{3}", quote) is None
+                or currency.get("fxPair") != f"{base}/{quote}"
+                or currency.get("conversionRequired") is not (base != quote)
+            ):
+                raise ValueError("OOS outcome contiene par FX inconsistente.")
+            if self._sha256(payload.get("attributionKey"), "outcome.attributionKey") != self._sha256(
+                attribution.get("attributionKey"), "attribution.attributionKey"
+            ):
+                raise ValueError("OOS outcome perdió attributionKey.")
+            if self._text(payload.get("benchmarkId"), "outcome.benchmarkId") != self._text(
+                attribution.get("benchmarkId"), "attribution.benchmarkId"
+            ):
+                raise ValueError("OOS outcome perdió benchmarkId.")
+            if (
+                self._text(attribution.get("instrumentId"), "attribution.instrumentId")
+                != self._text(payload.get("instrumentId"), "outcome.instrumentId")
+                or self._text(attribution.get("symbol"), "attribution.symbol").upper()
+                != self._text(payload.get("symbol"), "outcome.symbol").upper()
+                or self._aware_iso(attribution.get("asOf"), "attribution.asOf") != outcome_as_of
+                or self._aware_iso(attribution.get("periodStart"), "attribution.periodStart") != period_start
+                or self._aware_iso(attribution.get("periodEnd"), "attribution.periodEnd") != period_end
+            ):
+                raise ValueError("OOS outcome perdió identidad o periodo de atribución.")
 
         total = self._finite(attribution.get("totalReturn"), "totalReturn")
         explained = self._finite(attribution.get("explainedReturn"), "explainedReturn")
         residual = self._finite(attribution.get("residualReturn"), "residualReturn")
         market = self._finite(attribution.get("marketContribution"), "marketContribution")
         fx = self._finite(attribution.get("fxContribution"), "fxContribution")
+        if (
+            fx_contract == "explicit_currency_pair_bound_fail_closed"
+            and payload["currency"]["conversionRequired"] is False
+            and not math.isclose(fx, 0.0, rel_tol=0.0, abs_tol=1e-12)
+        ):
+            raise ValueError("OOS outcome contiene FX no nulo sin conversión.")
         if not math.isclose(total, explained + residual, rel_tol=1e-9, abs_tol=1e-12):
             raise ValueError("El outcome no reconcilia totalReturn = explainedReturn + residualReturn.")
 
@@ -350,7 +410,7 @@ class RecommendationResearchOutcomeOosCohortService:
             "cycleHash": cycle_hash,
             "instrumentId": instrument_id,
             "symbol": symbol,
-            "cycleAsOf": self._aware_iso(payload.get("cycleAsOf"), "outcome.cycleAsOf").isoformat(),
+            "cycleAsOf": cycle_as_of.isoformat(),
             "asOf": outcome_as_of.isoformat(),
             "periodStart": period_start.isoformat(),
             "periodEnd": period_end.isoformat(),

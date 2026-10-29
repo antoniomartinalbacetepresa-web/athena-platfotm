@@ -135,6 +135,149 @@ def _identity(
     )
 
 
+def _canonical_outcome_record() -> dict[str, object]:
+    """Exercise the actual persisted-outcome producer contract, not a legacy fixture."""
+    from app.services.recommendation_research_outcome_attribution_service import (
+        RecommendationResearchOutcomeAttributionService,
+    )
+
+    end = CYCLE_AS_OF + timedelta(days=30)
+    observed_at = end + timedelta(hours=2)
+    available_at = end + timedelta(minutes=1)
+    cycle_hash = "a" * 64
+    cycle_record = {
+        "cycle_hash": cycle_hash,
+        "package": {"cycle": {
+            "integrity": {"cycleHash": cycle_hash},
+            "instrumentId": "instrument-a",
+            "symbol": "AAA",
+            "asOf": CYCLE_AS_OF.isoformat(),
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "policy": {
+                "automaticTrading": False,
+                "automaticProductionPromotion": False,
+            },
+        }},
+    }
+
+    def evidence(ref: str) -> dict[str, object]:
+        return {
+            "availableAt": available_at.isoformat(),
+            "source": "verified-independent-source",
+            "sourceRef": f"urn:outcome:{ref}",
+        }
+
+    attribution = {
+        "module": "performance_attribution",
+        "advisoryStatus": "no_advice",
+        "productionEligible": False,
+        "isWeightingReady": False,
+        "instrumentId": "instrument-a",
+        "symbol": "AAA",
+        "asOf": observed_at.isoformat(),
+        "periodStart": CYCLE_AS_OF.isoformat(),
+        "periodEnd": end.isoformat(),
+        "attributionKey": "b" * 64,
+        "benchmarkId": "benchmark:world",
+        "currency": {
+            "instrumentCurrency": "USD",
+            "reportingCurrency": "EUR",
+            "fxPair": "USD/EUR",
+            "conversionRequired": True,
+        },
+        "totalReturn": 0.10,
+        "marketContribution": 0.04,
+        "fxContribution": 0.01,
+        "factorContributions": {"quality": 0.02},
+        "explainedReturn": 0.07,
+        "residualReturn": 0.03,
+        "evidence": {
+            "totalReturn": evidence("total"),
+            "marketContribution": evidence("market"),
+            "fxContribution": evidence("fx"),
+            "factorContributions": {"quality": evidence("quality")},
+        },
+        "policy": {
+            "automaticTrading": False,
+            "automaticProductionPromotion": False,
+            "causalClaim": "forbidden_arithmetic_attribution_only",
+            "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
+            "fx": "explicit_currency_pair_bound_fail_closed",
+            "identity": "deterministic_sha256_attribution_key",
+            "benchmark": "explicit_market_contribution_identity",
+        },
+    }
+    outcome = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="canonical-30d",
+        cycle_record=cycle_record,
+        attribution_payload=attribution,
+    )
+    return {
+        "cycle_hash": outcome["cycleHash"],
+        "outcome_hash": outcome["outcomeHash"],
+        "payload": outcome,
+    }
+
+
+def test_actual_canonical_outcome_contract_is_accepted_for_oos_research() -> None:
+    record = _canonical_outcome_record()
+    service = RecommendationResearchOutcomeOosCohortService()
+    artifact = service.build(
+        cohort_id="canonical-oos",
+        as_of=COHORT_AS_OF,
+        outcome_records=[record],
+        issuer_evidence=[_identity("instrument-a", "issuer-a")],
+    )
+    assert artifact["observationCount"] == 1
+    assert artifact["rows"][0]["fxContribution"] == 0.01
+    assert artifact["productionLearningEligible"] is False
+    service.validate_artifact(artifact)
+
+
+def test_canonical_outcome_rejects_inconsistent_fx_identity() -> None:
+    record = _canonical_outcome_record()
+    record["payload"]["currency"]["fxPair"] = "EUR/USD"
+    with pytest.raises(ValueError, match="identidad FX"):
+        RecommendationResearchOutcomeOosCohortService().build(
+            cohort_id="tampered-currency",
+            as_of=COHORT_AS_OF,
+            outcome_records=[record],
+            issuer_evidence=[_identity("instrument-a", "issuer-a")],
+        )
+
+
+def test_oos_rejects_cycle_frozen_after_outcome_period_begins() -> None:
+    record = _record(
+        outcome_id="precommitment",
+        instrument_id="instrument-a",
+        symbol="AAA",
+        cycle_seed="cycle-precommitment",
+    )
+    record["payload"]["cycleAsOf"] = (CYCLE_AS_OF + timedelta(days=1)).isoformat()
+    with pytest.raises(ValueError, match="Research Cycle congelado"):
+        RecommendationResearchOutcomeOosCohortService().build(
+            cohort_id="invalid-precommitment",
+            as_of=COHORT_AS_OF,
+            outcome_records=[record],
+            issuer_evidence=[_identity("instrument-a", "issuer-a")],
+        )
+
+
+def test_oos_cohort_rejects_mutated_unhashed_temporal_policy() -> None:
+    service = RecommendationResearchOutcomeOosCohortService()
+    artifact = service.build(
+        cohort_id="policy-integrity",
+        as_of=COHORT_AS_OF,
+        outcome_records=[_canonical_outcome_record()],
+        issuer_evidence=[_identity("instrument-a", "issuer-a")],
+    )
+    artifact["policy"]["lookAhead"] = "future_data_permitted"
+    with pytest.raises(ValueError, match="policy.lookAhead"):
+        service.validate_artifact(artifact)
+
+
 def test_cohort_counts_repeated_issuer_as_one_distinct_issuer() -> None:
     service = RecommendationResearchOutcomeOosCohortService()
     first = _record(
