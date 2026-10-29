@@ -31,6 +31,96 @@ def _metadata(path: Path) -> dict:
     return result
 
 
+def _validate_report_rows(path: Path, summary: dict, *, kind: str) -> None:
+    """Independently reconcile every exported row with the claimed totals.
+
+    The paired manifest must not certify a child report that lost, duplicated
+    or reclassified rows after the child exporter returned its summary.
+    This validation streams records without loading the universe into memory.
+    """
+    if kind == "history":
+        fields = ("eligibleInstrumentCount", "currentDeepHistoryInstrumentCount", "totalBlockingCount")
+        total_field = "totalBlockingCount"
+        categories = ("no_observations", "insufficient_span", "discontinuous_source", "stale_source")
+        category_field = "reason"
+    elif kind == "actions":
+        fields = ("totalUnresolvedEventCount", "totalIncompleteEventCount", "totalConflictEventCount")
+        total_field = "totalUnresolvedEventCount"
+        categories = ("incomplete", "conflict")
+        category_field = "reconciliationStatus"
+    else:
+        raise ValueError("Unknown paired diagnostic kind")
+
+    metadata = _metadata(path)
+    if any(
+        type(metadata.get(field)) is not int
+        or metadata[field] < 0
+        or metadata[field] != summary.get(field)
+        for field in fields
+    ):
+        raise RuntimeError("Paired diagnostic summary totals mismatch")
+    expected_total = metadata[total_field]
+    expected_categories = (
+        metadata.get("blockingByReason") if kind == "history" else {
+            "incomplete": metadata["totalIncompleteEventCount"],
+            "conflict": metadata["totalConflictEventCount"],
+        }
+    )
+    if (
+        not isinstance(expected_categories, dict)
+        or set(expected_categories) != set(categories)
+        or any(type(value) is not int or value < 0 for value in expected_categories.values())
+        or sum(expected_categories.values()) != expected_total
+    ):
+        raise RuntimeError("Paired diagnostic category totals mismatch")
+
+    observed = dict.fromkeys(categories, 0)
+    count = 0
+    previous_key = None
+    with path.open(encoding="utf-8") as stream:
+        next(stream)  # The metadata header was already parsed and validated.
+        for line in stream:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                raise RuntimeError("Paired diagnostic contains malformed JSONL") from None
+            if not isinstance(row, dict):
+                raise RuntimeError("Paired diagnostic contains a non-object row")
+            category = row.get(category_field)
+            instrument_id = row.get("instrumentId")
+            symbol = row.get("symbol")
+            if (
+                category not in observed
+                or type(instrument_id) is not int or instrument_id <= 0
+                or not isinstance(symbol, str) or not symbol
+            ):
+                raise RuntimeError("Paired diagnostic contains an invalid row")
+            if kind == "history":
+                if row.get("recordType") != "history_gap":
+                    raise RuntimeError("Paired history row type mismatch")
+                key = (categories.index(category), symbol, instrument_id)
+            else:
+                action_type = row.get("actionType")
+                effective_at = row.get("effectiveAt")
+                if (
+                    action_type not in ("dividend", "split")
+                    or not isinstance(effective_at, str) or not effective_at
+                    or row.get("automaticCanonicalization") is not False
+                    or row.get("requiredIndependentFamilyCount") != 2
+                ):
+                    raise RuntimeError("Paired corporate-action row contract mismatch")
+                key = (instrument_id, action_type, effective_at)
+            if previous_key is not None and key <= previous_key:
+                raise RuntimeError("Paired diagnostic contains duplicate or unordered rows")
+            previous_key = key
+            observed[category] += 1
+            count += 1
+            if count > expected_total:
+                raise RuntimeError("Paired diagnostic has excess rows")
+    if count != expected_total or observed != expected_categories:
+        raise RuntimeError("Paired diagnostic rows do not match claimed totals")
+
+
 def _member_sha(archive: zipfile.ZipFile, name: str) -> str:
     digest = hashlib.sha256()
     with archive.open(name) as stream:
@@ -66,9 +156,9 @@ def export_operational_history_bundle(
                 database_path=frozen, output_path=actions_path, as_of=cutoff,
             )
             _verify_snapshot_unchanged(frozen, source_sha)
-            for summary, path, status in (
-                (history, history_path, "complete_pit_history_diagnostic"),
-                (actions, actions_path, "complete_pit_reconciliation_diagnostic"),
+            for summary, path, status, kind in (
+                (history, history_path, "complete_pit_history_diagnostic", "history"),
+                (actions, actions_path, "complete_pit_reconciliation_diagnostic", "actions"),
             ):
                 meta = _metadata(path)
                 if (
@@ -82,6 +172,7 @@ def export_operational_history_bundle(
                     or summary.get("exportSha256") != _sha256_file(path)
                 ):
                     raise RuntimeError("Paired diagnostic metadata mismatch")
+                _validate_report_rows(path, summary, kind=kind)
             if (
                 history["eligibleInstrumentCount"]
                 != history["currentDeepHistoryInstrumentCount"] + history["totalBlockingCount"]

@@ -118,3 +118,57 @@ def test_live_database_write_after_freeze_cannot_mix_generations(tmp_path, monke
     with zipfile.ZipFile(output) as archive:
         assert b"LATE" not in archive.read(bundle.HISTORY_MEMBER)
         assert b"LATE" not in archive.read(bundle.ACTIONS_MEMBER)
+
+
+@pytest.mark.parametrize("corrupt_child", ["history", "actions"])
+def test_paired_bundle_rejects_rehashed_incomplete_child_reports(
+    tmp_path, monkeypatch, corrupt_child,
+):
+    """A child summary and its SHA can agree while JSONL rows are missing."""
+    source = _seed(tmp_path)
+    output = tmp_path / "should-not-publish.zip"
+    name = "export_history_gaps" if corrupt_child == "history" else "export_worklist"
+    original = getattr(bundle, name)
+
+    def truncate_rows(**kwargs):
+        summary = original(**kwargs)
+        path = kwargs["output_path"]
+        metadata_line = path.read_text(encoding="utf-8").splitlines(keepends=True)[0]
+        path.write_text(metadata_line, encoding="utf-8")
+        summary["exportSha256"] = bundle._sha256_file(path)
+        return summary
+
+    monkeypatch.setattr(bundle, name, truncate_rows)
+    with pytest.raises(RuntimeError, match="rows do not match claimed totals"):
+        bundle.export_operational_history_bundle(
+            database_path=source, output_path=output, as_of=CUTOFF,
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".athena-paired-*"))
+
+
+def test_paired_bundle_rejects_rehashed_misclassified_action(tmp_path, monkeypatch):
+    source = _seed(tmp_path)
+    output = tmp_path / "should-not-publish.zip"
+    original = bundle.export_worklist
+
+    def relabel_action(**kwargs):
+        summary = original(**kwargs)
+        path = kwargs["output_path"]
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        rows[1]["reconciliationStatus"] = "conflict"
+        path.write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+        summary["exportSha256"] = bundle._sha256_file(path)
+        return summary
+
+    monkeypatch.setattr(bundle, "export_worklist", relabel_action)
+    with pytest.raises(RuntimeError, match="rows do not match claimed totals"):
+        bundle.export_operational_history_bundle(
+            database_path=source, output_path=output, as_of=CUTOFF,
+        )
+    assert not output.exists()
+
+
