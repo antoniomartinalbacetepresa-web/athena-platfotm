@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import tempfile
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,13 +113,15 @@ class DatabaseBackupService:
             temporary_backup = Path(staging) / destination.name
             temporary_manifest = Path(staging) / manifest_path.name
 
-            with self._database.connect() as source:
-                target = sqlite3.connect(temporary_backup)
-                try:
+            # A backup must never invoke AthenaDatabase.connect(), which
+            # configures WAL on the live source and requires write authority.
+            # SQLite's read-only online backup still includes committed WAL.
+            with closing(sqlite3.connect(
+                source_path.resolve().as_uri() + "?mode=ro", uri=True,
+            )) as source:
+                with closing(sqlite3.connect(temporary_backup)) as target:
                     source.backup(target)
                     target.commit()
-                finally:
-                    target.close()
 
             schema_version = self._validate_database_file(temporary_backup)
             metadata = DatabaseBackupMetadata(
