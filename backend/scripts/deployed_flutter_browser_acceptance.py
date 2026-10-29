@@ -21,6 +21,7 @@ class BrowserAcceptanceFailure(RuntimeError):
 class BrowserConfig:
     base_url: str
     deployed_sha: str
+    backend_origin: str
 
 
 def validate_config(environment: dict[str, str]) -> BrowserConfig:
@@ -37,10 +38,31 @@ def validate_config(environment: dict[str, str]) -> BrowserConfig:
     deployed = environment.get("ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA", "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{40}", expected) or deployed != expected:
         raise BrowserAcceptanceFailure("Exact deployed web SHA attestation required")
-    return BrowserConfig(base_url=base.rstrip("/") + "/", deployed_sha=deployed)
+    backend = environment.get("ATHENA_ACCEPTANCE_BASE_URL", "")
+    try:
+        parsed_backend = urlsplit(backend)
+        if (
+            not backend or backend != backend.strip()
+            or any(c.isspace() or ord(c) < 32 for c in backend)
+            or "\\" in backend
+            or parsed_backend.scheme != "https" or not parsed_backend.hostname
+            or parsed_backend.username is not None or parsed_backend.password is not None
+            or parsed_backend.path not in ("", "/")
+            or parsed_backend.query or parsed_backend.fragment
+            or parsed_backend.hostname.lower() in ("localhost", "127.0.0.1", "::1")
+        ):
+            raise ValueError("invalid backend origin")
+        _ = parsed_backend.port
+    except ValueError:
+        raise BrowserAcceptanceFailure("Public HTTPS backend origin required") from None
+    return BrowserConfig(
+        base_url=base.rstrip("/") + "/", deployed_sha=deployed,
+        backend_origin=backend.rstrip("/"),
+    )
 
 
-def verify_deployed_web_build(page, *, expected_sha: str, expected_origin: str) -> None:
+def verify_deployed_web_build(page, *, expected_sha: str, expected_origin: str,
+                              expected_backend_origin: str) -> None:
     """Read the actual deployed bundle marker, not only the operator's SHA variable.
 
     This is a same-origin build identity check, not a signed deployment attestation.
@@ -66,9 +88,10 @@ def verify_deployed_web_build(page, *, expected_sha: str, expected_origin: str) 
         raise BrowserAcceptanceFailure("Deployed web build identity unavailable") from None
     if (
         not isinstance(manifest, dict)
-        or set(manifest) != {"schema", "sourceSha"}
-        or manifest.get("schema") != "athena.web-build.v1"
+        or set(manifest) != {"schema", "sourceSha", "backendOrigin"}
+        or manifest.get("schema") != "athena.web-build.v2"
         or manifest.get("sourceSha") != expected_sha
+        or manifest.get("backendOrigin") != expected_backend_origin
     ):
         raise BrowserAcceptanceFailure("Deployed web build SHA mismatch")
 
@@ -261,6 +284,7 @@ def main() -> int:
                 verify_deployed_web_build(
                     page, expected_sha=config.deployed_sha,
                     expected_origin=config.base_url,
+                    expected_backend_origin=config.backend_origin,
                 )
                 stage = "guest-research"
                 result = verify_guest_research(page)

@@ -29,9 +29,15 @@ HTTP 503 fail-closed removal and recovery, and compact Dashboard → Market
 navigation. The HTTP 503 is a controlled browser fault, **not** evidence
 that a live provider failed. No personal account or position is modified.
 
-Deploy the exact `dev/real-market-backend` Flutter Web build to HTTPS,
-compiled with an accessible HTTPS `ATHENA_BACKEND_URL` via
-`--dart-define`. Seed verified canonical News/ATHENA synthesis and real
+Deploy the exact `dev/real-market-backend` Flutter Web build to HTTPS.
+**Before the push build**, set repository variable
+`ATHENA_WEB_BACKEND_ORIGIN` to the public HTTPS API origin (no path, query,
+credentials or fragment). CI validates it and compiles the release artifact
+with `--dart-define=ATHENA_BACKEND_URL=<origin>`. The Flutter default is
+`http://127.0.0.1:8000`; a bundle built without the variable is **not
+staging-ready**, even when its SHA marker matches. When browser acceptance
+is enabled, CI fails closed if the backend origin variable is missing or
+invalid. Do not rebuild the published artifact outside CI. Seed verified canonical News/ATHENA synthesis and real
 SEC 13F CIK evidence in staging. Set `ATHENA_ACCEPTANCE_WEB_URL` as an
 environment **secret** and `ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA` as an
 environment **variable** in `staging-acceptance`. The SHA variable is
@@ -41,7 +47,10 @@ the exact `GITHUB_SHA` after `flutter build web --release`. Deploy the
 complete **push** release artifact without replacing this marker. Before
 opening the app, the browser probe fetches the deployed marker over HTTPS
 from the **same web origin**, bypasses ordinary caches, and rejects missing,
-redirected, malformed or mismatched SHA evidence. This closes the previous
+redirected, malformed or mismatched SHA evidence. The v2 manifest also
+binds the compiled backend origin to the independently configured
+`ATHENA_ACCEPTANCE_BASE_URL` staging secret; a matching SHA with a
+localhost or different backend binding is not accepted. This closes the previous
 gap where the operator-provided SHA variable alone could agree with CI while
 the served web bundle belonged to another commit. The marker is still
 self-reported by the deployed artifact, not a signed attestation or proof

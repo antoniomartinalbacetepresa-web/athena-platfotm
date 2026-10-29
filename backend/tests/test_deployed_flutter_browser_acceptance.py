@@ -23,6 +23,7 @@ def config(**changes):
         "GITHUB_SHA": SHA,
         "ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA": SHA,
         "ATHENA_ACCEPTANCE_WEB_URL": "https://staging.example.test/",
+        "ATHENA_ACCEPTANCE_BASE_URL": "https://api.staging.example.test",
     }
     env.update(changes)
     return module.validate_config(env)
@@ -32,6 +33,7 @@ def test_exact_sha_and_https_origin():
     result = config()
     assert result.base_url == "https://staging.example.test/"
     assert result.deployed_sha == SHA
+    assert result.backend_origin == "https://api.staging.example.test"
 
 
 @pytest.mark.parametrize("url", [
@@ -85,13 +87,15 @@ def _check_manifest(response):
     page = _ManifestPage(response)
     module.verify_deployed_web_build(
         page, expected_sha=SHA, expected_origin="https://staging.example.test/",
+        expected_backend_origin="https://api.staging.example.test",
     )
     return page
 
 
 def test_deployed_build_identity_uses_real_same_origin_manifest():
     page = _check_manifest(_ManifestResponse({
-        "schema": "athena.web-build.v1", "sourceSha": SHA,
+        "schema": "athena.web-build.v2", "sourceSha": SHA,
+        "backendOrigin": "https://api.staging.example.test",
     }))
     assert page.requested_url.startswith("athena-build.json?")
     assert page.headers["Cache-Control"] == "no-cache"
@@ -99,10 +103,14 @@ def test_deployed_build_identity_uses_real_same_origin_manifest():
 
 @pytest.mark.parametrize("payload", [
     {},
-    {"schema": "athena.web-build.v1", "sourceSha": "b" * 40},
+    {"schema": "athena.web-build.v2", "sourceSha": "b" * 40},
     {"schema": "wrong", "sourceSha": SHA},
-    {"schema": "athena.web-build.v1", "sourceSha": SHA, "extra": True},
-    ["athena.web-build.v1", SHA],
+    {"schema": "athena.web-build.v2", "sourceSha": SHA, "extra": True},
+    {"schema": "athena.web-build.v2", "sourceSha": SHA,
+     "backendOrigin": "https://different-api.example.test"},
+    {"schema": "athena.web-build.v2", "sourceSha": SHA,
+     "backendOrigin": None},
+    ["athena.web-build.v2", SHA],
 ])
 def test_deployed_build_identity_rejects_wrong_or_ambiguous_manifest(payload):
     with pytest.raises(module.BrowserAcceptanceFailure):
@@ -118,7 +126,8 @@ def test_deployed_build_identity_rejects_wrong_or_ambiguous_manifest(payload):
 def test_deployed_build_identity_rejects_missing_or_redirected_manifest(status, url):
     with pytest.raises(module.BrowserAcceptanceFailure):
         _check_manifest(_ManifestResponse({
-            "schema": "athena.web-build.v1", "sourceSha": SHA,
+            "schema": "athena.web-build.v2", "sourceSha": SHA,
+            "backendOrigin": "https://api.staging.example.test",
         }, status=status, url=url))
 
 
@@ -144,3 +153,14 @@ def test_news_refresh_requires_exact_network_scope(selective, paths):
 def test_news_refresh_rejects_missing_extra_or_cross_surface_requests(selective, paths):
     with pytest.raises(module.BrowserAcceptanceFailure):
         module._require_news_refresh_requests(paths, selective=selective)
+
+
+@pytest.mark.parametrize("url", [
+    "", "http://api.staging.example.test", "https://localhost:8000",
+    "https://127.0.0.1:8000", "https://user:pass@api.example.test",
+    "https://api.example.test/private", "https://api.example.test?token=abc",
+    "https://api.example.test/#fragment", "https://api.example.test:bad",
+])
+def test_unsafe_expected_backend_origin_fails_closed(url):
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        config(ATHENA_ACCEPTANCE_BASE_URL=url)

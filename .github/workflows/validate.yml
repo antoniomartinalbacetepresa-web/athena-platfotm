@@ -118,10 +118,26 @@ jobs:
 
       - name: Build release web bundle
         if: success()
-        run: flutter build web --release
+        env:
+          ATHENA_WEB_BACKEND_ORIGIN: ${{ vars.ATHENA_WEB_BACKEND_ORIGIN }}
+          DEPLOYED_BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ATHENA_WEB_BACKEND_ORIGIN" ]; then
+            backend_origin="$(python3 ../backend/scripts/flutter_web_backend_origin.py)"
+            flutter build web --release --dart-define="ATHENA_BACKEND_URL=$backend_origin"
+          elif [ "$DEPLOYED_BROWSER_ENABLED" = "true" ]; then
+            echo "Deployed browser acceptance requires a configured HTTPS backend origin" >&2
+            exit 1
+          else
+            # Development-only bundle; its default backend points to loopback.
+            flutter build web --release
+          fi
 
       - name: Stamp release bundle with exact source SHA
         if: success()
+        env:
+          ATHENA_WEB_BACKEND_ORIGIN: ${{ vars.ATHENA_WEB_BACKEND_ORIGIN }}
         run: |
           python3 - <<'PY'
           import json
@@ -137,7 +153,8 @@ jobs:
               raise SystemExit("Release web bundle missing")
           manifest.write_text(
               json.dumps(
-                  {"schema": "athena.web-build.v1", "sourceSha": sha},
+                  {"schema": "athena.web-build.v2", "sourceSha": sha,
+                   "backendOrigin": os.environ.get("ATHENA_WEB_BACKEND_ORIGIN", "").rstrip("/") or None},
                   sort_keys=True,
               ) + "\n",
               encoding="utf-8",
@@ -232,6 +249,7 @@ jobs:
       - name: Verify deployed Flutter Web guest journey
         env:
           ATHENA_ACCEPTANCE_WEB_URL: ${{ secrets.ATHENA_ACCEPTANCE_WEB_URL }}
+          ATHENA_ACCEPTANCE_BASE_URL: ${{ secrets.ATHENA_ACCEPTANCE_BASE_URL }}
           ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA }}
         run: python backend/scripts/deployed_flutter_browser_acceptance.py
 
