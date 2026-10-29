@@ -161,12 +161,16 @@ class _AuthenticatedPortfolioHistoryPanelState
     final current = _history;
     final cursor = current?.nextCursor;
     if (_loading || _loadingMore || current == null ||
-        !current.hasMore || cursor == null) return;
+        !current.hasMore || cursor == null) {
+      return;
+    }
     final version = _requestVersion;
     final token = _session.accessToken;
     final ownerId = _session.account?.id;
     final portfolioId = widget.portfolioId;
-    if (!_session.isAuthenticated || token == null || ownerId == null) return;
+    if (!_session.isAuthenticated || token == null || ownerId == null) {
+      return;
+    }
     setState(() { _loadingMore = true; _loadMoreError = null; });
     bool stillCurrent() => mounted && version == _requestVersion &&
         identical(_history, current) && _session.isAuthenticated &&

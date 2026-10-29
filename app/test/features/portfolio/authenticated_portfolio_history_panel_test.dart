@@ -222,7 +222,7 @@ void main() {
   });
   testWidgets('history loads older PIT events without losing the first page',
       (tester) async {
-    const cursor = '2:${_hashA}:0123456789abcdef';
+    const cursor = '2:$_hashA:0123456789abcdef';
     var calls = 0;
     http.Response page(int sequence, String hash, bool more) =>
         http.Response(jsonEncode({

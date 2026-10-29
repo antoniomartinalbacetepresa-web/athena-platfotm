@@ -110,7 +110,7 @@ class AuthenticatedPortfolioService {
   Future<AuthenticatedPortfolioHistory> loadHistory({String portfolioId='primary',DateTime? asOf,int limit=100,String? cursor}) async {
     final id=portfolioId.trim(); if(id.isEmpty||id.length>128) throw ArgumentError.value(portfolioId,'portfolioId','Portfolio id no válido.'); if(limit<1||limit>500) throw ArgumentError.value(limit,'limit','Limit debe estar entre 1 y 500.');
     if(cursor!=null && !RegExp(r'^[1-9][0-9]{0,11}:[0-9a-f]{64}:[0-9a-f]{16}$').hasMatch(cursor)) throw ArgumentError.value(cursor,'cursor','Cursor de historial no válido.');
-    final cutoff=(asOf??DateTime.now()).toUtc(); final uri=Uri.parse('$_baseUrl/api/v1/user/portfolio/history').replace(queryParameters:{'portfolioId':id,'asOf':cutoff.toIso8601String(),'limit':'$limit',if(cursor!=null)'cursor':cursor});
+    final cutoff=(asOf??DateTime.now()).toUtc(); final uri=Uri.parse('$_baseUrl/api/v1/user/portfolio/history').replace(queryParameters:{'portfolioId':id,'asOf':cutoff.toIso8601String(),'limit':'$limit','cursor': ?cursor});
     final token=_currentToken(); final authorityVersion=_session.authorityVersion; final response=await _client.get(uri,headers:_headersFor(token)); await _rejectInvalidSession(response,token,authorityVersion); _requireCurrentToken(token, authorityVersion); final data=_decodeObject(response)['data']; if(data is! Map<String,dynamic>) throw const FormatException('Respuesta de historial sin data válida.'); return AuthenticatedPortfolioHistory.fromJson(data);
   }
 
