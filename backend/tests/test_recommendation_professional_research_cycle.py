@@ -13,6 +13,9 @@ from app.main import app
 from app.repositories.recommendation_investment_journal_repository import (
     RecommendationInvestmentJournalRepository,
 )
+from app.repositories.recommendation_professional_research_cycle_repository import (
+    RecommendationProfessionalResearchCycleRepository,
+)
 from app.services.recommendation_athena_radar_service import (
     AthenaRadarCandidateInput,
     AthenaRadarEvidenceInput,
@@ -253,8 +256,11 @@ def test_cycle_rejects_fmp_across_modules_even_when_underlying_module_accepts_it
 def test_cycle_api_persists_lineage_and_remains_research_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repository = RecommendationInvestmentJournalRepository(AthenaDatabase(tmp_path / "cycle.db"))
+    database = AthenaDatabase(tmp_path / "cycle.db")
+    repository = RecommendationInvestmentJournalRepository(database)
+    cycle_repository = RecommendationProfessionalResearchCycleRepository(database)
     monkeypatch.setattr(cycle_api, "journal_repository", repository)
+    monkeypatch.setattr(cycle_api, "cycle_repository", cycle_repository)
     client = TestClient(app)
 
     response = client.post(
@@ -278,8 +284,11 @@ def test_cycle_api_persists_lineage_and_remains_research_only(
 def test_cycle_api_rejects_look_ahead_before_persisting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repository = RecommendationInvestmentJournalRepository(AthenaDatabase(tmp_path / "cycle-lookahead.db"))
+    database = AthenaDatabase(tmp_path / "cycle-lookahead.db")
+    repository = RecommendationInvestmentJournalRepository(database)
+    cycle_repository = RecommendationProfessionalResearchCycleRepository(database)
     monkeypatch.setattr(cycle_api, "journal_repository", repository)
+    monkeypatch.setattr(cycle_api, "cycle_repository", cycle_repository)
     client = TestClient(app)
 
     response = client.post(
