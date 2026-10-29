@@ -202,6 +202,107 @@ def verify_news_refresh_scope(page, *, backend_origin: str) -> None:
         page.remove_listener("request", record)
 
 
+
+def _fetch_live_canonical_synthesis(page, *, backend_origin: str, path: str):
+    """Capture a genuine canonical 200 for a controlled delayed-reply race."""
+    try:
+        response = page.request.get(
+            backend_origin + path,
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            max_redirects=0, timeout=15000,
+        )
+        if (
+            response.status != 200
+            or not _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=path
+            )
+            or "application/json" not in response.headers.get(
+                "content-type", ""
+            ).lower()
+            or not isinstance(response.json().get("data"), dict)
+        ):
+            raise BrowserAcceptanceFailure("Live canonical synthesis unavailable")
+        return response
+    except Exception:
+        # Exceptions may include staging URLs. Never expose them.
+        raise BrowserAcceptanceFailure("Live canonical synthesis unavailable") from None
+
+
+def verify_stale_synthesis_ordering(page, *, backend_origin: str) -> None:
+    """A delayed genuine 200 must not override a newer browser-injected 503."""
+    path = "/api/v1/recommendations/professional-research/athena-synthesis/latest"
+    live_response = _fetch_live_canonical_synthesis(
+        page, backend_origin=backend_origin, path=path
+    )
+    held_routes = []
+    requests_seen = 0
+    released = False
+
+    def matches(url: str) -> bool:
+        return _matches_backend_api(url, backend_origin=backend_origin, path=path)
+
+    def intercept(route) -> None:
+        nonlocal requests_seen
+        requests_seen += 1
+        if requests_seen == 1:
+            held_routes.append(route)
+        else:
+            route.fulfill(
+                status=503, content_type="application/json",
+                body='{"detail":"controlled acceptance fault"}',
+            )
+
+    page.route(matches, intercept)
+    try:
+        refresh = page.get_by_role(
+            "button", name="Actualizar síntesis ATHENA verificada", exact=True
+        )
+        refresh.click(timeout=15000)
+        for _ in range(50):
+            if held_routes:
+                break
+            page.wait_for_timeout(100)
+        if len(held_routes) != 1 or requests_seen != 1:
+            raise BrowserAcceptanceFailure("Delayed canonical request not observed")
+        with page.expect_response(
+            lambda response: response.status == 503 and matches(response.url),
+            timeout=30000,
+        ):
+            refresh.click(timeout=15000)
+        page.get_by_text(
+            "No se pudo verificar la síntesis ATHENA.", exact=True
+        ).wait_for(state="visible", timeout=30000)
+        if page.get_by_text("Fuentes verificadas", exact=True).count():
+            raise BrowserAcceptanceFailure("Newer failure retained stale provenance")
+        if requests_seen != 2:
+            raise BrowserAcceptanceFailure("Unexpected canonical refresh requests")
+
+        held_routes[0].fulfill(response=live_response)
+        released = True
+        page.wait_for_timeout(600)
+        page.get_by_text(
+            "No se pudo verificar la síntesis ATHENA.", exact=True
+        ).wait_for(state="visible", timeout=1500)
+        if page.get_by_text("Fuentes verificadas", exact=True).count():
+            raise BrowserAcceptanceFailure("Delayed success overrode newer failure")
+    finally:
+        if held_routes and not released:
+            try:
+                held_routes[0].abort()
+            except Exception:
+                pass
+        page.unroute(matches, intercept)
+
+    with page.expect_response(
+        lambda response: response.status == 200 and matches(response.url),
+        timeout=30000,
+    ):
+        page.get_by_role("button", name="Reintentar", exact=True).click()
+    page.get_by_text("Fuentes verificadas", exact=True).wait_for(
+        state="visible", timeout=30000
+    )
+
+
 def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
     """Check real deployed navigation and explicitly scoped fault recovery."""
     seen: set[str] = set()
@@ -286,6 +387,7 @@ def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
     page.get_by_text("Fuentes verificadas", exact=True).wait_for(
         state="visible", timeout=30000
     )
+    verify_stale_synthesis_ordering(page, backend_origin=backend_origin)
     _back(page)
 
     page.set_viewport_size({"width": 390, "height": 844})
@@ -347,8 +449,8 @@ def main() -> int:
         "deployedWebBuildIdentityVerified": True,
         "deployedFlutterBrowserE2EVerified": False,
         "twoOwnerBrowserIsolationVerified": False,
-        "staleResponseOrderingVerified": False,
-        "selectiveRefreshVerified": False,
+        "staleResponseOrderingVerified": True,
+        "selectiveRefreshVerified": True,
         "productionAuthorization": False,
     }, sort_keys=True))
     return 0

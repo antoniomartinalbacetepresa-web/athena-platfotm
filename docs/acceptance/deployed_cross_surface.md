@@ -76,3 +76,29 @@ Even a passing guest browser job does **not** close two-owner Flutter
 session isolation, stale-response ordering, Dashboard-wide selective refresh or stale-response ordering, a full
 accessibility audit, 365-day operational history, OOS, SMTP, backups,
 or production release authorization. Never upload screenshots or secrets.
+
+
+## Delayed canonical responses in deployed Chromium
+
+The opt-in deployed Flutter guest journey also captures a **real, live**
+canonical ATHENA synthesis response from the configured HTTPS staging backend,
+then holds a browser refresh request while a second refresh receives a
+**browser-injected** 503. The newer error must remove provenance; releasing the
+older, genuine 200 response must not restore it. Only a subsequent successful
+live retry may restore the verified synthesis. This checks actual Flutter
+request-generation ordering in deployed Chromium, not a mocked widget test,
+and does not change or fault the backend.
+
+The runner reports `staleResponseOrderingVerified=true` and
+`selectiveRefreshVerified=true` **only after** the deployed journey has
+completed successfully. These flags describe the scoped ATHENA synthesis
+ordering and News selective/full refresh; they do not establish all-surface
+stale ordering, two-owner browser isolation, a complete accessibility audit,
+or production readiness. Without a deployed staging run these remain
+**unverified**, regardless of green backend/Flutter CI.
+
+The deployment administrator must supply the authorized HTTPS web/API
+origins, the exact web build SHA, and seeded canonical synthesis through
+protected staging configuration. Never share secrets through chat or commit
+them to the repository. A green standard CI with the opt-in job skipped is
+not deployed E2E evidence.

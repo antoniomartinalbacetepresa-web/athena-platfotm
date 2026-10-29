@@ -189,3 +189,58 @@ def test_news_refresh_rejects_missing_extra_or_cross_surface_requests(selective,
 def test_unsafe_expected_backend_origin_fails_closed(url):
     with pytest.raises(module.BrowserAcceptanceFailure):
         config(ATHENA_ACCEPTANCE_BASE_URL=url)
+
+
+class _CanonicalLiveResponse:
+    def __init__(
+        self, *, status=200,
+        url="https://api.staging.example.test/api/v1/recommendations/professional-research/athena-synthesis/latest",
+        content_type="application/json", payload=None,
+    ):
+        self.status = status
+        self.url = url
+        self.headers = {"content-type": content_type}
+        self.payload = {"data": {"cycleBindingVerified": True}} if payload is None else payload
+
+    def json(self):
+        return self.payload
+
+
+class _CanonicalLivePage:
+    def __init__(self, response):
+        self.request = self
+        self.response = response
+
+    def get(self, url, *, headers, max_redirects, timeout):
+        assert url == (
+            "https://api.staging.example.test"
+            "/api/v1/recommendations/professional-research/athena-synthesis/latest"
+        )
+        assert headers["Cache-Control"] == "no-cache"
+        assert max_redirects == 0
+        assert timeout == 15000
+        return self.response
+
+
+def _live_canonical(response):
+    return module._fetch_live_canonical_synthesis(
+        _CanonicalLivePage(response),
+        backend_origin="https://api.staging.example.test",
+        path="/api/v1/recommendations/professional-research/athena-synthesis/latest",
+    )
+
+
+def test_delayed_success_requires_genuine_live_canonical_response():
+    response = _CanonicalLiveResponse()
+    assert _live_canonical(response) is response
+
+
+@pytest.mark.parametrize("response", [
+    _CanonicalLiveResponse(status=503),
+    _CanonicalLiveResponse(url="https://untrusted.example.test/api/v1/recommendations/professional-research/athena-synthesis/latest"),
+    _CanonicalLiveResponse(content_type="text/html"),
+    _CanonicalLiveResponse(payload={"detail": "unavailable"}),
+])
+def test_delayed_success_rejects_unverified_or_noncanonical_response(response):
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        _live_canonical(response)
