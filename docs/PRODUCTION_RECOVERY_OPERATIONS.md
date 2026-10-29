@@ -84,7 +84,7 @@ database in isolation, measures RPO/RTO, and configures an alert for any failed
 service or stale successful run. The entry point deliberately reports
 `scheduledExecutionVerified=false`, `offsiteLocationVerified=false` and
 `productionRecoveryVerified=false`; those facts require external evidence.
-The unit uses `ProtectHome=true`: deploy the database under an authorized
+The online backup now opens the live SQLite source with `mode=ro` instead of invoking the application's WAL-configuring writable connection. The runtime must be able to read the database and any committed WAL/SHM state; confirm the permissions on the actual host without granting unnecessary application write authority. The unit uses `ProtectHome=true`: deploy the database under an authorized
 service-readable path outside protected home directories. It logs only
 sanitized status, backup SHA-256 and conservative policy flags, not secrets
 or database paths.
