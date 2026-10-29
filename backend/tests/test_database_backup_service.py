@@ -566,3 +566,27 @@ def test_retention_blocks_on_orphaned_managed_backup_without_deleting_older(
     assert service.manifest_path_for(old).is_file()
     assert service.manifest_path_for(recent).is_file()
     assert orphan.read_bytes() == b"incomplete-publication"
+
+
+
+@pytest.mark.parametrize("unsafe_prefix", ["athena-*", "athena-?", "athena-[old]", "athena-/"])
+def test_retention_rejects_unsafe_glob_prefix_without_deleting(
+    tmp_path: Path, unsafe_prefix: str,
+) -> None:
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    directory = tmp_path / "backups"
+    older = directory / "athena-old.db"
+    newer = directory / "athena-new.db"
+    service.create_backup(older)
+    service.create_backup(newer)
+
+    with pytest.raises(ValueError, match="prefijo"):
+        service.apply_retention(
+            directory, keep_last=1, filename_prefix=unsafe_prefix,
+        )
+
+    for backup in (older, newer):
+        assert backup.is_file()
+        assert service.manifest_path_for(backup).is_file()

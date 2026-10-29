@@ -337,10 +337,7 @@ class DatabaseBackupService:
             raise ValueError(
                 "La retención debe conservar al menos un backup."
             )
-        if not filename_prefix or Path(filename_prefix).name != filename_prefix:
-            raise ValueError(
-                "El prefijo de backup no es válido."
-            )
+        self.validate_filename_prefix(filename_prefix)
 
         directory = Path(backup_directory)
         if not directory.is_dir():
@@ -412,6 +409,17 @@ class DatabaseBackupService:
                 for path in deleted_paths
             ),
         )
+
+    @staticmethod
+    def validate_filename_prefix(prefix: str) -> None:
+        # The prefix is interpolated into glob patterns during retention.
+        # Wildcards could select and delete backups outside the intended family.
+        if (
+            not prefix
+            or Path(prefix).name != prefix
+            or any(character in prefix for character in ("*", "?", "[", "]", "/", "\\", "\x00"))
+        ):
+            raise ValueError("El prefijo de backup no es válido.")
 
     @staticmethod
     def manifest_path_for(

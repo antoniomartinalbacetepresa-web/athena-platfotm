@@ -61,3 +61,31 @@ def test_runner_rejects_live_database_directory_and_invalid_retention(tmp_path, 
     _configure(monkeypatch, database_path, tmp_path / "backups", "0")
     with pytest.raises(RuntimeError, match="KEEP_LAST"):
         run_backup()
+
+
+
+@pytest.mark.parametrize("relative_backup", ["shared", "shared/live/nested"])
+def test_runner_rejects_ancestor_and_descendant_backup_directories(
+    tmp_path: Path, monkeypatch, relative_backup: str,
+) -> None:
+    database_path = tmp_path / "shared" / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    backup_directory = tmp_path / relative_backup
+    _configure(monkeypatch, database_path, backup_directory, "1")
+
+    with pytest.raises(RuntimeError, match="directorios"):
+        run_backup()
+
+    assert not list(tmp_path.rglob("athena-*.db"))
+
+
+def test_runner_validates_retention_before_creating_backup(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    backup_directory = tmp_path / "backups"
+    _configure(monkeypatch, database_path, backup_directory, "0")
+
+    with pytest.raises(RuntimeError, match="KEEP_LAST"):
+        run_backup()
+
+    assert not backup_directory.exists()

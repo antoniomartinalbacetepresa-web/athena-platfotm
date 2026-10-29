@@ -39,8 +39,7 @@ def run_cycle(
 ) -> dict[str, object]:
     if keep_last < 1:
         raise ValueError("La retención debe conservar al menos un backup.")
-    if not prefix or Path(prefix).name != prefix:
-        raise ValueError("El prefijo de backup no es válido.")
+    DatabaseBackupService.validate_filename_prefix(prefix)
     if offsite_attested and secondary_directory is None:
         raise ValueError("La declaración off-site requiere destino secundario.")
 

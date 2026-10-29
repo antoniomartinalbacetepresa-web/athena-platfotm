@@ -31,8 +31,13 @@ def run_backup() -> dict[str, object]:
     database = AthenaDatabase()
     backup_directory = _required_directory()
     live_directory = database.database_path.expanduser().resolve().parent
-    if backup_directory == live_directory:
-        raise RuntimeError("El backup no puede compartir directorio con la base activa.")
+    if (
+        backup_directory == live_directory
+        or backup_directory in live_directory.parents
+        or live_directory in backup_directory.parents
+    ):
+        raise RuntimeError("El backup no puede compartir el árbol de directorios con la base activa.")
+    keep_last = _required_retention()
 
     service = DatabaseBackupService(database)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -44,7 +49,7 @@ def run_backup() -> dict[str, object]:
 
     retention = service.apply_retention(
         backup_directory,
-        keep_last=_required_retention(),
+        keep_last=keep_last,
     )
     return {
         "status": "ok",

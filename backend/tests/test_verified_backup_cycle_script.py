@@ -197,3 +197,23 @@ def test_cycle_rejects_secondary_ancestor_or_descendant_of_live_directory(
 
     assert not primary.exists()
     assert not list(tmp_path.rglob("athena-*.db"))
+
+
+
+@pytest.mark.parametrize("unsafe_prefix", ["athena-*", "athena-?", "athena-[old]", "athena-/"])
+def test_cycle_rejects_unsafe_retention_prefix_before_creating_backup(
+    tmp_path: Path, unsafe_prefix: str,
+) -> None:
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary = tmp_path / "primary"
+
+    with pytest.raises(ValueError, match="prefijo"):
+        run_cycle(
+            database_path=database_path,
+            backup_directory=primary,
+            keep_last=1,
+            prefix=unsafe_prefix,
+        )
+
+    assert not primary.exists()
