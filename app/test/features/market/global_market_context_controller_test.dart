@@ -57,6 +57,25 @@ class SequencedGlobalMarketDataService extends GlobalMarketDataService {
   }
 }
 
+class PendingGlobalMarketDataService extends GlobalMarketDataService {
+  PendingGlobalMarketDataService()
+      : super(
+          regionalMarketContextService: FakeRegionalMarketContextService(),
+          globalMarketContextService: const GlobalMarketContextService(),
+          marketUniverseRepository: const FakeMarketUniverseRepository(),
+          regionalMarketWeightService: const RegionalMarketWeightService(),
+        );
+
+  final requests = <Completer<GlobalMarketContext>>[];
+
+  @override
+  Future<GlobalMarketContext> getGlobalContext() {
+    final request = Completer<GlobalMarketContext>();
+    requests.add(request);
+    return request.future;
+  }
+}
+
 void main() {
   GlobalMarketDataService createService() => GlobalMarketDataService(
         regionalMarketContextService: FakeRegionalMarketContextService(),
@@ -164,6 +183,44 @@ void main() {
       // A refresh clears the prior snapshot before awaiting the response.
       // Disposal must not publish the late replacement.
       expect(controller.context, isNull);
+    });
+
+    test('explicit refresh supersedes a stalled market request', () async {
+      final service = PendingGlobalMarketDataService();
+      final controller = GlobalMarketContextController(service: service);
+      final expected = await createService().getGlobalContext();
+      final stale = controller.loadGlobalContext();
+      final current = controller.loadGlobalContext();
+      expect(service.requests.length, 2);
+      expect(controller.context, isNull);
+      expect(controller.isLoading, isTrue);
+
+      service.requests[1].complete(expected);
+      await current;
+      service.requests[0].completeError(StateError('private-market-url'));
+      await stale;
+      expect(controller.context, same(expected));
+      expect(controller.error, isNull);
+      expect(controller.isLoading, isFalse);
+      controller.dispose();
+    });
+
+    test('late success cannot replace a newer market failure', () async {
+      final service = PendingGlobalMarketDataService();
+      final controller = GlobalMarketContextController(service: service);
+      final oldContext = await createService().getGlobalContext();
+      final stale = controller.loadGlobalContext();
+      final current = controller.loadGlobalContext();
+
+      service.requests[1].completeError(StateError('private-market-url'));
+      await current;
+      service.requests[0].complete(oldContext);
+      await stale;
+      expect(controller.context, isNull);
+      expect(controller.error, contains('No se pudo verificar'));
+      expect(controller.error, isNot(contains('private-market-url')));
+      expect(controller.isLoading, isFalse);
+      controller.dispose();
     });
   });
 }

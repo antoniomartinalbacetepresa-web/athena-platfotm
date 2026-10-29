@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/features/market/controllers/market_context_controller.dart';
@@ -26,6 +28,27 @@ class FakeMarketContextRepository implements MarketContextRepository {
     );
   }
 }
+
+class PendingMarketContextRepository implements MarketContextRepository {
+  final requests = <Completer<MarketContext>>[];
+
+  @override
+  Future<MarketContext> getMarketContext() {
+    final request = Completer<MarketContext>();
+    requests.add(request);
+    return request.future;
+  }
+}
+
+MarketContext sampleContext(int assets) => MarketContext(
+      updatedAt: DateTime.utc(2026, 10, 29),
+      assetsAnalyzed: assets,
+      advancingPercentage: 55,
+      decliningPercentage: 45,
+      volatility: 20,
+      sentiment: 'neutral',
+      summary: 'Contexto de prueba',
+    );
 
 void main() {
   test(
@@ -68,4 +91,56 @@ void main() {
       controller.dispose();
     },
   );
+  test('refresh supersedes an in-flight response and clears stale evidence', () async {
+    final repository = PendingMarketContextRepository();
+    final controller = MarketContextController(repository: repository);
+    final stale = controller.loadMarketContext();
+    final current = controller.loadMarketContext();
+    expect(repository.requests.length, 2);
+    expect(controller.isLoading, isTrue);
+    expect(controller.context, isNull);
+
+    repository.requests[1].complete(sampleContext(200));
+    await current;
+    expect(controller.context!.assetsAnalyzed, 200);
+    repository.requests[0].complete(sampleContext(100));
+    await stale;
+    expect(controller.context!.assetsAnalyzed, 200);
+    expect(controller.error, isNull);
+    expect(controller.isLoading, isFalse);
+    controller.dispose();
+  });
+
+  test('stale provider failure cannot erase newer evidence or expose details', () async {
+    final repository = PendingMarketContextRepository();
+    final controller = MarketContextController(repository: repository);
+    final stale = controller.loadMarketContext();
+    final current = controller.loadMarketContext();
+    repository.requests[1].complete(sampleContext(300));
+    await current;
+    repository.requests[0].completeError(StateError('private-provider-token'));
+    await stale;
+    expect(controller.context!.assetsAnalyzed, 300);
+    expect(controller.error, isNull);
+    controller.dispose();
+  });
+
+  test('clear and disposal invalidate in-flight responses', () async {
+    final repository = PendingMarketContextRepository();
+    final controller = MarketContextController(repository: repository);
+    final cleared = controller.loadMarketContext();
+    controller.clear();
+    repository.requests[0].complete(sampleContext(100));
+    await cleared;
+    expect(controller.context, isNull);
+    expect(controller.isLoading, isFalse);
+
+    final disposed = controller.loadMarketContext();
+    controller.dispose();
+    repository.requests[1].complete(sampleContext(200));
+    await disposed;
+    expect(controller.context, isNull);
+    await controller.loadMarketContext();
+    expect(repository.requests.length, 2);
+  });
 }

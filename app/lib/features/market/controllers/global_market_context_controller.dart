@@ -23,9 +23,10 @@ class GlobalMarketContextController extends ChangeNotifier {
   String? get error => _error;
 
   Future<void> loadGlobalContext() async {
-    if (_disposed || _isLoading) {
+    if (_disposed) {
       return;
     }
+    // A new explicit refresh supersedes a stalled request without a clear().
     final requestVersion = ++_requestVersion;
 
     // A refresh must never keep presenting an old market snapshot as current.
