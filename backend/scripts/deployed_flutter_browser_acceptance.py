@@ -254,7 +254,10 @@ def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
 
     # Inject one controlled browser-side fault; never fabricate success data.
     synthesis_path = "/api/v1/recommendations/professional-research/athena-synthesis/latest"
-    pattern = backend_origin + synthesis_path + "*"
+    def matches_synthesis(url: str) -> bool:
+        return _matches_backend_api(
+            url, backend_origin=backend_origin, path=synthesis_path
+        )
 
     def reject(route) -> None:
         route.fulfill(
@@ -262,7 +265,7 @@ def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
             body='{"detail":"controlled acceptance fault"}',
         )
 
-    page.route(pattern, reject)
+    page.route(matches_synthesis, reject)
     try:
         page.get_by_role(
             "button", name="Actualizar síntesis ATHENA verificada"
@@ -273,7 +276,7 @@ def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
         if page.get_by_text("Fuentes verificadas", exact=True).count():
             raise BrowserAcceptanceFailure("Stale provenance remained visible")
     finally:
-        page.unroute(pattern, reject)
+        page.unroute(matches_synthesis, reject)
     with page.expect_response(
         lambda response: response.status == 200 and _matches_backend_api(
             response.url, backend_origin=backend_origin, path=synthesis_path
