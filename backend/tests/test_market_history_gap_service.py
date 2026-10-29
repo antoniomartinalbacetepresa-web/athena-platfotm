@@ -424,3 +424,63 @@ def test_future_source_timestamp_remains_blocked_in_gap_diagnostics(tmp_path: Pa
     assert report.no_observations_count == 1
     assert report.items[0].reason == "no_observations"
     assert report.to_api_dict()["productionEvidenceClaimed"] is False
+
+
+def test_price_history_acceptance_excludes_priceless_and_corrupt_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    """A 365-day timestamp series is not price coverage without valid closes."""
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    no_price_id = _insert_instrument(instruments, "NOPRICE")
+    damaged_id = _insert_instrument(instruments, "DAMAGED")
+    observations = MarketObservationRepository(database=database)
+    base = datetime(2025, 1, 1, 21, 0, tzinfo=timezone.utc)
+    cutoff = base + timedelta(days=366)
+    observations.save_many(
+        instrument_id=no_price_id,
+        observations=[
+            {"timestamp": (base + timedelta(days=day)).isoformat(), "volume": 100}
+            for day in range(0, 366, 5)
+        ],
+        source_provider="yahoo",
+        retrieved_at=cutoff,
+    )
+    observations.save_many(
+        instrument_id=damaged_id,
+        observations=_continuous_history(base),
+        source_provider="yahoo",
+        retrieved_at=cutoff,
+    )
+    coverage_service = MarketObservationCoverageService(database=database)
+    gap_service = MarketHistoryGapService(database=database)
+
+    initial_coverage = coverage_service.get_report(as_of=cutoff)
+    initial_gaps = gap_service.get_report(as_of=cutoff)
+    assert initial_coverage.history_eligible_instrument_count == 2
+    assert initial_coverage.covered_instrument_count == 1
+    assert initial_coverage.current_deep_history_instrument_count == 1
+    assert initial_gaps.no_observations_count == 1
+    assert initial_gaps.items[0].symbol == "NOPRICE"
+
+    # Legacy imports may predate today's positive-price validation.
+    # A single invalid price must break the continuous seven-day segment.
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET close = -1 "
+            "WHERE instrument_id = ? AND observed_at = ?",
+            (damaged_id, (base + timedelta(days=180)).isoformat()),
+        )
+    coverage = coverage_service.get_report(as_of=cutoff)
+    gaps = gap_service.get_report(as_of=cutoff)
+    assert coverage.observation_count == len(_continuous_history(base)) - 1
+    assert coverage.covered_instrument_count == 1
+    assert coverage.current_deep_history_instrument_count == 0
+    assert coverage.current_history_depth_ready is False
+    assert gaps.total_blocking_count == 2
+    assert gaps.no_observations_count == 1
+    assert gaps.discontinuous_source_count == 1
+    assert [item.symbol for item in gaps.items] == ["NOPRICE", "DAMAGED"]
+    assert gaps.total_blocking_count + coverage.current_deep_history_instrument_count == 2
+    assert coverage.to_api_dict()["positiveFiniteCloseRequired"] is True
+    assert gaps.to_api_dict()["positiveFiniteCloseRequired"] is True

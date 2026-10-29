@@ -71,3 +71,17 @@ attaching historical observations to a different security sharing a ticker.
 Run this only against a separately authorized writable operational database,
 after reviewing the full gap export and a rollback/backup plan. A partial
 sweep, a provider error or a changing universe is not 365-day acceptance.
+
+## Price-bearing historical acceptance
+
+The 365-day coverage and gap diagnostics count only PIT-valid observations
+with a **numeric, strictly positive, finite closing price**. Timestamp-only,
+volume-only, missing-close and invalid legacy-price records do not establish
+price history. A missing or corrupt price can split a continuous source
+segment and therefore re-open the seven-day gap criterion. Both diagnostics
+apply the same predicate so the full eligible-universe blocker reconciliation
+remains fail-closed. This is a stricter evidence filter, not a migration,
+automatic historical correction or deletion of immutable observations.
+An operator must review any resulting gaps and authorize a separately
+provenanced backfill or independent source; never overwrite the first
+point-in-time observation or infer adjusted-price quality from this check.

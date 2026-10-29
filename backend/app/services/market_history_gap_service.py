@@ -59,6 +59,7 @@ class MarketHistoryGapReport:
             "offset": self.offset,
             "asOf": self.as_of,
             "pointInTimeCutoffApplied": self.as_of is not None,
+            "positiveFiniteCloseRequired": True,
             "items": [item.to_api_dict() for item in self.items],
             "productionEvidenceClaimed": False,
             "warning": (
@@ -146,6 +147,9 @@ class MarketHistoryGapService:
                 FROM market_observations mo JOIN eligible e ON e.instrument_id = mo.instrument_id
                 WHERE julianday(mo.observed_at) <= julianday(?)
                   AND julianday(mo.retrieved_at) <= julianday(?)
+                  AND typeof(mo.close) IN ('integer', 'real')
+                  AND mo.close > 0
+                  AND mo.close < 1.0e308
                   AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
                   AND (mo.source_timestamp IS NULL OR julianday(mo.source_timestamp) <= julianday(mo.retrieved_at))
                   AND TRIM(COALESCE(mo.source_provider, '')) <> ''
