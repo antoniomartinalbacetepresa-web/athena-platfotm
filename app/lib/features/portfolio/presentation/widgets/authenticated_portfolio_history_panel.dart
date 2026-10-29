@@ -33,6 +33,8 @@ class _AuthenticatedPortfolioHistoryPanelState
   Object? _error;
   bool _loading = true;
   bool _sessionRejected = false;
+  bool _loadingMore = false;
+  Object? _loadMoreError;
   int _requestVersion = 0;
 
   @override
@@ -95,6 +97,8 @@ class _AuthenticatedPortfolioHistoryPanelState
         _error = null;
         _loading = false;
         _sessionRejected = true;
+        _loadingMore = false;
+        _loadMoreError = null;
       });
       return;
     }
@@ -106,6 +110,8 @@ class _AuthenticatedPortfolioHistoryPanelState
       _loading = true;
       _error = null;
       _sessionRejected = false;
+      _loadingMore = false;
+      _loadMoreError = null;
     });
 
     bool isCurrent() =>
@@ -147,6 +153,62 @@ class _AuthenticatedPortfolioHistoryPanelState
         _error = error;
         _loading = false;
       });
+    }
+  }
+
+
+  Future<void> _loadMore() async {
+    final current = _history;
+    final cursor = current?.nextCursor;
+    if (_loading || _loadingMore || current == null ||
+        !current.hasMore || cursor == null) return;
+    final version = _requestVersion;
+    final token = _session.accessToken;
+    final ownerId = _session.account?.id;
+    final portfolioId = widget.portfolioId;
+    if (!_session.isAuthenticated || token == null || ownerId == null) return;
+    setState(() { _loadingMore = true; _loadMoreError = null; });
+    bool stillCurrent() => mounted && version == _requestVersion &&
+        identical(_history, current) && _session.isAuthenticated &&
+        _session.accessToken == token && _session.account?.id == ownerId &&
+        widget.portfolioId == portfolioId;
+    try {
+      final page = await _service.loadHistory(
+        portfolioId: portfolioId, asOf: current.asOf, cursor: cursor);
+      if (!stillCurrent()) return;
+      if (page.portfolioId != current.portfolioId ||
+          !page.asOf.isAtSameMomentAs(current.asOf) ||
+          page.events.isEmpty ||
+          (page.hasMore && page.nextCursor == cursor)) {
+        throw const FormatException('La página de historial no coincide.');
+      }
+      final hashes = current.events.map((event) => event.recordHash).toSet();
+      if (page.events.any((event) => hashes.contains(event.recordHash))) {
+        throw const FormatException('Historial duplicado.');
+      }
+      final previous = current.events.last;
+      final next = page.events.first;
+      final chronological = next.occurredAt.compareTo(previous.occurredAt);
+      final availability = next.availableAt.compareTo(previous.availableAt);
+      if (chronological > 0 ||
+          (chronological == 0 && availability > 0) ||
+          (chronological == 0 && availability == 0 &&
+              next.sequence >= previous.sequence)) {
+        throw const FormatException('Historial fuera de orden.');
+      }
+      setState(() {
+        _history = AuthenticatedPortfolioHistory(
+          portfolioId: current.portfolioId,
+          asOf: current.asOf,
+          events: List.unmodifiable([...current.events, ...page.events]),
+          hasMore: page.hasMore,
+          nextCursor: page.nextCursor,
+        );
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!stillCurrent()) return;
+      setState(() { _loadingMore = false; _loadMoreError = error; });
     }
   }
 
@@ -281,12 +343,31 @@ class _AuthenticatedPortfolioHistoryPanelState
         separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) {
           if (index == history.events.length) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                'Hay más eventos en el ledger; esta vista muestra solo los más recientes dentro del límite actual.',
-                textAlign: TextAlign.center,
-              ),
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Column(children: [
+                if (_loadMoreError != null)
+                  Semantics(
+                    liveRegion: true,
+                    label: 'No se pudieron cargar eventos anteriores.',
+                    child: const Text(
+                      'No se pudieron cargar eventos anteriores. Puedes reintentar.',
+                      key: Key('portfolio-history-more-error'),
+                    ),
+                  ),
+                if (_loadingMore)
+                  const CircularProgressIndicator(
+                    key: Key('portfolio-history-more-loading'),
+                  )
+                else if (history.nextCursor != null)
+                  FilledButton.tonal(
+                    key: const Key('portfolio-history-load-more'),
+                    onPressed: _loadMore,
+                    child: const Text('Cargar eventos anteriores'),
+                  )
+                else
+                  const Text('No hay cursor verificable para continuar.'),
+              ]),
             );
           }
           return _HistoryEventTile(event: history.events[index], theme: theme);

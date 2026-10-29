@@ -139,12 +139,14 @@ class AuthenticatedPortfolioHistory {
     required this.asOf,
     required this.events,
     required this.hasMore,
+    this.nextCursor,
   });
 
   final String portfolioId;
   final DateTime asOf;
   final List<AuthenticatedPortfolioHistoryEvent> events;
   final bool hasMore;
+  final String? nextCursor;
 
   factory AuthenticatedPortfolioHistory.fromJson(Map<String, dynamic> json) {
     final portfolioId = json['portfolioId'];
@@ -152,6 +154,7 @@ class AuthenticatedPortfolioHistory {
     final rawEvents = json['events'];
     final eventCount = json['eventCount'];
     final hasMore = json['hasMore'];
+    final rawNextCursor = json['nextCursor'];
 
     if (portfolioId is! String || portfolioId.trim().isEmpty) {
       throw const FormatException('Historial sin portfolioId válido.');
@@ -172,6 +175,13 @@ class AuthenticatedPortfolioHistory {
     if (eventCount != events.length) {
       throw const FormatException('eventCount no coincide con events.');
     }
+    final validCursor = rawNextCursor is String &&
+        RegExp(r'^[1-9][0-9]{0,11}:[0-9a-f]{64}:[0-9a-f]{16}$')
+            .hasMatch(rawNextCursor);
+    if ((hasMore && !validCursor) ||
+        (!hasMore && rawNextCursor != null)) {
+      throw const FormatException('Paginación de historial inconsistente.');
+    }
     if (events.any((event) => event.portfolioId != portfolioId)) {
       throw const FormatException('Historial mezcla portfolioId distintos.');
     }
@@ -184,6 +194,7 @@ class AuthenticatedPortfolioHistory {
       asOf: asOf,
       events: events,
       hasMore: hasMore,
+      nextCursor: rawNextCursor as String?,
     );
   }
 }

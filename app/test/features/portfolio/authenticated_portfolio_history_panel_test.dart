@@ -220,4 +220,57 @@ void main() {
     expect(session.accessToken, isNull);
     expect(session.account, isNull);
   });
+  testWidgets('history loads older PIT events without losing the first page',
+      (tester) async {
+    const cursor = '2:${_hashA}:0123456789abcdef';
+    var calls = 0;
+    http.Response page(int sequence, String hash, bool more) =>
+        http.Response(jsonEncode({
+          'data': {
+            'portfolioId': 'primary',
+            'asOf': '2026-09-12T06:00:00Z',
+            'events': [{
+              'sequence': sequence,
+              'recordHash': hash,
+              'eventKey': _hashB,
+              'portfolioId': 'primary',
+              'eventType': 'cash_dividend',
+              'occurredAt': '2026-09-12T0${sequence + 2}:00:00Z',
+              'availableAt': '2026-09-12T0${sequence + 2}:01:00Z',
+              'currency': 'EUR',
+              'amount': 10,
+              'source': 'user_portfolio',
+              'sourceRef': 'dividend-$sequence',
+            }],
+            'eventCount': 1,
+            'hasMore': more,
+            'nextCursor': more ? cursor : null,
+          },
+        }), 200);
+    final service = AuthenticatedPortfolioService(
+      baseUrl: 'http://athena.local',
+      session: session,
+      client: MockClient((request) async {
+        calls++;
+        if (calls == 1) {
+          expect(request.url.queryParameters.containsKey('cursor'), isFalse);
+          return page(2, _hashA, true);
+        }
+        expect(request.url.queryParameters['cursor'], cursor);
+        expect(DateTime.parse(request.url.queryParameters['asOf']!).toUtc(),
+            DateTime.parse('2026-09-12T06:00:00Z'));
+        return page(1, _hashB, false);
+      }),
+    );
+    await tester.pumpWidget(harness(service));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('portfolio-history-event-2')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('portfolio-history-load-more')));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.byKey(const Key('portfolio-history-event-2')), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-history-event-1')), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-history-load-more')), findsNothing);
+  });
+
 }
