@@ -50,9 +50,10 @@ ATHENA_BACKUP_DATABASE=/srv/athena/data/athena.db
 ATHENA_BACKUP_PRIMARY_DIRECTORY=/var/lib/athena-backups
 ATHENA_BACKUP_SECONDARY_DIRECTORY=/mnt/athena-independent-backups
 ATHENA_BACKUP_KEEP_LAST=7
+ATHENA_BACKUP_ENCRYPTED_STORAGE_CONFIRMED=true
 ```
 
-These paths are examples, not deployment assertions. Create both backup
+The encryption confirmation is an explicit operator assertion, not cryptographic proof. Do not set it until the independently managed secondary mount has verified encryption at rest and appropriate access controls. These paths are examples, not deployment assertions. Create both backup
 directories before enabling the timer. The secondary path must be a mounted,
 independent filesystem with a different device identifier from the live database
 and primary backup storage. The entry point refuses a missing/unmounted
