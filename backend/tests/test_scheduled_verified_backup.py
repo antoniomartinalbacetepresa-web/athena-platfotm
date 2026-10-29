@@ -93,3 +93,95 @@ def test_scheduler_requires_explicit_encrypted_secondary_storage_confirmation(
     assert loaded == scheduled.ScheduledBackupConfig(
         config.database, config.primary, config.secondary, 7,
     )
+
+
+def test_scheduler_rejects_unsafe_secondary_retention_configuration(
+    tmp_path: Path,
+) -> None:
+    config, _ = _configured(tmp_path)
+    environment = {
+        "ATHENA_BACKUP_DATABASE": str(config.database),
+        "ATHENA_BACKUP_PRIMARY_DIRECTORY": str(config.primary),
+        "ATHENA_BACKUP_SECONDARY_DIRECTORY": str(config.secondary),
+        "ATHENA_BACKUP_ENCRYPTED_STORAGE_CONFIRMED": "true",
+        "ATHENA_BACKUP_KEEP_LAST": "3",
+    }
+    with pytest.raises(ValueError, match="Secondary retention"):
+        scheduled.load_config({
+            **environment, "ATHENA_BACKUP_SECONDARY_KEEP_LAST": "2",
+        })
+    with pytest.raises(ValueError, match="secondary backup retention"):
+        scheduled.load_config({
+            **environment, "ATHENA_BACKUP_SECONDARY_KEEP_LAST": "invalid",
+        })
+    assert scheduled.load_config(environment).secondary_keep_last is None
+    assert scheduled.load_config({
+        **environment, "ATHENA_BACKUP_SECONDARY_KEEP_LAST": "24",
+    }).secondary_keep_last == 24
+
+
+def test_scheduler_bounds_secondary_copies_only_when_explicitly_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    config, lock = _configured(tmp_path)
+    config = replace(config, keep_last=2, secondary_keep_last=3)
+    monkeypatch.setattr(scheduled, "require_independent_mount", lambda _: None)
+    original = scheduled.run_cycle
+    times = iter([
+        datetime(2026, 10, 29, hour, tzinfo=timezone.utc)
+        for hour in (8, 9, 10, 11)
+    ])
+
+    def timed_cycle(**kwargs: object) -> dict[str, object]:
+        return original(**kwargs, now=next(times))
+
+    monkeypatch.setattr(scheduled, "run_cycle", timed_cycle)
+    for _ in range(4):
+        result = scheduled.run_scheduled_cycle(config, lock_path=lock)
+    assert result["secondaryRetentionConfigured"] is True
+    assert result["secondaryRetentionDeleted"] == 1
+    assert len(list(config.primary.glob("athena-*.db"))) == 2
+    assert len(list(config.secondary.glob("athena-*.db"))) == 3
+
+
+def test_secondary_retention_failure_preserves_primary_recovery_points(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from app.services.database_backup_service import DatabaseBackupService
+
+    config, lock = _configured(tmp_path)
+    config = replace(config, secondary_keep_last=3)
+    monkeypatch.setattr(scheduled, "require_independent_mount", lambda _: None)
+    original_cycle = scheduled.run_cycle
+
+    def timed_cycle(**kwargs: object) -> dict[str, object]:
+        return original_cycle(
+            **kwargs, now=datetime(2026, 10, 29, 12, tzinfo=timezone.utc),
+        )
+
+    monkeypatch.setattr(scheduled, "run_cycle", timed_cycle)
+    original_retention = DatabaseBackupService.apply_retention
+    directories: list[Path] = []
+
+    def guarded_retention(self: DatabaseBackupService, directory: Path, *,
+                          keep_last: int, filename_prefix: str = "athena-"):
+        directories.append(Path(directory))
+        if Path(directory) == config.secondary:
+            raise RuntimeError("Secondary retention failed")
+        return original_retention(
+            self, directory, keep_last=keep_last,
+            filename_prefix=filename_prefix,
+        )
+
+    monkeypatch.setattr(DatabaseBackupService, "apply_retention", guarded_retention)
+    with pytest.raises(RuntimeError, match="Secondary retention failed"):
+        scheduled.run_scheduled_cycle(config, lock_path=lock)
+    assert directories == [config.secondary]
+    assert len(list(config.primary.glob("athena-*.db"))) == 1
+    assert len(list(config.secondary.glob("athena-*.db"))) == 1
