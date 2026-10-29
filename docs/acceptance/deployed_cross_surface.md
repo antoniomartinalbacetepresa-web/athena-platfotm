@@ -29,6 +29,15 @@ HTTP 503 fail-closed removal and recovery, and compact Dashboard → Market
 navigation. The HTTP 503 is a controlled browser fault, **not** evidence
 that a live provider failed. No personal account or position is modified.
 
+Canonical synthesis and News-refresh HTTP evidence must originate from the
+**configured HTTPS staging backend origin** (host and effective port) and the
+exact API path. A same-path response from another host, an HTTP downgrade,
+or a cross-origin request during selective News refresh fails acceptance.
+The controlled 503 fault is routed only to that configured backend; recovery
+must include a fresh successful response from that backend, not just a
+reappearing UI label. These checks do not replace independent provider
+provenance verification or the opt-in two-owner API acceptance.
+
 Deploy the exact `dev/real-market-backend` Flutter Web build to HTTPS.
 **Before the push build**, set repository variable
 `ATHENA_WEB_BACKEND_ORIGIN` to the public HTTPS API origin (no path, query,
