@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import hashlib
+import sqlite3
 import json
 import re
 from datetime import datetime
@@ -153,8 +155,10 @@ class RecommendationProfessionalResearchCycleRepository:
         radar_payload: dict[str, Any],
         journal_payload: dict[str, Any],
         devils_advocate_payload: dict[str, Any],
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
-        self.initialize()
+        if connection is None:
+            self.initialize()
         package = self.validate_package(
             cycle_payload=cycle_payload,
             radar_payload=radar_payload,
@@ -176,7 +180,7 @@ class RecommendationProfessionalResearchCycleRepository:
         serialized = json.dumps(package, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         created_at = datetime.now().astimezone().isoformat()
 
-        with self._database.connect() as connection:
+        with (self._database.connect() if connection is None else nullcontext(connection)) as connection:
             existing_revision = connection.execute(
                 "SELECT * FROM athena_professional_research_cycles WHERE journal_id = ? AND revision_id = ?",
                 (journal_id, revision_id),

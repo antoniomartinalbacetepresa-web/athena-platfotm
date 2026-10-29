@@ -265,3 +265,46 @@ def test_cycle_api_persists_complete_package_and_get_reverifies_it(
 def test_cycle_get_route_is_registered() -> None:
     paths = app.openapi()["paths"]
     assert "/api/v1/recommendations/professional-research/research-cycle/{cycle_hash}" in paths
+
+
+def test_cycle_api_rolls_back_journal_if_cycle_append_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = AthenaDatabase(tmp_path / "atomic-cycle-failure.db")
+    journal_repository = RecommendationInvestmentJournalRepository(database)
+    cycle_repository = RecommendationProfessionalResearchCycleRepository(database)
+    monkeypatch.setattr(cycle_api, "journal_repository", journal_repository)
+    monkeypatch.setattr(cycle_api, "cycle_repository", cycle_repository)
+
+    def reject_cycle(**kwargs):
+        # Simulate a storage failure AFTER the journal has been appended.
+        assert kwargs["connection"].in_transaction
+        raise ValueError("simulated cycle storage failure")
+
+    monkeypatch.setattr(cycle_repository, "append", reject_cycle)
+    response = TestClient(app).post(
+        "/api/v1/recommendations/professional-research/research-cycle",
+        json=_request_payload(),
+    )
+    assert response.status_code == 400
+    assert journal_repository.get_journal(journal_id="journal-aapl") == []
+
+
+def test_cycle_api_rejects_split_database_without_partial_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    journal_repository = RecommendationInvestmentJournalRepository(
+        AthenaDatabase(tmp_path / "journal.db")
+    )
+    cycle_repository = RecommendationProfessionalResearchCycleRepository(
+        AthenaDatabase(tmp_path / "cycle.db")
+    )
+    monkeypatch.setattr(cycle_api, "journal_repository", journal_repository)
+    monkeypatch.setattr(cycle_api, "cycle_repository", cycle_repository)
+
+    response = TestClient(app).post(
+        "/api/v1/recommendations/professional-research/research-cycle",
+        json=_request_payload(),
+    )
+    assert response.status_code == 400
+    assert journal_repository.get_journal(journal_id="journal-aapl") == []

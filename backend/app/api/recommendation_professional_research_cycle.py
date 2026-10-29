@@ -255,20 +255,34 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
             devils_advocate_payload=devils_payload,
         )
 
-        journal_repository.append(snapshot=journal)
-        lineage = journal_repository.verify_lineage(journal_id=journal.journal_id)
-        _assert_lineage(
-            lineage,
-            snapshot_hash=journal.snapshot_hash,
-            journal_id=journal.journal_id,
-            symbol=journal.symbol,
-        )
-        cycle_record = cycle_repository.append(
-            cycle_payload=payload,
-            radar_payload=radar_payload,
-            journal_payload=journal_payload,
-            devils_advocate_payload=devils_payload,
-        )
+        # Both append-only artifacts must commit together or not at all.
+        # Never accept independently configured SQLite stores for this operation.
+        journal_db = journal_repository._database
+        cycle_db = cycle_repository._database
+        if journal_db.database_path.resolve() != cycle_db.database_path.resolve():
+            raise ValueError("Journal y Research Cycle deben compartir la misma base SQLite.")
+        # DDL/executescript must finish before BEGIN IMMEDIATE.
+        journal_repository.initialize()
+        cycle_repository.initialize()
+        with journal_db.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            journal_repository.append(snapshot=journal, connection=connection)
+            lineage = journal_repository.verify_lineage(
+                journal_id=journal.journal_id, connection=connection,
+            )
+            _assert_lineage(
+                lineage,
+                snapshot_hash=journal.snapshot_hash,
+                journal_id=journal.journal_id,
+                symbol=journal.symbol,
+            )
+            cycle_record = cycle_repository.append(
+                cycle_payload=payload,
+                radar_payload=radar_payload,
+                journal_payload=journal_payload,
+                devils_advocate_payload=devils_payload,
+                connection=connection,
+            )
     except HTTPException:
         raise
     except ValueError as exc:

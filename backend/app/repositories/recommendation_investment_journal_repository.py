@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
+import sqlite3
 import re
 from datetime import datetime
 from typing import Any
@@ -60,8 +62,12 @@ class RecommendationInvestmentJournalRepository:
                 """
             )
 
-    def append(self, *, snapshot: InvestmentJournalSnapshot) -> dict[str, Any]:
-        self.initialize()
+    def append(
+        self, *, snapshot: InvestmentJournalSnapshot,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        if connection is None:
+            self.initialize()
         payload = self._validated_snapshot(snapshot)
         journal_id = str(payload["journalId"])
         revision_id = str(payload["revisionId"])
@@ -72,9 +78,11 @@ class RecommendationInvestmentJournalRepository:
         snapshot_hash = str(payload["snapshotHash"])
         created_at = datetime.now().astimezone().isoformat()
 
-        with self._database.connect() as connection:
-            # Serialize the head check and insert across independent SQLite writers.
-            connection.execute("BEGIN IMMEDIATE")
+        owns_connection = connection is None
+        with (self._database.connect() if owns_connection else nullcontext(connection)) as connection:
+            # A caller may already hold the write transaction for a paired cycle.
+            if owns_connection:
+                connection.execute("BEGIN IMMEDIATE")
             chain_rows = connection.execute(
                 """SELECT * FROM athena_investment_journal_snapshots
                    WHERE journal_id = ? ORDER BY id ASC""",
@@ -170,10 +178,13 @@ class RecommendationInvestmentJournalRepository:
             raise RuntimeError("No se pudo recuperar la revisión persistida del journal.")
         return self.validate_record(record)
 
-    def get_journal(self, *, journal_id: str) -> list[dict[str, Any]]:
-        self.initialize()
+    def get_journal(
+        self, *, journal_id: str, connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        if connection is None:
+            self.initialize()
         normalized = self._required_text(journal_id, "journal_id")
-        with self._database.connect() as connection:
+        with (self._database.connect() if connection is None else nullcontext(connection)) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM athena_investment_journal_snapshots
@@ -184,8 +195,10 @@ class RecommendationInvestmentJournalRepository:
             ).fetchall()
         return [self.validate_record(record) for row in rows if (record := self._row(row)) is not None]
 
-    def verify_lineage(self, *, journal_id: str) -> dict[str, Any]:
-        records = self.get_journal(journal_id=journal_id)
+    def verify_lineage(
+        self, *, journal_id: str, connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        records = self.get_journal(journal_id=journal_id, connection=connection)
         if not records:
             raise ValueError("No existe un journal persistido con ese journal_id.")
 
