@@ -228,4 +228,71 @@ void main() {
     await controller.loadLatest();
     expect(controller.hasData, isFalse);
   });
+
+  test('new research cycle supersedes a pending older cycle', () async {
+    final older = Completer<http.Response>();
+    final newer = Completer<http.Response>();
+    var calls = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.test',
+      client: MockClient((_) {
+        calls++;
+        return calls == 1 ? older.future : newer.future;
+      }),
+    );
+    final controller = AthenaSynthesisController(dataSource: source);
+    final nextCycle = 'f' * 64;
+    final oldLoad = controller.load(cycleHash);
+    final newLoad = controller.load(nextCycle);
+    expect(calls, 2);
+    expect(controller.cycleHash, nextCycle);
+    expect(controller.hasData, isFalse);
+
+    final current = validPayload();
+    ((current['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Ciclo vigente';
+    newer.complete(http.Response(jsonEncode(current), 200));
+    await newLoad;
+    older.complete(http.Response(jsonEncode(validPayload()), 200));
+    await oldLoad;
+
+    expect(controller.synthesis!.summary, 'Ciclo vigente');
+    expect(controller.cycleHash, nextCycle);
+    expect(controller.isLoading, isFalse);
+    controller.dispose();
+    source.dispose();
+  });
+
+  test('latest synthesis supersedes a pending cycle-specific response', () async {
+    final older = Completer<http.Response>();
+    final newer = Completer<http.Response>();
+    var calls = 0;
+    final source = AthenaBackendSynthesisDataSource(
+      baseUrl: 'https://athena.test',
+      client: MockClient((_) {
+        calls++;
+        return calls == 1 ? older.future : newer.future;
+      }),
+    );
+    final controller = AthenaSynthesisController(dataSource: source);
+    final oldLoad = controller.load(cycleHash);
+    final latestLoad = controller.loadLatest();
+    expect(calls, 2);
+    expect(controller.cycleHash, isNull);
+
+    final current = validPayload();
+    ((current['data'] as Map<String, dynamic>)['synthesis']
+        as Map<String, dynamic>)['summary'] = 'Última síntesis';
+    newer.complete(http.Response(jsonEncode(current), 200));
+    await latestLoad;
+    older.complete(http.Response(jsonEncode(validPayload()), 200));
+    await oldLoad;
+
+    expect(controller.synthesis!.summary, 'Última síntesis');
+    expect(controller.cycleHash, isNull);
+    expect(controller.isLoading, isFalse);
+    controller.dispose();
+    source.dispose();
+  });
+
 }

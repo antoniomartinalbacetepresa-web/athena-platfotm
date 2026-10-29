@@ -61,7 +61,7 @@ void main() {
         retrievedAt: DateTime.parse('2026-09-15T16:00:02Z'),
       );
 
-  http.Response portfolioResponse({double? averagePurchasePrice = 160}) =>
+  http.Response portfolioResponse({double? averagePurchasePrice = 160, double quantity = 4.5}) =>
       http.Response(
         jsonEncode({
           'data': {
@@ -70,7 +70,7 @@ void main() {
                 'id': 3,
                 'symbol': 'AAPL',
                 'exchange': 'NASDAQ',
-                'quantity': 4.5,
+                'quantity': quantity,
                 'averagePurchasePrice': averagePurchasePrice,
                 'createdAt': '2026-09-10T10:00:00Z',
                 'updatedAt': '2026-09-10T10:01:00Z',
@@ -190,6 +190,90 @@ void main() {
     controller.dispose();
     response.complete(portfolioResponse());
     await pending;
+    service.dispose();
+  });
+
+
+  test('post-mutation refresh supersedes an in-flight holdings read',
+      () async {
+    final auth = session();
+    final oldResponse = Completer<http.Response>();
+    var reads = 0;
+    final service = AuthenticatedPortfolioService(
+      session: auth,
+      client: MockClient((request) {
+        if (request.method == 'PUT') {
+          final updated = (jsonDecode(portfolioResponse(quantity: 9).body)
+              as Map<String, dynamic>)['data']['positions'][0];
+          return Future.value(http.Response(jsonEncode({'data': updated}), 200));
+        }
+        expect(request.method, 'GET');
+        reads++;
+        return reads == 1
+            ? oldResponse.future
+            : Future.value(portfolioResponse(quantity: 9));
+      }),
+    );
+    final controller = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _MarketRepository({'AAPL': quote('AAPL')}),
+      session: auth,
+    );
+    final oldLoad = controller.load();
+    expect(reads, 1);
+
+    final saved = await controller.upsert(symbol: 'AAPL', quantity: 9);
+    expect(saved, isTrue);
+    expect(reads, 2);
+    expect(controller.positions.single.quantity, 9);
+    expect(controller.positions.single.currentValue, 1800);
+
+    oldResponse.complete(portfolioResponse());
+    await oldLoad;
+    expect(controller.positions.single.quantity, 9);
+    expect(controller.isLoading, isFalse);
+    controller.dispose();
+    service.dispose();
+  });
+
+  test('failed post-mutation refresh does not report success or restore stale data',
+      () async {
+    final auth = session();
+    final oldResponse = Completer<http.Response>();
+    var reads = 0;
+    final service = AuthenticatedPortfolioService(
+      session: auth,
+      client: MockClient((request) {
+        if (request.method == 'PUT') {
+          final updated = (jsonDecode(portfolioResponse(quantity: 9).body)
+              as Map<String, dynamic>)['data']['positions'][0];
+          return Future.value(http.Response(jsonEncode({'data': updated}), 200));
+        }
+        expect(request.method, 'GET');
+        reads++;
+        return reads == 1
+            ? oldResponse.future
+            : Future.value(http.Response('unavailable', 503));
+      }),
+    );
+    final controller = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _MarketRepository({'AAPL': quote('AAPL')}),
+      session: auth,
+    );
+    final oldLoad = controller.load();
+    expect(reads, 1);
+
+    expect(await controller.upsert(symbol: 'AAPL', quantity: 9), isFalse);
+    expect(reads, 2);
+    expect(controller.positions, isEmpty);
+    expect(controller.error, isNotNull);
+
+    oldResponse.complete(portfolioResponse());
+    await oldLoad;
+    expect(controller.positions, isEmpty);
+    expect(controller.error, isNotNull);
+    controller.dispose();
     service.dispose();
   });
 

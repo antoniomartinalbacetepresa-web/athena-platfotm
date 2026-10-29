@@ -22,7 +22,8 @@ class AthenaSynthesisController extends ChangeNotifier {
   bool get hasData => _synthesis != null;
 
   Future<void> loadLatest() async {
-    if (_disposed || _isLoading) return;
+    // A latest request supersedes an in-flight cycle-specific response.
+    if (_disposed || (_isLoading && _latestRequested)) return;
     final requestVersion = ++_requestVersion;
     _latestRequested = true;
     _cycleHash = null;
@@ -51,10 +52,12 @@ class AthenaSynthesisController extends ChangeNotifier {
   }
 
   Future<void> load(String cycleHash) async {
-    if (_disposed || _isLoading) return;
-
-    final requestVersion = ++_requestVersion;
+    if (_disposed) return;
     final requestedCycle = cycleHash.trim().toLowerCase();
+    // Different research cycles must supersede pending responses immediately.
+    // Only identical concurrent requests are coalesced.
+    if (_isLoading && !_latestRequested && _cycleHash == requestedCycle) return;
+    final requestVersion = ++_requestVersion;
     _latestRequested = false;
     _synthesis = null;
     _isLoading = true;

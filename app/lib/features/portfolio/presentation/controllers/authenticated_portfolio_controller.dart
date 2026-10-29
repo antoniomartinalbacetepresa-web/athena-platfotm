@@ -33,6 +33,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   bool _sessionRejected = false;
   String? _error;
   int _authorityGeneration = 0;
+  int _loadGeneration = 0;
 
   List<AuthenticatedPortfolioViewPosition> get positions => _positions;
   bool get isLoading => _isLoading;
@@ -45,6 +46,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     // changes. Any response already in flight belongs to the old generation
     // and is forbidden from repopulating this controller.
     _authorityGeneration += 1;
+    _loadGeneration += 1;
     _positions = const [];
     _isLoading = false;
     _sessionRejected = false;
@@ -55,34 +57,43 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     }
   }
 
-  Future<void> load() async {
-    if (_isLoading) return;
+  Future<void> load({bool force = false}) async {
+    // A completed mutation must supersede an earlier read, even if that
+    // read is still waiting for HTTP or market quotes.
+    if (_isLoading && !force) return;
     final generation = _authorityGeneration;
+    final loadGeneration = ++_loadGeneration;
     _isLoading = true;
     _error = null;
+    // Never show pre-mutation holdings as if they were the refreshed state.
+    _positions = const [];
     notifyListeners();
 
     try {
       final valued = await _portfolioService.loadValuedPositions(
         marketRepository: _marketRepository,
       );
-      if (generation != _authorityGeneration) return;
+      if (generation != _authorityGeneration ||
+          loadGeneration != _loadGeneration) return;
       _positions = List.unmodifiable(
         valued.map(AuthenticatedPortfolioViewPosition.fromValuedPosition),
       );
       _sessionRejected = false;
     } on AuthSessionRejectedException {
-      if (generation != _authorityGeneration) return;
+      if (generation != _authorityGeneration ||
+          loadGeneration != _loadGeneration) return;
       _positions = const [];
       _sessionRejected = true;
       _error = null;
     } catch (_) {
-      if (generation != _authorityGeneration) return;
+      if (generation != _authorityGeneration ||
+          loadGeneration != _loadGeneration) return;
       _positions = const [];
       _sessionRejected = false;
       _error = 'No se pudo cargar la cartera autenticada con datos verificables.';
     } finally {
-      if (generation == _authorityGeneration) {
+      if (generation == _authorityGeneration &&
+          loadGeneration == _loadGeneration) {
         _isLoading = false;
         notifyListeners();
       }
@@ -105,10 +116,11 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
         averagePurchasePrice: averagePurchasePrice,
       );
       if (generation != _authorityGeneration) return false;
-      await load();
+      final refreshGeneration = _loadGeneration + 1;
+      await load(force: true);
       return generation == _authorityGeneration &&
-          !_sessionRejected &&
-          _error == null;
+          _loadGeneration == refreshGeneration &&
+          !_isLoading && !_sessionRejected && _error == null;
     } on AuthSessionRejectedException {
       if (generation != _authorityGeneration) return false;
       _positions = const [];
@@ -130,10 +142,11 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     try {
       await _portfolioService.deletePosition(position.serverPositionId);
       if (generation != _authorityGeneration) return false;
-      await load();
+      final refreshGeneration = _loadGeneration + 1;
+      await load(force: true);
       return generation == _authorityGeneration &&
-          !_sessionRejected &&
-          _error == null;
+          _loadGeneration == refreshGeneration &&
+          !_isLoading && !_sessionRejected && _error == null;
     } on AuthSessionRejectedException {
       if (generation != _authorityGeneration) return false;
       _positions = const [];
@@ -177,6 +190,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   void dispose() {
     // In-flight HTTP/market work must not notify a disposed owner boundary.
     _authorityGeneration++;
+    _loadGeneration++;
     _session.removeListener(_onAuthorityChanged);
     super.dispose();
   }
