@@ -358,3 +358,37 @@ def test_cli_requires_complete_export_for_csv(
         main()
     assert exc.value.code == 2
     assert not target.exists()
+
+
+
+def test_snapshot_diagnostic_rejects_outdated_schema_without_migration(tmp_path: Path) -> None:
+    path, _ = _database(tmp_path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE schema_metadata SET value='8' WHERE key='schema_version'"
+        )
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(RuntimeError, match="schema version"):
+        run_snapshot(path)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_snapshot_diagnostic_rejects_copy_changed_during_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, database = _database(tmp_path)
+    _instrument(database)
+    original = MarketHistoryGapService.get_report
+
+    def tamper(self: MarketHistoryGapService, **kwargs: object):
+        result = original(self, **kwargs)
+        # Simulate an unexpected writer on the temporary diagnostic copy.
+        with sqlite3.connect(self._database.database_path) as connection:
+            connection.execute("CREATE TABLE unexpected_diagnostic_write (id INTEGER)")
+        return result
+
+    monkeypatch.setattr(MarketHistoryGapService, "get_report", tamper)
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(RuntimeError, match="cambió durante"):
+        run_snapshot(path)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before

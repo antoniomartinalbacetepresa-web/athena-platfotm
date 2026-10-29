@@ -2,7 +2,8 @@
 
 This diagnostic never certifies production coverage or authorizes trading.
 The live SQLite database is opened read-only and backed up to a temporary copy;
-ATHENA's schema initialization and queries run only against that copy.
+ATHENA's current schema is validated and queried read-only on that copy.
+The recorded SHA-256 must match the exact copy used by the diagnostics.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.database.athena_database import AthenaDatabase
+from app.database.read_only_snapshot_database import ReadOnlySnapshotDatabase
 from app.services.market_history_gap_service import MarketHistoryGapService
 from app.services.market_observation_coverage_service import MarketObservationCoverageService
 
@@ -72,8 +73,7 @@ def run_snapshot(
         with closing(sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)) as source:
             with closing(sqlite3.connect(snapshot_path)) as snapshot:
                 source.backup(snapshot)
-        # Fingerprint the exact backed-up source image, before any migrations
-        # performed against the disposable copy.
+        # Fingerprint the exact immutable SQLite image queried by both reports.
         digest = hashlib.sha256()
         with snapshot_path.open("rb") as copied_file:
             for chunk in iter(lambda: copied_file.read(1024 * 1024), b""):
@@ -87,7 +87,7 @@ def run_snapshot(
         if integrity is None or integrity[0] != "ok":
             raise RuntimeError("La copia SQLite no supera la comprobación de integridad.")
 
-        database = AthenaDatabase(snapshot_path)
+        database = ReadOnlySnapshotDatabase(snapshot_path)
         coverage = MarketObservationCoverageService(database=database).get_report(
             as_of=cutoff
         )
@@ -118,6 +118,12 @@ def run_snapshot(
                 or len({item.instrument_id for item in blocking_items}) != len(blocking_items)
             ):
                 raise RuntimeError("Exportación de bloqueos PIT incompleta o duplicada.")
+
+        # A diagnostic must never report the pre-query SHA of a copy that
+        # was migrated, modified by a service, or concurrently tampered with.
+        with snapshot_path.open("rb") as copied_file:
+            if hashlib.file_digest(copied_file, "sha256").hexdigest() != fingerprint:
+                raise RuntimeError("La copia SQLite cambió durante el diagnóstico PIT.")
 
     eligible = coverage.history_eligible_instrument_count
     current = coverage.current_deep_history_instrument_count
