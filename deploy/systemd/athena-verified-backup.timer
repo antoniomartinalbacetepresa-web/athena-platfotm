@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly ATHENA verified backup and isolated restore
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+Unit=athena-verified-backup.service
+
+[Install]
+WantedBy=timers.target
