@@ -199,4 +199,97 @@ void main() {
       }
     });
 
+    test('presenta medidas PIT de dividendos sin elevar autoridad', () async {
+      final data = _dossier();
+      (data['professionalModules'] as Map<String, dynamic>)['dividendTotalReturn'] = {
+        'status': 'diagnostic_evidence_available',
+        'productionEligible': false,
+        'recommendationInfluence': false,
+        'automaticTrading': false,
+        'reason': 'Diagnóstico descriptivo',
+        'evidence': {
+          'knowledgeCutoff': '2026-09-07T08:00:00Z',
+          'productionEligible': false,
+          'automaticTrading': false,
+          'signal': {
+            'status': 'diagnostic_ready',
+            'symbol': 'AAPL',
+            'asOf': '2026-09-07T08:00:00Z',
+            'productionEligible': false,
+            'dividend': {
+              'pitSafe': true,
+              'knowledgeCutoff': '2026-09-07T08:00:00Z',
+              'frequency': 'quarterly',
+              'trailingYield': 0.02,
+              'dividendGrowthRate': -0.1,
+              'paymentStabilityScore': 0.9,
+            },
+            'totalReturn60d': -0.05,
+            'earningsPayoutRatio': null,
+            'fcfPayoutRatio': 0.4,
+            'financialPeriodSustainability': null,
+          },
+        },
+      };
+      final source = AthenaBackendProfessionalDossierDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({'data': data}), 200)),
+      );
+      addTearDown(source.dispose);
+      final result = await source.getLatest(symbol: 'AAPL');
+      final metrics = result.modules['dividendTotalReturn']!.dividendDiagnostics!;
+      expect(result.isSafe, isTrue);
+      expect(metrics.frequency, 'quarterly');
+      expect(metrics.trailingYield, 0.02);
+      expect(metrics.dividendGrowthRate, -0.1);
+      expect(metrics.totalReturn60d, -0.05);
+      expect(metrics.earningsPayoutRatio, isNull);
+    });
+
+    test('rechaza identidad, PIT y medidas no finitas en evidencia económica', () async {
+      for (final mutation in <void Function(Map<String, dynamic>)>[
+        (signal) => signal['symbol'] = 'MSFT',
+        (signal) => signal['asOf'] = '2026-09-08T08:00:00Z',
+        (signal) => (signal['dividend'] as Map<String, dynamic>)['knowledgeCutoff'] = '2026-09-08T08:00:00Z',
+        (signal) => signal['totalReturn60d'] = 'Infinity',
+        (signal) => signal['productionEligible'] = true,
+      ]) {
+        final data = _dossier();
+        (data['professionalModules'] as Map<String, dynamic>)['dividendTotalReturn'] = {
+          'status': 'diagnostic_evidence_available',
+          'productionEligible': false,
+          'recommendationInfluence': false,
+          'automaticTrading': false,
+          'reason': 'Diagnóstico',
+          'evidence': {
+            'knowledgeCutoff': '2026-09-07T08:00:00Z',
+            'productionEligible': false,
+            'automaticTrading': false,
+            'signal': {
+              'status': 'diagnostic_ready',
+              'symbol': 'AAPL',
+              'asOf': '2026-09-07T08:00:00Z',
+              'productionEligible': false,
+              'dividend': {
+                'pitSafe': true,
+                'knowledgeCutoff': '2026-09-07T08:00:00Z',
+                'frequency': 'quarterly',
+                'trailingYield': 0.02,
+              },
+              'totalReturn60d': 0.01,
+            },
+          },
+        };
+        final signal = ((data['professionalModules'] as Map<String, dynamic>)['dividendTotalReturn']
+            as Map<String, dynamic>)['evidence'] as Map<String, dynamic>;
+        mutation(signal['signal'] as Map<String, dynamic>);
+        final source = AthenaBackendProfessionalDossierDataSource(
+          baseUrl: 'https://api.athena.test',
+          client: MockClient((_) async => http.Response(jsonEncode({'data': data}), 200)),
+        );
+        addTearDown(source.dispose);
+        expect(source.getLatest(symbol: 'AAPL'), throwsFormatException);
+      }
+    });
+
 }

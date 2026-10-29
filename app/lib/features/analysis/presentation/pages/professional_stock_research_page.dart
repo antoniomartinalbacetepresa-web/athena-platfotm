@@ -168,22 +168,32 @@ class _ResearchBody extends StatelessWidget {
               : _provenanceSummary(module.evidence!);
           return Card(
             key: Key('professional-research-module-$name'),
-            child: ListTile(
-              title: Text(_label(name)),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(module.reason),
-                  if (provenance != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      provenance,
-                      key: Key('professional-research-provenance-$name'),
-                    ),
-                  ],
-                ],
-              ),
-              trailing: Text(module.status),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListTile(
+                  title: Text(_label(name)),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(module.reason),
+                      if (provenance != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          provenance,
+                          key: Key('professional-research-provenance-$name'),
+                        ),
+                      ],
+                    ],
+                  ),
+                  trailing: Text(module.status),
+                ),
+                if (name == 'dividendTotalReturn' &&
+                    module.dividendDiagnostics != null)
+                  _DividendDiagnosticDetails(
+                    diagnostics: module.dividendDiagnostics!,
+                  ),
+              ],
             ),
           );
         }),
@@ -219,5 +229,69 @@ class _ResearchBody extends StatelessWidget {
       'dividendTotalReturn': 'Dividendos y retorno total',
     };
     return labels[name] ?? name;
+  }
+}
+
+class _DividendDiagnosticDetails extends StatelessWidget {
+  final ProfessionalDividendDiagnostics diagnostics;
+
+  const _DividendDiagnosticDetails({required this.diagnostics});
+
+  String _percent(double? value) {
+    if (value == null) return 'No disponible';
+    final percentage = value * 100;
+    return percentage.isFinite
+        ? '${percentage.toStringAsFixed(2)} %'
+        : 'No disponible';
+  }
+
+  String _frequency(String? value) {
+    const labels = <String, String>{
+      'none': 'Sin historial de dividendos',
+      'insufficient_history': 'Historial insuficiente',
+      'monthly': 'Mensual',
+      'quarterly': 'Trimestral',
+      'semiannual': 'Semestral',
+      'annual': 'Anual',
+      'irregular': 'Irregular',
+    };
+    return labels[value] ?? 'No disponible';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = switch (diagnostics.status) {
+      'diagnostic_ready' => 'Diagnóstico disponible',
+      'no_dividend_history' => 'Sin historial de dividendos',
+      _ => 'Evidencia de mercado insuficiente',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Semantics(
+        container: true,
+        label: 'Diagnóstico PIT descriptivo de dividendos y retorno total. '
+            'No es una predicción ni autoriza recomendaciones u operaciones.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(status, key: const Key('professional-dividend-status')),
+            Text('Frecuencia: ${_frequency(diagnostics.frequency)}'),
+            Text(
+              'Rentabilidad por dividendo histórica: ${_percent(diagnostics.trailingYield)}',
+              key: const Key('professional-dividend-yield'),
+            ),
+            Text('Crecimiento histórico del dividendo: ${_percent(diagnostics.dividendGrowthRate)}'),
+            Text('Estabilidad de pagos: ${_percent(diagnostics.paymentStabilityScore)}'),
+            Text(
+              'Retorno total histórico 60 días: ${_percent(diagnostics.totalReturn60d)}',
+              key: const Key('professional-dividend-total-return'),
+            ),
+            Text('Payout sobre beneficios: ${_percent(diagnostics.earningsPayoutRatio)}'),
+            Text('Payout sobre flujo de caja libre: ${_percent(diagnostics.fcfPayoutRatio)}'),
+            Text('Sostenibilidad financiera: ${_percent(diagnostics.financialSustainabilityScore)}'),
+          ],
+        ),
+      ),
+    );
   }
 }

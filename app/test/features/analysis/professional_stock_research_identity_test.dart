@@ -115,4 +115,50 @@ void main() {
     expect(find.textContaining('Evidencia del símbolo OLD'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('el dossier profesional muestra métricas históricas sin inventar datos', (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    final base = _dossier('AAPL');
+    final modules = Map<String, ProfessionalModuleState>.from(base.modules);
+    modules['dividendTotalReturn'] = const ProfessionalModuleState(
+      status: 'diagnostic_evidence_available',
+      productionEligible: false,
+      reason: 'Diagnóstico PIT sin autoridad',
+      dividendDiagnostics: ProfessionalDividendDiagnostics(
+        status: 'diagnostic_ready',
+        frequency: 'quarterly',
+        trailingYield: 0.02,
+        totalReturn60d: -0.05,
+      ),
+    );
+    source.pending['AAPL']!.complete(ProfessionalDossier(
+      asOf: base.asOf,
+      symbol: 'AAPL',
+      advisoryStatus: 'no_advice',
+      productionEligible: false,
+      allocationEligible: false,
+      executionEligible: false,
+      orderRoutingEligible: false,
+      automaticTrading: false,
+      readOnly: true,
+      modules: modules,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-safety-boundary')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('professional-research-module-dividendTotalReturn')),
+      250,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-dividend-status')), findsOneWidget);
+    expect(find.text('Rentabilidad por dividendo histórica: 2.00 %'), findsOneWidget);
+    expect(find.text('Retorno total histórico 60 días: -5.00 %'), findsOneWidget);
+    expect(find.text('Payout sobre beneficios: No disponible'), findsOneWidget);
+    expect(find.byKey(const Key('professional-research-module-dividendTotalReturn')), findsOneWidget);
+  });
+
 }

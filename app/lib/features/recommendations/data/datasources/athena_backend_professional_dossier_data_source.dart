@@ -2,6 +2,32 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+/// Verified, read-only PIT dividend diagnostics; missing values stay unavailable.
+/// Percentages are stored as ratios and must never be interpreted as forecasts.
+class ProfessionalDividendDiagnostics {
+  final String status;
+  final String? frequency;
+  final double? trailingYield;
+  final double? dividendGrowthRate;
+  final double? paymentStabilityScore;
+  final double? totalReturn60d;
+  final double? earningsPayoutRatio;
+  final double? fcfPayoutRatio;
+  final double? financialSustainabilityScore;
+
+  const ProfessionalDividendDiagnostics({
+    required this.status,
+    this.frequency,
+    this.trailingYield,
+    this.dividendGrowthRate,
+    this.paymentStabilityScore,
+    this.totalReturn60d,
+    this.earningsPayoutRatio,
+    this.fcfPayoutRatio,
+    this.financialSustainabilityScore,
+  });
+}
+
 class ProfessionalModuleState {
   final String status;
   final bool productionEligible;
@@ -9,6 +35,7 @@ class ProfessionalModuleState {
   final bool recommendationInfluence;
   final bool automaticTrading;
   final Map<String, dynamic>? evidence;
+  final ProfessionalDividendDiagnostics? dividendDiagnostics;
 
   const ProfessionalModuleState({
     required this.status,
@@ -17,6 +44,7 @@ class ProfessionalModuleState {
     this.recommendationInfluence = false,
     this.automaticTrading = false,
     this.evidence,
+    this.dividendDiagnostics,
   });
 }
 
@@ -217,6 +245,7 @@ class AthenaBackendProfessionalDossierDataSource {
           Map<String, dynamic>.from(module['evidence'] as Map),
         );
       }
+      ProfessionalDividendDiagnostics? dividendDiagnostics;
       if (name == 'dividendTotalReturn' &&
           module['status'] == 'diagnostic_evidence_available') {
         if (!module.containsKey('recommendationInfluence') ||
@@ -241,6 +270,9 @@ class AthenaBackendProfessionalDossierDataSource {
             'La evidencia de dividendos intentó elevar autoridad de producción.',
           );
         }
+        dividendDiagnostics = _mapDividendDiagnostics(
+          evidence, cutoff, dossierSymbol,
+        );
       }
 
       modules[name] = ProfessionalModuleState(
@@ -250,6 +282,7 @@ class AthenaBackendProfessionalDossierDataSource {
         recommendationInfluence: recommendationInfluence,
         automaticTrading: moduleAutomaticTrading,
         evidence: evidence,
+        dividendDiagnostics: dividendDiagnostics,
       );
     }
 
@@ -270,6 +303,95 @@ class AthenaBackendProfessionalDossierDataSource {
       throw const FormatException('Dossier profesional inconsistente.');
     }
     return dossier;
+  }
+
+  ProfessionalDividendDiagnostics _mapDividendDiagnostics(
+    Map<String, dynamic> evidence,
+    DateTime cutoff,
+    String? dossierSymbol,
+  ) {
+    final rawSignal = evidence['signal'];
+    if (rawSignal is! Map<String, dynamic>) {
+      throw const FormatException('La señal diagnóstica de dividendos es obligatoria.');
+    }
+    final signal = rawSignal;
+    if (signal['productionEligible'] != false ||
+        _utc(signal['asOf'], 'dividend.signal.asOf') != cutoff ||
+        dossierSymbol == null ||
+        _optionalSymbol(signal['symbol']) != dossierSymbol) {
+      throw const FormatException('La señal de dividendos viola identidad, PIT o autoridad.');
+    }
+    final status = _string(signal['status'], 'dividend.signal.status');
+    if (!const {'diagnostic_ready', 'no_dividend_history', 'market_evidence_not_ready'}
+        .contains(status)) {
+      throw const FormatException('Estado económico de dividendos desconocido.');
+    }
+    final rawDividend = signal['dividend'];
+    if (rawDividend != null && rawDividend is! Map<String, dynamic>) {
+      throw const FormatException('Evidencia económica de dividendos inválida.');
+    }
+    final dividend = rawDividend as Map<String, dynamic>?;
+    if (dividend != null) {
+      if (dividend['pitSafe'] != true ||
+          _utc(dividend['knowledgeCutoff'], 'dividend.knowledgeCutoff') != cutoff) {
+        throw const FormatException('Los dividendos no respetan el corte PIT.');
+      }
+    }
+    if ((status == 'diagnostic_ready' && dividend == null) ||
+        (status == 'market_evidence_not_ready' && dividend != null)) {
+      throw const FormatException('La señal y su disponibilidad económica se contradicen.');
+    }
+    final frequency = dividend?['frequency'];
+    if (frequency != null &&
+        !const {'none', 'insufficient_history', 'monthly', 'quarterly',
+          'semiannual', 'annual', 'irregular'}.contains(frequency)) {
+      throw const FormatException('Frecuencia de dividendos inválida.');
+    }
+    final rawSustainability = signal['financialPeriodSustainability'];
+    if (rawSustainability != null &&
+        rawSustainability is! Map<String, dynamic>) {
+      throw const FormatException('Sostenibilidad financiera inválida.');
+    }
+    final sustainability = rawSustainability as Map<String, dynamic>?;
+    if (sustainability != null &&
+        (sustainability['pitSafe'] != true ||
+         _utc(sustainability['knowledgeCutoff'], 'sustainability.knowledgeCutoff') != cutoff ||
+         sustainability['sourceProvider'] is! String ||
+         (sustainability['sourceProvider'] as String).trim().isEmpty)) {
+      throw const FormatException('Sostenibilidad sin procedencia PIT verificable.');
+    }
+    return ProfessionalDividendDiagnostics(
+      status: status,
+      frequency: frequency as String?,
+      trailingYield: _optionalFiniteRatio(dividend?['trailingYield'], 'trailingYield', minimum: 0),
+      dividendGrowthRate: _optionalFiniteRatio(dividend?['dividendGrowthRate'], 'dividendGrowthRate'),
+      paymentStabilityScore: _optionalFiniteRatio(
+        dividend?['paymentStabilityScore'], 'paymentStabilityScore', minimum: 0, maximum: 1,
+      ),
+      totalReturn60d: _optionalFiniteRatio(signal['totalReturn60d'], 'totalReturn60d'),
+      earningsPayoutRatio: _optionalFiniteRatio(
+        signal['earningsPayoutRatio'], 'earningsPayoutRatio', minimum: 0,
+      ),
+      fcfPayoutRatio: _optionalFiniteRatio(
+        signal['fcfPayoutRatio'], 'fcfPayoutRatio', minimum: 0,
+      ),
+      financialSustainabilityScore: _optionalFiniteRatio(
+        sustainability?['sustainabilityScore'], 'sustainabilityScore', minimum: 0, maximum: 1,
+      ),
+    );
+  }
+
+  double? _optionalFiniteRatio(dynamic value, String field,
+      {double? minimum, double? maximum}) {
+    if (value == null) return null;
+    if (value is! num) throw FormatException('$field debe ser numérico.');
+    final numeric = value.toDouble();
+    if (!numeric.isFinite ||
+        (minimum != null && numeric < minimum) ||
+        (maximum != null && numeric > maximum)) {
+      throw FormatException('$field no es una medida finita válida.');
+    }
+    return numeric;
   }
 
   String? _optionalSymbol(dynamic value) {
