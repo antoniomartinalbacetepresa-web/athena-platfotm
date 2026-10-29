@@ -219,6 +219,9 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     if (authorityToken == null || authorityToken.isEmpty) return;
     try {
       final positions = await _loadDeclaredPositions();
+      // The page may have been removed while the local snapshot was pending.
+      // An unmounted route must never initiate an authenticated cloud write.
+      if (!mounted) return;
       if (!AuthSession.instance.isAuthenticated ||
           AuthSession.instance.accessToken?.trim() != authorityToken ||
           AuthSession.instance.authorityVersion != authorityVersion) {
@@ -232,7 +235,11 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo leer la cartera local. No se ha enviado ningún dato.')));
       return;
     }
-    if (!mounted) return;
+    // A completion from owner A must not show a status on owner B's route.
+    if (!mounted ||
+        !AuthSession.instance.isAuthenticated ||
+        AuthSession.instance.authorityVersion != authorityVersion ||
+        AuthSession.instance.accessToken?.trim() != authorityToken) return;
     setState(() {});
     if (_syncController.message != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_syncController.message!)));
   }

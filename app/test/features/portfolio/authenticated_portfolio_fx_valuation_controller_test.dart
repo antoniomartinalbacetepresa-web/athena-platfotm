@@ -118,6 +118,59 @@ void main() {
     controller.dispose();
   });
 
+  test('disposed FX boundary discards delayed success and refuses new requests', () async {
+    final pending = Completer<FxQuote>();
+    var calls = 0;
+    final controller = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) {
+          calls++;
+          return pending.future;
+        },
+      ),
+    );
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    final load = controller.load(
+      positions: [position(currency: 'USD', currentValue: 100)],
+      baseCurrency: 'EUR',
+    );
+    expect(calls, 1);
+    controller.dispose();
+    final beforeCompletion = notifications;
+    pending.complete(fx(0.9));
+    await load;
+    await controller.load(
+      positions: [position(currency: 'USD', currentValue: 100)],
+      baseCurrency: 'EUR',
+    );
+    controller.clear();
+    expect(calls, 1);
+    expect(notifications, beforeCompletion);
+    expect(controller.valuation, isNull);
+  });
+
+  test('disposed FX boundary discards delayed provider error', () async {
+    final pending = Completer<FxQuote>();
+    final controller = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({required baseCurrency, required quoteCurrency}) => pending.future,
+      ),
+    );
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    final load = controller.load(
+      positions: [position(currency: 'USD', currentValue: 100)],
+      baseCurrency: 'EUR',
+    );
+    controller.dispose();
+    final beforeCompletion = notifications;
+    pending.completeError(StateError('late FX failure'));
+    await load;
+    expect(notifications, beforeCompletion);
+    expect(controller.error, isNull);
+  });
+
   test('owner replacement clears completed FX valuation synchronously', () async {
     final session = AuthSession.forTesting(_TokenStore());
     session.establish(accessToken: 'owner-a', account: account(1));

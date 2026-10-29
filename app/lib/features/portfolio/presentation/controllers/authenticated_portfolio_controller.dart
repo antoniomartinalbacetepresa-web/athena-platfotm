@@ -34,6 +34,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   String? _error;
   int _authorityGeneration = 0;
   int _loadGeneration = 0;
+  bool _disposed = false;
 
   List<AuthenticatedPortfolioViewPosition> get positions => _positions;
   bool get isLoading => _isLoading;
@@ -42,6 +43,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   bool get isEmpty => !_isLoading && !_sessionRejected && _positions.isEmpty;
 
   void _onAuthorityChanged() {
+    if (_disposed) return;
     // Owner data must disappear synchronously when authentication authority
     // changes. Any response already in flight belongs to the old generation
     // and is forbidden from repopulating this controller.
@@ -58,6 +60,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   }
 
   Future<void> load({bool force = false}) async {
+    if (_disposed) return;
     // A completed mutation must supersede an earlier read, even if that
     // read is still waiting for HTTP or market quotes.
     if (_isLoading && !force) return;
@@ -112,7 +115,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
     required double quantity,
     double? averagePurchasePrice,
   }) async {
-    if (_sessionRejected) return false;
+    if (_disposed || _sessionRejected) return false;
     final generation = _authorityGeneration;
     try {
       await _portfolioService.upsertPosition(
@@ -143,7 +146,7 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   }
 
   Future<bool> remove(AuthenticatedPortfolioViewPosition position) async {
-    if (_sessionRejected) return false;
+    if (_disposed || _sessionRejected) return false;
     final generation = _authorityGeneration;
     try {
       await _portfolioService.deletePosition(position.serverPositionId);
@@ -195,8 +198,13 @@ class AuthenticatedPortfolioController extends ChangeNotifier {
   @override
   void dispose() {
     // In-flight HTTP/market work must not notify a disposed owner boundary.
+    _disposed = true;
     _authorityGeneration++;
     _loadGeneration++;
+    _positions = const [];
+    _isLoading = false;
+    _sessionRejected = false;
+    _error = null;
     _session.removeListener(_onAuthorityChanged);
     super.dispose();
   }

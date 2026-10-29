@@ -25,6 +25,7 @@ class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
   String? _error;
   AuthenticatedPortfolioFxValuation? _valuation;
   int _generation = 0;
+  bool _disposed = false;
 
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -39,6 +40,7 @@ class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
     required List<AuthenticatedPortfolioViewPosition> positions,
     required String baseCurrency,
   }) async {
+    if (_disposed) return;
     final generation = ++_generation;
     _isLoading = true;
     _error = null;
@@ -65,6 +67,7 @@ class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
   }
 
   void clear() {
+    if (_disposed) return;
     _generation++;
     _isLoading = false;
     _error = null;
@@ -74,6 +77,12 @@ class AuthenticatedPortfolioFxValuationController extends ChangeNotifier {
 
   @override
   void dispose() {
+    // Do not publish late FX totals or errors after an owner boundary closes.
+    _disposed = true;
+    _generation++;
+    _valuation = null;
+    _error = null;
+    _isLoading = false;
     _session.removeListener(_onAuthorityChanged);
     super.dispose();
   }

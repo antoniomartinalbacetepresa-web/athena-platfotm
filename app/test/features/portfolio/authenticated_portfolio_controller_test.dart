@@ -194,6 +194,35 @@ void main() {
   });
 
 
+  test('disposed holdings boundary refuses later reads and writes', () async {
+    final auth = session();
+    var requests = 0;
+    final service = AuthenticatedPortfolioService(
+      session: auth,
+      client: MockClient((request) async {
+        requests++;
+        if (request.method == 'GET') return portfolioResponse();
+        return http.Response('{}', 500);
+      }),
+    );
+    final controller = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _MarketRepository({'AAPL': quote('AAPL')}),
+      session: auth,
+    );
+    await controller.load();
+    final previouslyVisible = controller.positions.single;
+    expect(requests, 1);
+    controller.dispose();
+    expect(controller.positions, isEmpty);
+
+    await controller.load();
+    expect(await controller.upsert(symbol: 'AAPL', quantity: 3), isFalse);
+    expect(await controller.remove(previouslyVisible), isFalse);
+    expect(requests, 1);
+    service.dispose();
+  });
+
   test('post-mutation refresh supersedes an in-flight holdings read',
       () async {
     final auth = session();
