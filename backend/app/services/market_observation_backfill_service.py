@@ -25,6 +25,13 @@ class MarketHistoryProvider(Protocol):
 ProgressCallback = Callable[[dict[str, Any]], None]
 TodayProvider = Callable[[], date]
 
+# A sweep must preserve listing identity, not merely the ticker symbol. These
+# are the same identity fields checked around every provider request.
+FROZEN_INSTRUMENT_IDENTITY_FIELDS = (
+    "symbol", "exchange_short_name", "instrument_type", "issuer_id",
+    "instrument_id", "currency", "is_active",
+)
+
 
 @dataclass(frozen=True)
 class MarketObservationBackfillReport:
@@ -106,6 +113,7 @@ class MarketObservationBackfillService:
         blocking_only: bool = False,
         _instrument_ids: tuple[int, ...] | None = None,
         _expected_symbols: tuple[str, ...] | None = None,
+        _expected_identities: tuple[tuple[Any, ...], ...] | None = None,
     ) -> MarketObservationBackfillReport:
         if _instrument_ids is not None:
             if not blocking_only or offset != 0:
@@ -130,6 +138,17 @@ class MarketObservationBackfillService:
             )
         ):
             raise ValueError("La selección fija requiere símbolos congelados válidos.")
+        if _expected_identities is not None and (
+            _instrument_ids is None
+            or not isinstance(_expected_identities, tuple)
+            or len(_expected_identities) != len(_instrument_ids)
+            or any(
+                not isinstance(identity, tuple)
+                or len(identity) != len(FROZEN_INSTRUMENT_IDENTITY_FIELDS)
+                for identity in _expected_identities
+            )
+        ):
+            raise ValueError("La selección fija requiere identidades completas y alineadas.")
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
         if offset < 0:
@@ -158,6 +177,7 @@ class MarketObservationBackfillService:
             blocking_only=blocking_only,
             instrument_ids=_instrument_ids,
             expected_symbols=_expected_symbols,
+            expected_identities=_expected_identities,
             as_of_date=(
                 self._parse_iso_date(effective_to_date, field="to_date")
                 if effective_to_date is not None
@@ -362,6 +382,7 @@ class MarketObservationBackfillService:
         blocking_only: bool,
         instrument_ids: tuple[int, ...] | None,
         expected_symbols: tuple[str, ...] | None,
+        expected_identities: tuple[tuple[Any, ...], ...] | None,
         as_of_date: date,
     ) -> list[dict[str, Any]]:
         if instrument_ids is not None:
@@ -374,6 +395,12 @@ class MarketObservationBackfillService:
                     raise RuntimeError("Un instrumento del lote fijo dejó de ser elegible.")
                 if (expected_symbols is not None and
                     str(row.get("symbol") or "").strip().upper() != expected_symbols[index]):
+                    raise RuntimeError("La identidad congelada del instrumento cambió.")
+                if (
+                    expected_identities is not None
+                    and tuple(row.get(field) for field in FROZEN_INSTRUMENT_IDENTITY_FIELDS)
+                    != expected_identities[index]
+                ):
                     raise RuntimeError("La identidad congelada del instrumento cambió.")
                 rows.append(row)
             return rows
@@ -397,10 +424,7 @@ class MarketObservationBackfillService:
 
     def _assert_selected_identity(self, selected: dict[str, Any]) -> None:
         current = self._instruments.get_by_id(int(selected["id"]))
-        fields = (
-            "symbol", "exchange_short_name", "instrument_type", "issuer_id",
-            "instrument_id", "currency", "is_active",
-        )
+        fields = FROZEN_INSTRUMENT_IDENTITY_FIELDS
         if (current is None or not bool(current.get("is_active")) or
             any(current.get(field) != selected.get(field) for field in fields)):
             raise RuntimeError("La identidad del instrumento cambió durante el backfill.")

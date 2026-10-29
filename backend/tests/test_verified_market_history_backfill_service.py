@@ -228,3 +228,54 @@ def test_sweep_rejects_symbol_reassignment_after_freezing_worklist(tmp_path: Pat
     with pytest.raises(RuntimeError, match="identidad congelada"):
         service.run_sweep(limit=1, max_batches=2)
     assert [call[0] for call in provider.calls] == ["AAA"]
+
+
+@pytest.mark.parametrize("field,new_value", [
+    ("exchange_short_name", "NYSE"),
+    ("currency", "EUR"),
+    ("instrument_type", "preferred_stock"),
+])
+def test_sweep_rejects_listing_identity_change_before_next_batch(
+    tmp_path: Path, field: str, new_value: str,
+) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _insert(instruments, "AAA")
+    second_id = _insert(instruments, "BBB")
+
+    class MutatingProvider(FakeHistoryProvider):
+        def get_history(self, symbol, from_date=None, to_date=None):
+            self.calls.append((symbol, from_date, to_date))
+            if symbol == "AAA":
+                with database.connect() as connection:
+                    # Column names are a fixed test-only allowlist, never input.
+                    connection.execute(
+                        f"UPDATE instruments SET {field} = ? WHERE id = ?",
+                        (new_value, second_id),
+                    )
+            return []
+
+    provider = MutatingProvider({})
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 10, 28),
+    )
+    with pytest.raises(RuntimeError, match="identidad congelada"):
+        service.run_sweep(limit=1, max_batches=2)
+    # No request or write is allowed for the rebound second listing.
+    assert [call[0] for call in provider.calls] == ["AAA"]
+
+
+def test_sweep_processes_unchanged_frozen_listings_in_multiple_batches(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    _insert(instruments, "AAA")
+    _insert(instruments, "BBB")
+    provider = FakeHistoryProvider({})
+    report = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 10, 28),
+    ).run_sweep(limit=1, max_batches=2)
+    assert report["attemptedInstrumentCount"] == 2
+    assert report["historyReady"] is False
+    assert [call[0] for call in provider.calls] == ["AAA", "BBB"]

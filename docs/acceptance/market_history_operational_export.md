@@ -58,3 +58,16 @@ A deployment URL, two disposable staging accounts in protected secrets,
 real longitudinal OOS maturities, off-site backup/restore evidence, SMTP
 delivery and required protected-branch checks remain separate release
 criteria. This tool does not close them.
+
+## Safe bounded backfill after gap review
+
+The authorized `python -m scripts.backfill_deep_market_history --sweep --limit 25 --max-batches 20`
+command freezes the blocking worklist from one consistent SQLite generation.
+The sweep now also freezes the **full listing identity** (symbol, exchange,
+instrument type, issuer/instrument IDs, currency and active status). If the
+live catalogue changes any of these fields before a later batch, the sweep
+stops **before fetching or persisting that listing**, rather than silently
+attaching historical observations to a different security sharing a ticker.
+Run this only against a separately authorized writable operational database,
+after reviewing the full gap export and a rollback/backup plan. A partial
+sweep, a provider error or a changing universe is not 365-day acceptance.

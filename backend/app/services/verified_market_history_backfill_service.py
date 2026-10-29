@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.instrument_repository import InstrumentRepository
 from app.services.market_history_gap_service import MarketHistoryGapService
 from app.services.market_observation_coverage_service import MarketObservationCoverageService
 from app.services.market_observation_backfill_service import (
@@ -17,6 +18,7 @@ from app.services.market_observation_backfill_service import (
     MarketHistoryProvider,
     ProgressCallback,
     TodayProvider,
+    FROZEN_INSTRUMENT_IDENTITY_FIELDS,
 )
 
 
@@ -116,6 +118,7 @@ class VerifiedMarketHistoryBackfillService:
         to_date: str | None = None,
         _instrument_ids: tuple[int, ...] | None = None,
         _expected_symbols: tuple[str, ...] | None = None,
+        _expected_identities: tuple[tuple[Any, ...], ...] | None = None,
     ) -> VerifiedMarketHistoryBackfillReport:
         if limit <= 0:
             raise ValueError("limit debe ser mayor que 0.")
@@ -134,6 +137,7 @@ class VerifiedMarketHistoryBackfillService:
             blocking_only=True,
             _instrument_ids=_instrument_ids,
             _expected_symbols=_expected_symbols,
+            _expected_identities=_expected_identities,
         )
         blockers_after = self._blocking_count(verification_cutoff)
         coverage_after = MarketObservationCoverageService(database=self._database).get_report(
@@ -225,6 +229,22 @@ class VerifiedMarketHistoryBackfillService:
                         "La lista de bloqueos cambió durante la congelación del barrido."
                     )
                 frozen.extend(page.items)
+            # Freeze every identity field from the SAME SQLite generation as
+            # the blocker list. Later live catalogue changes must not silently
+            # rebind observations to a different listing with the same ticker.
+            frozen_repository = InstrumentRepository(database=frozen_database)
+            frozen_identities: list[tuple[Any, ...]] = []
+            for item in frozen:
+                frozen_row = frozen_repository.get_by_id(item.instrument_id)
+                if (
+                    frozen_row is None
+                    or not bool(frozen_row.get("is_active"))
+                    or str(frozen_row.get("symbol") or "").strip().upper() != item.symbol
+                ):
+                    raise RuntimeError("La identidad congelada del instrumento cambió.")
+                frozen_identities.append(tuple(
+                    frozen_row.get(field) for field in FROZEN_INSTRUMENT_IDENTITY_FIELDS
+                ))
         instrument_ids = tuple(item.instrument_id for item in frozen)
         frozen_symbols = tuple(item.symbol for item in frozen)
         if len(instrument_ids) != len(set(instrument_ids)):
@@ -242,6 +262,7 @@ class VerifiedMarketHistoryBackfillService:
                 to_date=to_date,
                 _instrument_ids=batch,
                 _expected_symbols=frozen_symbols[index:index + limit],
+                _expected_identities=tuple(frozen_identities[index:index + limit]),
             ))
         # An empty frozen worklist must NEVER fall back to run() against the
         # live queue: a newly added instrument could then be fetched/written
