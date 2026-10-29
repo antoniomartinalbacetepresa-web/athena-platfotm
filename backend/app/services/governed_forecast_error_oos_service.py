@@ -124,6 +124,8 @@ class GovernedForecastErrorOosService:
             source_retrieved = self._iso(item.get("retrievedAt"), "source_provenance.retrievedAt")
             if source_observed > source_retrieved or source_retrieved > origin:
                 raise ValueError("External challenger provenance violates the PIT cutoff.")
+            if source_observed > observed or source_retrieved > retrieved:
+                raise ValueError("External challenger source provenance exceeds declared input cutoff.")
             provenance.append({
                 "source": source,
                 "observedAt": source_observed.isoformat(),
@@ -213,6 +215,8 @@ class GovernedForecastErrorOosService:
             )
             if source_observed > source_retrieved or source_retrieved > origin:
                 raise ValueError("external challenger provenance PIT cutoff was corrupted after binding.")
+            if source_observed > input_observed or source_retrieved > input_retrieved:
+                raise ValueError("external challenger source provenance exceeds declared input cutoff.")
             provenance.append({
                 "source": source,
                 "observedAt": source_observed.isoformat(),
@@ -363,6 +367,8 @@ class GovernedForecastErrorOosService:
                 )
                 if source_observed > source_retrieved or source_retrieved > forecast_origin:
                     raise ValueError("error record failed source provenance PIT ordering.")
+                if source_observed > input_observed or source_retrieved > input_retrieved:
+                    raise ValueError("error record source provenance exceeds declared input cutoff.")
             maturity = forecast_origin + timedelta(seconds=horizon)
             if self._iso(record.get("maturityAt"), "error.maturityAt") != maturity:
                 raise ValueError("error record maturity does not match forecast horizon.")

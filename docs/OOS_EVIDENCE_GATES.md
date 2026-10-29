@@ -10,6 +10,16 @@ error dictionaries are rechecked before aggregation. These are software
 integrity safeguards, not real forecast observations, measured skill, policy
 approval, model promotion or investment authority.
 
+## External challenger input chronology
+
+Research-only external challengers must prove that every source observation
+occurred no later than `inputObservedThrough` and every source retrieval no
+later than `inputRetrievedAt`, in addition to the existing forecast-origin
+PIT boundary. Binding, realized-outcome measurement and longitudinal replay
+all enforce the same relationship. This prevents a forecast from declaring
+an earlier input cutoff while using evidence obtained later. It is not an
+external timestamp attestation, real longitudinal evidence or production approval.
+
 ## Manual prospective operations
 
 From `backend`, use `PYTHONPATH=. python scripts/prospective_cohort.py` with

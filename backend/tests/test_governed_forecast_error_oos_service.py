@@ -892,3 +892,68 @@ def test_challenger_rejects_unrepresentable_numeric_input(tmp_path) -> None:
             outcome_observed_at=observed,
             outcome_retrieved_at=observed + timedelta(minutes=1),
         )
+
+@pytest.mark.parametrize("stage", ["binding", "measurement", "summary"])
+@pytest.mark.parametrize(
+    ("source_field", "minutes_before_origin"),
+    [("observedAt", 90), ("retrievedAt", 30)],
+)
+def test_challenger_provenance_must_fit_declared_input_window(
+    tmp_path, stage: str, source_field: str, minutes_before_origin: int
+) -> None:
+    """An input cutoff cannot predate a source actually used by the forecast."""
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    offending_time = (origin - timedelta(minutes=minutes_before_origin)).isoformat()
+    if stage == "binding":
+        provenance = [{
+            "source": "market_history",
+            "observedAt": (origin - timedelta(hours=2)).isoformat(),
+            "retrievedAt": (origin - timedelta(hours=1)).isoformat(),
+        }]
+        provenance[0][source_field] = offending_time
+        with pytest.raises(ValueError, match="exceeds declared input cutoff"):
+            service.bind_external_challenger(
+                provider="google",
+                model_name="timesfm",
+                model_version="research-pinned-version",
+                model_config={"contextLength": 512},
+                forecast_origin=origin,
+                input_observed_through=origin - timedelta(hours=2),
+                input_retrieved_at=origin - timedelta(hours=1),
+                horizon_seconds=86400,
+                forecast_value=105.0,
+                baseline_name="last_value",
+                baseline_value=100.0,
+                source_provenance=provenance,
+            )
+        return
+
+    challenger = _external_challenger(service, origin)
+    observed = origin + timedelta(days=1)
+    if stage == "measurement":
+        challenger["sourceProvenance"][0][source_field] = offending_time
+        with pytest.raises(ValueError, match="exceeds declared input cutoff"):
+            service.measure_external_challenger_outcome(
+                challenger=challenger,
+                as_of=observed + timedelta(minutes=2),
+                outcome_value=104.0,
+                outcome_observed_at=observed,
+                outcome_retrieved_at=observed + timedelta(minutes=1),
+            )
+        return
+
+    realized = service.measure_external_challenger_outcome(
+        challenger=challenger,
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0,
+        outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    realized["sourceProvenance"][0][source_field] = offending_time
+    with pytest.raises(ValueError, match="exceeds declared input cutoff"):
+        service.summarize_external_challenger_outcomes(error_records=[realized])
