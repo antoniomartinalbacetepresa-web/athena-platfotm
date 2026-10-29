@@ -174,15 +174,29 @@ def test_sweep_freezes_more_than_1000_blockers_before_writing(tmp_path, monkeypa
         )
 
     monkeypatch.setattr(sweep_module.MarketHistoryGapService, "get_report", get_report)
+    # This pagination test synthesizes 1001 blocker IDs without inserting
+    # instruments. Supply matching frozen listing identities explicitly;
+    # production sweeps must never skip the identity lookup.
+    def frozen_get_by_id(_self, instrument_id):
+        return {
+            "symbol": f"TEST{instrument_id:04d}",
+            "exchange_short_name": "NASDAQ",
+            "instrument_type": "common_stock",
+            "issuer_id": None, "instrument_id": None,
+            "currency": None, "is_active": 1,
+        }
+
+    monkeypatch.setattr(sweep_module.InstrumentRepository, "get_by_id", frozen_get_by_id)
     service = VerifiedMarketHistoryBackfillService(
         database=database, history_provider=FakeHistoryProvider({}),
         today_provider=lambda: today,
     )
     attempted = []
 
-    def run(*, limit, offset, from_date, to_date, _instrument_ids, _expected_symbols):
+    def run(*, limit, offset, from_date, to_date, _instrument_ids, _expected_symbols, _expected_identities):
         assert offset == 0
-        assert limit == len(_instrument_ids) == len(_expected_symbols)
+        assert limit == len(_instrument_ids) == len(_expected_symbols) == len(_expected_identities)
+        assert all(identity[0] == symbol for identity, symbol in zip(_expected_identities, _expected_symbols))
         assert _expected_symbols == tuple(f"TEST{i:04d}" for i in _instrument_ids)
         attempted.extend(_instrument_ids)
         return SimpleNamespace(
