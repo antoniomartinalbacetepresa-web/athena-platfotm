@@ -131,6 +131,31 @@ def test_deployed_build_identity_rejects_missing_or_redirected_manifest(status, 
         }, status=status, url=url))
 
 
+@pytest.mark.parametrize("url,expected", [
+    ("https://api.staging.example.test/api/v1/news/feed", True),
+    ("https://api.staging.example.test:443/api/v1/news/feed?page=1", True),
+    ("https://other.example.test/api/v1/news/feed", False),
+    ("http://api.staging.example.test/api/v1/news/feed", False),
+    ("https://api.staging.example.test:8443/api/v1/news/feed", False),
+    ("https://api.staging.example.test/api/v1/news/feed/extra", False),
+    ("https://user@api.staging.example.test/api/v1/news/feed", False),
+    ("https://api.staging.example.test/api/v1/news/feed-malicious", False),
+])
+def test_live_http_evidence_requires_exact_https_backend_origin_and_path(url, expected):
+    assert module._matches_backend_api(
+        url, backend_origin="https://api.staging.example.test",
+        path="/api/v1/news/feed",
+    ) is expected
+
+
+def test_news_refresh_rejects_untrusted_origin_even_when_real_requests_exist():
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        module._require_news_refresh_requests([
+            "/api/v1/recommendations/professional-research/news-synthesis/latest",
+            "unexpected_origin",
+        ], selective=True)
+
+
 @pytest.mark.parametrize("selective,paths", [
     (True, ["/api/v1/recommendations/professional-research/news-synthesis/latest"]),
     (False, [
