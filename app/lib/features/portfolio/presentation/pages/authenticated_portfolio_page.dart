@@ -239,7 +239,9 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     if (!mounted ||
         !AuthSession.instance.isAuthenticated ||
         AuthSession.instance.authorityVersion != authorityVersion ||
-        AuthSession.instance.accessToken?.trim() != authorityToken) return;
+        AuthSession.instance.accessToken?.trim() != authorityToken) {
+      return;
+    }
     setState(() {});
     if (_syncController.message != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_syncController.message!)));
   }
