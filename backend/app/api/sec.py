@@ -103,6 +103,7 @@ def get_latest_institutional_holdings(
             retrieved_at=retrieved_at,
         )
         _assert_passive_13f_payload(data)
+        _assert_selected_13f_metadata(data, selected)
         return {
             "data": data,
             "selectedFiling": {
@@ -159,3 +160,29 @@ def _assert_passive_13f_payload(data: object) -> None:
         or identity_policy.get("isWeightingReady") is not False
     ):
         raise RuntimeError("El contrato 13F violó isWeightingReady=false.")
+
+
+def _assert_selected_13f_metadata(data: object, selected: dict[str, object]) -> None:
+    """Require the parsed 13F to match the exact selected SEC accession and PIT time."""
+    if not isinstance(data, dict):
+        raise RuntimeError("El expediente SEC 13F no es verificable.")
+    expected_fields = {
+        "form": selected.get("form"),
+        "accessionNumber": selected.get("accessionNumber"),
+        "positionDate": selected.get("reportDate"),
+        "filingDate": selected.get("filingDate"),
+    }
+    if any(data.get(field) != expected for field, expected in expected_fields.items()):
+        raise RuntimeError("La identidad del expediente SEC 13F no coincide.")
+    try:
+        raw_acceptance = selected.get("acceptanceDateTime")
+        if not isinstance(raw_acceptance, str):
+            raise ValueError("missing acceptance timestamp")
+        acceptance = datetime.strptime(raw_acceptance, "%Y%m%d%H%M%S").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as exc:
+        raise RuntimeError("La publicación SEC 13F no es verificable.") from exc
+    expected_publication = acceptance.isoformat().replace("+00:00", "Z")
+    if data.get("publicationDateTime") != expected_publication:
+        raise RuntimeError("La fecha PIT SEC 13F no coincide con la aceptación EDGAR.")
