@@ -254,6 +254,21 @@ class RelevantInvestorActivity {
     if (form != '13F-HR' && form != '13F-HR/A') {
       throw const FormatException('Formulario institucional no soportado.');
     }
+    // Bind the displayed PIT availability to the selected EDGAR acceptance.
+    // A different timestamp could falsely make a filing appear available earlier.
+    final expectedAcceptance = [
+      publication.year.toString().padLeft(4, '0'),
+      publication.month.toString().padLeft(2, '0'),
+      publication.day.toString().padLeft(2, '0'),
+      publication.hour.toString().padLeft(2, '0'),
+      publication.minute.toString().padLeft(2, '0'),
+      publication.second.toString().padLeft(2, '0'),
+    ].join();
+    if (selected['acceptanceDateTime'] != expectedAcceptance) {
+      throw const FormatException(
+        'La publicación SEC 13F no coincide con la aceptación EDGAR.',
+      );
+    }
 
     return RelevantInvestorActivity(
       cik: normalizedCik,
