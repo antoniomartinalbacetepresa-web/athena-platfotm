@@ -27,7 +27,20 @@ class Fake13fService:
 
     def fetch_and_parse(self, **kwargs):
         self.calls.append(kwargs)
-        return self.payload
+        result = dict(self.payload)
+        filing = kwargs["filing"]
+        result.setdefault("form", filing["form"])
+        result.setdefault("accessionNumber", filing["accessionNumber"])
+        result.setdefault("positionDate", filing["reportDate"])
+        result.setdefault("filingDate", filing["filingDate"])
+        acceptance = sec_api.datetime.strptime(
+            filing["acceptanceDateTime"], "%Y%m%d%H%M%S"
+        ).replace(tzinfo=timezone.utc)
+        result.setdefault(
+            "publicationDateTime",
+            acceptance.isoformat().replace("+00:00", "Z"),
+        )
+        return result
 
     def close(self):
         self.closed = True
@@ -89,6 +102,34 @@ def test_latest_13f_endpoint_selects_newest_acceptance_and_keeps_passive_contrac
     assert edgar.closed is True
     assert parser.closed is True
 
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong"),
+    [
+        ("form", "13F-HR/A"),
+        ("accessionNumber", "0001067983-26-999999"),
+        ("positionDate", "2026-03-31"),
+        ("filingDate", "2026-08-13"),
+        ("publicationDateTime", "2026-08-14T12:00:01Z"),
+    ],
+)
+def test_latest_13f_rejects_mismatched_selected_filing_and_pit_time(
+    monkeypatch, field, wrong
+):
+    payload = _passive_payload()
+    payload[field] = wrong
+    filing = _filing("0001067983-26-000001", "20260814120000")
+    edgar = FakeEdgarService([filing])
+    parser = Fake13fService(payload)
+    monkeypatch.setattr(sec_api, "_edgar_service", lambda: edgar)
+    monkeypatch.setattr(sec_api, "_sec_13f_service", lambda: parser)
+
+    with pytest.raises(HTTPException) as error:
+        sec_api.get_latest_institutional_holdings(cik="1067983")
+    assert error.value.status_code == 502
+    assert edgar.closed is True
+    assert parser.closed is True
 
 def test_latest_13f_endpoint_returns_404_when_no_filing_exists(monkeypatch):
     edgar = FakeEdgarService([])
