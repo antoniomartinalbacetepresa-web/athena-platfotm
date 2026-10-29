@@ -55,6 +55,45 @@ PortfolioPosition _position() => PortfolioPosition(
     );
 
 void main() {
+  test('disposing during pending sync never publishes late success', () async {
+    final service = _DeferredSyncService();
+    final controller = PortfolioCloudSyncController(service: service);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    final pending = controller.sync([_position()]);
+    expect(service.calls, 1);
+    controller.dispose();
+    final notificationsBeforeCompletion = notifications;
+
+    service.pending.complete(const AuthenticatedPortfolioSyncReport(
+      localPositionCount: 1,
+      remotePositionCountBefore: 0,
+      upsertedPositionCount: 1,
+      remotePositionCountAfter: 1,
+    ));
+    await pending;
+    expect(notifications, notificationsBeforeCompletion);
+    await controller.sync([_position()]);
+    expect(service.calls, 1);
+  });
+
+  test('disposing during pending sync never publishes late failure', () async {
+    final service = _DeferredSyncService();
+    final controller = PortfolioCloudSyncController(service: service);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    final pending = controller.sync([_position()]);
+    controller.dispose();
+    final notificationsBeforeCompletion = notifications;
+
+    service.pending.completeError(StateError('late transport failure'));
+    await pending;
+    expect(notifications, notificationsBeforeCompletion);
+    controller.invalidateAuthority();
+    controller.clearMessage();
+    expect(notifications, notificationsBeforeCompletion);
+  });
+
   test('authority switch drops a late success and serializes pending writes', () async {
     final service = _DeferredSyncService();
     final controller = PortfolioCloudSyncController(service: service);
