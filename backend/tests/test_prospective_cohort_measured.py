@@ -8,6 +8,7 @@ from app.repositories.recommendation_research_forecast_error_repository import (
     RecommendationResearchForecastErrorRepository,
 )
 from scripts.prospective_cohort import build_parser, run
+from test_recommendation_research_model_executor import context
 from test_recommendation_research_prospective_cohort import setup_cohort
 
 
