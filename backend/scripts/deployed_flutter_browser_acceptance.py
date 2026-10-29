@@ -96,6 +96,22 @@ def verify_deployed_web_build(page, *, expected_sha: str, expected_origin: str,
         raise BrowserAcceptanceFailure("Deployed web build SHA mismatch")
 
 
+def _matches_backend_api(url: str, *, backend_origin: str, path: str) -> bool:
+    """Only responses from the configured HTTPS backend count as live evidence."""
+    try:
+        actual = urlsplit(url)
+        expected = urlsplit(backend_origin)
+        return (
+            actual.scheme == "https"
+            and actual.hostname == expected.hostname
+            and (actual.port or 443) == (expected.port or 443)
+            and actual.username is None and actual.password is None
+            and actual.path == path
+        )
+    except ValueError:
+        return False
+
+
 def _heading(page, label: str) -> None:
     page.get_by_role("heading", name=label, exact=True).first.wait_for(
         state="visible", timeout=30000
@@ -118,11 +134,13 @@ def _require_news_refresh_requests(paths: list[str], *, selective: bool) -> None
     synthesis = "/api/v1/recommendations/professional-research/news-synthesis/latest"
     feed = "/api/v1/news/feed"
     expected = {synthesis: 1, feed: 0 if selective else 1}
-    if any(paths.count(path) != count for path, count in expected.items()):
+    if any(path not in expected for path in paths) or any(
+        paths.count(path) != count for path, count in expected.items()
+    ):
         raise BrowserAcceptanceFailure("News refresh request scope mismatch")
 
 
-def verify_news_refresh_scope(page) -> None:
+def verify_news_refresh_scope(page, *, backend_origin: str) -> None:
     """Exercise independent News synthesis refresh and full News refresh in staging.
 
     Network requests are observed, not mocked. The existing Flutter UI must
@@ -139,12 +157,18 @@ def verify_news_refresh_scope(page) -> None:
     def record(request) -> None:
         path = urlsplit(request.url).path
         if path in (synthesis, feed):
-            requested.append(path)
+            requested.append(
+                path if _matches_backend_api(
+                    request.url, backend_origin=backend_origin, path=path
+                ) else "unexpected_origin"
+            )
 
     page.on("request", record)
     try:
         with page.expect_response(
-            lambda response: urlsplit(response.url).path == synthesis,
+            lambda response: _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=synthesis
+            ),
             timeout=30000,
         ) as synthesis_response:
             page.get_by_role(
@@ -157,10 +181,14 @@ def verify_news_refresh_scope(page) -> None:
 
         requested.clear()
         with page.expect_response(
-            lambda response: urlsplit(response.url).path == synthesis,
+            lambda response: _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=synthesis
+            ),
             timeout=30000,
         ) as synthesis_response, page.expect_response(
-            lambda response: urlsplit(response.url).path == feed,
+            lambda response: _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=feed
+            ),
             timeout=30000,
         ) as feed_response:
             page.get_by_role(
@@ -174,16 +202,21 @@ def verify_news_refresh_scope(page) -> None:
         page.remove_listener("request", record)
 
 
-def verify_guest_research(page) -> dict[str, bool]:
+def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
     """Check real deployed navigation and explicitly scoped fault recovery."""
     seen: set[str] = set()
 
     def record(response) -> None:
-        path = urlsplit(response.url).path
-        if response.status == 200 and path.endswith("/athena-synthesis/latest"):
-            seen.add("athena")
-        if response.status == 200 and path.endswith("/news-synthesis/latest"):
-            seen.add("news")
+        if response.status != 200:
+            return
+        for label, path in (
+            ("athena", "/api/v1/recommendations/professional-research/athena-synthesis/latest"),
+            ("news", "/api/v1/recommendations/professional-research/news-synthesis/latest"),
+        ):
+            if _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=path
+            ):
+                seen.add(label)
 
     page.on("response", record)
     page.goto("/", wait_until="domcontentloaded", timeout=45000)
@@ -204,7 +237,7 @@ def verify_guest_research(page) -> dict[str, bool]:
     _back(page)
     _visit(page, "Noticias", "NOTICIAS")
     _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
-    verify_news_refresh_scope(page)
+    verify_news_refresh_scope(page, backend_origin=backend_origin)
     _back(page)
     _visit(page, "Inversores", "INVERSORES")
     _heading(page, "ACTIVIDAD DE INVERSORES RELEVANTES")
@@ -220,7 +253,8 @@ def verify_guest_research(page) -> dict[str, bool]:
         raise BrowserAcceptanceFailure("Live canonical responses missing")
 
     # Inject one controlled browser-side fault; never fabricate success data.
-    pattern = "**/api/v1/recommendations/professional-research/athena-synthesis/latest*"
+    synthesis_path = "/api/v1/recommendations/professional-research/athena-synthesis/latest"
+    pattern = backend_origin + synthesis_path + "*"
 
     def reject(route) -> None:
         route.fulfill(
@@ -240,7 +274,12 @@ def verify_guest_research(page) -> dict[str, bool]:
             raise BrowserAcceptanceFailure("Stale provenance remained visible")
     finally:
         page.unroute(pattern, reject)
-    page.get_by_role("button", name="Reintentar", exact=True).click()
+    with page.expect_response(
+        lambda response: response.status == 200 and _matches_backend_api(
+            response.url, backend_origin=backend_origin, path=synthesis_path
+        ), timeout=30000,
+    ):
+        page.get_by_role("button", name="Reintentar", exact=True).click()
     page.get_by_text("Fuentes verificadas", exact=True).wait_for(
         state="visible", timeout=30000
     )
@@ -287,7 +326,9 @@ def main() -> int:
                     expected_backend_origin=config.backend_origin,
                 )
                 stage = "guest-research"
-                result = verify_guest_research(page)
+                result = verify_guest_research(
+                    page, backend_origin=config.backend_origin
+                )
                 context.close()
             finally:
                 browser.close()
