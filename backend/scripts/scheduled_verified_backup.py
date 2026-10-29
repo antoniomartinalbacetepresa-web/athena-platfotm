@@ -42,6 +42,8 @@ def load_config(environment: Mapping[str, str]) -> ScheduledBackupConfig:
         raise ValueError("Invalid backup retention") from None
     if not 2 <= keep_last <= 365:
         raise ValueError("Backup retention must be between 2 and 365")
+    if environment.get("ATHENA_BACKUP_ENCRYPTED_STORAGE_CONFIRMED") != "true":
+        raise ValueError("Encrypted secondary storage operator confirmation required")
     if not database.is_file() or not primary.is_dir() or not secondary.is_dir():
         raise ValueError("Backup database and pre-provisioned directories must exist")
     return ScheduledBackupConfig(database, primary, secondary, keep_last)
