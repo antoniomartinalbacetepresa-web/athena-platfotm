@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import closing
 import sqlite3
 import json
 from dataclasses import replace
@@ -147,3 +148,37 @@ def test_history_snapshot_diagnostics_are_read_only_and_schema_checked(tmp_path)
         )
     with pytest.raises(RuntimeError, match="schema version"):
         diagnostic.initialize()
+
+
+def test_consistent_snapshot_normalizes_wal_before_fingerprinting(tmp_path):
+    database, _ = _seed(tmp_path)
+    with closing(sqlite3.connect(database.database_path)) as connection:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    snapshot = tmp_path / "wal-normalized.db"
+    fingerprint = _consistent_copy(database.database_path, snapshot)
+    with closing(sqlite3.connect(snapshot)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert _sha256_file(snapshot) == fingerprint
+    assert not snapshot.with_name(snapshot.name + "-wal").exists()
+    assert not snapshot.with_name(snapshot.name + "-shm").exists()
+
+
+def test_history_gap_export_rejects_snapshot_wal_sidecar(tmp_path, monkeypatch):
+    database, cutoff = _seed(tmp_path)
+    original = MarketHistoryGapService.get_report
+
+    def inject_sidecar(self, *, as_of, limit, offset):
+        page = original(self, as_of=as_of, limit=limit, offset=offset)
+        snapshot = self._database.database_path
+        snapshot.with_name(snapshot.name + "-wal").write_bytes(b"unexpected sidecar")
+        return page
+
+    monkeypatch.setattr(MarketHistoryGapService, "get_report", inject_sidecar)
+    output = tmp_path / "must-not-exist.jsonl"
+    with pytest.raises(RuntimeError, match="snapshot changed"):
+        export_history_gaps(
+            database_path=database.database_path, output_path=output, as_of=cutoff
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".athena-history-export-*"))

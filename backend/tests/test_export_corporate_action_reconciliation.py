@@ -158,3 +158,27 @@ def test_changed_page_totals_fail_without_publishing_partial_export(
         export_worklist(database_path=source, output_path=output, as_of=AS_OF)
     assert not output.exists()
     assert not list(tmp_path.glob(".athena-ca-export-*"))
+
+
+def test_export_rejects_snapshot_wal_sidecar_before_publication(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "source.db"
+    database = AthenaDatabase(source)
+    database.initialize()
+    instrument = _instrument(database, "WAL")
+    _dividend(database, instrument, "yahoo", 0.25, AS_OF - timedelta(days=1))
+    original = CorporateActionReconciliationWorklistService.get_worklist
+
+    def inject_sidecar(self, *, as_of, limit=100, offset=0):
+        page = original(self, as_of=as_of, limit=limit, offset=offset)
+        snapshot = self._database.database_path
+        snapshot.with_name(snapshot.name + "-wal").write_bytes(b"unexpected sidecar")
+        return page
+
+    monkeypatch.setattr(
+        CorporateActionReconciliationWorklistService, "get_worklist", inject_sidecar
+    )
+    output = tmp_path / "must-not-exist.jsonl"
+    with pytest.raises(RuntimeError, match="snapshot changed"):
+        export_worklist(database_path=source, output_path=output, as_of=AS_OF)
+    assert not output.exists()
+    assert not list(tmp_path.glob(".athena-ca-export-*"))

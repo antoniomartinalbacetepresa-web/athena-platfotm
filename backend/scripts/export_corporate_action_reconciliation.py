@@ -42,6 +42,15 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _has_sqlite_sidecars(path: Path) -> bool:
+    return any(path.with_name(path.name + suffix).exists() for suffix in ("-wal", "-shm"))
+
+
+def _verify_snapshot_unchanged(path: Path, expected_sha: str) -> None:
+    if _sha256_file(path) != expected_sha or _has_sqlite_sidecars(path):
+        raise RuntimeError("Diagnostic SQLite snapshot changed during export")
+
+
 def _consistent_copy(source: Path, destination: Path) -> str:
     """SQLite online backup includes committed WAL data without writing to source."""
     if not source.is_file():
@@ -52,9 +61,18 @@ def _consistent_copy(source: Path, destination: Path) -> str:
         reader.execute("SELECT 1 FROM corporate_actions LIMIT 1")
         with closing(sqlite3.connect(destination)) as writer:
             reader.backup(writer)
-            integrity = writer.execute("PRAGMA quick_check").fetchone()
-            if integrity is None or integrity[0] != "ok":
-                raise RuntimeError("Consistent SQLite snapshot failed integrity check")
+    # Online backup can preserve WAL mode. Normalize the disposable copy
+    # before hashing; otherwise a sidecar may contain committed bytes that
+    # are absent from the SHA-256 of the main database file.
+    with closing(sqlite3.connect(destination)) as verified:
+        journal_mode = verified.execute("PRAGMA journal_mode=DELETE").fetchone()
+        if journal_mode is None or journal_mode[0].lower() != "delete":
+            raise RuntimeError("Consistent SQLite snapshot cannot disable WAL")
+        integrity = verified.execute("PRAGMA quick_check").fetchone()
+        if integrity is None or integrity[0] != "ok":
+            raise RuntimeError("Consistent SQLite snapshot failed integrity check")
+    if _has_sqlite_sidecars(destination):
+        raise RuntimeError("Consistent SQLite snapshot has unexpected sidecars")
     return _sha256_file(destination)
 
 
@@ -149,6 +167,8 @@ def export_worklist(
                     raise RuntimeError("Corporate-action worklist totals changed during export")
                 handle.flush()
                 os.fsync(handle.fileno())
+            # Reject any mutation or WAL sidecar after the final PIT read.
+            _verify_snapshot_unchanged(snapshot, snapshot_sha)
             # Exclusive publication: a concurrent export cannot be overwritten.
             os.link(staged, output)
         finally:
