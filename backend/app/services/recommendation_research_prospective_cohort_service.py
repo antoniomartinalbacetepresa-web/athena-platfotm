@@ -157,6 +157,118 @@ class RecommendationResearchProspectiveCohortService:
             raise ValueError("La cohorte perdió su método/horizonte.")
         return artifact
 
+
+    def measured_coverage(self, *, cohort_id: str, as_of: datetime) -> dict[str, Any]:
+        """Measure the frozen denominator against persisted errors AND outcomes.
+
+        This is a read-only, descriptive audit of stored evidence. It cannot
+        establish independent market provenance, predictive skill or approval.
+        """
+        from app.repositories.recommendation_research_forecast_error_repository import (
+            RecommendationResearchForecastErrorRepository,
+        )
+        from app.repositories.recommendation_research_outcome_attribution_repository import (
+            RecommendationResearchOutcomeAttributionRepository,
+        )
+
+        cutoff = self._time(as_of)
+        cohort = self.get(cohort_id=cohort_id)
+        sealed = self._time(cohort["sealedAt"])
+        if cutoff < sealed:
+            raise ValueError("El corte es anterior al sellado prospectivo.")
+        refs = cohort["specificationHashes"]
+        specifications = {
+            record["artifact"]["specificationHash"]: record["artifact"]
+            for record in self._forecasts(refs)
+        }
+        if set(specifications) != set(refs):
+            raise ValueError("La selección no coincide con las specifications persistidas.")
+        due = {
+            ref for ref, specification in specifications.items()
+            if self._time(specification["periodEnd"]) <= cutoff
+        }
+        errors = RecommendationResearchForecastErrorRepository(self._database)
+        outcomes = RecommendationResearchOutcomeAttributionRepository(self._database)
+        measured: dict[str, str] = {}
+        store_present = False
+        with self._database.connect() as connection:
+            connection.execute("BEGIN")
+            store_present = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='athena_research_forecast_errors'"
+            ).fetchone() is not None
+            if store_present:
+                for offset in range(0, len(refs), 400):
+                    batch = refs[offset:offset + 400]
+                    placeholders = ",".join("?" for _ in batch)
+                    rows = connection.execute(
+                        "SELECT * FROM athena_research_forecast_errors "
+                        f"WHERE specification_hash IN ({placeholders})",
+                        batch,
+                    ).fetchall()
+                    for row in rows:
+                        created_at = self._time(row["created_at"])
+                        if created_at > cutoff:
+                            continue
+                        record = errors.validate_record(errors._row(row))
+                        artifact = record["artifact"]
+                        ref = record["specification_hash"]
+                        specification = specifications[ref]
+                        if ref in measured:
+                            raise ValueError("Hay más de un error persistido para la misma previsión.")
+                        if ref not in due or created_at < self._time(specification["periodEnd"]):
+                            raise ValueError("Un error fue persistido antes de vencer su horizonte.")
+                        for key in (
+                            "cycleHash", "instrumentId", "symbol", "metric",
+                            "periodStart", "periodEnd", "horizonSeconds", "expectedValue",
+                        ):
+                            if artifact.get(key) != specification.get(key):
+                                raise ValueError(f"Forecast error no coincide con specification.{key}.")
+                        outcome_row = connection.execute(
+                            "SELECT * FROM athena_research_outcome_attributions WHERE outcome_hash = ?",
+                            (record["outcome_hash"],),
+                        ).fetchone() if connection.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='athena_research_outcome_attributions'"
+                        ).fetchone() is not None else None
+                        if outcome_row is None:
+                            raise ValueError("Falta el outcome persistido asociado al forecast error.")
+                        outcome = outcomes.validate_record(outcomes._row(outcome_row))
+                        payload = outcome["payload"]
+                        outcome_created = self._time(outcome["created_at"])
+                        if (outcome_created > created_at or outcome_created > cutoff
+                                or outcome_created < self._time(specification["periodEnd"])
+                                or self._time(payload["asOf"]) > cutoff):
+                            raise ValueError("El outcome no respeta la secuencia temporal persistida.")
+                        for key in ("cycleHash", "instrumentId", "symbol", "periodStart", "periodEnd"):
+                            if payload.get(key) != specification.get(key):
+                                raise ValueError(f"Outcome no coincide con specification.{key}.")
+                        if payload["attribution"].get("totalReturn") != artifact.get("realizedValue"):
+                            raise ValueError("El retorno realizado no coincide con el outcome persistido.")
+                        measured[ref] = record["error_hash"]
+        if self.get(cohort_id=cohort_id)["cohortHash"] != cohort["cohortHash"]:
+            raise ValueError("La selección cambió durante la medición.")
+        missing_due = sorted(due - set(measured))
+        return {
+            "cohortHash": cohort["cohortHash"],
+            "asOf": cutoff.isoformat(),
+            "selectedCount": len(refs),
+            "maturedCount": len(due),
+            "notYetDueCount": len(refs) - len(due),
+            "measuredErrorCount": len(measured),
+            "missingMaturedSpecificationHashes": missing_due,
+            "measuredErrorHashes": sorted(measured.values()),
+            "membershipComplete": len(measured) == len(refs),
+            "errorStorePresent": store_present,
+            "persistedOutcomeChainVerified": bool(measured),
+            "independentMarketSourceVerified": False,
+            "predictiveSkillEstablished": False,
+            "outcomeEvidenceVerified": False,
+            "productionEligible": False,
+            "productionLearningEligible": False,
+            "automaticTrading": False,
+        }
+
     def coverage(self, *, cohort_id: str, evaluated_specification_hashes: list[str]) -> dict[str, Any]:
         """Membership accounting only; supplied refs do not prove outcome measurement."""
         artifact = self.get(cohort_id=cohort_id)

@@ -58,3 +58,34 @@ the original specification and observed receipt-v2 and requires the original
 model bytes/pin. It never invokes inference or appends forecast/receipt evidence,
 including when a record is missing. Missing evidence fails closed. This does not
 restore deleted evidence, reconstruct historical predictions or certify skill.
+
+
+## Medición del denominador precomprometido (sin inferir skill)
+
+Tras registrar una cohorte v2 y cuando sus horizontes venzan, el operador puede
+medir la presencia de errores **y outcomes realmente persistidos**, sin aportar
+manualmente listas de hashes que aparenten evaluaciones:
+
+```sh
+PYTHONPATH=. python scripts/prospective_cohort.py measured \
+  --cohort-id COHORT_ID \
+  --expected-cohort-hash SEALED_COHORT_SHA256 \
+  --as-of 2026-10-29T20:00:00Z
+```
+
+El corte es explícito y con zona horaria. La consulta mantiene el denominador
+inmutable: distingue previsiones todavía no vencidas, vencidas sin resultado y
+vencidas con cadena specification → error → outcome persistida e íntegra. Rechaza
+duplicados, inconsistencias de identidad/periodo, resultados anteriores al
+vencimiento y referencias a outcomes ausentes. No inserta errores ni outcomes,
+no evalúa retrospectivamente predicciones, no altera modelos y no envía órdenes.
+Si el almacén de errores todavía no existe, declara cero mediciones.
+
+`persistedOutcomeChainVerified` verifica solamente coherencia del almacenamiento;
+**no** demuestra procedencia independiente de datos de mercado, cobertura real
+del universo, ausencia de selección de supervivientes, independencia estadística,
+calibración, rentabilidad ni skill. Por ello `independentMarketSourceVerified`,
+`predictiveSkillEstablished`, `outcomeEvidenceVerified` y todas las
+autoridades productivas permanecen en `false`. No usar fixtures para declarar
+cumplimiento operativo. Se requiere una instantánea autorizada y consistente
+de la base operativa y validación externa de los resultados para cerrar OOS.

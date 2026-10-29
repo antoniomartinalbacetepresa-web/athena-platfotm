@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from datetime import datetime, timezone
 
 from app.services.recommendation_research_prospective_cohort_service import (
     RecommendationResearchProspectiveCohortService,
@@ -27,6 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--cohort-id", required=True)
     coverage.add_argument("--expected-cohort-hash", help="Pin opcional de la selección sellada esperada.")
     coverage.add_argument("--evaluated-specification-hash", action="append", default=[])
+    measured = commands.add_parser("measured", help="Mide errores y outcomes realmente persistidos; no acredita fuentes externas.")
+    measured.add_argument("--cohort-id", required=True)
+    measured.add_argument("--expected-cohort-hash", help="Pin de la selección prospectiva.")
+    measured.add_argument("--as-of", required=True, help="Corte ISO-8601 con zona horaria.")
     return parser
 
 
@@ -43,6 +48,17 @@ def run(args: argparse.Namespace, *, service=None) -> dict:
         return ledger.register(cohort_id=args.cohort_id, specification_hashes=args.specification_hash)
     if args.command == "show":
         return original if expected is not None else ledger.get(cohort_id=args.cohort_id)
+    if args.command == "measured":
+        normalized = args.as_of.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        cutoff = datetime.fromisoformat(normalized)
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("--as-of requiere zona horaria.")
+        result = ledger.measured_coverage(cohort_id=args.cohort_id, as_of=cutoff.astimezone(timezone.utc))
+        if expected is not None and result.get("cohortHash") != expected:
+            raise ValueError("La medición no coincide con el pin esperado.")
+        return result
     if args.command == "coverage":
         result = ledger.coverage(cohort_id=args.cohort_id,
                                  evaluated_specification_hashes=args.evaluated_specification_hash)
