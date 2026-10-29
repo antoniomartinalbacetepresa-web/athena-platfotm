@@ -74,3 +74,22 @@ def test_scheduler_lock_rejects_concurrent_invocation(tmp_path: Path) -> None:
         with pytest.raises(BlockingIOError):
             scheduled.run_scheduled_cycle(config, lock_path=lock)
     assert not list(config.primary.iterdir())
+
+
+def test_scheduler_requires_explicit_encrypted_secondary_storage_confirmation(
+    tmp_path: Path,
+) -> None:
+    config, _ = _configured(tmp_path)
+    environment = {
+        "ATHENA_BACKUP_DATABASE": str(config.database),
+        "ATHENA_BACKUP_PRIMARY_DIRECTORY": str(config.primary),
+        "ATHENA_BACKUP_SECONDARY_DIRECTORY": str(config.secondary),
+    }
+    with pytest.raises(ValueError, match="Encrypted secondary"):
+        scheduled.load_config(environment)
+    loaded = scheduled.load_config({
+        **environment, "ATHENA_BACKUP_ENCRYPTED_STORAGE_CONFIRMED": "true",
+    })
+    assert loaded == scheduled.ScheduledBackupConfig(
+        config.database, config.primary, config.secondary, 7,
+    )
