@@ -176,6 +176,30 @@ void main() {
       throwsStateError,
     );
   });
+  test('rejects a selected SEC acceptance inconsistent with PIT publication',
+      () async {
+    for (final acceptance in [
+      '20260814203001',
+      '20260814202959',
+      '20260815203000',
+      'not-a-timestamp',
+      null,
+    ]) {
+      final payload = envelope();
+      (payload['selectedFiling'] as Map<String, Object?>)['acceptanceDateTime'] =
+          acceptance;
+      final source = AthenaBackendRelevantInvestorDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode(payload), 200)),
+      );
+      await expectLater(
+        source.getLatestInstitutionalHoldings(cik: '123456'),
+        throwsA(isA<FormatException>()),
+      );
+      source.dispose();
+    }
+  });
+
   test('rejects SEC documents belonging to another filer or accession',
       () async {
     for (final url in [
