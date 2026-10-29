@@ -73,19 +73,23 @@ def run_snapshot(
         with closing(sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)) as source:
             with closing(sqlite3.connect(snapshot_path)) as snapshot:
                 source.backup(snapshot)
-        # Fingerprint the exact immutable SQLite image queried by both reports.
+        # SQLite online backup can inherit WAL mode. Hashing only the .db
+        # file would then miss committed changes written to its -wal sidecar.
+        # Normalize the disposable copy BEFORE fingerprinting, with no reader
+        # open, so later unexpected commits modify the hashed database image.
+        with closing(sqlite3.connect(snapshot_path)) as snapshot:
+            journal_mode = snapshot.execute("PRAGMA journal_mode=DELETE").fetchone()
+            if journal_mode is None or journal_mode[0].lower() != "delete":
+                raise RuntimeError("La copia SQLite no admite modo de diario seguro.")
+            integrity = snapshot.execute("PRAGMA quick_check").fetchone()
+        if integrity is None or integrity[0] != "ok":
+            raise RuntimeError("La copia SQLite no supera la comprobación de integridad.")
+
         digest = hashlib.sha256()
         with snapshot_path.open("rb") as copied_file:
             for chunk in iter(lambda: copied_file.read(1024 * 1024), b""):
                 digest.update(chunk)
         fingerprint = digest.hexdigest()
-
-        # A successful backup is not evidence that every SQLite page is valid.
-        # Check the unmodified copy before schema initialization or diagnostics.
-        with closing(sqlite3.connect(snapshot_path)) as snapshot:
-            integrity = snapshot.execute("PRAGMA quick_check").fetchone()
-        if integrity is None or integrity[0] != "ok":
-            raise RuntimeError("La copia SQLite no supera la comprobación de integridad.")
 
         database = ReadOnlySnapshotDatabase(snapshot_path)
         coverage = MarketObservationCoverageService(database=database).get_report(
@@ -124,6 +128,8 @@ def run_snapshot(
         with snapshot_path.open("rb") as copied_file:
             if hashlib.file_digest(copied_file, "sha256").hexdigest() != fingerprint:
                 raise RuntimeError("La copia SQLite cambió durante el diagnóstico PIT.")
+        if snapshot_path.with_name(snapshot_path.name + "-wal").exists():
+            raise RuntimeError("La copia SQLite cambió durante el diagnóstico PIT.")
 
     eligible = coverage.history_eligible_instrument_count
     current = coverage.current_deep_history_instrument_count
