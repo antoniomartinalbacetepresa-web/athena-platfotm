@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import re
 import math
 import os
 from pathlib import Path
@@ -22,6 +24,12 @@ router = APIRouter(
     tags=["user-portfolio"],
 )
 _DEFAULT_LEDGER_PATH = "var/athena/portfolio_event_ledger.jsonl"
+_HISTORY_CURSOR_RE = re.compile(r"^([1-9][0-9]{0,11}):([0-9a-f]{64}):([0-9a-f]{16})$")
+
+
+def _history_order(record: Any) -> tuple[datetime, datetime, int]:
+    return (record.event.occurred_at, record.event.available_at, record.sequence)
+
 
 
 class PositionUpsertRequest(BaseModel):
@@ -128,8 +136,9 @@ def get_personal_portfolio_history(
     portfolio_id: str = Query(..., alias="portfolioId", min_length=1, max_length=128),
     as_of: datetime = Query(..., alias="asOf"),
     limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(default=None, min_length=1, max_length=128),
 ) -> dict[str, Any]:
-    """Read the authenticated owner's append-only portfolio history as known at asOf."""
+    """Read stable pages of the owner's PIT history without crossing ledger generations."""
 
     owner_id = _owner_id(account)
     cutoff = _aware_utc(as_of, "asOf")
@@ -146,25 +155,54 @@ def get_personal_portfolio_history(
             detail="No se pudo leer el historial de cartera.",
         ) from exc
 
+    # Bind every page to the first page's append-only high-water mark.
+    # A later backdated append must not silently change an in-progress page set.
+    snapshot_sequence = records[-1].sequence if records else 0
+    context = hashlib.sha256(
+        f"{portfolio_id}|{cutoff.isoformat()}".encode("utf-8")
+    ).hexdigest()[:16]
+    anchor_key = None
+    if cursor is not None:
+        match = _HISTORY_CURSOR_RE.fullmatch(cursor)
+        if match is None or match.group(3) != context:
+            raise HTTPException(status_code=400, detail="Cursor de historial no válido.")
+        snapshot_sequence = int(match.group(1))
+        if snapshot_sequence > len(records):
+            raise HTTPException(status_code=400, detail="Cursor de historial no válido.")
+        anchor = next(
+            (
+                record for record in records
+                if record.sequence <= snapshot_sequence
+                and record.record_hash == match.group(2)
+                and record.event.portfolio_id == portfolio_id
+                and record.event.available_at <= cutoff
+            ),
+            None,
+        )
+        if anchor is None:
+            raise HTTPException(status_code=400, detail="Cursor de historial no válido.")
+        anchor_key = _history_order(anchor)
+
     visible = [
         record
         for record in records
-        if record.event.portfolio_id == portfolio_id
+        if record.sequence <= snapshot_sequence
+        and record.event.portfolio_id == portfolio_id
         and record.event.available_at <= cutoff
+        and (anchor_key is None or _history_order(record) < anchor_key)
     ]
-    visible.sort(
-        key=lambda record: (
-            record.event.occurred_at,
-            record.event.available_at,
-            record.sequence,
-        ),
-        reverse=True,
-    )
+    visible.sort(key=_history_order, reverse=True)
     selected = visible[:limit]
+    has_more = len(visible) > len(selected)
+    next_cursor = (
+        f"{snapshot_sequence}:{selected[-1].record_hash}:{context}"
+        if has_more and selected else None
+    )
     return {
         "data": {
             "portfolioId": portfolio_id,
             "asOf": cutoff.isoformat(),
+            "nextCursor": next_cursor,
             "events": [
                 {
                     "sequence": record.sequence,
@@ -174,7 +212,7 @@ def get_personal_portfolio_history(
                 for record in selected
             ],
             "eventCount": len(selected),
-            "hasMore": len(visible) > len(selected),
+            "hasMore": has_more,
         },
         "policy": _history_policy(),
     }

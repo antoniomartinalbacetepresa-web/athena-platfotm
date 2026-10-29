@@ -276,3 +276,78 @@ def test_upsert_updates_only_the_authenticated_owners_matching_position(
         portfolio_b = client.get("/api/v1/user/portfolio", headers=_headers(token_b)).json()
         assert portfolio_a["data"]["positions"][0]["quantity"] == 4.0
         assert portfolio_b["data"]["positions"][0]["quantity"] == 9.0
+
+
+def test_personal_history_cursor_paginates_stable_owner_pit_snapshot(
+    monkeypatch, tmp_path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token_a = _register_and_token(client, email="cursor-a@example.com")
+        token_b = _register_and_token(client, email="cursor-b@example.com")
+        cutoff = "2026-09-15T00:00:00Z"
+        recorded = {}
+        # Append order deliberately differs from chronological order.
+        for hour in (10, 13, 11, 12):
+            recorded[hour] = _append_trade(
+                client, token=token_a, portfolio_id="primary",
+                source_ref=f"cursor-a-{hour}",
+                occurred_at=f"2026-09-10T{hour:02d}:00:00Z",
+                available_at=f"2026-09-10T{hour:02d}:01:00Z",
+                as_of=cutoff, instrument_id="AAPL:XNAS",
+            )
+        _append_trade(
+            client, token=token_b, portfolio_id="primary",
+            source_ref="cursor-b-private",
+            occurred_at="2026-09-10T09:00:00Z",
+            available_at="2026-09-10T09:01:00Z",
+            as_of=cutoff, instrument_id="MSFT:XNAS",
+        )
+        base = {"portfolioId": "primary", "asOf": cutoff, "limit": 2}
+        first = client.get(
+            "/api/v1/user/portfolio/history", headers=_headers(token_a), params=base
+        )
+        assert first.status_code == 200, first.text
+        first_data = first.json()["data"]
+        assert [e["sequence"] for e in first_data["events"]] == [
+            recorded[13]["sequence"], recorded[12]["sequence"],
+        ]
+        assert first_data["hasMore"] is True
+        cursor = first_data["nextCursor"]
+        assert isinstance(cursor, str) and len(cursor) < 128
+
+        # A later append with old economic dates cannot enter the frozen page set.
+        late_append = _append_trade(
+            client, token=token_a, portfolio_id="primary",
+            source_ref="cursor-a-backdated",
+            occurred_at="2026-09-10T09:30:00Z",
+            available_at="2026-09-10T09:31:00Z",
+            as_of=cutoff, instrument_id="NVDA:XNAS",
+        )
+        second = client.get(
+            "/api/v1/user/portfolio/history", headers=_headers(token_a),
+            params={**base, "cursor": cursor},
+        )
+        assert second.status_code == 200, second.text
+        second_data = second.json()["data"]
+        assert [e["sequence"] for e in second_data["events"]] == [
+            recorded[11]["sequence"], recorded[10]["sequence"],
+        ]
+        assert late_append["sequence"] not in {
+            e["sequence"] for e in second_data["events"]
+        }
+        assert second_data["hasMore"] is False
+        assert second_data["nextCursor"] is None
+
+        # A cursor cannot cross owner, portfolio or PIT-cutoff boundaries.
+        for token, params in (
+            (token_b, {**base, "cursor": cursor}),
+            (token_a, {**base, "portfolioId": "other", "cursor": cursor}),
+            (token_a, {**base, "asOf": "2026-09-16T00:00:00Z", "cursor": cursor}),
+            (token_a, {**base, "cursor": "not-a-cursor"}),
+        ):
+            rejected = client.get(
+                "/api/v1/user/portfolio/history",
+                headers=_headers(token), params=params,
+            )
+            assert rejected.status_code == 400, rejected.text

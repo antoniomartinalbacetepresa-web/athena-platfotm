@@ -20,3 +20,16 @@ success/failure without notifying disposed listeners. A completed sync status
 is shown only while the same mounted route and authority generation remain
 current. These are Flutter lifecycle and authorization-boundary regressions,
 not deployed two-owner HTTPS acceptance or operational investment evidence.
+
+### Full owner-scoped history pagination
+
+The authenticated `GET /api/v1/user/portfolio/history` now supports a
+`cursor` for reading older events beyond the first 100 (maximum 500 per
+request). The first response includes `nextCursor` only when `hasMore` is
+true. The caller must retain the same `portfolioId` and `asOf` on every
+page. The cursor binds the PIT cutoff, portfolio and initial append-only ledger
+high-water mark; later backdated appends do not alter the in-progress page set.
+A cursor from another owner, portfolio or cutoff fails closed with HTTP 400.
+History remains authenticated, read-only, hash-chain verified, and cannot
+place orders. A new refresh starts a new snapshot; this is not a transactional
+snapshot of an external brokerage.
