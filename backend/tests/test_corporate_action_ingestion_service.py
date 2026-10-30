@@ -549,7 +549,8 @@ def test_ingestion_rejects_future_retrieval_even_for_past_economic_date(
     assert repository.list_for_instrument(instrument_id) == []
 
 
-def test_ingestion_rejects_conflicting_retrieval_without_partial_batch_write(
+
+def test_ingestion_rejects_conflicting_source_timestamp_without_partial_batch_write(
     tmp_path: Path,
 ) -> None:
     database = _database(tmp_path)
@@ -557,28 +558,34 @@ def test_ingestion_rejects_conflicting_retrieval_without_partial_batch_write(
     repository = CorporateActionRepository(database)
     retrieved_at = "2026-09-11T08:00:00+00:00"
     initial = FakeHistoryProvider([
-        _observation(
-            timestamp="2026-08-01T00:00:00+00:00",
-            retrieved_at=retrieved_at, dividend=0.25,
-        ),
+        {
+            **_observation(
+                timestamp="2026-08-01T00:00:00+00:00",
+                retrieved_at=retrieved_at, dividend=0.25,
+            ),
+            "sourceTimestamp": "2026-09-10T00:00:00+00:00",
+        },
     ])
     CorporateActionIngestionService(
         market_provider=initial, repository=repository,
     ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
 
-    # A second provider response claims the identical immutable retrieval
-    # identity but changes the dividend; its otherwise valid split must roll back.
+    # A replay of the same immutable economic event cannot change provenance.
+    # A valid split in that same retrieval batch must not be partly committed.
     conflicting = FakeHistoryProvider([
         _observation(
             timestamp="2026-08-02T00:00:00+00:00",
             retrieved_at=retrieved_at, split=4.0,
         ),
-        _observation(
-            timestamp="2026-08-01T00:00:00+00:00",
-            retrieved_at=retrieved_at, dividend=0.50,
-        ),
+        {
+            **_observation(
+                timestamp="2026-08-01T00:00:00+00:00",
+                retrieved_at=retrieved_at, dividend=0.25,
+            ),
+            "sourceTimestamp": "2026-09-10T01:00:00+00:00",
+        },
     ])
-    with pytest.raises(ValueError, match="PIT conflict"):
+    with pytest.raises(ValueError, match="PIT provenance conflict"):
         CorporateActionIngestionService(
             market_provider=conflicting, repository=repository,
         ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
@@ -587,3 +594,4 @@ def test_ingestion_rejects_conflicting_retrieval_without_partial_batch_write(
     assert len(rows) == 1
     assert rows[0]["cash_amount"] == 0.25
     assert rows[0]["action_type"] == "dividend"
+    assert rows[0]["source_timestamp"] == "2026-09-10T00:00:00+00:00"
