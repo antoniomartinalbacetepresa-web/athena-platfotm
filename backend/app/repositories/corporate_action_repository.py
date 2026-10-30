@@ -65,9 +65,9 @@ class CorporateActionRepository:
                 source_timestamp = normalized["source_timestamp"]
                 if source_timestamp is not None and datetime.fromisoformat(source_timestamp) > retrieved_dt:
                     raise ValueError("source_timestamp no puede ser posterior a retrieved_at.")
-                # Only the exact same economic observation may be idempotent.
-                # INSERT OR IGNORE also masks CHECK violations and silently hides
-                # conflicting amounts/currencies under the immutable PIT key.
+                # Schema v6+ permits distinct economic events at the same instant.
+                # Only an identical event_identity may be idempotent. Do not use
+                # INSERT OR IGNORE: it also masks CHECK violations.
                 key = (
                     instrument_id, normalized["action_type"], effective_dt.isoformat(),
                     provider, retrieved,
@@ -78,7 +78,8 @@ class CorporateActionRepository:
                         split_ratio, currency, source_provider, source_timestamp, retrieved_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (
-                        instrument_id, action_type, effective_at, source_provider, retrieved_at
+                        instrument_id, action_type, effective_at, event_identity,
+                        source_provider, retrieved_at
                     ) DO NOTHING""",
                     (
                         instrument_id, normalized["action_type"], effective_dt.isoformat(),
@@ -90,21 +91,21 @@ class CorporateActionRepository:
                     inserted += 1
                     continue
                 existing = connection.execute(
-                    """SELECT cash_amount, split_ratio, currency, source_timestamp
-                       FROM corporate_actions
+                    """SELECT source_timestamp FROM corporate_actions
                        WHERE instrument_id = ? AND action_type = ? AND effective_at = ?
-                         AND source_provider = ? AND retrieved_at = ?""",
-                    key,
+                         AND source_provider = ? AND retrieved_at = ?
+                         AND cash_amount IS ? AND split_ratio IS ? AND currency IS ?""",
+                    (
+                        *key, normalized["cash_amount"], normalized["split_ratio"],
+                        normalized["currency"],
+                    ),
                 ).fetchone()
-                if existing is None or any(
-                    existing[field] != normalized[field]
-                    for field in ("cash_amount", "split_ratio", "currency", "source_timestamp")
-                ):
-                    # The surrounding SQLite transaction rolls back any earlier
-                    # insertions from this batch; never overwrite PIT evidence.
+                if existing is None or existing["source_timestamp"] != source_timestamp:
+                    # Same economic event and retrieval identity cannot silently
+                    # change its declared source timestamp on replay.
                     raise ValueError(
-                        "Corporate action PIT conflict: same retrieval identity "
-                        "contains different economic values or provenance."
+                        "Corporate action PIT provenance conflict: source timestamp "
+                        "changed for an immutable economic event."
                     )
         return CorporateActionSaveStats(received=len(buffered), inserted=inserted, unchanged=len(buffered)-inserted)
 
