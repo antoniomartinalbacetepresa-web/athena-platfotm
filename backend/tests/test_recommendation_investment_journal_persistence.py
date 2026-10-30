@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from datetime import datetime, timedelta, timezone
@@ -122,6 +123,53 @@ def test_repository_is_idempotent_for_same_revision_and_hash(tmp_path: Path) -> 
 
     assert first["id"] == second["id"]
     assert repository.verify_lineage(journal_id="journal-aapl-1")["revisionCount"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["hash", "thesis"])
+def test_repository_rejects_forged_snapshot_before_persistence(
+    tmp_path: Path, mutation: str,
+) -> None:
+    repository = _repository(tmp_path)
+    valid = _snapshot()
+    forged = (
+        replace(valid, snapshot_hash="0" * 64)
+        if mutation == "hash"
+        else replace(valid, thesis="Retrospectively changed after freezing.")
+    )
+
+    with pytest.raises(ValueError, match="snapshot_hash canónico"):
+        repository.append(snapshot=forged)
+
+    # The same revision must still be writable with its legitimate hash.
+    repository.append(snapshot=valid)
+    assert repository.verify_lineage(journal_id=valid.journal_id)["revisionCount"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["policy", "extra_field"])
+def test_repository_rejects_unhashed_contract_tampering(
+    tmp_path: Path, mutation: str,
+) -> None:
+    repository = _repository(tmp_path)
+    valid = _snapshot()
+    repository.append(snapshot=valid)
+
+    with repository._database.connect() as connection:
+        row = connection.execute(
+            "SELECT snapshot_json FROM athena_investment_journal_snapshots WHERE journal_id = ?",
+            (valid.journal_id,),
+        ).fetchone()
+        payload = json.loads(str(row["snapshot_json"]))
+        if mutation == "policy":
+            payload["policy"]["hindsight"] = "retrospective_outcome_known"
+        else:
+            payload["productionReady"] = True
+        connection.execute(
+            "UPDATE athena_investment_journal_snapshots SET snapshot_json = ? WHERE journal_id = ?",
+            (json.dumps(payload), valid.journal_id),
+        )
+
+    with pytest.raises(ValueError, match="contrato canónico completo"):
+        repository.verify_lineage(journal_id=valid.journal_id)
 
 
 def test_repository_rejects_first_revision_with_prior_hash(tmp_path: Path) -> None:

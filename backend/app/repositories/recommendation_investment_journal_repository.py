@@ -66,9 +66,11 @@ class RecommendationInvestmentJournalRepository:
         self, *, snapshot: InvestmentJournalSnapshot,
         connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
+        # Validate the exact canonical snapshot BEFORE any schema or data write.
+        # A forged dataclass must not poison an append-only journal.
+        payload = self._validated_snapshot(snapshot)
         if connection is None:
             self.initialize()
-        payload = self._validated_snapshot(snapshot)
         journal_id = str(payload["journalId"])
         revision_id = str(payload["revisionId"])
         symbol = str(payload["symbol"])
@@ -311,6 +313,8 @@ class RecommendationInvestmentJournalRepository:
         )
         if rebuilt.snapshot_hash != supplied_hash:
             raise ValueError("El contenido persistido no coincide con su snapshot_hash canónico.")
+        if snapshot != rebuilt.to_api_dict():
+            raise ValueError("El snapshot persistido no coincide con el contrato canónico completo.")
         return record
 
     def _validated_snapshot(self, snapshot: InvestmentJournalSnapshot) -> dict[str, Any]:
@@ -321,7 +325,22 @@ class RecommendationInvestmentJournalRepository:
             raise ValueError("Investment Journal debe mantener advisoryStatus=no_advice.")
         if payload.get("productionEligible") is not False or payload.get("isWeightingReady") is not False:
             raise ValueError("Investment Journal no puede habilitar producción ni ponderación.")
-        self._sha256(payload.get("snapshotHash"), "snapshotHash")
+        # A SHA-shaped value is not proof of integrity. Rebuild from the
+        # immutable fields and reject altered thesis, references or hash.
+        rebuilt = self._snapshot_service.freeze_snapshot(
+            journal_id=snapshot.journal_id,
+            revision_id=snapshot.revision_id,
+            symbol=snapshot.symbol,
+            recorded_at=self._aware_iso(snapshot.recorded_at, "recorded_at"),
+            as_of=self._aware_iso(snapshot.as_of, "as_of"),
+            thesis=snapshot.thesis,
+            references=snapshot.references,
+            prior_snapshot_hash=snapshot.prior_snapshot_hash,
+        )
+        if rebuilt.snapshot_hash != snapshot.snapshot_hash:
+            raise ValueError("El snapshot recibido no coincide con su snapshot_hash canónico.")
+        if payload != rebuilt.to_api_dict():
+            raise ValueError("El snapshot recibido no coincide con el contrato canónico completo.")
         return payload
 
     def _row(self, row: Any) -> dict[str, Any] | None:
