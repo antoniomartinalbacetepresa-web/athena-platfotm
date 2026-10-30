@@ -170,13 +170,14 @@ def test_secondary_retention_failure_preserves_primary_recovery_points(
     directories: list[Path] = []
 
     def guarded_retention(self: DatabaseBackupService, directory: Path, *,
-                          keep_last: int, filename_prefix: str = "athena-"):
+                          keep_last: int, filename_prefix: str = "athena-",
+                          guard=None):
         directories.append(Path(directory))
         if Path(directory) == config.secondary:
             raise RuntimeError("Secondary retention failed")
         return original_retention(
             self, directory, keep_last=keep_last,
-            filename_prefix=filename_prefix,
+            filename_prefix=filename_prefix, guard=guard,
         )
 
     monkeypatch.setattr(DatabaseBackupService, "apply_retention", guarded_retention)
