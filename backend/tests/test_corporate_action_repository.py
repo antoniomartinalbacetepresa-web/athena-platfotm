@@ -84,7 +84,7 @@ def test_repository_creates_durable_indexes(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("original", "conflicting"),
+    ("original", "distinct"),
     [
         (
             {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
@@ -104,72 +104,83 @@ def test_repository_creates_durable_indexes(tmp_path) -> None:
             {"type": "split", "effectiveAt": "2020-08-31T00:00:00+00:00",
              "splitRatio": 2.0},
         ),
-        (
-            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
-             "cashAmount": 0.25, "sourceTimestamp": "2026-09-10T00:00:00+00:00"},
-            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
-             "cashAmount": 0.25, "sourceTimestamp": "2026-09-10T01:00:00+00:00"},
-        ),
     ],
 )
-def test_same_pit_identity_with_different_economic_evidence_is_rejected(
-    tmp_path, original, conflicting,
+def test_distinct_economic_events_at_same_instant_are_not_discarded(
+    tmp_path, original, distinct,
 ) -> None:
     repository = CorporateActionRepository(_database(tmp_path))
     retrieved_at = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
-    repository.save_many(
-        instrument_id=1, actions=[original],
+    stats = repository.save_many(
+        instrument_id=1, actions=[original, distinct],
         source_provider="secondary_provider", retrieved_at=retrieved_at,
     )
-    with pytest.raises(ValueError, match="PIT conflict"):
+    assert stats.inserted == 2 and stats.unchanged == 0
+    assert len(repository.list_for_instrument(1)) == 2
+
+
+def test_same_economic_event_cannot_rewrite_source_timestamp(tmp_path) -> None:
+    repository = CorporateActionRepository(_database(tmp_path))
+    retrieved_at = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
+    action = {
+        "type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+        "cashAmount": 0.25, "currency": "USD",
+        "sourceTimestamp": "2026-09-10T00:00:00+00:00",
+    }
+    repository.save_many(
+        instrument_id=1, actions=[action],
+        source_provider="secondary_provider", retrieved_at=retrieved_at,
+    )
+    with pytest.raises(ValueError, match="PIT provenance conflict"):
         repository.save_many(
-            instrument_id=1, actions=[conflicting],
+            instrument_id=1,
+            actions=[{**action, "sourceTimestamp": "2026-09-10T01:00:00+00:00"}],
             source_provider="secondary_provider", retrieved_at=retrieved_at,
         )
     rows = repository.list_for_instrument(1)
     assert len(rows) == 1
-    assert rows[0]["cash_amount"] == original.get("cashAmount")
-    assert rows[0]["split_ratio"] == original.get("splitRatio")
-    assert rows[0]["currency"] == original.get("currency")
-    assert rows[0]["source_timestamp"] == (
-        datetime.fromisoformat(original["sourceTimestamp"]).isoformat()
-        if "sourceTimestamp" in original else None
-    )
+    assert rows[0]["source_timestamp"] == action["sourceTimestamp"]
 
 
-def test_conflict_rolls_back_other_insertions_from_same_batch(tmp_path) -> None:
+def test_provenance_conflict_rolls_back_other_insertions_from_same_batch(tmp_path) -> None:
     repository = CorporateActionRepository(_database(tmp_path))
     retrieved_at = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
-    existing = {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
-                "cashAmount": 0.25, "currency": "USD"}
+    existing = {
+        "type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+        "cashAmount": 0.25, "currency": "USD",
+        "sourceTimestamp": "2026-09-10T00:00:00+00:00",
+    }
     repository.save_many(
         instrument_id=1, actions=[existing],
         source_provider="yahoo", retrieved_at=retrieved_at,
     )
-    with pytest.raises(ValueError, match="PIT conflict"):
+    with pytest.raises(ValueError, match="PIT provenance conflict"):
         repository.save_many(
             instrument_id=1, source_provider="yahoo", retrieved_at=retrieved_at,
             actions=[
                 {"type": "split", "effectiveAt": "2020-08-31T00:00:00+00:00",
                  "splitRatio": 4.0},
-                {**existing, "cashAmount": 0.50},
+                {**existing, "sourceTimestamp": "2026-09-10T01:00:00+00:00"},
             ],
         )
     rows = repository.list_for_instrument(1)
     assert len(rows) == 1 and rows[0]["cash_amount"] == 0.25
 
 
-def test_conflicting_duplicates_inside_one_new_batch_roll_back(tmp_path) -> None:
+def test_conflicting_source_timestamps_inside_one_batch_roll_back(tmp_path) -> None:
     repository = CorporateActionRepository(_database(tmp_path))
-    with pytest.raises(ValueError, match="PIT conflict"):
+    action = {
+        "type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+        "cashAmount": 0.25,
+        "sourceTimestamp": "2026-09-10T00:00:00+00:00",
+    }
+    with pytest.raises(ValueError, match="PIT provenance conflict"):
         repository.save_many(
             instrument_id=1, source_provider="yahoo",
             retrieved_at=datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc),
             actions=[
-                {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
-                 "cashAmount": 0.25},
-                {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
-                 "cashAmount": 0.30},
+                action,
+                {**action, "sourceTimestamp": "2026-09-10T01:00:00+00:00"},
             ],
         )
     assert repository.list_for_instrument(1) == []
