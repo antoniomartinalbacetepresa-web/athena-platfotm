@@ -81,3 +81,113 @@ def test_repository_creates_durable_indexes(tmp_path) -> None:
     with database.connect() as connection:
         table=connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='corporate_actions'").fetchone(); indexes={row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='corporate_actions'").fetchall()}
     assert table is not None and "idx_corporate_actions_instrument_effective" in indexes and "idx_corporate_actions_pit" in indexes
+
+
+@pytest.mark.parametrize(
+    ("original", "conflicting"),
+    [
+        (
+            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+             "cashAmount": 0.25, "currency": "USD"},
+            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+             "cashAmount": 0.30, "currency": "USD"},
+        ),
+        (
+            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+             "cashAmount": 0.25, "currency": "USD"},
+            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+             "cashAmount": 0.25, "currency": "EUR"},
+        ),
+        (
+            {"type": "split", "effectiveAt": "2020-08-31T00:00:00+00:00",
+             "splitRatio": 4.0},
+            {"type": "split", "effectiveAt": "2020-08-31T00:00:00+00:00",
+             "splitRatio": 2.0},
+        ),
+        (
+            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+             "cashAmount": 0.25, "sourceTimestamp": "2026-09-10T00:00:00+00:00"},
+            {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+             "cashAmount": 0.25, "sourceTimestamp": "2026-09-10T01:00:00+00:00"},
+        ),
+    ],
+)
+def test_same_pit_identity_with_different_economic_evidence_is_rejected(
+    tmp_path, original, conflicting,
+) -> None:
+    repository = CorporateActionRepository(_database(tmp_path))
+    retrieved_at = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
+    repository.save_many(
+        instrument_id=1, actions=[original],
+        source_provider="secondary_provider", retrieved_at=retrieved_at,
+    )
+    with pytest.raises(ValueError, match="PIT conflict"):
+        repository.save_many(
+            instrument_id=1, actions=[conflicting],
+            source_provider="secondary_provider", retrieved_at=retrieved_at,
+        )
+    rows = repository.list_for_instrument(1)
+    assert len(rows) == 1
+    assert rows[0]["cash_amount"] == original.get("cashAmount")
+    assert rows[0]["split_ratio"] == original.get("splitRatio")
+    assert rows[0]["currency"] == original.get("currency")
+    assert rows[0]["source_timestamp"] == (
+        datetime.fromisoformat(original["sourceTimestamp"]).isoformat()
+        if "sourceTimestamp" in original else None
+    )
+
+
+def test_conflict_rolls_back_other_insertions_from_same_batch(tmp_path) -> None:
+    repository = CorporateActionRepository(_database(tmp_path))
+    retrieved_at = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
+    existing = {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+                "cashAmount": 0.25, "currency": "USD"}
+    repository.save_many(
+        instrument_id=1, actions=[existing],
+        source_provider="yahoo", retrieved_at=retrieved_at,
+    )
+    with pytest.raises(ValueError, match="PIT conflict"):
+        repository.save_many(
+            instrument_id=1, source_provider="yahoo", retrieved_at=retrieved_at,
+            actions=[
+                {"type": "split", "effectiveAt": "2020-08-31T00:00:00+00:00",
+                 "splitRatio": 4.0},
+                {**existing, "cashAmount": 0.50},
+            ],
+        )
+    rows = repository.list_for_instrument(1)
+    assert len(rows) == 1 and rows[0]["cash_amount"] == 0.25
+
+
+def test_conflicting_duplicates_inside_one_new_batch_roll_back(tmp_path) -> None:
+    repository = CorporateActionRepository(_database(tmp_path))
+    with pytest.raises(ValueError, match="PIT conflict"):
+        repository.save_many(
+            instrument_id=1, source_provider="yahoo",
+            retrieved_at=datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc),
+            actions=[
+                {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+                 "cashAmount": 0.25},
+                {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+                 "cashAmount": 0.30},
+            ],
+        )
+    assert repository.list_for_instrument(1) == []
+
+
+def test_later_retrieval_can_preserve_a_revised_value_without_rewriting_pit(tmp_path) -> None:
+    repository = CorporateActionRepository(_database(tmp_path))
+    action = {"type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+              "cashAmount": 0.25}
+    repository.save_many(
+        instrument_id=1, actions=[action], source_provider="yahoo",
+        retrieved_at=datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc),
+    )
+    repository.save_many(
+        instrument_id=1, actions=[{**action, "cashAmount": 0.30}],
+        source_provider="yahoo",
+        retrieved_at=datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc),
+    )
+    rows = repository.list_for_instrument(1)
+    assert len(rows) == 2
+    assert [row["cash_amount"] for row in rows] == [0.25, 0.30]
