@@ -98,3 +98,25 @@ the data was *originally* learned; these checks reject impossible future
 timestamps but cannot independently attest a provider's earlier claimed
 retrieval time. Only separately audited acquisition logs and independent
 source custody can close that provenance criterion.
+
+
+## Immutable PIT collision handling
+
+For a given instrument, action type, effective UTC instant, provider and exact
+retrieval instant, the stored economic observation is immutable. A replay is
+idempotent **only** when the amount/split ratio, dividend currency and source
+timestamp also match the stored record. A changed value with the same PIT key
+is a **conflict**, not a successful duplicate: the repository rejects it and
+rolls back all inserts in that `save_many` transaction. A later, genuinely
+different retrieval instant may preserve a revised value as a new PIT version;
+the original record is never overwritten. SQLite CHECK/foreign-key violations
+must not be masked by a blanket `INSERT OR IGNORE`.
+
+The ingestion service propagates a collision as a failed instrument. Each
+provider/retrieval-time batch is transactional, but **different batches in the
+same provider response are not one database transaction**. If an earlier batch
+commits before a later batch collides, those earlier observations remain
+persisted and must be reconciled explicitly. Do not report the whole instrument
+as accepted when this occurs; inspect the failed batch and immutable evidence
+before retrying. These repository regressions use fixtures, not operational
+source evidence, and do not close the independent-provider acceptance gate.
