@@ -169,7 +169,6 @@ class RecommendationResearchOutcomeAttributionRepository:
             nested_policy.get("benchmark") != "explicit_market_contribution_identity",
         )):
             raise ValueError("Performance Attribution anidado perdió política de investigación.")
-        RecommendationPerformanceAttributionService.verify_canonical_payload(attribution)
         attribution_key = self._sha256(payload.get("attributionKey"), "attributionKey")
         if self._sha256(attribution.get("attributionKey"), "attribution.attributionKey") != attribution_key:
             raise ValueError("attributionKey no coincide con Performance Attribution anidado.")
@@ -221,6 +220,7 @@ class RecommendationResearchOutcomeAttributionRepository:
         expected = self._canonical_hash(canonical)
         if outcome_hash != expected:
             raise ValueError("Outcome attribution no coincide con outcomeHash canónico.")
+        RecommendationPerformanceAttributionService.verify_canonical_payload(attribution)
         return payload
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:

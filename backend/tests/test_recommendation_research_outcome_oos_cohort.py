@@ -162,53 +162,42 @@ def _canonical_outcome_record() -> dict[str, object]:
         }},
     }
 
-    def evidence(ref: str) -> dict[str, object]:
-        return {
-            "availableAt": available_at.isoformat(),
-            "source": "verified-independent-source",
-            "sourceRef": f"urn:outcome:{ref}",
-        }
+    from app.services.recommendation_performance_attribution_service import (
+        AttributionEvidence,
+        FactorContributionEvidence,
+        RecommendationPerformanceAttributionInput,
+        RecommendationPerformanceAttributionService,
+    )
 
-    attribution = {
-        "module": "performance_attribution",
-        "advisoryStatus": "no_advice",
-        "productionEligible": False,
-        "isWeightingReady": False,
-        "instrumentId": "instrument-a",
-        "symbol": "AAA",
-        "asOf": observed_at.isoformat(),
-        "periodStart": CYCLE_AS_OF.isoformat(),
-        "periodEnd": end.isoformat(),
-        "attributionKey": "b" * 64,
-        "benchmarkId": "benchmark:world",
-        "currency": {
-            "instrumentCurrency": "USD",
-            "reportingCurrency": "EUR",
-            "fxPair": "USD/EUR",
-            "conversionRequired": True,
-        },
-        "totalReturn": 0.10,
-        "marketContribution": 0.04,
-        "fxContribution": 0.01,
-        "factorContributions": {"quality": 0.02},
-        "explainedReturn": 0.07,
-        "residualReturn": 0.03,
-        "evidence": {
-            "totalReturn": evidence("total"),
-            "marketContribution": evidence("market"),
-            "fxContribution": evidence("fx"),
-            "factorContributions": {"quality": evidence("quality")},
-        },
-        "policy": {
-            "automaticTrading": False,
-            "automaticProductionPromotion": False,
-            "causalClaim": "forbidden_arithmetic_attribution_only",
-            "residualInterpretation": "unexplained_not_automatic_stock_selection_alpha",
-            "fx": "explicit_currency_pair_bound_fail_closed",
-            "identity": "deterministic_sha256_attribution_key",
-            "benchmark": "explicit_market_contribution_identity",
-        },
-    }
+    def evidence(value: float, ref: str) -> AttributionEvidence:
+        return AttributionEvidence(
+            value=value, available_at=available_at,
+            source="verified-independent-source", source_ref=f"urn:outcome:{ref}",
+        )
+
+    attribution = RecommendationPerformanceAttributionService().evaluate(
+        as_of=observed_at,
+        item=RecommendationPerformanceAttributionInput(
+            instrument_id="instrument-a",
+            symbol="AAA",
+            instrument_currency="USD",
+            reporting_currency="EUR",
+            fx_pair="USD/EUR",
+            benchmark_id="benchmark:world",
+            period_start=CYCLE_AS_OF,
+            period_end=end,
+            total_return=evidence(0.10, "total"),
+            market_contribution=evidence(0.04, "market"),
+            fx_contribution=evidence(0.01, "fx"),
+            factor_contributions=(
+                FactorContributionEvidence(
+                    factor="quality", contribution=0.02,
+                    available_at=available_at, source="verified-independent-source",
+                    source_ref="urn:outcome:quality",
+                ),
+            ),
+        ),
+    ).to_api_dict()
     outcome = RecommendationResearchOutcomeAttributionService().bind(
         outcome_id="canonical-30d",
         cycle_record=cycle_record,
