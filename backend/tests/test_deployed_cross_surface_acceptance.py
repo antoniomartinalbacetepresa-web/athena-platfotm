@@ -30,13 +30,21 @@ def owners():
 def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=False,
               missing_athena=False, shared_extra_position=False,
               personalization_leak=False, personalization_escalation=False,
-              fallback_market=False, empty_market=False):
+              fallback_market=False, empty_market=False,
+              stale_build=False, missing_build=False):
     revoked = set()
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/health":
             return httpx.Response(200, json={"status": "ok", "service": "athena-tyche-backend"})
+        if path == "/api/v1/build":
+            if missing_build:
+                return httpx.Response(503, json={"detail": "unavailable"})
+            return httpx.Response(200, json={
+                "schema": "athena.backend-build.v1",
+                "sourceSha": "b" * 40 if stale_build else "a" * 40,
+            })
         if path == "/api/v1/market/universe/status":
             return httpx.Response(200, json={"data": {
                 "activeCount": 0 if empty_market else 2,
@@ -104,13 +112,14 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
 
 def check(**kwargs):
     with httpx.Client(base_url="https://staging.example", transport=transport(**kwargs)) as client:
-        return module.verify_deployed_api(client, *owners())
+        return module.verify_deployed_api(client, *owners(), expected_sha="a" * 40)
 
 
 def test_two_owner_canonical_and_revocation_success():
     report = check()
     assert report["status"] == "passed"
     assert report["deployedApiContractsVerified"] is True
+    assert report["deployedBackendBuildIdentityVerified"] is True
     assert report["deployedFlutterBrowserE2EVerified"] is False
     assert report["operationalHistory365DaysVerified"] is False
     assert report["ownerScopedPersonalizationVerified"] is True
@@ -120,7 +129,7 @@ def test_two_owner_canonical_and_revocation_success():
 @pytest.mark.parametrize("fault", [
     "missing_athena", "mismatched_news", "cross_owner", "revoked_accepted",
     "shared_extra_position", "personalization_leak", "personalization_escalation",
-    "fallback_market", "empty_market",
+    "fallback_market", "empty_market", "stale_build", "missing_build",
 ])
 def test_deployed_acceptance_fails_closed(fault):
     with pytest.raises(module.AcceptanceFailure):
@@ -138,3 +147,9 @@ def test_deployment_url_must_be_https_and_never_contain_credentials(monkeypatch,
         monkeypatch.setenv("ATHENA_ACCEPTANCE_BASE_URL", url)
         assert module.main() == 2
         assert "secret" not in capsys.readouterr().out
+
+
+def test_missing_expected_sha_fails_before_any_deployed_contract():
+    with httpx.Client(base_url="https://staging.example", transport=transport()) as client:
+        with pytest.raises(module.AcceptanceFailure, match="expected source SHA"):
+            module.verify_deployed_api(client, *owners(), expected_sha="not-a-sha")

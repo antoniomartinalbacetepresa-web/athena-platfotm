@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -133,14 +134,22 @@ def _owner_snapshot(client: httpx.Client, token: str, owner: TestOwner, label: s
     return owner_id, position_ids
 
 
-def verify_deployed_api(client: httpx.Client, owner_a: TestOwner, owner_b: TestOwner) -> dict[str, object]:
+def verify_deployed_api(
+    client: httpx.Client, owner_a: TestOwner, owner_b: TestOwner, *, expected_sha: str,
+) -> dict[str, object]:
     """Verify one deployed backend and two pre-seeded, authorized test accounts.
 
     A missing canonical artifact or missing owner-specific fixture means
     deployed acceptance is NOT complete.
     """
+    _expect(bool(re.fullmatch(r"[0-9a-f]{40}", expected_sha)), "expected source SHA")
     health = _get(client, "/health", "health")
     _expect(health.get("status") == "ok" and health.get("service") == "athena-tyche-backend", "health")
+    build = _get(client, "/api/v1/build", "backend build identity")
+    _expect(set(build) == {"schema", "sourceSha"}
+            and build.get("schema") == "athena.backend-build.v1"
+            and build.get("sourceSha") == expected_sha,
+            "deployed backend exact source SHA")
     market = _get(client, "/api/v1/market/universe/status", "market universe")
     universe = _object(market.get("data"), "market universe")
     _expect(type(universe.get("activeCount")) is int and universe["activeCount"] > 0
@@ -202,6 +211,7 @@ def verify_deployed_api(client: httpx.Client, owner_a: TestOwner, owner_b: TestO
                      "owner B personalization after A logout", token=token_b).get("status") == "configured",
                 "independent owner personalization")
         return {"status": "passed", "deployedApiContractsVerified": True,
+                "deployedBackendBuildIdentityVerified": True,
                 "persistedMarketUniverseVerified": True,
                 "ownerScopedPersonalizationVerified": True,
                 "deployedFlutterBrowserE2EVerified": False, "operationalHistory365DaysVerified": False,
@@ -242,7 +252,9 @@ def main() -> int:
     try:
         owner_a, owner_b = _env_owner("A"), _env_owner("B")
         with httpx.Client(base_url=base, timeout=12.0, follow_redirects=False, trust_env=False) as client:
-            result = verify_deployed_api(client, owner_a, owner_b)
+            result = verify_deployed_api(
+                client, owner_a, owner_b, expected_sha=os.environ.get("GITHUB_SHA", ""),
+            )
     except AcceptanceFailure as exc:
         print(json.dumps({"status": "failed", "reason": str(exc)}))
         return 3

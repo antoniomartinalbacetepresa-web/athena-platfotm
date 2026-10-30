@@ -2,6 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.build_identity import router as build_identity_router
 from app.api.macro import router as macro_router
 from app.api.market import router as market_router
 from app.api.news import router as news_router
@@ -51,7 +52,7 @@ app = FastAPI(title="ATHENA TYCHE Backend", version="0.1.0", description="Backen
 app.add_middleware(CORSMiddleware, allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$", allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
 app.add_middleware(SecurityHeadersMiddleware)
 
-app.include_router(auth_router); app.include_router(user_portfolio_router); app.include_router(user_profile_router)
+app.include_router(build_identity_router); app.include_router(auth_router); app.include_router(user_portfolio_router); app.include_router(user_profile_router)
 app.include_router(market_router); app.include_router(sec_router); app.include_router(sec_fundamental_pit_router); app.include_router(macro_router); app.include_router(news_router); app.include_router(sources_router); app.include_router(readiness_router); app.include_router(portfolio_router)
 app.include_router(portfolio_allocation_authority_router); app.include_router(portfolio_allocation_policy_router); app.include_router(recommendations_router); app.include_router(recommendation_production_router); app.include_router(recommendation_research_router); app.include_router(recommendation_professional_research_router); app.include_router(recommendation_thesis_invalidation_router); app.include_router(recommendation_catalysts_router); app.include_router(recommendation_factor_risk_sealed_value_router); app.include_router(recommendation_market_factor_exposure_router); app.include_router(recommendation_fundamental_factor_evidence_router); app.include_router(recommendation_performance_attribution_router)
 app.include_router(recommendation_portfolio_performance_attribution_router, dependencies=[Depends(bind_portfolio_owner_context)])
