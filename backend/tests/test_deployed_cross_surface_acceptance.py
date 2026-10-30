@@ -60,8 +60,9 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
             return httpx.Response(200, json={"data": {
                 "artifactBindingVerified": True, "cycleHash": HASH,
                 "synthesis": {"inputFingerprint": "invalid" if malformed_pit_fingerprint else HASH},
-                "provenance": {"inputFingerprint": HASH, "news": {"artifactHash": NEWS_HASH},
-                               "investors": {"artifactHash": INVESTORS_HASH}},
+                "provenance": {"inputFingerprint": "invalid" if malformed_pit_fingerprint else HASH,
+                               "news": {"artifactHash": None if missing_news_hash else NEWS_HASH},
+                               "investors": {"artifactHash": None if missing_investors_hash else INVESTORS_HASH}},
                 "selection": {"presentationOnly": True, "recommendationInfluence": False,
                               "automaticTrading": False}}})
         if path.endswith("/news-synthesis/latest"):
