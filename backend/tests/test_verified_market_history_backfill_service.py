@@ -279,3 +279,79 @@ def test_sweep_processes_unchanged_frozen_listings_in_multiple_batches(tmp_path:
     assert report["attemptedInstrumentCount"] == 2
     assert report["historyReady"] is False
     assert [call[0] for call in provider.calls] == ["AAA", "BBB"]
+
+
+def test_current_day_future_known_history_cannot_hide_backfill_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A future-today retrieval must not satisfy today's live PIT cutoff."""
+    from app.services import verified_market_history_backfill_service as verified_module
+    from app.services import market_observation_backfill_service as backfill_module
+
+    class ControlledDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 10, 30, 10, tzinfo=timezone.utc)
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(verified_module, "datetime", ControlledDateTime)
+    monkeypatch.setattr(backfill_module, "datetime", ControlledDateTime)
+
+    database = _database(tmp_path)
+    instrument_id = _insert(InstrumentRepository(database=database), "AAA")
+    start = datetime(2025, 10, 28, 9, tzinfo=timezone.utc)
+    # This full-year series is already in SQLite, but its declared knowledge
+    # time is 12 hours AFTER the operator's 10:00 UTC measurement.
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_history(start, span_days=365),
+        source_provider="yahoo_finance",
+        retrieved_at=datetime(2026, 10, 30, 22, tzinfo=timezone.utc),
+    )
+    provider = FakeHistoryProvider({})
+    service = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 10, 30),
+    )
+    report = service.run(limit=1)
+    assert report.blockers_before == 1
+    assert report.blockers_after == 1
+    assert report.current_blockers_before == 1
+    assert report.backfill.selected_count == 1
+    assert report.history_ready is False
+    assert [symbol for symbol, _, _ in provider.calls] == ["AAA"]
+
+
+def test_sweep_freezes_only_history_known_by_actual_current_utc_instant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frozen worklist must not use a future end-of-day knowledge cutoff."""
+    from app.services import verified_market_history_backfill_service as verified_module
+    from app.services import market_observation_backfill_service as backfill_module
+
+    class ControlledDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 10, 30, 10, tzinfo=timezone.utc)
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(verified_module, "datetime", ControlledDateTime)
+    monkeypatch.setattr(backfill_module, "datetime", ControlledDateTime)
+    database = _database(tmp_path)
+    instrument_id = _insert(InstrumentRepository(database=database), "AAA")
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=_history(datetime(2025, 10, 28, 9, tzinfo=timezone.utc), span_days=365),
+        source_provider="yahoo_finance",
+        retrieved_at=datetime(2026, 10, 30, 22, tzinfo=timezone.utc),
+    )
+    provider = FakeHistoryProvider({})
+    result = VerifiedMarketHistoryBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 10, 30),
+    ).run_sweep(limit=1, max_batches=1)
+    assert result["initialBlockingCount"] == 1
+    assert result["attemptedInstrumentCount"] == 1
+    assert result["remainingBlockingCount"] == 1
+    assert result["historyReady"] is False
+    assert [symbol for symbol, _, _ in provider.calls] == ["AAA"]

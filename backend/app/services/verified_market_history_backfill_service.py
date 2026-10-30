@@ -126,9 +126,14 @@ class VerifiedMarketHistoryBackfillService:
             raise ValueError("offset no puede ser negativo.")
 
         self._database.initialize()
-        verification_cutoff = datetime.combine(self._today_provider(), time.max, tzinfo=timezone.utc)
-        blockers_before = self._blocking_count(verification_cutoff)
-        current_blockers_before = self._current_blocking_count(verification_cutoff)
+        # A UTC calendar day is not yet fully observed. Never count a row
+        # whose PIT knowledge timestamp lies later today than the real clock.
+        # Take a second cutoff after I/O so newly fetched rows are eligible
+        # for the post-backfill measurement, not the pre-backfill baseline.
+        day_end = datetime.combine(self._today_provider(), time.max, tzinfo=timezone.utc)
+        before_cutoff = min(day_end, datetime.now(timezone.utc))
+        blockers_before = self._blocking_count(before_cutoff)
+        current_blockers_before = self._current_blocking_count(before_cutoff)
         backfill = self._backfill.run(
             limit=limit,
             offset=offset,
@@ -139,9 +144,10 @@ class VerifiedMarketHistoryBackfillService:
             _expected_symbols=_expected_symbols,
             _expected_identities=_expected_identities,
         )
-        blockers_after = self._blocking_count(verification_cutoff)
+        after_cutoff = min(day_end, datetime.now(timezone.utc))
+        blockers_after = self._blocking_count(after_cutoff)
         coverage_after = MarketObservationCoverageService(database=self._database).get_report(
-            as_of=verification_cutoff,
+            as_of=after_cutoff,
         )
         current_blockers_after = max(
             0,
@@ -187,7 +193,10 @@ class VerifiedMarketHistoryBackfillService:
         # Match run() initialization before querying the frozen blocker list.
         self._database.initialize()
         sweep_day = self._today_provider()
-        cutoff = datetime.combine(sweep_day, time.max, tzinfo=timezone.utc)
+        cutoff = min(
+            datetime.combine(sweep_day, time.max, tzinfo=timezone.utc),
+            datetime.now(timezone.utc),
+        )
         # Freeze the worklist from ONE consistent SQLite backup, not from
         # successive live queries. A concurrent ingestion or universe refresh
         # can reorder an offset-paginated blocker queue without changing its

@@ -453,10 +453,16 @@ class MarketObservationBackfillService:
         if not blocking_only:
             return self._instruments.list_active(limit=limit, offset=offset)
 
+        # A same-day end-of-day cutoff would allow future-known imported
+        # observations to hide real blockers from the live backfill queue.
+        selection_cutoff = min(
+            datetime.combine(as_of_date, time.max, tzinfo=timezone.utc),
+            datetime.now(timezone.utc),
+        )
         report = MarketHistoryGapService(database=self._database).get_report(
             limit=limit,
             offset=offset,
-            as_of=datetime.combine(as_of_date, time.max, tzinfo=timezone.utc),
+            as_of=selection_cutoff,
         )
         rows: list[dict[str, Any]] = []
         for blocker in report.items:

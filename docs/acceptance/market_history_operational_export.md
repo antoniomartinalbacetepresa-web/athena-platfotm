@@ -126,3 +126,15 @@ coverage, source independence, corporate-action reconciliation or release
 readiness. Both commands preserve their JSON reports on stdout. No command
 changes the immutable PIT overwrite policy, approves provider data, or
 promotes production readiness automatically.
+
+
+## Same-day PIT cutoff for live backfill
+
+The verified history backfill now measures its initial blockers at the actual
+UTC instant, not the end of the current calendar day. Its post-ingestion
+measurement takes a fresh UTC instant so observations retrieved during the
+batch can count, while future-dated imported knowledge cannot. The frozen
+sweep worklist and the direct blocker-only selection use the same bounded
+cutoff. For historical dates already past, the requested day's end remains
+the cutoff. This is a code-level no-lookahead safeguard, not proof of live
+365-day coverage, production origin or independent corporate-action agreement.
