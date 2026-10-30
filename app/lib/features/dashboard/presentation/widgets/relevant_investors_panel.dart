@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/theme/athena_colors.dart';
+import '../../../investors/models/sec_13f_overlap.dart';
 import '../../../investors/data/athena_backend_relevant_investor_data_source.dart';
 import '../../../investors/models/relevant_investor_activity.dart';
 import 'base/athena_card.dart';
@@ -251,21 +252,132 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
                   );
                 }
 
+                final showOverlap = activities.length >= 2;
                 return ListView.separated(
                   padding: EdgeInsets.zero,
-                  itemCount: activities.length,
+                  itemCount: activities.length + (showOverlap ? 1 : 0),
                   separatorBuilder: (_, _) => const Divider(
                     height: 20,
                     color: AthenaColors.border,
                   ),
-                  itemBuilder: (context, index) =>
-                      _InvestorActivityItem(activity: activities[index]),
+                  itemBuilder: (context, index) {
+                    if (showOverlap && index == 0) {
+                      return _InvestorOverlapSummary(activities: activities);
+                    }
+                    return _InvestorActivityItem(
+                      activity: activities[index - (showOverlap ? 1 : 0)],
+                    );
+                  },
                 );
               },
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Cross-manager as-reported SEC 13F co-occurrence; never a weighting signal.
+class _InvestorOverlapSummary extends StatelessWidget {
+  const _InvestorOverlapSummary({required this.activities});
+
+  final List<RelevantInvestorActivity> activities;
+
+  void _showDetails(BuildContext context, Sec13fOverlapReport report) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.75,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Semantics(
+                  header: true,
+                  child: const Text('Coincidencias declaradas SEC 13F'),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'No son posiciones actuales, identidad canónica, consenso '
+                  'de inversión, recomendaciones ni pesos de cartera.',
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: report.sharedCusips.length,
+                    itemBuilder: (_, index) {
+                      final entry = report.sharedCusips[index];
+                      return ListTile(
+                        title: Text('CUSIP ${entry.cusip}'),
+                        subtitle: Text(
+                          '${entry.ciks.length} declarantes · '
+                          'CIK ${entry.ciks.join(', ')}',
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = Sec13fOverlapReport.fromFilings(activities);
+    return Column(
+      key: const Key('investor-overlap-summary'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: const Text(
+            'COINCIDENCIAS SEC 13F POR CUSIP',
+            style: TextStyle(
+              color: AthenaColors.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        if (report == null)
+          const Text(
+            'Comparación no disponible: se requieren entre 2 y 5 CIK '
+            'distintos, expedientes 13F-HR originales y la misma fecha '
+            'de posición.',
+          )
+        else ...[
+          Text(
+            '${report.sharedCusips.length} CUSIP coincidente(s) entre '
+            '${report.managerCount} declarantes · '
+            'posición ${_formatDate(report.positionDate)}',
+          ),
+          if (report.sharedCusips.isNotEmpty)
+            TextButton(
+              key: const Key('investor-overlap-detail'),
+              onPressed: () => _showDetails(context, report),
+              child: const Text('Examinar todas las coincidencias'),
+            ),
+        ],
+        const Text(
+          'Coincidencia textual histórica, no identidad canónica, '
+          'tenencia actual, consejo financiero ni señal de trading.',
+          style: TextStyle(
+            color: AthenaColors.textSecondary,
+            fontSize: 10,
+          ),
+        ),
+      ],
     );
   }
 }
