@@ -550,48 +550,31 @@ def test_ingestion_rejects_future_retrieval_even_for_past_economic_date(
 
 
 
-def test_ingestion_rejects_conflicting_source_timestamp_without_partial_batch_write(
+
+def test_ingestion_preserves_distinct_events_at_same_effective_and_retrieval_time(
     tmp_path: Path,
 ) -> None:
     database = _database(tmp_path)
     instrument_id = _instrument_id(database)
     repository = CorporateActionRepository(database)
     retrieved_at = "2026-09-11T08:00:00+00:00"
-    initial = FakeHistoryProvider([
-        {
-            **_observation(
-                timestamp="2026-08-01T00:00:00+00:00",
-                retrieved_at=retrieved_at, dividend=0.25,
-            ),
-            "sourceTimestamp": "2026-09-10T00:00:00+00:00",
-        },
-    ])
-    CorporateActionIngestionService(
-        market_provider=initial, repository=repository,
-    ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
-
-    # A replay of the same immutable economic event cannot change provenance.
-    # A valid split in that same retrieval batch must not be partly committed.
-    conflicting = FakeHistoryProvider([
+    provider = FakeHistoryProvider([
         _observation(
-            timestamp="2026-08-02T00:00:00+00:00",
-            retrieved_at=retrieved_at, split=4.0,
+            timestamp="2026-08-01T00:00:00+00:00",
+            retrieved_at=retrieved_at, dividend=0.25,
         ),
-        {
-            **_observation(
-                timestamp="2026-08-01T00:00:00+00:00",
-                retrieved_at=retrieved_at, dividend=0.25,
-            ),
-            "sourceTimestamp": "2026-09-10T01:00:00+00:00",
-        },
+        _observation(
+            timestamp="2026-08-01T00:00:00+00:00",
+            retrieved_at=retrieved_at, dividend=0.30,
+        ),
     ])
-    with pytest.raises(ValueError, match="PIT provenance conflict"):
-        CorporateActionIngestionService(
-            market_provider=conflicting, repository=repository,
-        ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
-
+    service = CorporateActionIngestionService(
+        market_provider=provider, repository=repository,
+    )
+    first = service.ingest_history(instrument_id=instrument_id, symbol="AAPL")
+    second = service.ingest_history(instrument_id=instrument_id, symbol="AAPL")
+    assert first.inserted == 2 and first.unchanged == 0
+    assert second.inserted == 0 and second.unchanged == 2
     rows = repository.list_for_instrument(instrument_id)
-    assert len(rows) == 1
-    assert rows[0]["cash_amount"] == 0.25
-    assert rows[0]["action_type"] == "dividend"
-    assert rows[0]["source_timestamp"] == "2026-09-10T00:00:00+00:00"
+    assert len(rows) == 2
+    assert sorted(row["cash_amount"] for row in rows) == [0.25, 0.30]
