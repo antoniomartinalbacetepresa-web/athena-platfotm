@@ -689,3 +689,80 @@ def test_frozen_backfill_rejects_symbol_remap_before_network(tmp_path: Path) -> 
             _expected_symbols=("AAA",),
         )
     assert provider.calls == []
+
+
+@pytest.mark.parametrize(
+    "bad_observation",
+    [
+        {"timestamp": "2025-12-31T21:00:00+00:00", "close": 99.0},
+        {"timestamp": "2026-01-03T21:00:00+00:00", "close": 103.0},
+        {"observed_at": "2026-01-02T21:00:00+00:00",
+         "timestamp": "2026-01-03T21:00:00+00:00", "close": 103.0},
+        {"timestamp": "2026-01-02T21:00:00", "close": 102.0},
+    ],
+)
+def test_backfill_rejects_mixed_out_of_window_or_conflicting_provider_rows_atomically(
+    tmp_path: Path, bad_observation: dict[str, object],
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database), symbol="AAA", instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({"AAA": [
+        {"timestamp": "2026-01-01T21:00:00+00:00", "close": 101.0},
+        bad_observation,
+    ]})
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 1, 5),
+    ).run(limit=1, from_date="2026-01-01", to_date="2026-01-02")
+
+    assert provider.date_calls == [("AAA", "2026-01-01", "2026-01-02")]
+    assert report.failed_count == 1
+    assert report.persisted_instrument_count == 0
+    assert report.observations_inserted == 0
+    assert MarketObservationRepository(database=database).list_for_instrument(instrument_id) == []
+
+
+def test_backfill_explicit_start_is_bounded_to_today_and_rejects_future_response(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database), symbol="AAA", instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({"AAA": [
+        {"timestamp": "2026-01-03T21:00:00+00:00", "close": 103.0},
+    ]})
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 1, 2),
+    ).run(limit=1, from_date="2026-01-01")
+
+    assert provider.date_calls == [("AAA", "2026-01-01", "2026-01-02")]
+    assert report.effective_to_date == "2026-01-02"
+    assert report.failed_count == 1
+    assert report.observations_inserted == 0
+    assert MarketObservationRepository(database=database).list_for_instrument(instrument_id) == []
+
+
+def test_backfill_accepts_equivalent_timestamp_aliases_inside_pit_window(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database), symbol="AAA", instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({"AAA": [{
+        "observed_at": "2026-01-02T21:00:00+00:00",
+        "timestamp": "2026-01-02T16:00:00-05:00",
+        "close": 102.0,
+    }]})
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 1, 5),
+    ).run(limit=1, from_date="2026-01-01", to_date="2026-01-02")
+
+    assert report.failed_count == 0
+    assert report.observations_inserted == 1
+    assert len(MarketObservationRepository(database=database).list_for_instrument(instrument_id)) == 1

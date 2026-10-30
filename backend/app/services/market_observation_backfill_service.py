@@ -237,6 +237,13 @@ class MarketObservationBackfillService:
                     expected_provider=provider,
                     expected_symbol=symbol,
                 )
+                # Provider filtering is not an authority boundary. Reject the
+                # entire response if any timestamp escapes the PIT window.
+                self._validate_observation_window(
+                    observations=history,
+                    from_date=effective_from_date,
+                    to_date=effective_to_date,
+                )
                 # The observation was not available when the batch began.
                 # Recording that earlier time would create false PIT knowledge.
                 retrieved_at = datetime.now(timezone.utc)
@@ -337,6 +344,42 @@ class MarketObservationBackfillService:
                         "se rechaza la persistencia para evitar provenance incorrecto."
                     )
 
+    def _validate_observation_window(
+        self,
+        *,
+        observations: list[dict[str, Any]],
+        from_date: str | None,
+        to_date: str | None,
+    ) -> None:
+        """Validate all provider timestamps, including conflicting aliases."""
+        lower = self._parse_iso_date(from_date, field="from_date") if from_date else None
+        upper = self._parse_iso_date(to_date, field="to_date") if to_date else self._today_provider()
+        for observation in observations:
+            if not isinstance(observation, dict):
+                raise ValueError("El histórico contiene una observación no estructurada.")
+            declared = [observation[key] for key in ("observed_at", "timestamp") if key in observation]
+            if not declared:
+                raise ValueError("El histórico no declara fecha de observación.")
+            instants: list[datetime] = []
+            for raw in declared:
+                if isinstance(raw, datetime):
+                    observed = raw
+                elif isinstance(raw, str):
+                    try:
+                        observed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    except ValueError as exc:
+                        raise ValueError("Fecha de observación inválida del proveedor.") from exc
+                else:
+                    raise ValueError("Fecha de observación inválida del proveedor.")
+                if observed.tzinfo is None or observed.utcoffset() is None:
+                    raise ValueError("La fecha de observación requiere zona horaria.")
+                instants.append(observed.astimezone(timezone.utc))
+            if len(instants) == 2 and instants[0] != instants[1]:
+                raise ValueError("Fechas de observación contradictorias del proveedor.")
+            observed_day = instants[0].date()
+            if (lower is not None and observed_day < lower) or observed_day > upper:
+                raise ValueError("Observación histórica fuera de la ventana PIT solicitada.")
+
     def _resolve_history_window(
         self,
         *,
@@ -354,6 +397,9 @@ class MarketObservationBackfillService:
             raise ValueError("to_date no puede ser una fecha futura.")
         if start is not None and end is not None and start > end:
             raise ValueError("from_date no puede ser posterior a to_date.")
+        # Explicit lower bounds must not create open-ended provider requests.
+        if start is not None and end is None:
+            end = today
 
         if not blocking_only or start is not None:
             return (

@@ -85,3 +85,24 @@ automatic historical correction or deletion of immutable observations.
 An operator must review any resulting gaps and authorize a separately
 provenanced backfill or independent source; never overwrite the first
 point-in-time observation or infer adjusted-price quality from this check.
+
+## Provider-response PIT boundary for market-history backfill
+
+The bounded Yahoo market-history backfill now validates every returned
+observation against the requested UTC date interval before any row for that
+instrument is persisted. A provider response that mixes valid rows with
+out-of-window rows, omits timezone information, or declares contradictory
+`observed_at` and `timestamp` aliases fails closed for that instrument.
+An explicit `--from-date` without `--to-date` is bounded to the current
+UTC day rather than making an open-ended provider request. The repository
+continues to enforce that retrieval knowledge time cannot precede the
+observation instant; a response with no explicit date window is still
+bounded by the current UTC day and the write-time PIT invariant.
+
+This prevents accidental ingestion outside an approved historical interval,
+but does not prove that Yahoo data are complete or independently corroborated.
+The comparison uses UTC observation dates; providers whose session date
+differs from UTC must supply an appropriately normalized requested window
+or be reviewed rather than silently widening the PIT gate. No existing
+immutable observation is rewritten, no readiness is automatically promoted,
+and no trading or weighting authority is introduced.
