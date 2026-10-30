@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import re
 from typing import Any, Callable
 
@@ -158,6 +159,39 @@ class RecommendationResearchProspectiveCohortService:
         return artifact
 
 
+    @staticmethod
+    def _observed_error_statistics(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Descriptive errors from validated persisted chains, never a skill claim.
+
+        Divide before summation to avoid overflowing intermediate totals when
+        finite errors are large. Empty cohorts have no invented zero error.
+        """
+        if not artifacts:
+            return None
+        samples: dict[str, list[float]] = {
+            "signedError": [], "absoluteError": [], "squaredError": [],
+        }
+        for artifact in artifacts:
+            for field, values in samples.items():
+                value = artifact.get(field)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise ValueError(f"Error persistido no finito: {field}.")
+                if field != "signedError" and value < 0:
+                    raise ValueError(f"Error persistido negativo: {field}.")
+                values.append(float(value))
+        count = len(artifacts)
+        return {
+            "metric": "total_return",
+            "sampleCount": count,
+            "meanSignedError": math.fsum(value / count for value in samples["signedError"]),
+            "meanAbsoluteError": math.fsum(value / count for value in samples["absoluteError"]),
+            "rootMeanSquaredError": math.sqrt(math.fsum(
+                value / count for value in samples["squaredError"]
+            )),
+            "maximumAbsoluteError": max(samples["absoluteError"]),
+            "descriptiveOnly": True,
+        }
+
     def measured_coverage(self, *, cohort_id: str, as_of: datetime) -> dict[str, Any]:
         """Measure the frozen denominator against persisted errors AND outcomes.
 
@@ -190,6 +224,7 @@ class RecommendationResearchProspectiveCohortService:
         errors = RecommendationResearchForecastErrorRepository(self._database)
         outcomes = RecommendationResearchOutcomeAttributionRepository(self._database)
         measured: dict[str, str] = {}
+        measured_artifacts: list[dict[str, Any]] = []
         store_present = False
         with self._database.connect() as connection:
             connection.execute("BEGIN")
@@ -246,6 +281,7 @@ class RecommendationResearchProspectiveCohortService:
                         if payload["attribution"].get("totalReturn") != artifact.get("realizedValue"):
                             raise ValueError("El retorno realizado no coincide con el outcome persistido.")
                         measured[ref] = record["error_hash"]
+                        measured_artifacts.append(artifact)
         if self.get(cohort_id=cohort_id)["cohortHash"] != cohort["cohortHash"]:
             raise ValueError("La selección cambió durante la medición.")
         missing_due = sorted(due - set(measured))
@@ -256,6 +292,8 @@ class RecommendationResearchProspectiveCohortService:
             "maturedCount": len(due),
             "notYetDueCount": len(refs) - len(due),
             "measuredErrorCount": len(measured),
+            "maturedMeasurementCoverage": len(measured) / len(due) if due else None,
+            "observedErrorStatistics": self._observed_error_statistics(measured_artifacts),
             "missingMaturedSpecificationHashes": missing_due,
             "measuredErrorHashes": sorted(measured.values()),
             "membershipComplete": len(measured) == len(refs),

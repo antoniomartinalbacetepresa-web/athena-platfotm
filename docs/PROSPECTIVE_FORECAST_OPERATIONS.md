@@ -89,3 +89,21 @@ calibración, rentabilidad ni skill. Por ello `independentMarketSourceVerified`,
 autoridades productivas permanecen en `false`. No usar fixtures para declarar
 cumplimiento operativo. Se requiere una instantánea autorizada y consistente
 de la base operativa y validación externa de los resultados para cerrar OOS.
+
+## Estadísticas descriptivas de errores persistidos
+
+La operación `measured` también devuelve `maturedMeasurementCoverage`
+(fracción de horizontes vencidos con cadena de error y outcome persistida) y
+`observedErrorStatistics`: tamaño de muestra, sesgo medio firmado, error
+absoluto medio, raíz del error cuadrático medio y máximo error absoluto,
+todos expresados en **fracciones de retorno total**. Las métricas se calculan
+exclusivamente sobre los errores persistidos que han superado las validaciones
+de identidad, PIT y outcome. Si no hay observaciones, las estadísticas son
+`null`; si todavía no venció ningún horizonte, la fracción de cobertura es
+`null`, no un 100% ficticio.
+
+Estas estadísticas son **descriptivas y potencialmente sesgadas por la falta
+de outcomes**: el denominador precomprometido y la lista completa de vencidos
+sin medición siguen siendo obligatorios para interpretarlas. No demuestran
+calibración, skill, significación estadística, calidad de fuentes externas,
+aprobación de ponderaciones ni autoridad de aprendizaje/trading.

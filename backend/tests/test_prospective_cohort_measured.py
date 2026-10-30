@@ -8,6 +8,9 @@ from app.repositories.recommendation_research_forecast_error_repository import (
     RecommendationResearchForecastErrorRepository,
 )
 from scripts.prospective_cohort import build_parser, run
+from app.services.recommendation_research_prospective_cohort_service import (
+    RecommendationResearchProspectiveCohortService,
+)
 from test_recommendation_research_model_executor import context
 from test_recommendation_research_prospective_cohort import setup_cohort
 
@@ -21,6 +24,8 @@ def test_measured_reports_matured_missing_without_supplied_hashes(context, tmp_p
     assert report["cohortHash"] == cohort["cohortHash"]
     assert report["selectedCount"] == report["maturedCount"] == 1
     assert report["measuredErrorCount"] == 0
+    assert report["maturedMeasurementCoverage"] == 0.0
+    assert report["observedErrorStatistics"] is None
     assert report["missingMaturedSpecificationHashes"] == [ref]
     assert report["errorStorePresent"] is False
     assert report["outcomeEvidenceVerified"] is False
@@ -56,6 +61,8 @@ def test_measured_does_not_count_unmatured_period(context, tmp_path):
     )
     assert report["maturedCount"] == 0
     assert report["notYetDueCount"] == 1
+    assert report["maturedMeasurementCoverage"] is None
+    assert report["observedErrorStatistics"] is None
     assert report["membershipComplete"] is False
 
 
@@ -77,3 +84,38 @@ def test_measured_cli_requires_timezone_and_checks_pin():
     args.as_of = "2026-10-29T20:00:00"
     with pytest.raises(ValueError, match="zona horaria"):
         run(args, service=Ledger())
+
+def test_descriptive_errors_use_measured_sample_not_selected_denominator():
+    samples = [
+        {"signedError": 0.1, "absoluteError": 0.1, "squaredError": 0.01},
+        {"signedError": -0.2, "absoluteError": 0.2, "squaredError": 0.04},
+    ]
+    stats = RecommendationResearchProspectiveCohortService._observed_error_statistics(samples)
+    assert stats["metric"] == "total_return"
+    assert stats["sampleCount"] == 2
+    assert stats["meanSignedError"] == pytest.approx(-0.05)
+    assert stats["meanAbsoluteError"] == pytest.approx(0.15)
+    assert stats["rootMeanSquaredError"] == pytest.approx(0.025 ** 0.5)
+    assert stats["maximumAbsoluteError"] == pytest.approx(0.2)
+    assert stats["descriptiveOnly"] is True
+    assert RecommendationResearchProspectiveCohortService._observed_error_statistics([]) is None
+
+
+def test_descriptive_errors_reject_invalid_values_without_overflow():
+    summarize = RecommendationResearchProspectiveCohortService._observed_error_statistics
+    for field, invalid in (
+        ("signedError", float("nan")),
+        ("absoluteError", -1),
+        ("squaredError", float("inf")),
+        ("absoluteError", True),
+    ):
+        row = {"signedError": 0.0, "absoluteError": 0.0, "squaredError": 0.0}
+        row[field] = invalid
+        with pytest.raises(ValueError):
+            summarize([row])
+    large = summarize([
+        {"signedError": 1e154, "absoluteError": 1e154, "squaredError": 1e308},
+        {"signedError": -1e154, "absoluteError": 1e154, "squaredError": 1e308},
+    ])
+    assert large["meanSignedError"] == pytest.approx(0)
+    assert large["rootMeanSquaredError"] == pytest.approx(1e154)
