@@ -347,13 +347,14 @@ def test_outcome_evaluator_persists_frozen_benchmark_and_excess_return(
 def _offset_price(
     database: AthenaDatabase, *, instrument_id: int,
     observed_at: str, retrieved_at: str, close: float,
+    source_provider: str = "offset_regression",
 ) -> None:
     with database.connect() as connection:
         connection.execute(
             """INSERT INTO market_observations
                (instrument_id, observed_at, close, source_provider, retrieved_at)
-               VALUES (?, ?, ?, 'offset_regression', ?)""",
-            (instrument_id, observed_at, close, retrieved_at),
+               VALUES (?, ?, ?, ?, ?)""",
+            (instrument_id, observed_at, close, source_provider, retrieved_at),
         )
 
 
@@ -371,7 +372,8 @@ def test_outcome_uses_exact_utc_instants_not_lexical_offset_order(tmp_path: Path
     # This looks lexically earlier than 12:00 UTC but is actually 12:30 UTC.
     _offset_price(database, instrument_id=instrument_id,
                   observed_at="2026-01-08T09:00:00-05:00",
-                  retrieved_at="2026-01-09T06:30:00-06:00", close=999.0)
+                  retrieved_at="2026-01-09T06:30:00-06:00", close=999.0,
+                  source_provider="offset_future")
     report = RecommendationOutcomeEvaluationService(database=database).evaluate_due(
         as_of=datetime(2026, 1, 9, 12, tzinfo=timezone.utc))
     assert report.evaluated_count == 1
@@ -403,7 +405,8 @@ def test_benchmark_deduplicates_equal_instants_and_excludes_future_retrieval(tmp
                   retrieved_at="2026-01-08T16:00:00+00:00", close=230.0)
     _offset_price(database, instrument_id=benchmark_id,
                   observed_at="2026-01-08T09:00:00-05:00",
-                  retrieved_at="2026-01-09T06:30:00-06:00", close=999.0)
+                  retrieved_at="2026-01-09T06:30:00-06:00", close=999.0,
+                  source_provider="offset_future")
     report = RecommendationOutcomeEvaluationService(database=database).evaluate_due(
         as_of=datetime(2026, 1, 9, 12, tzinfo=timezone.utc))
     assert report.evaluated_count == 1
