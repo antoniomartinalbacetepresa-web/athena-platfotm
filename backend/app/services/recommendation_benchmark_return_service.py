@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.services.market_pit_price_selection_service import select_pit_prices
 
 
 @dataclass(frozen=True)
@@ -143,56 +144,18 @@ class RecommendationBenchmarkReturnService:
         return tuple(int(row["id"]) for row in rows)
 
     def _first_price_in_window(
-        self,
-        *,
+        self, *,
         instrument_id: int,
         at_or_after: datetime,
         not_after: datetime,
         knowledge_cutoff: datetime,
     ) -> dict[str, Any] | None:
-        with self._database.connect() as connection:
-            row = connection.execute(
-                """
-                WITH eligible AS (
-                    SELECT
-                        observed_at,
-                        COALESCE(close, adjusted_close) AS price,
-                        source_provider,
-                        retrieved_at,
-                        id,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY observed_at
-                            ORDER BY retrieved_at DESC, id DESC
-                        ) AS row_rank
-                    FROM market_observations
-                    WHERE instrument_id = ?
-                      AND observed_at >= ?
-                      AND observed_at <= ?
-                      AND retrieved_at <= ?
-                      AND COALESCE(close, adjusted_close) IS NOT NULL
-                      AND COALESCE(close, adjusted_close) > 0
-                )
-                SELECT observed_at, price, source_provider, retrieved_at
-                FROM eligible
-                WHERE row_rank = 1
-                ORDER BY observed_at ASC
-                LIMIT 1
-                """,
-                (
-                    instrument_id,
-                    at_or_after.astimezone(timezone.utc).isoformat(),
-                    not_after.astimezone(timezone.utc).isoformat(),
-                    knowledge_cutoff.astimezone(timezone.utc).isoformat(),
-                ),
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "observed_at": str(row["observed_at"]),
-            "price": float(row["price"]),
-            "source_provider": str(row["source_provider"]),
-            "retrieved_at": str(row["retrieved_at"]),
-        }
+        prices = select_pit_prices(
+            self._database, instrument_id=instrument_id,
+            at_or_after=at_or_after, not_after=not_after,
+            knowledge_cutoff=knowledge_cutoff,
+        )
+        return prices[0] if prices else None
 
     def _empty(
         self,

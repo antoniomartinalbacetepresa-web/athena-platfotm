@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.services.market_pit_price_selection_service import select_pit_prices
 from app.repositories.recommendation_history_repository import (
     RecommendationHistoryRepository,
 )
@@ -245,113 +246,38 @@ class RecommendationOutcomeEvaluationService:
         )
 
     def _first_price_in_window(
-        self,
-        *,
+        self, *,
         instrument_id: int,
         at_or_after: datetime,
         not_after: datetime,
         knowledge_cutoff: datetime,
     ) -> dict[str, Any] | None:
-        start = at_or_after.astimezone(timezone.utc)
-        end = not_after.astimezone(timezone.utc)
-        cutoff = knowledge_cutoff.astimezone(timezone.utc)
-        if end < start:
-            return None
-
-        with self._database.connect() as connection:
-            row = connection.execute(
-                """
-                WITH eligible AS (
-                    SELECT
-                        observed_at,
-                        COALESCE(close, adjusted_close) AS price,
-                        retrieved_at,
-                        source_provider,
-                        id,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY observed_at
-                            ORDER BY retrieved_at DESC, id DESC
-                        ) AS row_rank
-                    FROM market_observations
-                    WHERE instrument_id = ?
-                      AND observed_at >= ?
-                      AND observed_at <= ?
-                      AND retrieved_at <= ?
-                      AND COALESCE(close, adjusted_close) IS NOT NULL
-                      AND COALESCE(close, adjusted_close) > 0
-                )
-                SELECT observed_at, price, retrieved_at, source_provider
-                FROM eligible
-                WHERE row_rank = 1
-                ORDER BY observed_at ASC
-                LIMIT 1
-                """,
-                (
-                    instrument_id,
-                    start.isoformat(),
-                    end.isoformat(),
-                    cutoff.isoformat(),
-                ),
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "observed_at": str(row["observed_at"]),
-            "price": float(row["price"]),
-            "retrieved_at": str(row["retrieved_at"]),
-            "source_provider": str(row["source_provider"]),
-        }
+        prices = select_pit_prices(
+            self._database, instrument_id=instrument_id,
+            at_or_after=at_or_after, not_after=not_after,
+            knowledge_cutoff=knowledge_cutoff,
+        )
+        return prices[0] if prices else None
 
     def _max_drawdown(
-        self,
-        *,
+        self, *,
         instrument_id: int,
         start_at: datetime,
         end_at: datetime,
         knowledge_cutoff: datetime,
         entry_price: float,
     ) -> float | None:
-        with self._database.connect() as connection:
-            rows = connection.execute(
-                """
-                WITH eligible AS (
-                    SELECT
-                        observed_at,
-                        COALESCE(close, adjusted_close) AS price,
-                        retrieved_at,
-                        id,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY observed_at
-                            ORDER BY retrieved_at DESC, id DESC
-                        ) AS row_rank
-                    FROM market_observations
-                    WHERE instrument_id = ?
-                      AND observed_at >= ?
-                      AND observed_at <= ?
-                      AND retrieved_at <= ?
-                      AND COALESCE(close, adjusted_close) IS NOT NULL
-                      AND COALESCE(close, adjusted_close) > 0
-                )
-                SELECT observed_at, price
-                FROM eligible
-                WHERE row_rank = 1
-                ORDER BY observed_at ASC
-                """,
-                (
-                    instrument_id,
-                    start_at.astimezone(timezone.utc).isoformat(),
-                    end_at.astimezone(timezone.utc).isoformat(),
-                    knowledge_cutoff.astimezone(timezone.utc).isoformat(),
-                ),
-            ).fetchall()
-
-        if not rows:
+        prices = select_pit_prices(
+            self._database, instrument_id=instrument_id,
+            at_or_after=start_at, not_after=end_at,
+            knowledge_cutoff=knowledge_cutoff,
+        )
+        if not prices:
             return None
-
         peak = float(entry_price)
         max_drawdown = 0.0
-        for row in rows:
-            price = float(row["price"])
+        for observation in prices:
+            price = observation["price"]
             if price > peak:
                 peak = price
             drawdown = (price / peak) - 1.0

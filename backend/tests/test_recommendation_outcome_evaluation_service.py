@@ -342,3 +342,72 @@ def test_outcome_evaluator_persists_frozen_benchmark_and_excess_return(
     assert len(outcomes) == 1
     assert outcomes[0]["benchmark_return"] == pytest.approx(0.05)
     assert outcomes[0]["excess_return"] == pytest.approx(0.05)
+
+
+def _offset_price(
+    database: AthenaDatabase, *, instrument_id: int,
+    observed_at: str, retrieved_at: str, close: float,
+) -> None:
+    with database.connect() as connection:
+        connection.execute(
+            """INSERT INTO market_observations
+               (instrument_id, observed_at, close, source_provider, retrieved_at)
+               VALUES (?, ?, ?, 'offset_regression', ?)""",
+            (instrument_id, observed_at, close, retrieved_at),
+        )
+
+
+def test_outcome_uses_exact_utc_instants_not_lexical_offset_order(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    generated = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    _recommendation(database, generated=generated, instrument_id=instrument_id)
+    _price(database, instrument_id=instrument_id,
+           observed_at=generated + timedelta(hours=1), close=100.0)
+    # 09:00 -05:00 is 14:00 UTC, after the seven-day horizon.
+    _offset_price(database, instrument_id=instrument_id,
+                  observed_at="2026-01-08T09:00:00-05:00",
+                  retrieved_at="2026-01-08T15:00:00+00:00", close=110.0)
+    # This looks lexically earlier than 12:00 UTC but is actually 12:30 UTC.
+    _offset_price(database, instrument_id=instrument_id,
+                  observed_at="2026-01-08T09:00:00-05:00",
+                  retrieved_at="2026-01-09T06:30:00-06:00", close=999.0)
+    report = RecommendationOutcomeEvaluationService(database=database).evaluate_due(
+        as_of=datetime(2026, 1, 9, 12, tzinfo=timezone.utc))
+    assert report.evaluated_count == 1
+    assert report.evaluated[0]["exitPrice"] == pytest.approx(110.0)
+    assert report.evaluated[0]["exitRetrievedAt"] == "2026-01-08T15:00:00+00:00"
+
+
+def test_benchmark_deduplicates_equal_instants_and_excludes_future_retrieval(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    benchmark_id = _instrument(
+        database, symbol="SPY", company_name="SPY", instrument_type="etf")
+    generated = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    _recommendation(database, generated=generated, instrument_id=instrument_id,
+                    benchmark_symbol="SPY")
+    _price(database, instrument_id=instrument_id,
+           observed_at=generated + timedelta(hours=1), close=100.0)
+    _price(database, instrument_id=instrument_id,
+           observed_at=generated + timedelta(days=7, hours=1), close=110.0)
+    _offset_price(database, instrument_id=benchmark_id,
+                  observed_at="2026-01-01T09:00:00-05:00",
+                  retrieved_at="2026-01-01T15:00:00+00:00", close=200.0)
+    # Both exit rows refer to the same instant; choose the later known revision.
+    _offset_price(database, instrument_id=benchmark_id,
+                  observed_at="2026-01-08T14:00:00+00:00",
+                  retrieved_at="2026-01-08T15:00:00+00:00", close=220.0)
+    _offset_price(database, instrument_id=benchmark_id,
+                  observed_at="2026-01-08T09:00:00-05:00",
+                  retrieved_at="2026-01-08T16:00:00+00:00", close=230.0)
+    _offset_price(database, instrument_id=benchmark_id,
+                  observed_at="2026-01-08T09:00:00-05:00",
+                  retrieved_at="2026-01-09T06:30:00-06:00", close=999.0)
+    report = RecommendationOutcomeEvaluationService(database=database).evaluate_due(
+        as_of=datetime(2026, 1, 9, 12, tzinfo=timezone.utc))
+    assert report.evaluated_count == 1
+    assert report.evaluated[0]["benchmarkReturn"] == pytest.approx(0.15)
+    assert report.evaluated[0]["benchmarkEvidence"]["exitRetrievedAt"] == (
+        "2026-01-08T16:00:00+00:00"
+    )
