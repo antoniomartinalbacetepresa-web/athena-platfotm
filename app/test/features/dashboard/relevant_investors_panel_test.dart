@@ -105,7 +105,7 @@ void main() {
     await tester.pumpWidget(
       host(
         RelevantInvestorsPanel(
-          configuredCiks: const ['123456', ' 123456 ', ''],
+          configuredCiks: const ['123456', ' 123456 ', '0000123456', ''],
           loader: (cik) async {
             calls += 1;
             return activityFor(cik);

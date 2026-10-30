@@ -71,6 +71,18 @@ void main() {
     expect(Sec13fOverlapReport.fromFilings([normal]), isNull);
   });
 
+  test('rejects aliases of the same SEC CIK as two independent managers', () {
+    final report = Sec13fOverlapReport.fromFilings([
+      filing('0000000111', [holding('037833100')]),
+      filing('111', [holding('037833100')]),
+    ]);
+    expect(report, isNull);
+    expect(Sec13fOverlapReport.fromFilings([
+      filing('0', [holding('037833100')]),
+      filing('222', [holding('037833100')]),
+    ]), isNull);
+  });
+
   test('does not count options, principal rows or placeholder CUSIPs', () {
     final report = Sec13fOverlapReport.fromFilings([
       filing('111', [

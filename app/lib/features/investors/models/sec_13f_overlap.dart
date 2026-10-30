@@ -1,4 +1,5 @@
 import 'relevant_investor_activity.dart';
+import 'sec_cik_identity.dart';
 
 /// An exact as-reported CUSIP co-occurrence, not canonical instrument identity.
 class Sec13fSharedCusip {
@@ -29,8 +30,15 @@ class Sec13fOverlapReport {
   ) {
     if (filings.length < 2 || filings.length > 5) return null;
     final positionDate = filings.first.positionDate;
-    final uniqueCiks = filings.map((filing) => filing.cik).toSet();
-    if (uniqueCiks.length != filings.length ||
+    final canonicalCiks = <String>[];
+    try {
+      for (final filing in filings) {
+        canonicalCiks.add(normalizeSecCik(filing.cik));
+      }
+    } on FormatException {
+      return null;
+    }
+    if (canonicalCiks.toSet().length != filings.length ||
         filings.any(
           (filing) =>
               filing.form != '13F-HR' ||
@@ -42,7 +50,9 @@ class Sec13fOverlapReport {
     }
 
     final managersByCusip = <String, Set<String>>{};
-    for (final filing in filings) {
+    for (var i = 0; i < filings.length; i++) {
+      final filing = filings[i];
+      final canonicalCik = canonicalCiks[i];
       for (final holding in filing.holdings) {
         // PRN, puts, calls and placeholder CUSIPs cannot support this
         // deliberately narrow as-reported share-row comparison.
@@ -52,7 +62,7 @@ class Sec13fOverlapReport {
           continue;
         }
         managersByCusip.putIfAbsent(holding.cusip, () => <String>{})
-            .add(filing.cik);
+            .add(canonicalCik);
       }
     }
 

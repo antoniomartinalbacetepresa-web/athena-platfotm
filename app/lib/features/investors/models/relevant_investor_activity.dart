@@ -1,3 +1,5 @@
+import 'sec_cik_identity.dart';
+
 class RelevantInvestorHolding {
   final String issuerName;
   final String titleOfClass;
@@ -133,10 +135,7 @@ class RelevantInvestorActivity {
     required String cik,
     required Map<String, dynamic> envelope,
   }) {
-    final normalizedCik = cik.trim();
-    if (!RegExp(r'^\d{1,10}$').hasMatch(normalizedCik)) {
-      throw const FormatException('CIK inválido.');
-    }
+    final normalizedCik = normalizeSecCik(cik);
     final dataRaw = envelope['data'];
     if (dataRaw is! Map) throw const FormatException('Falta data 13F.');
     final data = Map<String, dynamic>.from(dataRaw);

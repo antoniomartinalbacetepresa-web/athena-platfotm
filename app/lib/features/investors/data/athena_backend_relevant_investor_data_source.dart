@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/relevant_investor_activity.dart';
+import '../models/sec_cik_identity.dart';
 
 class AthenaBackendRelevantInvestorDataSource {
   final String baseUrl;
@@ -19,9 +20,11 @@ class AthenaBackendRelevantInvestorDataSource {
   Future<RelevantInvestorActivity> getLatestInstitutionalHoldings({
     required String cik,
   }) async {
-    final normalizedCik = cik.trim();
-    if (!RegExp(r'^\d{1,10}$').hasMatch(normalizedCik)) {
-      throw ArgumentError.value(cik, 'cik', 'Debe contener entre 1 y 10 dígitos.');
+    late final String normalizedCik;
+    try {
+      normalizedCik = normalizeSecCik(cik);
+    } on FormatException {
+      throw ArgumentError.value(cik, 'cik', 'Debe ser un CIK SEC positivo de hasta 10 dígitos.');
     }
 
     final uri = Uri.parse('$baseUrl/api/v1/sec/institutional-holdings/latest')

@@ -106,6 +106,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('SEC CIK aliases are canonicalized before fetching one manager',
+      (tester) async {
+    final requested = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: InvestorsPage(
+        configuredCiks: const [],
+        loader: (cik) async {
+          requested.add(cik);
+          throw StateError('SEC temporarily unavailable');
+        },
+      ),
+    ));
+    await tester.enterText(find.byKey(const Key('investors-cik-input')),
+        '0000000123, 123, 0000000456');
+    await tester.tap(find.byKey(const Key('investors-cik-submit')));
+    await tester.pumpAndSettle();
+    expect(requested, ['123', '456']);
+    expect(find.text('Actividad no disponible'), findsOneWidget);
+    expect(find.byKey(const Key('investors-cik-validation-error')), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('investors-cik-input')),
+        '0000000000');
+    await tester.tap(find.byKey(const Key('investors-cik-submit')));
+    await tester.pumpAndSettle();
+    expect(requested, ['123', '456']);
+    expect(find.byKey(const Key('investors-cik-validation-error')), findsOneWidget);
+    expect(find.text('Sin inversores configurados'), findsOneWidget);
+  });
+
   testWidgets('Replacing a pending CIK cohort rejects late results from the old query',
       (tester) async {
     final pending = Completer<RelevantInvestorActivity>();

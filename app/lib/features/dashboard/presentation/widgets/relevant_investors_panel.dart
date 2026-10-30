@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../../investors/models/sec_13f_overlap.dart';
+import '../../../investors/models/sec_cik_identity.dart';
 import '../../../investors/data/athena_backend_relevant_investor_data_source.dart';
 import '../../../investors/models/relevant_investor_activity.dart';
 import 'base/athena_card.dart';
@@ -101,9 +102,11 @@ class _RelevantInvestorsPanelState extends State<RelevantInvestorsPanel> {
     final seen = <String>{};
     final result = <String>[];
     for (final raw in values) {
-      final cik = raw.trim();
-      if (cik.isEmpty) continue;
-      if (!RegExp(r'^\d{1,10}$').hasMatch(cik)) {
+      if (raw.trim().isEmpty) continue;
+      late final String cik;
+      try {
+        cik = normalizeSecCik(raw);
+      } on FormatException {
         _configurationError =
             'ATHENA_RELEVANT_INVESTOR_CIKS contiene un CIK inválido.';
         return const [];

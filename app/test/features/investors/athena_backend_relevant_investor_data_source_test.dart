@@ -104,6 +104,21 @@ void main() {
     expect(activity.isWeightingReady, isFalse);
   });
 
+  test('uses canonical SEC CIK in HTTP request and parsed provenance', () async {
+    final source = AthenaBackendRelevantInvestorDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((request) async {
+        expect(request.url.queryParameters['cik'], '123456');
+        return http.Response(jsonEncode(envelope()), 200);
+      }),
+    );
+    final activity = await source.getLatestInstitutionalHoldings(
+      cik: '0000123456',
+    );
+    expect(activity.cik, '123456');
+    source.dispose();
+  });
+
   test('rejects retrieval before SEC publication', () async {
     final dataSource = AthenaBackendRelevantInvestorDataSource(
       baseUrl: 'https://api.athena.test',

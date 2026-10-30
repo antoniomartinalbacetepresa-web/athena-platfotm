@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
+import '../../models/sec_cik_identity.dart';
 import '../../../dashboard/presentation/widgets/relevant_investors_panel.dart';
 
 /// Session-only SEC 13F exploration; never a trading or weighting authority.
@@ -17,7 +18,6 @@ class InvestorsPage extends StatefulWidget {
 }
 
 class _InvestorsPageState extends State<InvestorsPage> {
-  static final RegExp _cikPattern = RegExp(r'^\d{1,10}$');
   static const int _maxCiksPerQuery = 5;
 
   late final TextEditingController _cikInput;
@@ -53,9 +53,15 @@ class _InvestorsPageState extends State<InvestorsPage> {
     final entries = raw.isEmpty
         ? <String>[]
         : raw.split(',').map((entry) => entry.trim()).toList();
-    final valid = entries.length <= _maxCiksPerQuery &&
-        entries.every((entry) => _cikPattern.hasMatch(entry));
-    if (!valid) {
+    final normalized = <String>[];
+    try {
+      if (entries.length > _maxCiksPerQuery) {
+        throw const FormatException('Demasiados CIKs SEC.');
+      }
+      for (final entry in entries) {
+        normalized.add(normalizeSecCik(entry));
+      }
+    } on FormatException {
       // Invalid input revokes the previous cohort immediately. Never leave
       // older institutional evidence visible under a different query.
       setState(() {
@@ -68,7 +74,7 @@ class _InvestorsPageState extends State<InvestorsPage> {
     }
 
     setState(() {
-      _selectedCiks = List<String>.unmodifiable(entries.toSet());
+      _selectedCiks = List<String>.unmodifiable(normalized.toSet());
       _validationError = null;
       // A repeated query is an explicit refresh, not a cached result.
       _queryGeneration++;

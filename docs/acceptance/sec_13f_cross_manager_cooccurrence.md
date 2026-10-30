@@ -24,3 +24,7 @@ identidades repetidas, opciones, PRN, marcadores ambiguos, deduplicación
 por CIK, ordenación y acceso UI al detalle. La aceptación desplegada HTTPS
 y la autenticidad operativa de cada filing siguen pendientes y no se
 sustituyen por fixtures ni por CI verde.
+
+## Identidad de CIK SEC (30-10-2026)
+
+Los ceros iniciales son formato, no identidad institucional: `0000000123` y `123` son el mismo declarante. La entrada de sesión, la configuración Dashboard, el cliente HTTP, el modelo recibido y la comparación normalizan al CIK decimal canónico antes de deduplicar. CIK cero e identificadores no numéricos se rechazan. La comparación falla cerrada ante alias de un mismo declarante, evitando presentar una única declaración como coincidencia entre inversores independientes. Se conserva la evidencia histórica original, sin autoridad para ponderaciones, recomendaciones ni órdenes.
