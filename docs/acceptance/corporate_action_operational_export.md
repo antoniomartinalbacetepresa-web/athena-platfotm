@@ -19,3 +19,27 @@ The output is newline-delimited JSON: one metadata record followed by **every** 
 ## Acceptance boundary
 
 The operator must separately establish the source's operational origin, eligibility-universe definition, acquisition time, access authorization, and custody. The exporter verifies SQLite snapshot consistency, **not** that the database is a genuine production source or that provider families are contractually independent. Conflicting events require independent review; the tool neither chooses a winning source nor performs backfill. Only an operator-verified full-universe historical diagnostic, independent reconciliation, and separately approved release gates can close production criteria.
+
+
+## Bounded secondary-provider sweep (authorized writes)
+
+After reviewing the complete worklist, an authorized operator may request a bounded
+Alpha Vantage secondary backfill (requires provider configuration and approval):
+
+```text
+python -m scripts.backfill_verified_secondary_corporate_actions --sweep --limit 10 --max-batches 20 --as-of 2026-10-30T00:00:00+00:00
+```
+
+Unlike repeated calls with an increasing `--offset` against a shrinking live
+queue, `--sweep` freezes actionable incomplete events from one consistent
+SQLite backup, groups them by instrument, and processes each selected instrument
+at most once. It retains the frozen listing identity (including exchange, type,
+issuer, financial identifier and currency) and refuses a changed identity before
+fetching the next batch. It reports actionable events not attempted because of
+the explicit batch cap; a partial sweep is not success for the full universe.
+
+The operator must separately verify the database's operational origin, provider
+license, rate limits and actual economic agreement. A second configured provider
+does not by itself prove independence; conflicts remain unresolved and are never
+canonicalized automatically. No fixture, successful command, or green CI
+constitutes production evidence. Do not automatically loop on increasing offsets.

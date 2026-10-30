@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import math
+import hashlib
+from pathlib import Path
+import sqlite3
+import tempfile
 from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
+from app.repositories.instrument_repository import InstrumentRepository
 from app.services.corporate_action_coverage_service import CorporateActionCoverageService
 from app.services.corporate_action_ingestion_service import CorporateActionIngestionService
+from app.services.market_observation_backfill_service import FROZEN_INSTRUMENT_IDENTITY_FIELDS
 from app.services.corporate_action_reconciliation_worklist_service import (
     CorporateActionReconciliationWorklistService,
 )
@@ -159,7 +165,6 @@ class VerifiedCorporateActionSecondaryBackfillService:
     """Backfill only unresolved PIT corporate-action work, then re-measure it."""
 
     _LOOKBACK_MARGIN_DAYS = 7
-    _NUMERIC_TOLERANCE = 1e-9
 
     def __init__(
         self,
@@ -183,6 +188,8 @@ class VerifiedCorporateActionSecondaryBackfillService:
         offset: int = 0,
         from_date: str | None = None,
         to_date: str | None = None,
+        _selected_items: tuple[Any, ...] | None = None,
+        _expected_identities: dict[int, tuple[Any, ...]] | None = None,
     ) -> VerifiedCorporateActionSecondaryBackfillReport:
         cutoff = self._aware_utc(as_of, "as_of")
         if limit <= 0:
@@ -193,17 +200,29 @@ class VerifiedCorporateActionSecondaryBackfillService:
         self._database.initialize()
         worklist_service = CorporateActionReconciliationWorklistService(self._database)
         coverage_service = CorporateActionCoverageService(self._database)
-        before_worklist = worklist_service.get_worklist(
-            as_of=cutoff,
-            limit=limit,
-            offset=offset,
-        )
+        if _selected_items is None:
+            before_worklist = worklist_service.get_worklist(
+                as_of=cutoff, limit=limit, offset=offset,
+            )
+            selected_items = tuple(
+                item for item in before_worklist.items
+                if item.suggested_provider == "alpha_vantage"
+            )
+        else:
+            selected_items = tuple(_selected_items)
+            if any(
+                item.suggested_provider != "alpha_vantage"
+                or item.reconciliation_status != "incomplete"
+                for item in selected_items
+            ):
+                raise ValueError("El barrido congelado contiene eventos no elegibles.")
+            event_keys = [
+                (item.instrument_id, item.action_type, item.effective_at)
+                for item in selected_items
+            ]
+            if len(event_keys) != len(set(event_keys)):
+                raise ValueError("El barrido congelado contiene eventos duplicados.")
         before_coverage = coverage_service.get_report(as_of=cutoff)
-        selected_items = tuple(
-            item
-            for item in before_worklist.items
-            if item.suggested_provider == "alpha_vantage"
-        )
         selected_event_keys: set[EventKey] = {
             (item.instrument_id, item.action_type, item.effective_at)
             for item in selected_items
@@ -229,6 +248,20 @@ class VerifiedCorporateActionSecondaryBackfillService:
         )
 
         for index, instrument_id in enumerate(instrument_ids, start=1):
+            if _expected_identities is not None:
+                current = InstrumentRepository(self._database).get_by_id(instrument_id)
+                actual_identity = (
+                    tuple(current.get(field) for field in FROZEN_INSTRUMENT_IDENTITY_FIELDS)
+                    if current is not None else None
+                )
+                if actual_identity != _expected_identities.get(instrument_id):
+                    failed += 1
+                    failures.append({
+                        "instrumentId": str(instrument_id), "symbol": "",
+                        "error": "frozen_instrument_identity_changed",
+                    })
+                    self._emit(index, len(instrument_ids), "", "failed_identity", 0)
+                    continue
             row = self._instrument(instrument_id)
             if row is None:
                 failed += 1
@@ -269,7 +302,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
             verification_cutoff = cutoff
         after_worklist = worklist_service.get_worklist(
             as_of=verification_cutoff,
-            limit=max(1, before_worklist.total_incomplete_event_count + before_worklist.total_conflict_event_count + len(selected_items) + 100),
+            limit=max(1, before_coverage.incomplete_event_count + before_coverage.conflict_event_count + len(selected_items) + 100),
             offset=0,
         )
         after_coverage = coverage_service.get_report(as_of=verification_cutoff)
@@ -279,9 +312,10 @@ class VerifiedCorporateActionSecondaryBackfillService:
             if item.reconciliation_status == "incomplete"
         }
         selected_remaining = len(selected_event_keys & remaining_keys)
-        selected_conflicting = self._count_selected_conflicts(
-            selected_event_keys,
-            knowledge_cutoff=verification_cutoff,
+        selected_conflicting = sum(
+            (item.instrument_id, item.action_type, item.effective_at) in selected_event_keys
+            and item.reconciliation_status == "conflict"
+            for item in after_worklist.items
         )
 
         return VerifiedCorporateActionSecondaryBackfillReport(
@@ -309,92 +343,149 @@ class VerifiedCorporateActionSecondaryBackfillService:
             effective_to_date=effective_to,
         )
 
-    def _count_selected_conflicts(
+    def run_sweep(
         self,
-        selected_event_keys: set[EventKey],
         *,
-        knowledge_cutoff: datetime,
-    ) -> int:
-        if not selected_event_keys:
-            return 0
-        families = CorporateActionCoverageService.DEFAULT_PROVIDER_FAMILIES
-        conflicts = 0
-        by_instrument: dict[int, set[tuple[str, str]]] = {}
-        for instrument_id, action_type, effective_at in selected_event_keys:
-            by_instrument.setdefault(instrument_id, set()).add((action_type, effective_at))
+        as_of: datetime,
+        limit: int = 10,
+        max_batches: int = 20,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Freeze actionable secondary events before writes shrink the worklist.
 
-        for instrument_id, target_events in by_instrument.items():
-            actions = self._repository.list_for_instrument(
-                instrument_id,
-                knowledge_cutoff=knowledge_cutoff,
+        A consistent SQLite backup fixes the selected events and their full
+        instrument identities. No live offset pagination occurs after writes.
+        """
+        cutoff = self._aware_utc(as_of, "as_of")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit debe estar entre 1 y 100.")
+        if type(max_batches) is not int or not 1 <= max_batches <= 1000:
+            raise ValueError("max_batches debe estar entre 1 y 1000.")
+        max_instruments = limit * max_batches
+        self._database.initialize()
+        with tempfile.TemporaryDirectory(prefix="athena-actions-sweep-") as directory:
+            snapshot = Path(directory) / "frozen-actions.db"
+            source_path = self._database.database_path.resolve()
+            with closing(sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)) as source:
+                with closing(sqlite3.connect(snapshot)) as destination:
+                    source.backup(destination)
+            with closing(sqlite3.connect(snapshot)) as connection:
+                journal_mode = connection.execute("PRAGMA journal_mode=DELETE").fetchone()
+                integrity = connection.execute("PRAGMA quick_check").fetchone()
+            if (
+                journal_mode is None or journal_mode[0].lower() != "delete"
+                or integrity is None or integrity[0] != "ok"
+            ):
+                raise RuntimeError("La instantánea de corporate actions no es íntegra.")
+            with snapshot.open("rb") as stream:
+                snapshot_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+            frozen_db = AthenaDatabase(snapshot)
+            frozen_worklist = CorporateActionReconciliationWorklistService(frozen_db)
+            first = frozen_worklist.get_worklist(as_of=cutoff, limit=500, offset=0)
+            unresolved_total = (
+                first.total_incomplete_event_count + first.total_conflict_event_count
             )
-            latest_by_event_provider: dict[
-                tuple[str, str], dict[str, dict[str, Any]]
-            ] = {}
-            for raw in actions:
-                row = dict(raw)
-                event_key = (
-                    str(row.get("action_type") or "").strip().lower(),
-                    str(row.get("effective_at") or "").strip(),
+            selected_by_instrument: dict[int, list[Any]] = {}
+            actionable_total = 0
+            seen_keys: set[EventKey] = set()
+            offset = 0
+            while offset < unresolved_total:
+                page = first if offset == 0 else frozen_worklist.get_worklist(
+                    as_of=cutoff, limit=500, offset=offset,
                 )
-                if event_key not in target_events:
-                    continue
-                provider = str(row.get("source_provider") or "").strip()
-                family = families.get(provider)
-                if family is None:
-                    continue
-                by_provider = latest_by_event_provider.setdefault(event_key, {})
-                previous = by_provider.get(provider)
-                if previous is None or str(row["retrieved_at"]) > str(previous["retrieved_at"]):
-                    by_provider[provider] = row
-
-            for latest_by_provider in latest_by_event_provider.values():
-                latest_by_family: dict[str, dict[str, Any]] = {}
-                for provider, row in latest_by_provider.items():
-                    family = families.get(provider)
-                    if family is None:
-                        continue
-                    previous = latest_by_family.get(family)
-                    if previous is None or str(row["retrieved_at"]) > str(previous["retrieved_at"]):
-                        latest_by_family[family] = row
-                if len(latest_by_family) < 2:
-                    continue
-                values = [self._public_value(row) for row in latest_by_family.values()]
-                reference = values[0]
-                if any(not self._values_equal(reference, candidate) for candidate in values[1:]):
-                    conflicts += 1
-        return conflicts
-
-    def _public_value(self, row: dict[str, Any]) -> dict[str, Any]:
-        action_type = str(row["action_type"]).lower()
-        if action_type == "dividend":
-            return {
-                "cashAmount": float(row["cash_amount"]),
-                "currency": (
-                    str(row["currency"]).strip().upper()
-                    if row.get("currency") is not None
-                    else None
-                ),
-            }
-        return {"splitRatio": float(row["split_ratio"])}
-
-    def _values_equal(self, left: dict[str, Any], right: dict[str, Any]) -> bool:
-        if left.keys() != right.keys():
-            return False
-        for key in left:
-            left_value = left[key]
-            right_value = right[key]
-            if isinstance(left_value, float) and isinstance(right_value, float):
-                if not math.isclose(
-                    left_value,
-                    right_value,
-                    rel_tol=self._NUMERIC_TOLERANCE,
-                    abs_tol=self._NUMERIC_TOLERANCE,
+                if (
+                    page.as_of != first.as_of
+                    or page.total_incomplete_event_count != first.total_incomplete_event_count
+                    or page.total_conflict_event_count != first.total_conflict_event_count
+                    or not page.items
                 ):
-                    return False
-            elif left_value != right_value:
-                return False
-        return True
+                    raise RuntimeError("La cola congelada cambió durante el barrido.")
+                for item in page.items:
+                    if (
+                        item.reconciliation_status != "incomplete"
+                        or item.suggested_provider != "alpha_vantage"
+                    ):
+                        continue
+                    key = (item.instrument_id, item.action_type, item.effective_at)
+                    if key in seen_keys:
+                        raise RuntimeError("La cola congelada contiene eventos duplicados.")
+                    seen_keys.add(key)
+                    actionable_total += 1
+                    if (
+                        item.instrument_id in selected_by_instrument
+                        or len(selected_by_instrument) < max_instruments
+                    ):
+                        selected_by_instrument.setdefault(item.instrument_id, []).append(item)
+                offset += len(page.items)
+            frozen_repo = InstrumentRepository(frozen_db)
+            expected_identities: dict[int, tuple[Any, ...]] = {}
+            for instrument_id in selected_by_instrument:
+                instrument = frozen_repo.get_by_id(instrument_id)
+                if instrument is None or not bool(instrument.get("is_active")):
+                    raise RuntimeError("El instrumento congelado no está activo.")
+                expected_identities[instrument_id] = tuple(
+                    instrument.get(field) for field in FROZEN_INSTRUMENT_IDENTITY_FIELDS
+                )
+            with snapshot.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != snapshot_sha:
+                    raise RuntimeError("La instantánea cambió durante la selección.")
+
+        instrument_ids = tuple(selected_by_instrument)
+        reports: list[VerifiedCorporateActionSecondaryBackfillReport] = []
+        for start in range(0, len(instrument_ids), limit):
+            batch_ids = instrument_ids[start:start + limit]
+            batch_items = tuple(
+                item for instrument_id in batch_ids
+                for item in selected_by_instrument[instrument_id]
+            )
+            reports.append(self.run(
+                as_of=cutoff, limit=len(batch_ids),
+                from_date=from_date, to_date=to_date,
+                _selected_items=batch_items,
+                _expected_identities={
+                    instrument_id: expected_identities[instrument_id]
+                    for instrument_id in batch_ids
+                },
+            ))
+        final_cutoff = self._aware_utc(self._clock(), "clock")
+        if final_cutoff < cutoff:
+            final_cutoff = cutoff
+        final = CorporateActionCoverageService(self._database).get_report(as_of=final_cutoff)
+        attempted_events = sum(len(items) for items in selected_by_instrument.values())
+        failures = sum(report.failed_count for report in reports)
+        unattempted_events = actionable_total - attempted_events
+        return {
+            "status": (
+                "completed_with_failures" if failures else
+                "bounded_sweep_partial" if unattempted_events else
+                "no_actionable_secondary_work" if actionable_total == 0 else
+                "bounded_sweep_completed"
+            ),
+            "asOf": cutoff.isoformat(),
+            "verificationAsOf": final_cutoff.isoformat(),
+            "frozenSnapshotSha256": snapshot_sha,
+            "initialUnresolvedEventCount": unresolved_total,
+            "initialActionableSecondaryEventCount": actionable_total,
+            "attemptedEventCount": attempted_events,
+            "unattemptedActionableEventCount": unattempted_events,
+            "attemptedInstrumentCount": len(instrument_ids),
+            "failedInstrumentCount": failures,
+            "batchCount": len(reports),
+            "finalIncompleteEventCount": final.incomplete_event_count,
+            "finalConflictEventCount": final.conflict_event_count,
+            "completeActionableSelection": unattempted_events == 0,
+            "batches": [report.to_api_dict() for report in reports],
+            "policy": {
+                "sourceSnapshotConsistent": True,
+                "frozenInstrumentIdentityCheckedBeforeFetch": True,
+                "operationalOriginVerified": False,
+                "independentProviderAgreementVerified": False,
+                "automaticCanonicalization": False,
+                "automaticReadinessPromotion": False,
+                "automaticTrading": False,
+            },
+        }
 
     def _resolve_window(
         self,

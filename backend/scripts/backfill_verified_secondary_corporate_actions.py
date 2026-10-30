@@ -37,6 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument(
+        "--sweep", action="store_true",
+        help="Congela una cola PIT consistente y procesa lotes sin saltar eventos resueltos.",
+    )
+    parser.add_argument(
+        "--max-batches", type=int, default=20,
+        help="Máximo de lotes de instrumentos en --sweep (1..1000).",
+    )
     parser.add_argument("--from-date", dest="from_date")
     parser.add_argument("--to-date", dest="to_date")
     parser.add_argument(
@@ -90,15 +98,41 @@ def run(
         provider.close()
 
 
+def run_sweep(
+    *,
+    limit: int,
+    max_batches: int,
+    from_date: str | None,
+    to_date: str | None,
+    as_of: datetime,
+) -> dict[str, Any]:
+    provider = AlphaVantageCorporateActionService()
+    try:
+        return VerifiedCorporateActionSecondaryBackfillService(
+            history_provider=provider, progress_callback=_progress,
+        ).run_sweep(
+            as_of=as_of, limit=limit, max_batches=max_batches,
+            from_date=from_date, to_date=to_date,
+        )
+    finally:
+        provider.close()
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    payload = run(
-        limit=args.limit,
-        offset=args.offset,
-        from_date=args.from_date,
-        to_date=args.to_date,
-        as_of=_parse_as_of(args.as_of),
-    )
+    if args.sweep and args.offset:
+        raise ValueError("--offset debe ser cero con --sweep.")
+    cutoff = _parse_as_of(args.as_of)
+    if args.sweep:
+        payload = run_sweep(
+            limit=args.limit, max_batches=args.max_batches,
+            from_date=args.from_date, to_date=args.to_date, as_of=cutoff,
+        )
+    else:
+        payload = run(
+            limit=args.limit, offset=args.offset,
+            from_date=args.from_date, to_date=args.to_date, as_of=cutoff,
+        )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 

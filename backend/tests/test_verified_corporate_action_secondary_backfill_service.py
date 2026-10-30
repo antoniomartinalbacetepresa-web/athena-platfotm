@@ -209,3 +209,79 @@ def test_service_requires_timezone_aware_cutoffs(tmp_path: Path) -> None:
         assert "zona horaria" in str(exc)
     else:
         raise AssertionError("Se esperaba rechazo de as_of sin zona horaria")
+
+
+def test_sweep_freezes_two_instruments_before_first_resolution(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    first = _instrument(database, "AAA")
+    second = _instrument(database, "BBB")
+    effective = "2026-08-15T00:00:00+00:00"
+    _seed_yahoo_dividend(database, first, effective_at=effective)
+    _seed_yahoo_dividend(database, second, effective_at=effective)
+    provider = FakeAlphaVantageProvider({
+        "AAA": [_alpha_dividend("AAA", effective, 0.25)],
+        "BBB": [_alpha_dividend("BBB", effective, 0.25)],
+    })
+    result = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=provider, clock=lambda: VERIFIED_AT,
+    ).run_sweep(as_of=AS_OF, limit=1, max_batches=2)
+
+    assert [call[0] for call in provider.calls] == ["AAA", "BBB"]
+    assert result["initialActionableSecondaryEventCount"] == 2
+    assert result["attemptedEventCount"] == 2
+    assert result["unattemptedActionableEventCount"] == 0
+    assert result["finalIncompleteEventCount"] == 0
+    assert result["finalConflictEventCount"] == 0
+    assert result["status"] == "bounded_sweep_completed"
+    assert result["policy"]["automaticCanonicalization"] is False
+
+
+def test_sweep_rejects_changed_instrument_identity_between_batches(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    first = _instrument(database, "AAA")
+    second = _instrument(database, "BBB")
+    effective = "2026-08-15T00:00:00+00:00"
+    _seed_yahoo_dividend(database, first, effective_at=effective)
+    _seed_yahoo_dividend(database, second, effective_at=effective)
+    provider = FakeAlphaVantageProvider({
+        "AAA": [_alpha_dividend("AAA", effective, 0.25)],
+        "BBB": [_alpha_dividend("BBB", effective, 0.25)],
+    })
+
+    def change_second_listing(event: dict[str, object]) -> None:
+        if event["symbol"] == "AAA" and event["status"] == "persisted":
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE instruments SET currency = 'EUR' WHERE id = ?", (second,),
+                )
+
+    result = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=provider,
+        clock=lambda: VERIFIED_AT, progress_callback=change_second_listing,
+    ).run_sweep(as_of=AS_OF, limit=1, max_batches=2)
+
+    assert [call[0] for call in provider.calls] == ["AAA"]
+    assert result["failedInstrumentCount"] == 1
+    assert result["status"] == "completed_with_failures"
+    assert result["batches"][1]["failures"][0]["error"] == "frozen_instrument_identity_changed"
+    assert result["finalIncompleteEventCount"] == 1
+
+
+def test_sweep_reports_bounded_unattempted_actionable_work(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    effective = "2026-08-15T00:00:00+00:00"
+    for symbol in ("AAA", "BBB"):
+        _seed_yahoo_dividend(database, _instrument(database, symbol), effective_at=effective)
+    provider = FakeAlphaVantageProvider({
+        "AAA": [_alpha_dividend("AAA", effective, 0.25)],
+        "BBB": [_alpha_dividend("BBB", effective, 0.25)],
+    })
+    result = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=provider, clock=lambda: VERIFIED_AT,
+    ).run_sweep(as_of=AS_OF, limit=1, max_batches=1)
+
+    assert result["status"] == "bounded_sweep_partial"
+    assert result["initialActionableSecondaryEventCount"] == 2
+    assert result["attemptedEventCount"] == 1
+    assert result["unattemptedActionableEventCount"] == 1
+    assert result["completeActionableSelection"] is False
