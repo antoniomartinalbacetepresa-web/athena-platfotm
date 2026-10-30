@@ -136,18 +136,27 @@ class DatabaseBackupService:
                 encoding="utf-8",
             )
 
-            # Hard-link publication is atomic and fails if the destination
-            # already exists, including a dangling symlink. Staging is on the
-            # same filesystem; unsupported hard links fail closed.
+            # Verify-and-retain is not crash-safe unless the new pair has
+            # reached stable storage before older recovery points are pruned.
+            for staged_path in (temporary_backup, temporary_manifest):
+                with staged_path.open("rb") as staged_file:
+                    os.fsync(staged_file.fileno())
+
+            # Hard-link publication never overwrites concurrent evidence.
             os.link(temporary_backup, destination)
             try:
                 os.link(temporary_manifest, manifest_path)
+                self._fsync_directory(destination.parent)
             except Exception:
-                # Only remove the database inode published by this invocation.
-                if destination.exists() and os.path.samefile(
-                    temporary_backup, destination
+                # On failure remove only inodes published by this invocation.
+                for staged_path, published_path in (
+                    (temporary_manifest, manifest_path),
+                    (temporary_backup, destination),
                 ):
-                    destination.unlink()
+                    if published_path.exists() and os.path.samefile(
+                        staged_path, published_path
+                    ):
+                        published_path.unlink()
                 raise
             return metadata
 
@@ -420,6 +429,18 @@ class DatabaseBackupService:
                 for path in deleted_paths
             ),
         )
+
+    @staticmethod
+    def _fsync_directory(directory: Path) -> None:
+        """Durably publish directory entries on POSIX, without off-site claims."""
+        if os.name != "posix":
+            # Windows has no portable directory fsync API in this service.
+            return
+        descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     @staticmethod
     def validate_filename_prefix(prefix: str) -> None:

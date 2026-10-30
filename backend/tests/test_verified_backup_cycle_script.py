@@ -336,3 +336,39 @@ def test_mount_loss_during_primary_retention_preserves_previous_primary(
         )
     assert Path(first["backup"]).is_file()
     assert len(list(primary.glob("athena-*.db"))) == 2
+
+def test_secondary_durability_failure_blocks_primary_retention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.database_backup_service import DatabaseBackupService
+
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary, secondary = tmp_path / "primary", tmp_path / "secondary"
+    first = run_cycle(
+        database_path=database_path, backup_directory=primary,
+        secondary_directory=secondary, keep_last=1, prefix="athena-",
+        now=datetime(2026, 10, 30, 10, tzinfo=timezone.utc),
+    )
+    real_sync = DatabaseBackupService._fsync_directory
+
+    def reject_secondary_sync(path: Path) -> None:
+        if Path(path) == secondary:
+            raise OSError("secondary directory fsync failed")
+        real_sync(path)
+
+    monkeypatch.setattr(
+        DatabaseBackupService, "_fsync_directory",
+        staticmethod(reject_secondary_sync),
+    )
+    with pytest.raises(OSError, match="secondary directory fsync failed"):
+        run_cycle(
+            database_path=database_path, backup_directory=primary,
+            secondary_directory=secondary, keep_last=1, prefix="athena-",
+            now=datetime(2026, 10, 30, 11, tzinfo=timezone.utc),
+        )
+    assert Path(first["backup"]).is_file()
+    assert Path(first["manifest"]).is_file()
+    assert Path(first["secondary"]["backup"]).is_file()
+    assert not (secondary / "athena-20261030T110000Z.db").exists()
+    assert len(list(primary.glob("athena-*.db"))) == 2

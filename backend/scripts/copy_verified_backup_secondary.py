@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -89,9 +90,13 @@ def copy_verified_backup(
             with source.open("rb") as reader, copied_backup.open("xb") as writer:
                 created.append(copied_backup)
                 shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                writer.flush()
+                os.fsync(writer.fileno())
             with manifest.open("rb") as reader, copied_manifest.open("xb") as writer:
                 created.append(copied_manifest)
                 shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                writer.flush()
+                os.fsync(writer.fileno())
 
             copied_metadata = verifier.verify_backup(copied_backup)
             if copied_metadata != metadata:
@@ -100,6 +105,8 @@ def copy_verified_backup(
                 copied_backup,
                 working_directory=verifier_root / "restore",
             )
+            # Do not authorize retention before the secondary directory is durable.
+            DatabaseBackupService._fsync_directory(destination)
         except Exception:
             for created_path in reversed(created):
                 created_path.unlink(missing_ok=True)

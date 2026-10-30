@@ -166,3 +166,27 @@ def test_secondary_copy_rejects_ancestor_or_nested_primary_destination(
             destination_directory=destination,
         )
     assert not (destination / backup.name).exists()
+
+def test_secondary_directory_durability_failure_removes_new_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup, manifest = _backup(tmp_path)
+    destination = tmp_path / "secondary"
+
+    def reject_directory_sync(path: Path) -> None:
+        assert Path(path) == destination
+        raise OSError("secondary directory fsync failed")
+
+    monkeypatch.setattr(
+        DatabaseBackupService, "_fsync_directory",
+        staticmethod(reject_directory_sync),
+    )
+    with pytest.raises(OSError, match="secondary directory fsync failed"):
+        copy_verified_backup(
+            backup_path=backup,
+            manifest_path=manifest,
+            destination_directory=destination,
+        )
+    assert not (destination / backup.name).exists()
+    assert not (destination / manifest.name).exists()
+    assert backup.is_file() and manifest.is_file()

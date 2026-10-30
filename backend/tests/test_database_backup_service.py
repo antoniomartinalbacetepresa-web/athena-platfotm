@@ -610,3 +610,30 @@ def test_online_backup_does_not_open_writable_athena_connection(
         assert restored.execute(
             "SELECT value FROM backup_probe WHERE id = 1"
         ).fetchone()[0] == "persisted-before-backup"
+
+def test_backup_publication_fsync_failure_rolls_back_only_new_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = AthenaDatabase(tmp_path / "live" / "athena.db")
+    _seed_database(database)
+    service = DatabaseBackupService(database)
+    directory = tmp_path / "backups"
+    previous = directory / "athena-previous.db"
+    service.create_backup(previous)
+    new_backup = directory / "athena-new.db"
+
+    def reject_directory_sync(path: Path) -> None:
+        assert Path(path) == directory
+        raise OSError("directory fsync failed")
+
+    monkeypatch.setattr(
+        DatabaseBackupService, "_fsync_directory",
+        staticmethod(reject_directory_sync),
+    )
+    with pytest.raises(OSError, match="directory fsync failed"):
+        service.create_backup(new_backup)
+
+    assert service.verify_backup(previous).schema_version > 0
+    assert not new_backup.exists()
+    assert not service.manifest_path_for(new_backup).exists()
+    assert not list(directory.glob(".*.staging-*"))

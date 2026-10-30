@@ -25,3 +25,20 @@ Failure-injection regressions cover both phases; they do not establish a
 real off-site installation or eliminate the small check-to-unlink race.
 Production closure still requires evidence of an installed timer, an
 independent encrypted mount and a real isolated restore.
+
+## Durable publication before retention (POSIX)
+
+The publisher flushes both the SQLite backup and its integrity manifest to
+stable storage, then syncs the primary directory after exclusive hard-link
+publication. The secondary copier flushes both files and syncs its directory
+**after** verifying the copied manifest and completing an isolated restore.
+A sync failure rejects the cycle and removes only the newly published pair;
+**older primary recovery points are not pruned**. This closes a crash-durability
+gap where checksum verification alone did not ensure new directory entries
+reached stable storage before retention.
+
+Directory fsync is POSIX-specific; Windows has no portable directory-fsync
+equivalent in this implementation. Storage firmware may misreport persistence,
+and a mounted filesystem is not proof of off-site geography or independent
+custody. Operational closure still requires timer logs, independent encrypted
+storage, failure monitoring and an externally observed restore.
