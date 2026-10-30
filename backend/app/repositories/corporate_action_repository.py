@@ -65,9 +65,47 @@ class CorporateActionRepository:
                 source_timestamp = normalized["source_timestamp"]
                 if source_timestamp is not None and datetime.fromisoformat(source_timestamp) > retrieved_dt:
                     raise ValueError("source_timestamp no puede ser posterior a retrieved_at.")
-                cursor = connection.execute("""INSERT OR IGNORE INTO corporate_actions (instrument_id, action_type, effective_at, cash_amount, split_ratio, currency, source_provider, source_timestamp, retrieved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (instrument_id, normalized["action_type"], effective_dt.isoformat(), normalized["cash_amount"], normalized["split_ratio"], normalized["currency"], provider, source_timestamp, retrieved))
+                # Only the exact same economic observation may be idempotent.
+                # INSERT OR IGNORE also masks CHECK violations and silently hides
+                # conflicting amounts/currencies under the immutable PIT key.
+                key = (
+                    instrument_id, normalized["action_type"], effective_dt.isoformat(),
+                    provider, retrieved,
+                )
+                cursor = connection.execute(
+                    """INSERT INTO corporate_actions (
+                        instrument_id, action_type, effective_at, cash_amount,
+                        split_ratio, currency, source_provider, source_timestamp, retrieved_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (
+                        instrument_id, action_type, effective_at, source_provider, retrieved_at
+                    ) DO NOTHING""",
+                    (
+                        instrument_id, normalized["action_type"], effective_dt.isoformat(),
+                        normalized["cash_amount"], normalized["split_ratio"],
+                        normalized["currency"], provider, source_timestamp, retrieved,
+                    ),
+                )
                 if cursor.rowcount == 1:
                     inserted += 1
+                    continue
+                existing = connection.execute(
+                    """SELECT cash_amount, split_ratio, currency, source_timestamp
+                       FROM corporate_actions
+                       WHERE instrument_id = ? AND action_type = ? AND effective_at = ?
+                         AND source_provider = ? AND retrieved_at = ?""",
+                    key,
+                ).fetchone()
+                if existing is None or any(
+                    existing[field] != normalized[field]
+                    for field in ("cash_amount", "split_ratio", "currency", "source_timestamp")
+                ):
+                    # The surrounding SQLite transaction rolls back any earlier
+                    # insertions from this batch; never overwrite PIT evidence.
+                    raise ValueError(
+                        "Corporate action PIT conflict: same retrieval identity "
+                        "contains different economic values or provenance."
+                    )
         return CorporateActionSaveStats(received=len(buffered), inserted=inserted, unchanged=len(buffered)-inserted)
 
     def list_for_instrument(self, instrument_id: int, *, source_provider: str | None = None, knowledge_cutoff: datetime | None = None, effective_from: datetime | None = None, effective_to: datetime | None = None) -> list[dict[str, Any]]:
