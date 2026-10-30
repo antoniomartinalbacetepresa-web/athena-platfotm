@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -61,6 +61,26 @@ class _ExpectedSecondaryProvider:
                     "La observación del backfill secundario no pertenece a la familia "
                     f"esperada {self.EXPECTED_SOURCE_PROVIDER}."
                 )
+            raw_timestamp = row.get("timestamp")
+            try:
+                effective_at = (
+                    datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+                    if isinstance(raw_timestamp, str) else raw_timestamp
+                )
+            except ValueError as exc:
+                raise RuntimeError("La fuente secundaria devolvió timestamp inválido.") from exc
+            if (
+                not isinstance(effective_at, datetime)
+                or effective_at.tzinfo is None
+                or effective_at.utcoffset() is None
+            ):
+                raise RuntimeError("La fuente secundaria devolvió timestamp sin zona horaria.")
+            effective_day = effective_at.astimezone(timezone.utc).date()
+            if (
+                (from_date is not None and effective_day < date.fromisoformat(from_date))
+                or (to_date is not None and effective_day > date.fromisoformat(to_date))
+            ):
+                raise RuntimeError("La fuente secundaria devolvió acciones fuera de la ventana PIT.")
             verified.append(dict(row))
         return verified
 
@@ -359,6 +379,10 @@ class VerifiedCorporateActionSecondaryBackfillService:
         instrument identities. No live offset pagination occurs after writes.
         """
         cutoff = self._aware_utc(as_of, "as_of")
+        # Reject an invalid explicit window before snapshot creation or any writes.
+        self._resolve_window(
+            selected_items=(), as_of=cutoff, from_date=from_date, to_date=to_date,
+        )
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit debe estar entre 1 y 100.")
         if type(max_batches) is not int or not 1 <= max_batches <= 1000:
@@ -485,6 +509,20 @@ class VerifiedCorporateActionSecondaryBackfillService:
             },
         }
 
+    @staticmethod
+    def _window_date(value: str | None, field: str) -> date | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"{field} debe usar YYYY-MM-DD.")
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{field} debe usar YYYY-MM-DD.") from exc
+        if parsed.isoformat() != value:
+            raise ValueError(f"{field} debe usar YYYY-MM-DD.")
+        return parsed
+
     def _resolve_window(
         self,
         *,
@@ -493,16 +531,28 @@ class VerifiedCorporateActionSecondaryBackfillService:
         from_date: str | None,
         to_date: str | None,
     ) -> tuple[str | None, str | None]:
-        if from_date is not None:
-            return from_date, to_date
-        if not selected_items:
-            return None, to_date
-        earliest = min(datetime.fromisoformat(item.effective_at) for item in selected_items)
-        start = earliest.astimezone(timezone.utc).date() - timedelta(days=self._LOOKBACK_MARGIN_DAYS)
-        end = as_of.date() if to_date is None else datetime.fromisoformat(to_date).date()
-        if start > end:
+        lower = self._window_date(from_date, "from_date")
+        upper = self._window_date(to_date, "to_date")
+        if upper is not None and upper > as_of.date():
+            raise ValueError("to_date no puede superar el corte PIT as_of.")
+        # A caller-provided lower bound must not silently remove the upper
+        # bound: otherwise the provider could retrieve post-cutoff actions.
+        if lower is not None and upper is None:
+            upper = as_of.date()
+        if lower is None and selected_items:
+            earliest = min(datetime.fromisoformat(item.effective_at) for item in selected_items)
+            lower = (
+                earliest.astimezone(timezone.utc).date()
+                - timedelta(days=self._LOOKBACK_MARGIN_DAYS)
+            )
+            if upper is None:
+                upper = as_of.date()
+        if lower is not None and upper is not None and lower > upper:
             raise ValueError("La ventana de reconciliación no puede empezar después de terminar.")
-        return start.isoformat(), end.isoformat()
+        return (
+            lower.isoformat() if lower is not None else None,
+            upper.isoformat() if upper is not None else None,
+        )
 
     def _instrument(self, instrument_id: int) -> Any | None:
         with self._database.connect() as connection:
