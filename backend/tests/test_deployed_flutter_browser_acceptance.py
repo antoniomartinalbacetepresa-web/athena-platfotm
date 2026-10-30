@@ -297,3 +297,76 @@ def test_deployed_browser_acceptance_requires_real_backend_sha():
 def test_deployed_browser_rejects_stale_or_untrusted_backend(response):
     with pytest.raises(module.BrowserAcceptanceFailure):
         _check_backend_build(response)
+
+
+class _LiveSurfaceResponse:
+    def __init__(self, path, data, *, status=200, origin="https://api.staging.example.test",
+                 query="", selected=None, content_type="application/json"):
+        self.status = status
+        self.url = origin + path + query
+        self.headers = {"content-type": content_type}
+        self.payload = {"data": data}
+        if selected is not None:
+            self.payload["selectedFiling"] = selected
+
+    def json(self):
+        return self.payload
+
+
+def _check_live_surface(response, path):
+    module._require_live_surface_payload(
+        response, backend_origin="https://api.staging.example.test", path=path
+    )
+
+
+def test_deployed_market_requires_nonempty_real_http_universe_and_status():
+    universe = "/api/v1/market/universe"
+    status = "/api/v1/market/universe/status"
+    _check_live_surface(_LiveSurfaceResponse(universe, [{"symbol": "AAPL"}]), universe)
+    _check_live_surface(
+        _LiveSurfaceResponse(status, {"globallyUsableCount": 1}), status
+    )
+    for response, path in [
+        (_LiveSurfaceResponse(universe, []), universe),
+        (_LiveSurfaceResponse(universe, [{"symbol": ""}]), universe),
+        (_LiveSurfaceResponse(status, {"globallyUsableCount": 0}), status),
+        (_LiveSurfaceResponse(status, {"globallyUsableCount": True}), status),
+        (_LiveSurfaceResponse(status, {"globallyUsableCount": 2}, status=503), status),
+        (_LiveSurfaceResponse(universe, [{"symbol": "AAPL"}],
+                              origin="https://untrusted.example.test"), universe),
+    ]:
+        with pytest.raises(module.BrowserAcceptanceFailure):
+            _check_live_surface(response, path)
+
+
+def test_deployed_sec_requires_live_cik_bound_passive_filing():
+    path = "/api/v1/sec/institutional-holdings/latest"
+    valid = {
+        "sourceUrl": (
+            "https://www.sec.gov/Archives/edgar/data/"
+            "123456/000012345626000001/table.xml"
+        ),
+        "sourceProvider": "SEC EDGAR",
+        "advisoryStatus": "no_advice",
+        "productionEligible": False,
+        "automaticTrading": False,
+        "holdings": [{"cusip": "037833100"}],
+    }
+    selected = {"accessionNumber": "0000123456-26-000001"}
+    _check_live_surface(
+        _LiveSurfaceResponse(path, valid, query="?cik=123456", selected=selected),
+        path,
+    )
+    for changes, query in [
+        ({}, "?cik=999999"),
+        ({"sourceProvider": "unverified"}, "?cik=123456"),
+        ({"automaticTrading": True}, "?cik=123456"),
+        ({"holdings": []}, "?cik=123456"),
+        ({}, ""),
+    ]:
+        with pytest.raises(module.BrowserAcceptanceFailure):
+            _check_live_surface(
+                _LiveSurfaceResponse(
+                    path, {**valid, **changes}, query=query, selected=selected
+                ), path,
+            )

@@ -26,7 +26,12 @@ live canonical HTTP responses, visible verified provenance, **real News
 synthesis-only refresh without reloading the independent news feed, and
 full News refresh requiring both endpoints**; browser-injected
 HTTP 503 fail-closed removal and recovery, and compact Dashboard → Market
-navigation. The HTTP 503 is a controlled browser fault, **not** evidence
+navigation. The deployed journey now also requires a nonempty live Market
+universe and usable status from the configured HTTPS backend, exercises
+Market 503 fail-closed removal and subsequent live recovery, and binds a
+live SEC 13F HTTP response to its requested CIK and official SEC archive.
+These are scoped staging-browser observations, not historical-coverage,
+independent provider authentication or production-readiness evidence. The HTTP 503 is a controlled browser fault, **not** evidence
 that a live provider failed. No personal account or position is modified.
 
 Before guest navigation, the browser gate now requires **both** the deployed Flutter Web build manifest and the staging backend `/api/v1/build` runtime marker to match the exact push SHA. A missing or stale backend marker fails before browser acceptance. This is stronger cross-origin consistency checking, not signed deployment attestation. Configure the backend marker through trusted deployment automation, not through chat or a public runtime input.

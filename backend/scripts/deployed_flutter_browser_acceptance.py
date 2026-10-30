@@ -10,7 +10,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 class BrowserAcceptanceFailure(RuntimeError):
@@ -169,6 +169,130 @@ def _require_news_refresh_requests(paths: list[str], *, selective: bool) -> None
         paths.count(path) != count for path, count in expected.items()
     ):
         raise BrowserAcceptanceFailure("News refresh request scope mismatch")
+
+
+
+def _require_live_surface_payload(response, *, backend_origin: str, path: str) -> None:
+    """Bind Market and SEC browser evidence to a live, scoped API response.
+
+    This is a deployment contract check, not independent source authentication.
+    Never echo response bodies or staging URLs into acceptance logs.
+    """
+    try:
+        if (
+            response.status != 200
+            or not _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=path
+            )
+            or "application/json" not in response.headers.get(
+                "content-type", ""
+            ).lower()
+        ):
+            raise ValueError("untrusted response")
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("invalid envelope")
+        data = payload.get("data")
+        if path == "/api/v1/market/universe":
+            if not isinstance(data, list) or not any(
+                isinstance(asset, dict)
+                and isinstance(asset.get("symbol"), str)
+                and bool(asset["symbol"].strip())
+                for asset in data
+            ):
+                raise ValueError("empty market universe")
+        elif path == "/api/v1/market/universe/status":
+            if (
+                not isinstance(data, dict)
+                or type(data.get("globallyUsableCount")) is not int
+                or data["globallyUsableCount"] <= 0
+            ):
+                raise ValueError("unusable market universe")
+        elif path == "/api/v1/sec/institutional-holdings/latest":
+            ciks = parse_qs(
+                urlsplit(response.url).query, keep_blank_values=True
+            ).get("cik", [])
+            if len(ciks) != 1 or not re.fullmatch(r"[0-9]{1,10}", ciks[0]):
+                raise ValueError("unbound CIK")
+            if not isinstance(data, dict):
+                raise ValueError("missing 13F data")
+            source = urlsplit(data.get("sourceUrl", ""))
+            expected_prefix = (
+                f"/Archives/edgar/data/{int(ciks[0])}/"
+            )
+            if (
+                source.scheme != "https"
+                or source.hostname != "www.sec.gov"
+                or source.username is not None
+                or source.password is not None
+                or source.port not in (None, 443)
+                or not source.path.startswith(expected_prefix)
+                or source.query or source.fragment
+                or data.get("sourceProvider") != "SEC EDGAR"
+                or data.get("advisoryStatus") != "no_advice"
+                or data.get("productionEligible") is not False
+                or data.get("automaticTrading") is not False
+                or not isinstance(data.get("holdings"), list)
+                or not data["holdings"]
+                or not isinstance(payload.get("selectedFiling"), dict)
+            ):
+                raise ValueError("unverified 13F")
+        else:
+            raise ValueError("unexpected surface")
+    except Exception:
+        raise BrowserAcceptanceFailure("Deployed surface evidence invalid") from None
+
+
+def verify_market_fault_recovery(page, *, backend_origin: str) -> None:
+    """Market must remove old evidence on a controlled 503 and recover live."""
+    path = "/api/v1/market/universe/status"
+
+    def matches(url: str) -> bool:
+        return _matches_backend_api(
+            url, backend_origin=backend_origin, path=path
+        )
+
+    def reject(route) -> None:
+        route.fulfill(
+            status=503, content_type="application/json",
+            body='{"detail":"controlled acceptance fault"}',
+        )
+
+    page.route(matches, reject)
+    try:
+        with page.expect_response(
+            lambda response: response.status == 503 and matches(response.url),
+            timeout=30000,
+        ):
+            page.get_by_role(
+                "button", name="Actualizar mercado", exact=True
+            ).click(timeout=15000)
+        page.get_by_text(
+            "No se pudo verificar el contexto global del mercado. "
+            "Reintenta la consulta.", exact=True
+        ).wait_for(state="visible", timeout=30000)
+        if page.get_by_text(
+            re.compile(r"UNIVERSO REAL PERSISTIDO")
+        ).count():
+            raise BrowserAcceptanceFailure(
+                "Market failure retained stale universe"
+            )
+    finally:
+        page.unroute(matches, reject)
+
+    with page.expect_response(
+        lambda response: response.status == 200 and matches(response.url),
+        timeout=30000,
+    ) as recovered:
+        page.get_by_role(
+            "button", name="Reintentar mercado", exact=True
+        ).click(timeout=15000)
+    _require_live_surface_payload(
+        recovered.value, backend_origin=backend_origin, path=path
+    )
+    page.get_by_text(
+        re.compile(r"UNIVERSO REAL PERSISTIDO")
+    ).first.wait_for(state="visible", timeout=30000)
 
 
 def verify_news_refresh_scope(page, *, backend_origin: str) -> None:
@@ -364,14 +488,46 @@ def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
         state="visible", timeout=30000
     )
 
-    _visit(page, "Mercado", "MERCADO")
+    market_universe = "/api/v1/market/universe"
+    market_status = "/api/v1/market/universe/status"
+    with page.expect_response(
+        lambda response: _matches_backend_api(
+            response.url, backend_origin=backend_origin, path=market_universe
+        ), timeout=30000,
+    ) as universe_response, page.expect_response(
+        lambda response: _matches_backend_api(
+            response.url, backend_origin=backend_origin, path=market_status
+        ), timeout=30000,
+    ) as status_response:
+        _visit(page, "Mercado", "MERCADO")
+    _require_live_surface_payload(
+        universe_response.value, backend_origin=backend_origin,
+        path=market_universe,
+    )
+    _require_live_surface_payload(
+        status_response.value, backend_origin=backend_origin,
+        path=market_status,
+    )
     _heading(page, "MERCADO GLOBAL")
+    page.get_by_text(
+        re.compile(r"UNIVERSO REAL PERSISTIDO")
+    ).first.wait_for(state="visible", timeout=30000)
+    verify_market_fault_recovery(page, backend_origin=backend_origin)
     _back(page)
     _visit(page, "Noticias", "NOTICIAS")
     _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
     verify_news_refresh_scope(page, backend_origin=backend_origin)
     _back(page)
-    _visit(page, "Inversores", "INVERSORES")
+    sec_path = "/api/v1/sec/institutional-holdings/latest"
+    with page.expect_response(
+        lambda response: _matches_backend_api(
+            response.url, backend_origin=backend_origin, path=sec_path
+        ), timeout=30000,
+    ) as sec_response:
+        _visit(page, "Inversores", "INVERSORES")
+    _require_live_surface_payload(
+        sec_response.value, backend_origin=backend_origin, path=sec_path
+    )
     _heading(page, "ACTIVIDAD DE INVERSORES RELEVANTES")
     page.get_by_text(re.compile(r"CIK \d+")).first.wait_for(
         state="visible", timeout=30000
@@ -432,6 +588,9 @@ def verify_guest_research(page, *, backend_origin: str) -> dict[str, bool]:
         "verifiedProvenanceVisible": True,
         "controlledFaultRecoveryVerified": True,
         "newsSelectiveAndFullRefreshVerified": True,
+        "marketLiveHttpVerified": True,
+        "marketControlledFaultRecoveryVerified": True,
+        "sec13fLiveHttpVerified": True,
     }
 
 
