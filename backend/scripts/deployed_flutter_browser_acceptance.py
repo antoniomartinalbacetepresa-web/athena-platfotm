@@ -112,6 +112,37 @@ def _matches_backend_api(url: str, *, backend_origin: str, path: str) -> bool:
         return False
 
 
+def verify_deployed_backend_build(page, *, expected_sha: str, backend_origin: str) -> None:
+    """Require the actual staging API to report the same source SHA as Web.
+
+    A runtime SHA marker is deployment-configured, not signed provenance.
+    """
+    path = "/api/v1/build"
+    try:
+        response = page.request.get(
+            backend_origin + path,
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            max_redirects=0, timeout=15000,
+        )
+        if (
+            response.status != 200
+            or not _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=path
+            )
+        ):
+            raise BrowserAcceptanceFailure("Deployed backend build identity unavailable")
+        manifest = response.json()
+    except Exception:
+        raise BrowserAcceptanceFailure("Deployed backend build identity unavailable") from None
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema", "sourceSha"}
+        or manifest.get("schema") != "athena.backend-build.v1"
+        or manifest.get("sourceSha") != expected_sha
+    ):
+        raise BrowserAcceptanceFailure("Deployed backend build SHA mismatch")
+
+
 def _heading(page, label: str) -> None:
     page.get_by_role("heading", name=label, exact=True).first.wait_for(
         state="visible", timeout=30000
@@ -430,6 +461,11 @@ def main() -> int:
                     expected_origin=config.base_url,
                     expected_backend_origin=config.backend_origin,
                 )
+                stage = "deployed-backend-build-identity"
+                verify_deployed_backend_build(
+                    page, expected_sha=config.deployed_sha,
+                    backend_origin=config.backend_origin,
+                )
                 stage = "guest-research"
                 result = verify_guest_research(
                     page, backend_origin=config.backend_origin
@@ -447,6 +483,7 @@ def main() -> int:
         "status": "passed", **result,
         "deployedFlutterGuestResearchVerified": True,
         "deployedWebBuildIdentityVerified": True,
+        "deployedBackendBuildIdentityVerified": True,
         "deployedFlutterBrowserE2EVerified": False,
         "twoOwnerBrowserIsolationVerified": False,
         "staleResponseOrderingVerified": True,

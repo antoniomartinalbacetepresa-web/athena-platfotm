@@ -244,3 +244,56 @@ def test_delayed_success_requires_genuine_live_canonical_response():
 def test_delayed_success_rejects_unverified_or_noncanonical_response(response):
     with pytest.raises(module.BrowserAcceptanceFailure):
         _live_canonical(response)
+
+
+
+class _BackendBuildResponse:
+    def __init__(
+        self, payload=None, *, status=200,
+        url="https://api.staging.example.test/api/v1/build",
+    ):
+        self.status = status
+        self.url = url
+        self.payload = (
+            {"schema": "athena.backend-build.v1", "sourceSha": SHA}
+            if payload is None else payload
+        )
+
+    def json(self):
+        return self.payload
+
+
+class _BackendBuildPage:
+    def __init__(self, response):
+        self.request = self
+        self.response = response
+
+    def get(self, url, *, headers, max_redirects, timeout):
+        assert url == "https://api.staging.example.test/api/v1/build"
+        assert headers["Cache-Control"] == "no-cache"
+        assert max_redirects == 0
+        assert timeout == 15000
+        return self.response
+
+
+def _check_backend_build(response):
+    module.verify_deployed_backend_build(
+        _BackendBuildPage(response), expected_sha=SHA,
+        backend_origin="https://api.staging.example.test",
+    )
+
+
+def test_deployed_browser_acceptance_requires_real_backend_sha():
+    _check_backend_build(_BackendBuildResponse())
+
+
+@pytest.mark.parametrize("response", [
+    _BackendBuildResponse(status=503),
+    _BackendBuildResponse(url="https://other.example.test/api/v1/build"),
+    _BackendBuildResponse(url="http://api.staging.example.test/api/v1/build"),
+    _BackendBuildResponse(payload={"schema": "athena.backend-build.v1", "sourceSha": "b" * 40}),
+    _BackendBuildResponse(payload={"schema": "athena.backend-build.v1", "sourceSha": SHA, "extra": True}),
+])
+def test_deployed_browser_rejects_stale_or_untrusted_backend(response):
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        _check_backend_build(response)

@@ -29,6 +29,8 @@ HTTP 503 fail-closed removal and recovery, and compact Dashboard → Market
 navigation. The HTTP 503 is a controlled browser fault, **not** evidence
 that a live provider failed. No personal account or position is modified.
 
+Before guest navigation, the browser gate now requires **both** the deployed Flutter Web build manifest and the staging backend `/api/v1/build` runtime marker to match the exact push SHA. A missing or stale backend marker fails before browser acceptance. This is stronger cross-origin consistency checking, not signed deployment attestation. Configure the backend marker through trusted deployment automation, not through chat or a public runtime input.
+
 Canonical synthesis and News-refresh HTTP evidence must originate from the
 **configured HTTPS staging backend origin** (host and effective port) and the
 exact API path. A same-path response from another host, an HTTP downgrade,
