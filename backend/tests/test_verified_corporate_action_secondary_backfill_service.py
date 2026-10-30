@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from app.database.athena_database import AthenaDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.services.verified_corporate_action_secondary_backfill_service import (
@@ -311,3 +313,82 @@ def test_sweep_cli_returns_nonzero_for_failed_identity(monkeypatch) -> None:
         "failedInstrumentCount": 1,
     })
     assert cli.main() == 3
+
+
+def test_explicit_start_date_still_caps_secondary_retrieval_at_pit_cutoff(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "AAPL")
+    effective = "2026-08-15T00:00:00+00:00"
+    _seed_yahoo_dividend(database, instrument_id, effective_at=effective)
+    provider = FakeAlphaVantageProvider({
+        "AAPL": [_alpha_dividend("AAPL", effective, 0.25)],
+    })
+    report = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=provider, clock=lambda: VERIFIED_AT,
+    ).run(as_of=AS_OF, from_date="2026-08-01")
+    assert provider.calls == [("AAPL", "2026-08-01", "2026-09-13")]
+    assert report.effective_to_date == "2026-09-13"
+    assert report.agreed_after == 1
+
+
+@pytest.mark.parametrize("from_date,to_date", [
+    ("2026-08-01", "2026-09-14"),
+    ("2026-09-14", None),
+    ("2026-09-10", "2026-09-09"),
+    ("2026-09-13T00:00:00Z", None),
+    ("2026-02-30", None),
+])
+def test_secondary_rejects_invalid_pit_windows_before_provider_fetch(
+    tmp_path: Path, from_date: str, to_date: str | None,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "AAPL")
+    _seed_yahoo_dividend(
+        database, instrument_id, effective_at="2026-08-15T00:00:00+00:00",
+    )
+    provider = FakeAlphaVantageProvider({})
+    service = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=provider, clock=lambda: VERIFIED_AT,
+    )
+    with pytest.raises(ValueError):
+        service.run(
+            as_of=AS_OF, from_date=from_date, to_date=to_date,
+        )
+    with pytest.raises(ValueError):
+        service.run_sweep(
+            as_of=AS_OF, from_date=from_date, to_date=to_date,
+        )
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize("extra_timestamp", [
+    "2026-09-14T00:00:00+00:00",
+    "2026-07-31T00:00:00+00:00",
+    "not-a-timestamp",
+])
+def test_secondary_rejects_out_of_window_provider_rows_without_partial_write(
+    tmp_path: Path, extra_timestamp: str,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "AAPL")
+    effective = "2026-08-15T00:00:00+00:00"
+    _seed_yahoo_dividend(database, instrument_id, effective_at=effective)
+    provider = FakeAlphaVantageProvider({
+        "AAPL": [
+            _alpha_dividend("AAPL", effective, 0.25),
+            _alpha_dividend("AAPL", extra_timestamp, 0.40),
+        ],
+    })
+    report = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=provider, clock=lambda: VERIFIED_AT,
+    ).run(
+        as_of=AS_OF, from_date="2026-08-01", to_date="2026-09-13",
+    )
+    assert provider.calls == [("AAPL", "2026-08-01", "2026-09-13")]
+    assert report.failed_count == 1
+    assert report.actions_inserted == 0
+    assert report.incomplete_before == report.incomplete_after == 1
+    assert report.agreed_after == 0
+    assert report.status == "completed_with_failures"
