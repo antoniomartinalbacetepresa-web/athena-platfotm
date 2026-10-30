@@ -10,6 +10,7 @@ import tempfile
 from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
+from app.database.read_only_snapshot_database import ReadOnlySnapshotDatabase
 from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.repositories.instrument_repository import InstrumentRepository
 from app.services.corporate_action_coverage_service import CorporateActionCoverageService
@@ -380,7 +381,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
                 raise RuntimeError("La instantánea de corporate actions no es íntegra.")
             with snapshot.open("rb") as stream:
                 snapshot_sha = hashlib.file_digest(stream, "sha256").hexdigest()
-            frozen_db = AthenaDatabase(snapshot)
+            frozen_db = ReadOnlySnapshotDatabase(snapshot)
             frozen_worklist = CorporateActionReconciliationWorklistService(frozen_db)
             first = frozen_worklist.get_worklist(as_of=cutoff, limit=500, offset=0)
             unresolved_total = (
