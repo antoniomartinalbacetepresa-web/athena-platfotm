@@ -185,3 +185,51 @@ def test_secondary_retention_failure_preserves_primary_recovery_points(
     assert directories == [config.secondary]
     assert len(list(config.primary.glob("athena-*.db"))) == 1
     assert len(list(config.secondary.glob("athena-*.db"))) == 1
+
+
+def test_mount_loss_after_secondary_copy_preserves_older_primary_recovery_points(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from scripts import run_verified_backup_cycle as cycle
+
+    config, lock = _configured(tmp_path)
+    config = replace(config, keep_last=1)
+    times = iter([
+        datetime(2026, 10, 30, hour, tzinfo=timezone.utc)
+        for hour in (1, 2)
+    ])
+    original_run = scheduled.run_cycle
+
+    def timed_run(**kwargs: object) -> dict[str, object]:
+        return original_run(**kwargs, now=next(times))
+
+    monkeypatch.setattr(scheduled, "run_cycle", timed_run)
+    state = {"mounted": True}
+
+    def mount_guard(_: scheduled.ScheduledBackupConfig) -> None:
+        if not state["mounted"]:
+            raise RuntimeError("Secondary mount disappeared")
+
+    monkeypatch.setattr(scheduled, "require_independent_mount", mount_guard)
+    scheduled.run_scheduled_cycle(config, lock_path=lock)
+    first = config.primary / "athena-20261030T010000Z.db"
+    assert first.is_file()
+
+    original_copy = cycle.copy_verified_backup
+
+    def copy_then_lose_mount(**kwargs: object) -> dict[str, object]:
+        result = original_copy(**kwargs)
+        state["mounted"] = False
+        return result
+
+    monkeypatch.setattr(cycle, "copy_verified_backup", copy_then_lose_mount)
+    with pytest.raises(RuntimeError, match="mount disappeared"):
+        scheduled.run_scheduled_cycle(config, lock_path=lock)
+
+    # The new pair may exist, but a lost secondary mount must not authorize
+    # deletion of the previously verified primary recovery point.
+    assert first.is_file()
+    assert len(list(config.primary.glob("athena-*.db"))) == 2

@@ -217,3 +217,14 @@ def test_cycle_rejects_unsafe_retention_prefix_before_creating_backup(
         )
 
     assert not primary.exists()
+
+
+def test_secondary_guard_requires_secondary_destination_before_writing(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    with pytest.raises(ValueError, match="secondary guard"):
+        run_cycle(
+            database_path=tmp_path / "missing.db",
+            backup_directory=primary, keep_last=1, prefix="athena-",
+            secondary_guard=lambda: None,
+        )
+    assert not primary.exists()

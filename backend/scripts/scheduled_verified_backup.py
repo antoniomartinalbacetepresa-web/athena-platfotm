@@ -83,6 +83,13 @@ def run_scheduled_cycle(
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         require_independent_mount(config)
+        initial_secondary_device = config.secondary.stat().st_dev
+
+        def guard_secondary_mount() -> None:
+            require_independent_mount(config)
+            if config.secondary.stat().st_dev != initial_secondary_device:
+                raise RuntimeError("Secondary filesystem changed during backup cycle")
+
         result = run_cycle(
             database_path=config.database,
             backup_directory=config.primary,
@@ -90,6 +97,7 @@ def run_scheduled_cycle(
             keep_last=config.keep_last,
             secondary_keep_last=config.secondary_keep_last,
             prefix="athena-",
+            secondary_guard=guard_secondary_mount,
         )
         secondary = result.get("secondary")
         if (
@@ -100,7 +108,7 @@ def run_scheduled_cycle(
             or secondary["restore_drill"].get("schema_version", 0) <= 0
         ):
             raise RuntimeError("Secondary backup or isolated restore was not verified")
-        require_independent_mount(config)
+        guard_secondary_mount()
         return {
             "status": "scheduled_entrypoint_cycle_passed",
             "backupSha256": result["metadata"]["sha256"],

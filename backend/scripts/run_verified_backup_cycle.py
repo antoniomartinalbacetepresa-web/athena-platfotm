@@ -4,7 +4,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from app.database.athena_database import AthenaDatabase
 from app.services.database_backup_service import DatabaseBackupService
@@ -39,12 +39,15 @@ def run_cycle(
     secondary_directory: Path | None = None,
     secondary_keep_last: int | None = None,
     offsite_attested: bool = False,
+    secondary_guard: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     if keep_last < 1:
         raise ValueError("La retención debe conservar al menos un backup.")
     DatabaseBackupService.validate_filename_prefix(prefix)
     if offsite_attested and secondary_directory is None:
         raise ValueError("La declaración off-site requiere destino secundario.")
+    if secondary_guard is not None and secondary_directory is None:
+        raise ValueError("A secondary guard requires a secondary destination.")
     if secondary_keep_last is not None:
         if secondary_directory is None:
             raise ValueError("La retención secundaria requiere destino secundario.")
@@ -96,12 +99,20 @@ def run_cycle(
     secondary = None
     secondary_retention = None
     if secondary_directory is not None:
+        # The scheduled entrypoint pins the mount identity across the cycle.
+        # Refuse a vanished or replaced secondary mount before copying.
+        if secondary_guard is not None:
+            secondary_guard()
         secondary = copy_verified_backup(
             backup_path=backup_path,
             manifest_path=service.manifest_path_for(backup_path),
             destination_directory=secondary_directory,
             offsite_attested=offsite_attested,
         )
+        # A mount may disappear during copy/restore. Never prune an older
+        # recovery point until the scheduler has rechecked its identity.
+        if secondary_guard is not None:
+            secondary_guard()
         # Prune only verified managed secondary copies. If verification or
         # secondary retention fails, preserve every older primary recovery point.
         if secondary_keep_last is not None:
@@ -110,6 +121,10 @@ def run_cycle(
                 keep_last=secondary_keep_last,
                 filename_prefix=prefix,
             )
+    # Recheck after secondary retention as well: the primary is the last
+    # recovery boundary and must survive a secondary mount transition.
+    if secondary_guard is not None:
+        secondary_guard()
     retention = service.apply_retention(
         backup_directory,
         keep_last=keep_last,
