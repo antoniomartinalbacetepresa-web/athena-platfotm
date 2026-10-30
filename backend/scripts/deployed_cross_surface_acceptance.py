@@ -38,6 +38,12 @@ def _expect(condition: bool, label: str) -> None:
         raise AcceptanceFailure(f"{label}: contract not satisfied")
 
 
+def _require_sha256(value: object, label: str) -> str:
+    """Reject absent or malformed canonical hashes before equality checks."""
+    _expect(isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value)), label)
+    return value
+
+
 def _json(response: httpx.Response, label: str, *, status: int = 200) -> dict:
     if response.status_code != status:
         raise AcceptanceFailure(f"{label}: unexpected HTTP status {response.status_code}")
@@ -161,26 +167,37 @@ def verify_deployed_api(
     selection = _object(athena.get("selection"), "athena selection")
     _expect(selection.get("presentationOnly") is True and selection.get("recommendationInfluence") is False
             and selection.get("automaticTrading") is False, "athena authority")
-    cycle = athena.get("cycleHash")
-    _expect(isinstance(cycle, str) and len(cycle) == 64 and all(c in "0123456789abcdef" for c in cycle), "athena cycle")
+    cycle = _require_sha256(athena.get("cycleHash"), "athena cycle")
     synthesis = _object(athena.get("synthesis"), "athena synthesis")
     provenance = _object(athena.get("provenance"), "athena provenance")
-    _expect(isinstance(synthesis.get("inputFingerprint"), str) and
-            synthesis.get("inputFingerprint") == provenance.get("inputFingerprint"), "athena PIT binding")
+    fingerprint = _require_sha256(synthesis.get("inputFingerprint"), "athena PIT fingerprint")
+    _expect(fingerprint == _require_sha256(
+        provenance.get("inputFingerprint"), "athena provenance PIT fingerprint"
+    ), "athena PIT binding")
     news = _object(_get(client, root + "/news-synthesis/latest", "news").get("data"), "news data")
     _expect(news.get("cycleBindingVerified") is True and news.get("cycleHash") == cycle and
             news.get("presentationOnly") is True and news.get("recommendationInfluence") is False and
             news.get("automaticTrading") is False, "news canonical binding")
-    news_hash = _object(news.get("persistence"), "news persistence").get("synthesisHash")
-    _expect(_object(provenance.get("news"), "athena news provenance").get("artifactHash") == news_hash,
-            "athena/news provenance binding")
+    news_hash = _require_sha256(
+        _object(news.get("persistence"), "news persistence").get("synthesisHash"),
+        "news synthesis hash",
+    )
+    _expect(_require_sha256(
+        _object(provenance.get("news"), "athena news provenance").get("artifactHash"),
+        "athena news provenance hash",
+    ) == news_hash, "athena/news provenance binding")
     investors = _object(_get(client, root + f"/research-cycle/{cycle}/investors-synthesis", "investors").get("data"), "investors data")
     _expect(investors.get("cycleBindingVerified") is True and investors.get("cycleHash") == cycle and
             investors.get("recommendationInfluence") is False and investors.get("automaticTrading") is False,
             "investors canonical binding")
-    investors_hash = _object(investors.get("persistence"), "investors persistence").get("synthesisHash")
-    _expect(_object(provenance.get("investors"), "athena investors provenance").get("artifactHash") == investors_hash,
-            "athena/investors provenance binding")
+    investors_hash = _require_sha256(
+        _object(investors.get("persistence"), "investors persistence").get("synthesisHash"),
+        "investors synthesis hash",
+    )
+    _expect(_require_sha256(
+        _object(provenance.get("investors"), "athena investors provenance").get("artifactHash"),
+        "athena investors provenance hash",
+    ) == investors_hash, "athena/investors provenance binding")
 
     token_a: str | None = None
     token_b: str | None = None
@@ -205,11 +222,12 @@ def verify_deployed_api(
             except httpx.RequestError:
                 raise AcceptanceFailure(f"{label}: transport unavailable") from None
             _expect(response.status_code == 401, label)
-        _expect(_get(client, "/api/v1/auth/me", "owner B after A logout", token=token_b).get("status") == "authenticated",
-                "independent owner session")
-        _expect(_get(client, "/api/v1/user/profile/personalization",
-                     "owner B personalization after A logout", token=token_b).get("status") == "configured",
-                "independent owner personalization")
+        # Revoking A must not corrupt B's identity, preferences or portfolio.
+        identity_b_after, positions_b_after = _owner_snapshot(
+            client, token_b, owner_b, "owner B after A logout"
+        )
+        _expect(identity_b_after == identity_b and positions_b_after == positions_b,
+                "owner B isolation after A revocation")
         return {"status": "passed", "deployedApiContractsVerified": True,
                 "deployedBackendBuildIdentityVerified": True,
                 "persistedMarketUniverseVerified": True,

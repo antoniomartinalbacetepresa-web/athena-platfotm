@@ -31,7 +31,11 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
               missing_athena=False, shared_extra_position=False,
               personalization_leak=False, personalization_escalation=False,
               fallback_market=False, empty_market=False,
-              stale_build=False, missing_build=False):
+              stale_build=False, missing_build=False,
+              missing_news_hash=False, missing_investors_hash=False,
+              malformed_pit_fingerprint=False,
+              owner_b_profile_corrupted_after_logout=False,
+              owner_b_portfolio_crossed_after_logout=False):
     revoked = set()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -55,7 +59,7 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
                 return httpx.Response(404, json={"detail": "not ready"})
             return httpx.Response(200, json={"data": {
                 "artifactBindingVerified": True, "cycleHash": HASH,
-                "synthesis": {"inputFingerprint": HASH},
+                "synthesis": {"inputFingerprint": "invalid" if malformed_pit_fingerprint else HASH},
                 "provenance": {"inputFingerprint": HASH, "news": {"artifactHash": NEWS_HASH},
                                "investors": {"artifactHash": INVESTORS_HASH}},
                 "selection": {"presentationOnly": True, "recommendationInfluence": False,
@@ -64,11 +68,11 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
             return httpx.Response(200, json={"data": {
                 "cycleBindingVerified": True, "cycleHash": "f" * 64 if mismatched_news else HASH,
                 "presentationOnly": True, "recommendationInfluence": False,
-                "automaticTrading": False, "persistence": {"synthesisHash": NEWS_HASH}}})
+                "automaticTrading": False, "persistence": {"synthesisHash": None if missing_news_hash else NEWS_HASH}}})
         if path.endswith(f"/research-cycle/{HASH}/investors-synthesis"):
             return httpx.Response(200, json={"data": {
                 "cycleBindingVerified": True, "cycleHash": HASH, "recommendationInfluence": False,
-                "automaticTrading": False, "persistence": {"synthesisHash": INVESTORS_HASH}}})
+                "automaticTrading": False, "persistence": {"synthesisHash": None if missing_investors_hash else INVESTORS_HASH}}})
         if path == "/api/v1/auth/token":
             return httpx.Response(200, json={"access_token": "ownerA-token-long-enough" if b"a%40test.invalid" in request.content else "ownerB-token-long-enough", "token_type": "bearer"})
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -83,7 +87,9 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
         if path == "/api/v1/auth/me":
             return httpx.Response(200, json={"status": "authenticated", "account": {"id": 1 if is_a else 2}})
         if path == "/api/v1/user/profile/preferences":
-            return httpx.Response(200, json={"status": "configured", "data": {"preferences": {"baseCurrency": "EUR" if is_a else "USD"}},
+            return httpx.Response(200, json={"status": "configured", "data": {"preferences": {"baseCurrency": "EUR" if is_a else (
+                                                 "GBP" if revoked and owner_b_profile_corrupted_after_logout
+                                                 else "USD")}},
                                              "policy": {"ownerDerivedFromAuthenticatedToken": True,
                                                         "clientSuppliedOwnerAccepted": False, "automaticTrading": False}})
         if path == "/api/v1/user/profile/personalization":
@@ -103,6 +109,8 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
         if path == "/api/v1/user/portfolio":
             ids = ([11, 33] if is_a else [22, 33]) if shared_extra_position else (
                 [11, 22] if cross_owner else ([11] if is_a else [22]))
+            if not is_a and revoked and owner_b_portfolio_crossed_after_logout:
+                ids = [11]
             return httpx.Response(200, json={"data": {"positions": [{"id": n} for n in ids], "positionCount": len(ids)},
                                              "policy": {"ownerDerivedFromAuthenticatedToken": True,
                                                         "clientSuppliedOwnerAccepted": False, "automaticTrading": False}})
@@ -130,6 +138,8 @@ def test_two_owner_canonical_and_revocation_success():
     "missing_athena", "mismatched_news", "cross_owner", "revoked_accepted",
     "shared_extra_position", "personalization_leak", "personalization_escalation",
     "fallback_market", "empty_market", "stale_build", "missing_build",
+    "missing_news_hash", "missing_investors_hash", "malformed_pit_fingerprint",
+    "owner_b_profile_corrupted_after_logout", "owner_b_portfolio_crossed_after_logout",
 ])
 def test_deployed_acceptance_fails_closed(fault):
     with pytest.raises(module.AcceptanceFailure):
