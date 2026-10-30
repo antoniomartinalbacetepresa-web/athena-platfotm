@@ -451,3 +451,99 @@ def test_ingestion_accepts_case_insensitive_stored_instrument_symbol(
     assert stats.inserted == 1
     assert provider.calls == [("AAPL", None, None)]
     assert len(repository.list_for_instrument(instrument_id)) == 1
+
+
+
+@pytest.mark.parametrize("extra_timestamp", [
+    "2026-07-31T23:59:59+00:00",
+    "2026-09-13T00:00:00+00:00",
+    "2026-08-01T01:00:00+02:00",
+    "not-a-timestamp",
+    "2026-08-15T00:00:00",
+])
+@pytest.mark.parametrize("valid_first", [False, True])
+def test_ingestion_rejects_out_of_window_or_invalid_observation_without_partial_write(
+    tmp_path: Path, extra_timestamp: str, valid_first: bool,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = CorporateActionRepository(database)
+    rows = [_observation(
+        timestamp=extra_timestamp, retrieved_at="2026-09-15T12:00:00+00:00",
+        dividend=0.50,
+    )]
+    if valid_first:
+        rows.insert(0, _observation(
+            timestamp="2026-08-15T00:00:00+00:00",
+            retrieved_at="2026-09-15T12:00:00+00:00", dividend=0.25,
+        ))
+    provider = FakeHistoryProvider(rows)
+    with pytest.raises(ValueError, match="ventana PIT|timestamp"):
+        CorporateActionIngestionService(
+            market_provider=provider, repository=repository,
+        ).ingest_history(
+            instrument_id=instrument_id, symbol="AAPL",
+            from_date="2026-08-01", to_date="2026-09-12",
+            dividend_currency="USD",
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+
+
+@pytest.mark.parametrize(("from_date", "to_date"), [
+    ("2026-02-30", None),
+    ("20260801", None),
+    ("2026-09-12", "2026-09-11"),
+    ("2026-08-01", "2099-01-01"),
+])
+def test_ingestion_rejects_invalid_windows_before_provider_call(
+    tmp_path: Path, from_date: str, to_date: str | None,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    provider = FakeHistoryProvider([])
+    with pytest.raises(ValueError):
+        CorporateActionIngestionService(
+            market_provider=provider,
+            repository=CorporateActionRepository(database),
+        ).ingest_history(
+            instrument_id=instrument_id, symbol="AAPL",
+            from_date=from_date, to_date=to_date,
+        )
+    assert provider.calls == []
+
+
+def test_ingestion_caps_open_upper_window_and_rejects_future_provider_knowledge(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = CorporateActionRepository(database)
+    provider = FakeHistoryProvider([_observation(
+        timestamp="2099-01-01T00:00:00+00:00",
+        retrieved_at="2099-01-02T00:00:00+00:00", dividend=0.25,
+    )])
+    with pytest.raises(ValueError, match="futuro|ventana PIT"):
+        CorporateActionIngestionService(
+            market_provider=provider, repository=repository,
+        ).ingest_history(
+            instrument_id=instrument_id, symbol="AAPL", from_date="2026-01-01",
+        )
+    assert provider.calls[0][2] == datetime.now(timezone.utc).date().isoformat()
+    assert repository.list_for_instrument(instrument_id) == []
+
+
+def test_ingestion_rejects_future_retrieval_even_for_past_economic_date(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = CorporateActionRepository(database)
+    provider = FakeHistoryProvider([_observation(
+        timestamp="2026-08-15T00:00:00+00:00",
+        retrieved_at="2099-01-01T00:00:00+00:00", dividend=0.25,
+    )])
+    with pytest.raises(ValueError, match="conocimiento futuro"):
+        CorporateActionIngestionService(
+            market_provider=provider, repository=repository,
+        ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
+    assert repository.list_for_instrument(instrument_id) == []

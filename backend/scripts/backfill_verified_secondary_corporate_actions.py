@@ -134,12 +134,17 @@ def main() -> int:
             from_date=args.from_date, to_date=args.to_date, as_of=cutoff,
         )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
-    if args.sweep and (
-        payload["unattemptedActionableEventCount"] > 0
-        or payload["failedInstrumentCount"] > 0
-    ):
-        return 3
-    return 0
+    # Exit 0 describes a completed selected operation, not global readiness.
+    # In single-batch mode unresolved selected events must not be certified.
+    fields = (
+        ("unattemptedActionableEventCount", "failedInstrumentCount")
+        if args.sweep else
+        ("failedCount", "selectedEventsStillIncomplete", "selectedEventsConflicting")
+    )
+    return 0 if all(
+        type(payload.get(field)) is int and payload[field] == 0
+        for field in fields
+    ) else 3
 
 
 if __name__ == "__main__":

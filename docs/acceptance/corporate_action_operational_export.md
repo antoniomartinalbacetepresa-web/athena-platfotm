@@ -68,3 +68,33 @@ from that response. The operator must investigate provider discrepancies
 rather than silently trimming them. These safeguards do not establish
 operational provider independence, successful economic reconciliation, or
 historical price-coverage readiness.
+
+
+
+## General corporate-action ingestion and CLI exit contract
+
+The shared `CorporateActionIngestionService` now validates **every** returned
+observation, including rows without dividends or splits, before writing any
+batch. It checks strict `YYYY-MM-DD` request bounds, UTC-normalized economic
+dates, timezone-aware effective/retrieval instants, chronological consistency,
+and rejects future effective or retrieval timestamps. If a lower bound is
+specified without an upper bound, the request is capped to the current UTC
+date. Any invalid or out-of-window observation rejects that instrument's
+whole response without partial persistence. A UTC-day boundary may differ
+from an exchange-local trading day; operators must investigate those cases,
+not silently discard the discrepancy.
+
+The basic `backfill_secondary_corporate_actions` command exits **3** when any
+selected instrument fails (and **0** only when its selected batch has no
+reported failures). The verified single-batch command exits **3** when a
+selected event remains incomplete or conflicting, or when an instrument fails.
+The verified sweep retains its bounded-selection contract: it exits **3** for
+unattempted actionable events or failed instruments. A zero exit status from
+any bounded command is **not** evidence of complete eligible-universe
+coverage, independent operational provider agreement, or production readiness.
+
+Provider-supplied historical `retrievedAt` remains untrusted evidence of when
+the data was *originally* learned; these checks reject impossible future
+timestamps but cannot independently attest a provider's earlier claimed
+retrieval time. Only separately audited acquisition logs and independent
+source custody can close that provenance criterion.

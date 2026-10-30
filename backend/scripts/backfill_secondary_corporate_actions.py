@@ -70,7 +70,7 @@ def run(
         provider.close()
 
 
-def main() -> None:
+def main() -> int:
     args = build_parser().parse_args()
     report = run(
         limit=args.limit,
@@ -79,7 +79,10 @@ def main() -> None:
         to_date=args.to_date,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    # A provider failure is not a successful ingestion batch.
+    failed = report.get("failedCount")
+    return 0 if type(failed) is int and failed == 0 else 3
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

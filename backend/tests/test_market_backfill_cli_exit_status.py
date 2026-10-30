@@ -49,3 +49,33 @@ def test_generic_backfill_rejects_partial_provider_results(
     monkeypatch.setattr(sys, "argv", ["backfill_market_observations"])
     assert generic.main() == expected
     assert json.loads(capsys.readouterr().out) == payload
+
+
+
+@pytest.mark.parametrize(("failed", "expected"), [(0, 0), (2, 3), (None, 3), (False, 3)])
+def test_plain_secondary_backfill_cli_does_not_hide_provider_failures(
+    monkeypatch, capsys, failed, expected,
+):
+    from scripts import backfill_secondary_corporate_actions as secondary
+    payload = {"failedCount": failed, "provider": "alpha_vantage"}
+    monkeypatch.setattr(secondary, "run", lambda **kwargs: payload)
+    monkeypatch.setattr(sys, "argv", ["backfill_secondary_corporate_actions"])
+    assert secondary.main() == expected
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+@pytest.mark.parametrize(("payload", "expected"), [
+    ({"failedCount": 0, "selectedEventsStillIncomplete": 0, "selectedEventsConflicting": 0}, 0),
+    ({"failedCount": 1, "selectedEventsStillIncomplete": 0, "selectedEventsConflicting": 0}, 3),
+    ({"failedCount": 0, "selectedEventsStillIncomplete": 1, "selectedEventsConflicting": 0}, 3),
+    ({"failedCount": 0, "selectedEventsStillIncomplete": 0, "selectedEventsConflicting": 1}, 3),
+    ({"failedCount": 0, "selectedEventsStillIncomplete": None, "selectedEventsConflicting": 0}, 3),
+])
+def test_verified_secondary_single_batch_cli_requires_selected_events_resolved(
+    monkeypatch, capsys, payload, expected,
+):
+    from scripts import backfill_verified_secondary_corporate_actions as secondary
+    monkeypatch.setattr(secondary, "run", lambda **kwargs: payload)
+    monkeypatch.setattr(sys, "argv", ["backfill_verified_secondary_corporate_actions"])
+    assert secondary.main() == expected
+    assert json.loads(capsys.readouterr().out) == payload
