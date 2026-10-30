@@ -32,7 +32,38 @@ def build_parser() -> argparse.ArgumentParser:
     measured.add_argument("--cohort-id", required=True)
     measured.add_argument("--expected-cohort-hash", help="Pin de la selección prospectiva.")
     measured.add_argument("--as-of", required=True, help="Corte ISO-8601 con zona horaria.")
+    measured.add_argument("--require-complete-measurement", action="store_true",
+                          help="Sale con código 3 salvo que toda la selección haya vencido y tenga errores y outcomes persistidos.")
     return parser
+
+
+def _complete_measured_evidence(report: dict) -> bool:
+    """Strict descriptive-completeness gate, never a skill or production gate."""
+    if not isinstance(report, dict):
+        return False
+    selected = report.get("selectedCount")
+    matured = report.get("maturedCount")
+    measured = report.get("measuredErrorCount")
+    statistics = report.get("observedErrorStatistics")
+    return (
+        type(selected) is int and selected > 0
+        and type(matured) is int and matured == selected
+        and type(measured) is int and measured == selected
+        and report.get("missingMaturedSpecificationHashes") == []
+        and report.get("membershipComplete") is True
+        and report.get("persistedOutcomeChainVerified") is True
+        and report.get("errorStorePresent") is True
+        and report.get("maturedMeasurementCoverage") == 1.0
+        and isinstance(statistics, dict)
+        and type(statistics.get("sampleCount")) is int
+        and statistics["sampleCount"] == selected
+        and statistics.get("descriptiveOnly") is True
+        and all(report.get(flag) is False for flag in (
+            "independentMarketSourceVerified", "predictiveSkillEstablished",
+            "outcomeEvidenceVerified", "productionEligible",
+            "productionLearningEligible", "automaticTrading",
+        ))
+    )
 
 
 def run(args: argparse.Namespace, *, service=None) -> dict:
@@ -55,6 +86,8 @@ def run(args: argparse.Namespace, *, service=None) -> dict:
         cutoff = datetime.fromisoformat(normalized)
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
             raise ValueError("--as-of requiere zona horaria.")
+        if cutoff.astimezone(timezone.utc) > datetime.now(timezone.utc):
+            raise ValueError("--as-of no puede ser futuro.")
         result = ledger.measured_coverage(cohort_id=args.cohort_id, as_of=cutoff.astimezone(timezone.utc))
         if expected is not None and result.get("cohortHash") != expected:
             raise ValueError("La medición no coincide con el pin esperado.")
@@ -78,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         # Do not leak storage details or partially validated evidence.
         parser.exit(1, "No se pudo verificar la operación prospectiva; no se concede autoridad productiva.\n")
     print(serialized)
+    if args.command == "measured" and args.require_complete_measurement:
+        return 0 if _complete_measured_evidence(result) else 3
     return 0
 
 

@@ -107,3 +107,21 @@ de outcomes**: el denominador precomprometido y la lista completa de vencidos
 sin medición siguen siendo obligatorios para interpretarlas. No demuestran
 calibración, skill, significación estadística, calidad de fuentes externas,
 aprobación de ponderaciones ni autoridad de aprendizaje/trading.
+
+## Gate opcional de integridad de medición completa (no de skill)
+
+Para automatizar un **control descriptivo** sobre una selección prospectiva ya
+sellada, añadir `--require-complete-measurement` a `prospective_cohort.py measured`.
+El comando conserva el informe JSON, pero devuelve **código 3** si todavía no ha
+vencido toda la selección, faltan errores u outcomes persistidos, la cohorte
+está vacía o falta alguna evidencia de integridad de la cadena. La salida 0
+requiere todos los forecasts seleccionados vencidos y medidos, con estadísticas
+calculadas sobre exactamente el denominador sellado. Sin esta opción, `measured`
+continúa siendo una consulta descriptiva que devuelve 0 cuando se verifica sin
+errores, aunque falten mediciones. El corte `--as-of` nunca puede estar en el
+futuro respecto del reloj UTC del operador.
+
+Este gate **no certifica** origen operativo, calidad de proveedores, independencia
+estadística, umbrales de suficiencia, habilidad predictiva, autorización humana,
+aprendizaje ni producción. Los indicadores de autoridad continúan en `false`.
+No debe utilizarse su código 0 como release gate de modelos o inversiones.

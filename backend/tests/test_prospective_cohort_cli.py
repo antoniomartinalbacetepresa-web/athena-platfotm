@@ -104,3 +104,55 @@ def test_cli_failure_has_nonzero_exit_and_no_partial_or_sensitive_output(monkeyp
     assert captured.out == ""
     assert "private-storage-diagnostic" not in captured.err
     assert "No se pudo verificar" in captured.err
+
+
+def _complete_measured_report():
+    return {
+        "cohortHash": "a" * 64,
+        "selectedCount": 2, "maturedCount": 2, "measuredErrorCount": 2,
+        "missingMaturedSpecificationHashes": [], "membershipComplete": True,
+        "maturedMeasurementCoverage": 1.0, "persistedOutcomeChainVerified": True,
+        "errorStorePresent": True,
+        "observedErrorStatistics": {"sampleCount": 2, "descriptiveOnly": True},
+        "independentMarketSourceVerified": False, "predictiveSkillEstablished": False,
+        "outcomeEvidenceVerified": False, "productionEligible": False,
+        "productionLearningEligible": False, "automaticTrading": False,
+    }
+
+
+def test_measured_completeness_gate_is_opt_in_and_does_not_claim_skill(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "run", lambda args: _complete_measured_report())
+    command = ["measured", "--cohort-id", "c", "--as-of", "2026-10-29T20:00:00Z"]
+    assert cli.main(command + ["--require-complete-measurement"]) == 0
+    assert cli.main(command) == 0
+    output = capsys.readouterr().out
+    assert output.count('"predictiveSkillEstablished": false') == 2
+    assert output.count('"productionEligible": false') == 2
+
+
+@pytest.mark.parametrize("changes", [
+    {"maturedCount": 0, "measuredErrorCount": 0},
+    {"measuredErrorCount": 1, "membershipComplete": False},
+    {"missingMaturedSpecificationHashes": ["b" * 64]},
+    {"observedErrorStatistics": None},
+    {"selectedCount": True},
+    {"independentMarketSourceVerified": True},
+    {"persistedOutcomeChainVerified": False},
+])
+def test_measured_completeness_gate_exits_three_and_preserves_diagnostic(monkeypatch, capsys, changes):
+    monkeypatch.setattr(cli, "run", lambda args: {**_complete_measured_report(), **changes})
+    command = ["measured", "--cohort-id", "c", "--as-of", "2026-10-29T20:00:00Z"]
+    assert cli.main(command + ["--require-complete-measurement"]) == 3
+    assert '"productionEligible": false' in capsys.readouterr().out
+    assert cli.main(command) == 0  # Descriptive reads remain available.
+
+
+def test_measured_rejects_future_cutoff_before_querying_storage():
+    class Unreadable(Ledger):
+        def measured_coverage(self, **kwargs):
+            pytest.fail("A future cutoff must not reach persisted OOS evidence")
+    args = build_parser().parse_args([
+        "measured", "--cohort-id", "c", "--as-of", "2099-01-01T00:00:00Z",
+    ])
+    with pytest.raises(ValueError, match="futuro"):
+        run(args, service=Unreadable())
