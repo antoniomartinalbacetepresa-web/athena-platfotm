@@ -12,6 +12,7 @@ import math
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.market_observation_repository import validated_market_source_provider
 
 
 def _utc(value: datetime, name: str) -> datetime:
@@ -42,7 +43,8 @@ def select_pit_prices(
     """Return one latest-knowable row per UTC instant, ordered by observation.
 
     Reject future retrieval, retrieval before the observation, non-finite
-    prices and malformed/naive timestamps. Never compare timestamp strings
+    prices, forbidden/untraceable providers, and invalid source timestamps.
+    Never compare timestamp strings
     lexicographically: their timezone offsets may differ.
     """
     start = _utc(at_or_after, "at_or_after")
@@ -53,7 +55,7 @@ def select_pit_prices(
     # The one-second SQL margin is deliberately larger than julianday's
     # rounding error. Exact boundaries are checked again in Python.
     sql = """
-        SELECT id, observed_at, retrieved_at, source_provider,
+        SELECT id, observed_at, retrieved_at, source_timestamp, source_provider,
                COALESCE(close, adjusted_close) AS price
         FROM market_observations
         WHERE instrument_id = ?
@@ -76,13 +78,25 @@ def select_pit_prices(
                 or not observed <= retrieved <= cutoff
             ):
                 continue
+            # The historical coverage and ingestion boundaries also reject
+            # source evidence dated after retrieval. Enforce it here for both
+            # outcomes and frozen benchmarks, including imported legacy rows.
+            source_timestamp = row["source_timestamp"]
+            if source_timestamp is not None:
+                source_instant = _stored_utc(source_timestamp)
+                if source_instant is None or source_instant > retrieved:
+                    continue
+            try:
+                provider = validated_market_source_provider(row["source_provider"])
+            except ValueError:
+                continue
             price = float(row["price"])
             if not math.isfinite(price) or price <= 0:
                 continue
             candidate = {
                 "observed_at": str(row["observed_at"]),
                 "retrieved_at": str(row["retrieved_at"]),
-                "source_provider": str(row["source_provider"]),
+                "source_provider": provider,
                 "price": price,
             }
             key = (retrieved, int(row["id"]))

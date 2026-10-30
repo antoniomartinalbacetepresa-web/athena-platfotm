@@ -414,3 +414,61 @@ def test_benchmark_deduplicates_equal_instants_and_excludes_future_retrieval(tmp
     assert report.evaluated[0]["benchmarkEvidence"]["exitRetrievedAt"] == (
         "2026-01-08T16:00:00+00:00"
     )
+
+
+def test_outcome_and_frozen_benchmark_exclude_untrusted_source_provenance(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    benchmark_id = _instrument(
+        database, symbol="SPY", company_name="SPY", instrument_type="etf",
+    )
+    generated = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    _recommendation(
+        database, generated=generated, instrument_id=instrument_id,
+        benchmark_symbol="SPY",
+    )
+    _price(database, instrument_id=instrument_id,
+           observed_at=generated + timedelta(hours=1), close=100.0)
+    _price(database, instrument_id=instrument_id,
+           observed_at=generated + timedelta(days=7, hours=1), close=110.0)
+    _price(database, instrument_id=benchmark_id,
+           observed_at=generated + timedelta(hours=2), close=500.0)
+    _price(database, instrument_id=benchmark_id,
+           observed_at=generated + timedelta(days=7, hours=2), close=525.0)
+
+    # Direct SQL simulates pre-policy imported rows; the repository's normal
+    # write boundary already rejects FMP and source timestamps after retrieval.
+    with database.connect() as connection:
+        for target_id, observed_at in (
+            (instrument_id, generated + timedelta(days=7, hours=1)),
+            (benchmark_id, generated + timedelta(days=7, hours=2)),
+        ):
+            observed = observed_at.isoformat()
+            for provider, source_timestamp, price, minutes in (
+                ("future_source", "2026-01-09T13:00:00+00:00", 999.0, 30),
+                ("F%4DP", None, 888.0, 40),
+                ("naive_source", "2026-01-08T17:00:00", 777.0, 50),
+                ("", None, 666.0, 60),
+            ):
+                connection.execute(
+                    """INSERT INTO market_observations
+                       (instrument_id, observed_at, close, source_provider,
+                        source_timestamp, retrieved_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        target_id, observed, price, provider, source_timestamp,
+                        (observed_at + timedelta(minutes=minutes)).isoformat(),
+                    ),
+                )
+
+    report = RecommendationOutcomeEvaluationService(database=database).evaluate_due(
+        as_of=datetime(2026, 1, 9, 12, tzinfo=timezone.utc),
+    )
+    assert report.evaluated_count == 1
+    result = report.evaluated[0]
+    assert result["exitPrice"] == pytest.approx(110.0)
+    assert result["exitSourceProvider"] == "test_prices"
+    assert result["benchmarkReturn"] == pytest.approx(0.05)
+    assert result["benchmarkEvidence"]["exitSourceProvider"] == "test_prices"

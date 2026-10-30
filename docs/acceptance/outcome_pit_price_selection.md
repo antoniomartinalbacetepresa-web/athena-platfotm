@@ -11,7 +11,10 @@ then checks each original timezone-aware timestamp at Python microsecond
 precision. It requires the observation to lie in the requested interval and
 the retrieval instant to be between the observation and the evaluation PIT
 cutoff. Malformed/naive timestamps and non-positive/non-finite prices are
-excluded. Equal UTC observation instants are deduplicated by the latest
+excluded. The selector also rejects a non-null source timestamp that is
+malformed, timezone-naive or later than the retrieval instant, and applies
+the same FMP/empty-provider exclusion as the market observation repository.
+This applies to imported legacy rows as well as current ingestion. Equal UTC observation instants are deduplicated by the latest
 eligible retrieval instant, then the persisted row ID. Raw close remains
 preferred over adjusted close when present.
 
