@@ -138,3 +138,17 @@ sweep worklist and the direct blocker-only selection use the same bounded
 cutoff. For historical dates already past, the requested day's end remains
 the cutoff. This is a code-level no-lookahead safeguard, not proof of live
 365-day coverage, production origin or independent corporate-action agreement.
+
+## Live multi-query snapshot consistency
+
+The live Market history coverage and blocker diagnostics now open an explicit
+SQLite read transaction before their first SELECT. All constituent totals,
+source statistics and paginated blocker rows within each report therefore
+observe the same committed WAL generation, even if an ingestion writer commits
+between queries. This prevents contradictory in-report denominators and worklists.
+Each separate API request still opens its own read transaction: **two reports
+requested independently are not a paired operational snapshot**. For auditable
+365-day acceptance and independent dividend/split reconciliation, use the
+existing single-generation read-only snapshot/paired evidence export on an
+authorized operational database. Fixture regressions and green CI do not
+establish real production coverage, provider agreement or deployment readiness.

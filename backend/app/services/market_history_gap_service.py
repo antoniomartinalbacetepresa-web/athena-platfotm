@@ -228,6 +228,10 @@ class MarketHistoryGapService:
             )
         """
         with self._database.connect() as connection:
+            # Two SELECTs must observe the same WAL generation: otherwise a
+            # concurrent backfill/catalogue update can mix blocker totals
+            # from one universe with rows from another.
+            connection.execute("BEGIN")
             counts = connection.execute(ctes + """
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN reason = 'no_observations' THEN 1 ELSE 0 END) AS no_observations,

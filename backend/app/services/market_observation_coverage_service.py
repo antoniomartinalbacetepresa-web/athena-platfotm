@@ -144,6 +144,10 @@ class MarketObservationCoverageService:
         cutoff_iso = cutoff.isoformat()
         self._database.initialize()
         with self._database.connect() as connection:
+            # Pin one SQLite read snapshot for the universe, deep-history and
+            # per-provider queries. Separate autocommit SELECTs can disagree
+            # when ingestion changes the live WAL between statements.
+            connection.execute("BEGIN")
             active_row = connection.execute(
                 "SELECT COUNT(*) AS total FROM instruments WHERE is_active = 1"
             ).fetchone()
