@@ -285,3 +285,29 @@ def test_sweep_reports_bounded_unattempted_actionable_work(tmp_path: Path) -> No
     assert result["attemptedEventCount"] == 1
     assert result["unattemptedActionableEventCount"] == 1
     assert result["completeActionableSelection"] is False
+
+
+def test_sweep_cli_returns_nonzero_for_unattempted_events(monkeypatch) -> None:
+    import sys
+    from scripts import backfill_verified_secondary_corporate_actions as cli
+
+    monkeypatch.setattr(sys, "argv", ["backfill_verified_secondary_corporate_actions", "--sweep"])
+    monkeypatch.setattr(cli, "run_sweep", lambda **kwargs: {
+        "status": "bounded_sweep_partial",
+        "unattemptedActionableEventCount": 1,
+        "failedInstrumentCount": 0,
+    })
+    assert cli.main() == 3
+
+
+def test_sweep_cli_returns_nonzero_for_failed_identity(monkeypatch) -> None:
+    import sys
+    from scripts import backfill_verified_secondary_corporate_actions as cli
+
+    monkeypatch.setattr(sys, "argv", ["backfill_verified_secondary_corporate_actions", "--sweep"])
+    monkeypatch.setattr(cli, "run_sweep", lambda **kwargs: {
+        "status": "completed_with_failures",
+        "unattemptedActionableEventCount": 0,
+        "failedInstrumentCount": 1,
+    })
+    assert cli.main() == 3

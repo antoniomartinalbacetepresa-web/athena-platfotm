@@ -213,7 +213,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
             selected_items = tuple(_selected_items)
             if any(
                 item.suggested_provider != "alpha_vantage"
-                or item.reconciliation_status != "incomplete"
+                or item.reconciliation_status not in ("incomplete", "conflict")
                 for item in selected_items
             ):
                 raise ValueError("El barrido congelado contiene eventos no elegibles.")
@@ -353,7 +353,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
         from_date: str | None = None,
         to_date: str | None = None,
     ) -> dict[str, Any]:
-        """Freeze actionable secondary events before writes shrink the worklist.
+        """Freeze actionable unresolved events before writes shrink the worklist.
 
         A consistent SQLite backup fixes the selected events and their full
         instrument identities. No live offset pagination occurs after writes.
@@ -403,10 +403,7 @@ class VerifiedCorporateActionSecondaryBackfillService:
                 ):
                     raise RuntimeError("La cola congelada cambió durante el barrido.")
                 for item in page.items:
-                    if (
-                        item.reconciliation_status != "incomplete"
-                        or item.suggested_provider != "alpha_vantage"
-                    ):
+                    if item.suggested_provider != "alpha_vantage":
                         continue
                     key = (item.instrument_id, item.action_type, item.effective_at)
                     if key in seen_keys:

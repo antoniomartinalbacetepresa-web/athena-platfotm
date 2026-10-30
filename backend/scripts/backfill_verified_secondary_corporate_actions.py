@@ -118,7 +118,7 @@ def run_sweep(
         provider.close()
 
 
-def main() -> None:
+def main() -> int:
     args = build_parser().parse_args()
     if args.sweep and args.offset:
         raise ValueError("--offset debe ser cero con --sweep.")
@@ -134,7 +134,13 @@ def main() -> None:
             from_date=args.from_date, to_date=args.to_date, as_of=cutoff,
         )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if args.sweep and (
+        payload["unattemptedActionableEventCount"] > 0
+        or payload["failedInstrumentCount"] > 0
+    ):
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

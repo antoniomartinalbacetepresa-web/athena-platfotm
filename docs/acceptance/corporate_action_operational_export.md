@@ -31,7 +31,7 @@ python -m scripts.backfill_verified_secondary_corporate_actions --sweep --limit 
 ```
 
 Unlike repeated calls with an increasing `--offset` against a shrinking live
-queue, `--sweep` freezes actionable incomplete events from one consistent
+queue, `--sweep` freezes actionable unresolved events suggested for Alpha Vantage from one consistent
 SQLite backup, groups them by instrument, and processes each selected instrument
 at most once. It retains the frozen listing identity (including exchange, type,
 issuer, financial identifier and currency) and refuses a changed identity before
@@ -43,3 +43,8 @@ license, rate limits and actual economic agreement. A second configured provider
 does not by itself prove independence; conflicts remain unresolved and are never
 canonicalized automatically. No fixture, successful command, or green CI
 constitutes production evidence. Do not automatically loop on increasing offsets.
+
+The sweep command exits with status **3** if the bounded selection leaves actionable
+events unattempted or an instrument fails; an incomplete run cannot be treated
+as successful by an unattended scheduler. Conflicting economic evidence remains
+a review item even after a secondary observation is collected.
