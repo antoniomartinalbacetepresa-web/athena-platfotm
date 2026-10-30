@@ -9,7 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.database.athena_database import AthenaDatabase
 
@@ -335,6 +335,7 @@ class DatabaseBackupService:
         *,
         keep_last: int,
         filename_prefix: str = "athena-",
+        guard: Callable[[], None] | None = None,
     ) -> DatabaseBackupRetentionResult:
         if keep_last < 1:
             raise ValueError(
@@ -399,7 +400,14 @@ class DatabaseBackupService:
             manifest_path = self.manifest_path_for(
                 backup_path
             )
+            # A mount can disappear while the full retention inventory is
+            # being verified. Recheck the recovery boundary at each unlink,
+            # not only before entering this destructive operation.
+            if guard is not None:
+                guard()
             backup_path.unlink()
+            if guard is not None:
+                guard()
             manifest_path.unlink()
 
         return DatabaseBackupRetentionResult(

@@ -11,3 +11,17 @@ This is a defense against a mount disappearing between the initial check and the
 ## Operational closure
 
 Require an authorized deployment record identifying the timer unit and exact deployed SHA, a complete successful timer invocation, the source backup SHA-256 and manifest, a verified secondary copy, a separately executed isolated restore, retention results, the mount's operational origin, encrypted custody and independent off-site location attestation. Confirm failures do not delete prior primary recovery points. Until these artifacts are independently reviewed, `scheduledExecutionVerified`, `offsiteLocationVerified` and `productionRecoveryVerified` remain false.
+
+## Retention guard at each destructive operation
+
+The scheduled mount guard is now passed into both secondary and primary
+retention. Each managed backup and manifest deletion rechecks the secondary
+mount identity **after** full inventory verification, not just before
+retention starts. If the secondary mount disappears during verification,
+retention fails closed and the older primary recovery point is preserved.
+The same check runs during primary pruning because a missing secondary
+recovery boundary must never authorize loss of older primary copies.
+Failure-injection regressions cover both phases; they do not establish a
+real off-site installation or eliminate the small check-to-unlink race.
+Production closure still requires evidence of an installed timer, an
+independent encrypted mount and a real isolated restore.

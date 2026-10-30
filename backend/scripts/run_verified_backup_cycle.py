@@ -120,6 +120,7 @@ def run_cycle(
                 secondary_directory,
                 keep_last=secondary_keep_last,
                 filename_prefix=prefix,
+                guard=secondary_guard,
             )
     # Recheck after secondary retention as well: the primary is the last
     # recovery boundary and must survive a secondary mount transition.
@@ -129,6 +130,7 @@ def run_cycle(
         backup_directory,
         keep_last=keep_last,
         filename_prefix=prefix,
+        guard=secondary_guard,
     )
 
     return {

@@ -228,3 +228,111 @@ def test_secondary_guard_requires_secondary_destination_before_writing(tmp_path:
             secondary_guard=lambda: None,
         )
     assert not primary.exists()
+
+
+
+def test_mount_loss_during_secondary_retention_preserves_previous_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.database_backup_service import DatabaseBackupService
+    from scripts import run_verified_backup_cycle as cycle
+
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary, secondary = tmp_path / "primary", tmp_path / "secondary"
+    state = {"mounted": True, "secondary_retention": False}
+
+    def mount_guard() -> None:
+        if not state["mounted"]:
+            raise RuntimeError("Secondary mount disappeared during retention")
+
+    first = run_cycle(
+        database_path=database_path, backup_directory=primary,
+        secondary_directory=secondary, keep_last=1, secondary_keep_last=1,
+        prefix="athena-", now=datetime(2026, 10, 30, 10, tzinfo=timezone.utc),
+        secondary_guard=mount_guard,
+    )
+    original_retention = DatabaseBackupService.apply_retention
+    original_verify = DatabaseBackupService.verify_backup
+
+    def guarded_retention(self, directory, *, keep_last, filename_prefix="athena-", guard=None):
+        state["secondary_retention"] = Path(directory) == secondary
+        try:
+            return original_retention(
+                self, directory, keep_last=keep_last,
+                filename_prefix=filename_prefix, guard=guard,
+            )
+        finally:
+            state["secondary_retention"] = False
+
+    def verify_then_lose_mount(self, backup_path):
+        result = original_verify(self, backup_path)
+        if state["secondary_retention"]:
+            state["mounted"] = False
+        return result
+
+    monkeypatch.setattr(DatabaseBackupService, "apply_retention", guarded_retention)
+    monkeypatch.setattr(DatabaseBackupService, "verify_backup", verify_then_lose_mount)
+    with pytest.raises(RuntimeError, match="mount disappeared during retention"):
+        run_cycle(
+            database_path=database_path, backup_directory=primary,
+            secondary_directory=secondary, keep_last=1, secondary_keep_last=1,
+            prefix="athena-", now=datetime(2026, 10, 30, 11, tzinfo=timezone.utc),
+            secondary_guard=mount_guard,
+        )
+    assert Path(first["backup"]).is_file()
+    assert Path(first["secondary"]["backup"]).is_file()
+    assert len(list(primary.glob("athena-*.db"))) == 2
+    assert len(list(secondary.glob("athena-*.db"))) == 2
+
+
+def test_mount_loss_during_primary_retention_preserves_previous_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.database_backup_service import DatabaseBackupService
+
+    database_path = tmp_path / "live" / "athena.db"
+    AthenaDatabase(database_path).initialize()
+    primary, secondary = tmp_path / "primary", tmp_path / "secondary"
+    state = {"mounted": True, "primary_retention": False}
+
+    def mount_guard() -> None:
+        if not state["mounted"]:
+            raise RuntimeError("Secondary mount disappeared during primary retention")
+
+    first = run_cycle(
+        database_path=database_path, backup_directory=primary,
+        secondary_directory=secondary, keep_last=1,
+        prefix="athena-", now=datetime(2026, 10, 30, 10, tzinfo=timezone.utc),
+        secondary_guard=mount_guard,
+    )
+    original_retention = DatabaseBackupService.apply_retention
+    original_verify = DatabaseBackupService.verify_backup
+
+    def guarded_retention(self, directory, *, keep_last, filename_prefix="athena-", guard=None):
+        state["primary_retention"] = Path(directory) == primary
+        try:
+            return original_retention(
+                self, directory, keep_last=keep_last,
+                filename_prefix=filename_prefix, guard=guard,
+            )
+        finally:
+            state["primary_retention"] = False
+
+    def verify_then_lose_mount(self, backup_path):
+        result = original_verify(self, backup_path)
+        if state["primary_retention"]:
+            state["mounted"] = False
+        return result
+
+    monkeypatch.setattr(DatabaseBackupService, "apply_retention", guarded_retention)
+    monkeypatch.setattr(DatabaseBackupService, "verify_backup", verify_then_lose_mount)
+    with pytest.raises(RuntimeError, match="mount disappeared during primary retention"):
+        run_cycle(
+            database_path=database_path, backup_directory=primary,
+            secondary_directory=secondary, keep_last=1,
+            prefix="athena-", now=datetime(2026, 10, 30, 11, tzinfo=timezone.utc),
+            secondary_guard=mount_guard,
+        )
+    assert Path(first["backup"]).is_file()
+    assert len(list(primary.glob("athena-*.db"))) == 2
