@@ -219,6 +219,95 @@ class RecommendationPerformanceAttributionService:
         tokens.extend(factor_tokens)
         return hashlib.sha256("|".join(tokens).encode("utf-8")).hexdigest()
 
+
+    @classmethod
+    def verify_canonical_payload(cls, payload: dict[str, object]) -> None:
+        """Re-derive arithmetic and attribution identity from the nested PIT inputs.
+
+        An outer JSON hash alone cannot certify that a claimed attributionKey,
+        explainedReturn or residualReturn was actually computed from evidence.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("Performance Attribution debe ser un objeto canónico.")
+        evidence, currency, factors = (
+            payload.get("evidence"), payload.get("currency"), payload.get("factorContributions")
+        )
+        if not isinstance(evidence, dict) or not isinstance(currency, dict) or not isinstance(factors, dict):
+            raise ValueError("Performance Attribution perdió entradas canónicas.")
+        factor_meta = evidence.get("factorContributions")
+        if not isinstance(factor_meta, dict) or set(factors) != set(factor_meta):
+            raise ValueError("Performance Attribution perdió provenance de factores.")
+        if any(not isinstance(name, str) for name in factors):
+            raise ValueError("Performance Attribution contiene factor no textual.")
+
+        def aware(value: object, field: str) -> datetime:
+            if not isinstance(value, str):
+                raise ValueError(f"{field} debe ser fecha ISO con zona horaria.")
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"{field} debe ser fecha ISO válida.") from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError(f"{field} debe incluir zona horaria.")
+            return parsed
+
+        def number(value: object, field: str) -> float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{field} debe ser numérico y no booleano.")
+            try:
+                numeric = float(value)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError(f"{field} debe ser finito.") from exc
+            if not math.isfinite(numeric):
+                raise ValueError(f"{field} debe ser finito.")
+            return numeric
+
+        def meta(value: object, field: str) -> tuple[datetime, str, str]:
+            if not isinstance(value, dict):
+                raise ValueError(f"{field} perdió provenance.")
+            source, source_ref = value.get("source"), value.get("sourceRef")
+            if (
+                not isinstance(source, str) or not source.strip()
+                or not isinstance(source_ref, str) or not source_ref.strip()
+            ):
+                raise ValueError(f"{field} perdió fuente verificable.")
+            return aware(value.get("availableAt"), f"{field}.availableAt"), source, source_ref
+
+        def item_evidence(field: str) -> AttributionEvidence:
+            available, source, source_ref = meta(evidence.get(field), f"evidence.{field}")
+            return AttributionEvidence(
+                value=number(payload.get(field), field),
+                available_at=available, source=source, source_ref=source_ref,
+            )
+
+        normalized_factors = []
+        for name in sorted(factors):
+            available, source, source_ref = meta(factor_meta[name], f"evidence.factorContributions.{name}")
+            normalized_factors.append(FactorContributionEvidence(
+                factor=name, contribution=number(factors[name], f"factorContributions.{name}"),
+                available_at=available, source=source, source_ref=source_ref,
+            ))
+
+        canonical = cls().evaluate(
+            as_of=aware(payload.get("asOf"), "asOf"),
+            item=RecommendationPerformanceAttributionInput(
+                instrument_id=payload.get("instrumentId"),
+                symbol=payload.get("symbol"),
+                instrument_currency=currency.get("instrumentCurrency"),
+                reporting_currency=currency.get("reportingCurrency"),
+                fx_pair=currency.get("fxPair"),
+                benchmark_id=payload.get("benchmarkId"),
+                period_start=aware(payload.get("periodStart"), "periodStart"),
+                period_end=aware(payload.get("periodEnd"), "periodEnd"),
+                total_return=item_evidence("totalReturn"),
+                market_contribution=item_evidence("marketContribution"),
+                fx_contribution=item_evidence("fxContribution"),
+                factor_contributions=tuple(normalized_factors),
+            ),
+        ).to_api_dict()
+        if payload != canonical:
+            raise ValueError("Performance Attribution no coincide con la atribución canónica recalculada.")
+
     def evaluate(
         self,
         *,

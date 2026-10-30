@@ -377,3 +377,55 @@ def test_outcome_repository_rejects_nested_authority_escalation(tmp_path: Path) 
     payload["attribution"]["policy"]["automaticTrading"] = True
     with pytest.raises(ValueError, match="anidado perdió política"):
         RecommendationResearchOutcomeAttributionRepository(database).validate_payload(payload)
+
+
+@pytest.mark.parametrize("field", [
+    "attributionKey", "explainedReturn", "residualReturn", "marketContribution",
+    "factorContributions", "evidence",
+])
+def test_outcome_rejects_resealed_noncanonical_attribution(
+    tmp_path: Path, field: str,
+) -> None:
+    """Re-hashing an outer envelope must not legitimize forged arithmetic or provenance."""
+    database = AthenaDatabase(tmp_path / f"forged-{field}.db")
+    cycle = _cycle_record(RecommendationProfessionalResearchCycleRepository(database))
+    valid = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="integrity-v1", cycle_record=cycle, attribution_payload=_attribution()
+    )
+    attribution = valid["attribution"]
+    if field == "attributionKey":
+        attribution["attributionKey"] = "a" * 64
+        valid["attributionKey"] = "a" * 64
+    elif field == "explainedReturn":
+        attribution["explainedReturn"] = 0.99
+    elif field == "residualReturn":
+        attribution["residualReturn"] = -0.99
+    elif field == "marketContribution":
+        attribution["marketContribution"] = 0.07
+    elif field == "factorContributions":
+        attribution["factorContributions"]["quality"] = 0.07
+    else:
+        attribution["evidence"]["totalReturn"]["sourceRef"] = "urn:outcome:forged"
+
+    canonical = {
+        "outcomeId": valid["outcomeId"],
+        "cycleHash": valid["cycleHash"],
+        "instrumentId": valid["instrumentId"],
+        "symbol": valid["symbol"],
+        "cycleAsOf": valid["cycleAsOf"],
+        "attribution": attribution,
+    }
+    valid["outcomeHash"] = RecommendationResearchOutcomeAttributionRepository(database)._canonical_hash(canonical)
+    with pytest.raises(ValueError, match="atribución canónica"):
+        RecommendationResearchOutcomeAttributionRepository(database).validate_payload(valid)
+
+
+def test_outcome_bind_rejects_tampered_attribution_before_hashing(tmp_path: Path) -> None:
+    database = AthenaDatabase(tmp_path / "bind-forged.db")
+    cycle = _cycle_record(RecommendationProfessionalResearchCycleRepository(database))
+    forged = _attribution()
+    forged["residualReturn"] = 42.0
+    with pytest.raises(ValueError, match="atribución canónica"):
+        RecommendationResearchOutcomeAttributionService().bind(
+            outcome_id="forged", cycle_record=cycle, attribution_payload=forged,
+        )

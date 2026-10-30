@@ -7,6 +7,8 @@ import math
 import re
 from typing import Any
 
+from app.services.recommendation_performance_attribution_service import RecommendationPerformanceAttributionService
+
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -45,6 +47,7 @@ class RecommendationResearchOutcomeAttributionService:
         if not isinstance(attribution_payload, dict):
             raise ValueError("attribution_payload debe ser un objeto.")
         self._assert_research_only(attribution_payload, "performance_attribution")
+        RecommendationPerformanceAttributionService.verify_canonical_payload(attribution_payload)
         if attribution_payload.get("module") != "performance_attribution":
             raise ValueError("El outcome requiere Performance Attribution canónico.")
         policy = attribution_payload.get("policy")

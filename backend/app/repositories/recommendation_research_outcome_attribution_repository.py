@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.services.recommendation_performance_attribution_service import RecommendationPerformanceAttributionService
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -168,6 +169,7 @@ class RecommendationResearchOutcomeAttributionRepository:
             nested_policy.get("benchmark") != "explicit_market_contribution_identity",
         )):
             raise ValueError("Performance Attribution anidado perdió política de investigación.")
+        RecommendationPerformanceAttributionService.verify_canonical_payload(attribution)
         attribution_key = self._sha256(payload.get("attributionKey"), "attributionKey")
         if self._sha256(attribution.get("attributionKey"), "attribution.attributionKey") != attribution_key:
             raise ValueError("attributionKey no coincide con Performance Attribution anidado.")
