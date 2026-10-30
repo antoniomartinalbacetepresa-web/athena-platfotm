@@ -35,7 +35,11 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
               missing_news_hash=False, missing_investors_hash=False,
               malformed_pit_fingerprint=False,
               owner_b_profile_corrupted_after_logout=False,
-              owner_b_portfolio_crossed_after_logout=False):
+              owner_b_portfolio_crossed_after_logout=False,
+              owner_b_position_details_mutated_after_logout=False,
+              owner_b_preferences_mutated_after_logout=False,
+              owner_b_personalization_mutated_after_logout=False,
+              anonymous_accepted=False):
     revoked = set()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -80,6 +84,11 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
         if path == "/api/v1/auth/logout":
             revoked.add(token)
             return httpx.Response(204)
+        if not token and anonymous_accepted and path in {
+            "/api/v1/auth/me", "/api/v1/user/profile/preferences",
+            "/api/v1/user/profile/personalization", "/api/v1/user/portfolio",
+        }:
+            token = "ownerA-token-long-enough"
         if token in revoked and not revoked_accepted:
             return httpx.Response(401, json={"detail": "revoked"})
         if token not in {"ownerA-token-long-enough", "ownerB-token-long-enough"}:
@@ -90,7 +99,8 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
         if path == "/api/v1/user/profile/preferences":
             return httpx.Response(200, json={"status": "configured", "data": {"preferences": {"baseCurrency": "EUR" if is_a else (
                                                  "GBP" if revoked and owner_b_profile_corrupted_after_logout
-                                                 else "USD")}},
+                                                 else "USD"),
+                                                 "riskTolerance": "high" if not is_a and revoked and owner_b_preferences_mutated_after_logout else "moderate"}},
                                              "policy": {"ownerDerivedFromAuthenticatedToken": True,
                                                         "clientSuppliedOwnerAccepted": False, "automaticTrading": False}})
         if path == "/api/v1/user/profile/personalization":
@@ -100,7 +110,7 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
             if personalization_escalation:
                 policy["automaticLearningPromotion"] = True
             projection = {"schema": "athena.user-personalization.v1", "fingerprint": HASH,
-                          "presentation": {"detailLevel": "standard", "explanationStyle": "balanced",
+                          "presentation": {"detailLevel": "detailed" if not is_a and revoked and owner_b_personalization_mutated_after_logout else "standard", "explanationStyle": "balanced",
                                            "riskEmphasis": "standard", "horizonEmphasis": "long_term",
                                            "liquidityEmphasis": "unspecified", "objectiveFocus": "long_term_growth"},
                           "policy": policy}
@@ -112,7 +122,7 @@ def transport(*, mismatched_news=False, cross_owner=False, revoked_accepted=Fals
                 [11, 22] if cross_owner else ([11] if is_a else [22]))
             if not is_a and revoked and owner_b_portfolio_crossed_after_logout:
                 ids = [11]
-            return httpx.Response(200, json={"data": {"positions": [{"id": n} for n in ids], "positionCount": len(ids)},
+            return httpx.Response(200, json={"data": {"positions": [{"id": n, "quantity": 2 if not is_a and revoked and owner_b_position_details_mutated_after_logout else 1} for n in ids], "positionCount": len(ids)},
                                              "policy": {"ownerDerivedFromAuthenticatedToken": True,
                                                         "clientSuppliedOwnerAccepted": False, "automaticTrading": False}})
         return httpx.Response(404)
@@ -133,6 +143,8 @@ def test_two_owner_canonical_and_revocation_success():
     assert report["operationalHistory365DaysVerified"] is False
     assert report["ownerScopedPersonalizationVerified"] is True
     assert report["persistedMarketUniverseVerified"] is True
+    assert report["anonymousProtectedSurfacesVerified"] is True
+    assert report["ownerBFullStateStableAfterRevocationVerified"] is True
 
 
 @pytest.mark.parametrize("fault", [
@@ -141,6 +153,9 @@ def test_two_owner_canonical_and_revocation_success():
     "fallback_market", "empty_market", "stale_build", "missing_build",
     "missing_news_hash", "missing_investors_hash", "malformed_pit_fingerprint",
     "owner_b_profile_corrupted_after_logout", "owner_b_portfolio_crossed_after_logout",
+    "owner_b_position_details_mutated_after_logout",
+    "owner_b_preferences_mutated_after_logout",
+    "owner_b_personalization_mutated_after_logout", "anonymous_accepted",
 ])
 def test_deployed_acceptance_fails_closed(fault):
     with pytest.raises(module.AcceptanceFailure):

@@ -109,3 +109,18 @@ origins, the exact web build SHA, and seeded canonical synthesis through
 protected staging configuration. Never share secrets through chat or commit
 them to the repository. A green standard CI with the opt-in job skipped is
 not deployed E2E evidence.
+
+## Full owner-state and anonymous-access acceptance
+
+The opt-in deployed API probe rejects anonymous access to `/auth/me`, Profile
+preferences, Profile personalization and the personal Portfolio before logging
+in. After revoking owner A, it compares **all** of owner B's stable private
+preferences, presentation-only personalization and complete position records,
+not only currency and position identifiers. Private values and their SHA-256
+comparison digests are never printed or included in the result. A changed
+quantity, preference or presentation field is a failed acceptance, even if the
+position IDs and currency remain unchanged. The staging fixtures must remain
+stable for the duration of the probe; concurrent authorized edits intentionally
+invalidate the result and require a clean rerun. This is read-only acceptance
+apart from disposable token revocation, and does not certify browser session
+isolation, production privacy or operational readiness while the job is skipped.

@@ -6,6 +6,7 @@ market-history depth, investment performance, or production authorization.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,15 @@ class TestOwner:
     currency: str
 
 
+@dataclass(frozen=True)
+class OwnerSnapshot:
+    owner_id: int
+    position_ids: frozenset[int]
+    preferences_sha256: str
+    personalization_sha256: str
+    positions_sha256: str
+
+
 def _object(value: object, label: str) -> dict:
     if not isinstance(value, dict):
         raise AcceptanceFailure(f"{label}: invalid object contract")
@@ -42,6 +52,18 @@ def _require_sha256(value: object, label: str) -> str:
     """Reject absent or malformed canonical hashes before equality checks."""
     _expect(isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value)), label)
     return value
+
+
+def _private_digest(value: object, label: str) -> str:
+    """Compare private state without emitting its contents or fingerprints."""
+    try:
+        canonical = json.dumps(
+            value, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        raise AcceptanceFailure(f"{label}: non-canonical private state") from None
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _json(response: httpx.Response, label: str, *, status: int = 200) -> dict:
@@ -81,7 +103,7 @@ def _login(client: httpx.Client, owner: TestOwner, label: str) -> str:
     return token
 
 
-def _owner_snapshot(client: httpx.Client, token: str, owner: TestOwner, label: str) -> tuple[int, set[int]]:
+def _owner_snapshot(client: httpx.Client, token: str, owner: TestOwner, label: str) -> OwnerSnapshot:
     account = _object(_get(client, "/api/v1/auth/me", label + " me", token=token).get("account"), label + " account")
     owner_id = account.get("id")
     _expect(type(owner_id) is int and owner_id > 0, label + " owner identity")
@@ -137,7 +159,15 @@ def _owner_snapshot(client: httpx.Client, token: str, owner: TestOwner, label: s
     _expect(policy.get("ownerDerivedFromAuthenticatedToken") is True and
             policy.get("clientSuppliedOwnerAccepted") is False and
             policy.get("automaticTrading") is False, label + " portfolio policy")
-    return owner_id, position_ids
+    return OwnerSnapshot(
+        owner_id=owner_id,
+        position_ids=frozenset(position_ids),
+        preferences_sha256=_private_digest(preferences, label + " preferences"),
+        personalization_sha256=_private_digest(personalization, label + " personalization"),
+        positions_sha256=_private_digest(
+            sorted(positions, key=lambda item: item["id"]), label + " positions"
+        ),
+    )
 
 
 def verify_deployed_api(
@@ -199,18 +229,33 @@ def verify_deployed_api(
         "athena investors provenance hash",
     ) == investors_hash, "athena/investors provenance binding")
 
+    # Anonymous requests must not see any owner-scoped surface, even before
+    # the first disposable acceptance session is issued.
+    for path, label in (
+        ("/api/v1/auth/me", "anonymous identity"),
+        ("/api/v1/user/profile/preferences", "anonymous preferences"),
+        ("/api/v1/user/profile/personalization", "anonymous personalization"),
+        ("/api/v1/user/portfolio", "anonymous portfolio"),
+    ):
+        try:
+            response = client.get(path)
+        except httpx.RequestError:
+            raise AcceptanceFailure(f"{label}: transport unavailable") from None
+        _expect(response.status_code == 401, label)
+
     token_a: str | None = None
     token_b: str | None = None
     try:
         token_a = _login(client, owner_a, "owner A login")
         token_b = _login(client, owner_b, "owner B login")
-        identity_a, positions_a = _owner_snapshot(client, token_a, owner_a, "owner A")
-        identity_b, positions_b = _owner_snapshot(client, token_b, owner_b, "owner B")
-        _expect(identity_a != identity_b and owner_a.position_id != owner_b.position_id,
+        snapshot_a = _owner_snapshot(client, token_a, owner_a, "owner A")
+        snapshot_b = _owner_snapshot(client, token_b, owner_b, "owner B")
+        _expect(snapshot_a.owner_id != snapshot_b.owner_id
+                and owner_a.position_id != owner_b.position_id,
                 "distinct owner fixtures")
-        _expect(positions_a.isdisjoint(positions_b)
-                and owner_b.position_id not in positions_a
-                and owner_a.position_id not in positions_b,
+        _expect(snapshot_a.position_ids.isdisjoint(snapshot_b.position_ids)
+                and owner_b.position_id not in snapshot_a.position_ids
+                and owner_a.position_id not in snapshot_b.position_ids,
                 "complete owner position isolation")
         _post(client, "/api/v1/auth/logout", "owner A logout", token=token_a, status=204)
         for path, label in (("/api/v1/auth/me", "revoked me"),
@@ -223,17 +268,19 @@ def verify_deployed_api(
                 raise AcceptanceFailure(f"{label}: transport unavailable") from None
             _expect(response.status_code == 401, label)
         # Revoking A must not corrupt B's identity, preferences or portfolio.
-        identity_b_after, positions_b_after = _owner_snapshot(
+        snapshot_b_after = _owner_snapshot(
             client, token_b, owner_b, "owner B after A logout"
         )
-        _expect(identity_b_after == identity_b and positions_b_after == positions_b,
-                "owner B isolation after A revocation")
+        _expect(snapshot_b_after == snapshot_b,
+                "owner B complete private state after A revocation")
         return {"status": "passed", "deployedApiContractsVerified": True,
                 "deployedBackendBuildIdentityVerified": True,
                 "persistedMarketUniverseVerified": True,
                 "ownerScopedPersonalizationVerified": True,
                 "deployedFlutterBrowserE2EVerified": False, "operationalHistory365DaysVerified": False,
                 "crossSurfaceCanonicalBindingVerified": True, "twoOwnerIsolationAndRevocationVerified": True,
+                "anonymousProtectedSurfacesVerified": True,
+                "ownerBFullStateStableAfterRevocationVerified": True,
                 "automaticTradingAuthorized": False}
     finally:
         # Never leave newly issued acceptance tokens live after a failed gate.
