@@ -100,7 +100,7 @@ def run(
     return report.to_api_dict()
 
 
-def main() -> None:
+def main() -> int:
     args = build_parser().parse_args()
     report = run(
         limit=args.limit,
@@ -110,7 +110,13 @@ def main() -> None:
         blocking_only=args.blocking_only,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    # A partial provider failure or empty history must not look like a
+    # successful ingestion to an unattended operator/scheduler. A clean
+    # bounded batch is NOT evidence of 365-day universe coverage.
+    failed = report.get("failedCount")
+    missing = report.get("noHistoryCount")
+    return 0 if type(failed) is int and failed == 0 and type(missing) is int and missing == 0 else 3
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

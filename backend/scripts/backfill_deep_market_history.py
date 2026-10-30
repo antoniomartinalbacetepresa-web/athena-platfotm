@@ -121,7 +121,17 @@ def main() -> int:
             from_date=args.from_date, to_date=args.to_date,
         )
     print(json.dumps(report, indent=2, ensure_ascii=False))
-    return 3 if args.sweep and not report["historyReady"] else 0
+    # Exit 0 means the FULL 365-day eligible-universe criterion is satisfied,
+    # never merely that a bounded batch finished without an exception.
+    if args.sweep:
+        ready = report.get("historyReady") is True
+    else:
+        verification = report.get("verification")
+        ready = (
+            isinstance(verification, dict)
+            and verification.get("deepHistoryCriterionSatisfied") is True
+        )
+    return 0 if ready else 3
 
 
 if __name__ == "__main__":

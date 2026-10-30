@@ -106,3 +106,23 @@ differs from UTC must supply an appropriately normalized requested window
 or be reviewed rather than silently widening the PIT gate. No existing
 immutable observation is rewritten, no readiness is automatically promoted,
 and no trading or weighting authority is introduced.
+
+
+## Operational CLI exit status (fail-closed)
+
+The bounded `scripts.backfill_deep_market_history` command exits **0 only if**
+the post-write verification satisfies the complete, non-empty eligible-universe
+current >=365-day criterion. A successful partial batch with unresolved
+instruments exits **3**, as do failed/empty-provider batches that leave the
+criterion blocked. The `--sweep` path follows the same readiness rule. Exit 3
+means **not ready**, not necessarily that the process crashed or that no rows
+were saved; inspect the JSON report and preserve its evidence before deciding
+which bounded batch to authorize next.
+
+The general `scripts.backfill_market_observations` command exits **3** when
+any selected instrument failed or returned no history, and **0** only when its
+selected batch had neither condition. Its exit 0 **does not** mean 365-day
+coverage, source independence, corporate-action reconciliation or release
+readiness. Both commands preserve their JSON reports on stdout. No command
+changes the immutable PIT overwrite policy, approves provider data, or
+promotes production readiness automatically.
