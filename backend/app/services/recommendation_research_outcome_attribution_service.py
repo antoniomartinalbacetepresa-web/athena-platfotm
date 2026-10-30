@@ -47,7 +47,6 @@ class RecommendationResearchOutcomeAttributionService:
         if not isinstance(attribution_payload, dict):
             raise ValueError("attribution_payload debe ser un objeto.")
         self._assert_research_only(attribution_payload, "performance_attribution")
-        RecommendationPerformanceAttributionService.verify_canonical_payload(attribution_payload)
         if attribution_payload.get("module") != "performance_attribution":
             raise ValueError("El outcome requiere Performance Attribution canónico.")
         policy = attribution_payload.get("policy")
@@ -155,6 +154,8 @@ class RecommendationResearchOutcomeAttributionService:
             raise ValueError("factorContributions debe ser un objeto.")
         for name, value in factor_values.items():
             self._finite(value, f"factorContributions.{name}")
+
+        RecommendationPerformanceAttributionService.verify_canonical_payload(attribution_payload)
 
         canonical = {
             "outcomeId": outcome_id_normalized,
