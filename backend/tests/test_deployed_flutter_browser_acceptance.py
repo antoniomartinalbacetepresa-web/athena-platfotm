@@ -324,14 +324,14 @@ def test_deployed_market_requires_nonempty_real_http_universe_and_status():
     status = "/api/v1/market/universe/status"
     _check_live_surface(_LiveSurfaceResponse(universe, [{"symbol": "AAPL"}]), universe)
     _check_live_surface(
-        _LiveSurfaceResponse(status, {"globallyUsableCount": 1}), status
+        _LiveSurfaceResponse(status, {"globallyUsableCount": 1, "activeCount": 1, "usingFallback": False}), status
     )
     for response, path in [
         (_LiveSurfaceResponse(universe, []), universe),
         (_LiveSurfaceResponse(universe, [{"symbol": ""}]), universe),
-        (_LiveSurfaceResponse(status, {"globallyUsableCount": 0}), status),
-        (_LiveSurfaceResponse(status, {"globallyUsableCount": True}), status),
-        (_LiveSurfaceResponse(status, {"globallyUsableCount": 2}, status=503), status),
+        (_LiveSurfaceResponse(status, {"globallyUsableCount": 0, "activeCount": 1, "usingFallback": False}), status),
+        (_LiveSurfaceResponse(status, {"globallyUsableCount": True, "activeCount": 1, "usingFallback": False}), status),
+        (_LiveSurfaceResponse(status, {"globallyUsableCount": 2, "activeCount": 1, "usingFallback": False}, status=503), status),
         (_LiveSurfaceResponse(universe, [{"symbol": "AAPL"}],
                               origin="https://untrusted.example.test"), universe),
     ]:
@@ -370,3 +370,102 @@ def test_deployed_sec_requires_live_cik_bound_passive_filing():
                     path, {**valid, **changes}, query=query, selected=selected
                 ), path,
             )
+
+
+class _CanonicalResearchPage:
+    def __init__(self, data):
+        self.request = self
+        self.data = data
+        self.paths = []
+
+    def get(self, url, *, headers, max_redirects, timeout):
+        assert headers["Cache-Control"] == "no-cache"
+        assert max_redirects == 0 and timeout == 15000
+        self.paths.append(url)
+        for suffix, data in self.data.items():
+            if url.endswith(suffix):
+                return _CanonicalLiveResponse(url=url, payload={"data": data})
+        raise AssertionError("Unexpected canonical path")
+
+
+def _research_data():
+    cycle, pit, news_hash, investors_hash = ("a" * 64, "b" * 64, "c" * 64, "d" * 64)
+    return {
+        "/athena-synthesis/latest": {
+            "artifactBindingVerified": True, "cycleHash": cycle,
+            "selection": {"presentationOnly": True, "recommendationInfluence": False,
+                          "automaticTrading": False},
+            "synthesis": {"inputFingerprint": pit},
+            "provenance": {"inputFingerprint": pit,
+                           "news": {"artifactHash": news_hash},
+                           "investors": {"artifactHash": investors_hash}},
+        },
+        "/news-synthesis/latest": {
+            "cycleBindingVerified": True, "cycleHash": cycle,
+            "presentationOnly": True, "recommendationInfluence": False,
+            "automaticTrading": False,
+            "persistence": {"synthesisHash": news_hash},
+        },
+        f"/research-cycle/{cycle}/investors-synthesis": {
+            "cycleBindingVerified": True, "cycleHash": cycle,
+            "recommendationInfluence": False, "automaticTrading": False,
+            "persistence": {"synthesisHash": investors_hash},
+        },
+    }
+
+
+def test_deployed_browser_requires_live_canonical_three_surface_cycle():
+    page = _CanonicalResearchPage(_research_data())
+    assert module.verify_live_canonical_cycle(
+        page, backend_origin="https://api.staging.example.test"
+    ) == "a" * 64
+    assert len(page.paths) == 3
+    assert all(url.startswith("https://api.staging.example.test/api/v1/") for url in page.paths)
+
+
+@pytest.mark.parametrize("surface,field,value", [
+    ("news", "cycleHash", "f" * 64),
+    ("news", "presentationOnly", False),
+    ("news", "automaticTrading", True),
+    ("investors", "cycleBindingVerified", False),
+    ("investors", "recommendationInfluence", True),
+    ("athena", "artifactBindingVerified", False),
+    ("athena", "cycleHash", "not-a-sha"),
+])
+def test_deployed_browser_rejects_inconsistent_live_research(surface, field, value):
+    data = _research_data()
+    path = next(path for path in data if surface in path)
+    data[path][field] = value
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        module.verify_live_canonical_cycle(
+            _CanonicalResearchPage(data),
+            backend_origin="https://api.staging.example.test",
+        )
+
+
+def test_deployed_browser_rejects_pit_and_news_provenance_mismatch():
+    data = _research_data()
+    data["/athena-synthesis/latest"]["provenance"]["inputFingerprint"] = "f" * 64
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        module.verify_live_canonical_cycle(
+            _CanonicalResearchPage(data),
+            backend_origin="https://api.staging.example.test",
+        )
+    data = _research_data()
+    data["/athena-synthesis/latest"]["provenance"]["news"]["artifactHash"] = "f" * 64
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        module.verify_live_canonical_cycle(
+            _CanonicalResearchPage(data),
+            backend_origin="https://api.staging.example.test",
+        )
+
+
+def test_deployed_market_status_rejects_fallback_even_when_counts_positive():
+    path = "/api/v1/market/universe/status"
+    for data in (
+        {"globallyUsableCount": 1, "activeCount": 1, "usingFallback": True},
+        {"globallyUsableCount": 1, "activeCount": 0, "usingFallback": False},
+        {"globallyUsableCount": 1, "activeCount": True, "usingFallback": False},
+    ):
+        with pytest.raises(module.BrowserAcceptanceFailure):
+            _check_live_surface(_LiveSurfaceResponse(path, data), path)

@@ -206,8 +206,11 @@ def _require_live_surface_payload(response, *, backend_origin: str, path: str) -
                 not isinstance(data, dict)
                 or type(data.get("globallyUsableCount")) is not int
                 or data["globallyUsableCount"] <= 0
+                or type(data.get("activeCount")) is not int
+                or data["activeCount"] <= 0
+                or data.get("usingFallback") is not False
             ):
-                raise ValueError("unusable market universe")
+                raise ValueError("unusable or fallback market universe")
         elif path == "/api/v1/sec/institutional-holdings/latest":
             ciks = parse_qs(
                 urlsplit(response.url).query, keep_blank_values=True
@@ -381,6 +384,71 @@ def _fetch_live_canonical_synthesis(page, *, backend_origin: str, path: str):
     except Exception:
         # Exceptions may include staging URLs. Never expose them.
         raise BrowserAcceptanceFailure("Live canonical synthesis unavailable") from None
+
+
+
+def verify_live_canonical_cycle(page, *, backend_origin: str) -> str:
+    """Require live ATHENA/News/Investors evidence from one PIT research cycle.
+
+    This verifies cross-artifact consistency, not independent provider truth.
+    Neither payloads nor source fingerprints are printed on failure.
+    """
+    root = "/api/v1/recommendations/professional-research"
+    def live(path: str) -> dict:
+        response = _fetch_live_canonical_synthesis(
+            page, backend_origin=backend_origin, path=root + path
+        )
+        try:
+            envelope = response.json()
+            if not isinstance(envelope, dict) or not isinstance(envelope.get("data"), dict):
+                raise ValueError("missing canonical data")
+            return envelope["data"]
+        except Exception:
+            raise BrowserAcceptanceFailure("Canonical deployed research unavailable") from None
+
+    def obj(value):
+        if not isinstance(value, dict):
+            raise ValueError("missing object")
+        return value
+
+    def digest(value):
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("missing hash")
+        return value
+
+    try:
+        athena = live("/athena-synthesis/latest")
+        cycle = digest(athena.get("cycleHash"))
+        news = live("/news-synthesis/latest")
+        investors = live(f"/research-cycle/{cycle}/investors-synthesis")
+        selection = obj(athena.get("selection"))
+        synthesis = obj(athena.get("synthesis"))
+        provenance = obj(athena.get("provenance"))
+        fingerprint = digest(synthesis.get("inputFingerprint"))
+        news_hash = digest(obj(news.get("persistence")).get("synthesisHash"))
+        investors_hash = digest(obj(investors.get("persistence")).get("synthesisHash"))
+        if not (
+            athena.get("artifactBindingVerified") is True
+            and selection.get("presentationOnly") is True
+            and selection.get("recommendationInfluence") is False
+            and selection.get("automaticTrading") is False
+            and digest(provenance.get("inputFingerprint")) == fingerprint
+            and news.get("cycleBindingVerified") is True
+            and news.get("cycleHash") == cycle
+            and news.get("presentationOnly") is True
+            and news.get("recommendationInfluence") is False
+            and news.get("automaticTrading") is False
+            and investors.get("cycleBindingVerified") is True
+            and investors.get("cycleHash") == cycle
+            and investors.get("recommendationInfluence") is False
+            and investors.get("automaticTrading") is False
+            and digest(obj(provenance.get("news")).get("artifactHash")) == news_hash
+            and digest(obj(provenance.get("investors")).get("artifactHash")) == investors_hash
+        ):
+            raise ValueError("inconsistent research binding")
+        return cycle
+    except (KeyError, TypeError, ValueError):
+        raise BrowserAcceptanceFailure("Canonical deployed research binding invalid") from None
 
 
 def verify_stale_synthesis_ordering(page, *, backend_origin: str) -> None:
@@ -625,6 +693,10 @@ def main() -> int:
                     page, expected_sha=config.deployed_sha,
                     backend_origin=config.backend_origin,
                 )
+                stage = "live-canonical-provenance"
+                verify_live_canonical_cycle(
+                    page, backend_origin=config.backend_origin
+                )
                 stage = "guest-research"
                 result = verify_guest_research(
                     page, backend_origin=config.backend_origin
@@ -643,6 +715,7 @@ def main() -> int:
         "deployedFlutterGuestResearchVerified": True,
         "deployedWebBuildIdentityVerified": True,
         "deployedBackendBuildIdentityVerified": True,
+        "deployedCanonicalCycleBindingVerified": True,
         "deployedFlutterBrowserE2EVerified": False,
         "twoOwnerBrowserIsolationVerified": False,
         "staleResponseOrderingVerified": True,

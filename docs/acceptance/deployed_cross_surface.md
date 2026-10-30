@@ -124,3 +124,22 @@ stable for the duration of the probe; concurrent authorized edits intentionally
 invalidate the result and require a clean rerun. This is read-only acceptance
 apart from disposable token revocation, and does not certify browser session
 isolation, production privacy or operational readiness while the job is skipped.
+
+ 
+## Live canonical cycle and persisted Market in deployed Chromium
+
+The optional deployed Chromium guest job now independently requests the live
+ATHENA, News and Investors synthesis envelopes from the configured HTTPS staging
+backend, using the cycle hash returned by ATHENA for the Investors endpoint.
+It requires one valid PIT input fingerprint, matching News/Investors persisted
+artifact hashes, verified cycle bindings, and presentation-only/no-order
+authority. A 200 response and a visible provenance label alone are not enough.
+The deployed Market status must additionally show a positive active instrument
+count, positive globally usable count, and usingFallback=false.
+
+These are real staging HTTP checks when the job is enabled, not fixture-only
+claims or independent provider authentication. The canonical data must remain
+stable during the browser journey. This change does not enable the opt-in job,
+prove 365-day history, validate the two-owner browser journey, or authorize
+production. Keep the HTTPS origins and account credentials in protected
+deployment configuration, never in logs, code, or chat.
