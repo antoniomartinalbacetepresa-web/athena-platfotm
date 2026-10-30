@@ -77,10 +77,7 @@ class CorporateActionRepository:
                         instrument_id, action_type, effective_at, cash_amount,
                         split_ratio, currency, source_provider, source_timestamp, retrieved_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (
-                        instrument_id, action_type, effective_at, event_identity,
-                        source_provider, retrieved_at
-                    ) DO NOTHING""",
+                    ON CONFLICT DO NOTHING""",
                     (
                         instrument_id, normalized["action_type"], effective_dt.isoformat(),
                         normalized["cash_amount"], normalized["split_ratio"],
