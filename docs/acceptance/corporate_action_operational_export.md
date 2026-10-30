@@ -48,3 +48,23 @@ The sweep command exits with status **3** if the bounded selection leaves action
 events unattempted or an instrument fails; an incomplete run cannot be treated
 as successful by an unattended scheduler. Conflicting economic evidence remains
 a review item even after a secondary observation is collected.
+
+## PIT-bounded secondary retrieval
+
+The secondary corporate-action backfill accepts only strict `YYYY-MM-DD`
+`--from-date` and `--to-date` values. An explicit `--to-date` later
+than the UTC `--as-of` date is rejected before provider retrieval; a
+`--from-date` without `--to-date` is automatically capped at the UTC
+`--as-of` date rather than allowing an unbounded provider request. A
+reversed or malformed date window fails closed for both single-batch and
+`--sweep` execution.
+
+The Alpha Vantage adapter filters its own date range, but the secondary
+backfill now **independently validates every returned observation** against
+the requested UTC date window before ingestion. An invalid timestamp or
+out-of-window row rejects that instrument's entire response, including
+otherwise valid actions in the same response; no partial write is made
+from that response. The operator must investigate provider discrepancies
+rather than silently trimming them. These safeguards do not establish
+operational provider independence, successful economic reconciliation, or
+historical price-coverage readiness.
