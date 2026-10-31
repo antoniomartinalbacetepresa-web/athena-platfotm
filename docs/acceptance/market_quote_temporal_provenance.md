@@ -20,3 +20,8 @@ The fallback rejects missing timezone, a future-dated bar, or nonpositive
 prices. A nonpositive previous close cannot generate a misleading change.
 This change improves quote provenance but does not demonstrate production
 market-data quality or deployed E2E acceptance.
+
+When using a daily-close fallback, open, high, low, volume and the
+comparison previous close are taken from that same historical series.
+The service must not combine fast-info session values with a fallback
+close from a different session.

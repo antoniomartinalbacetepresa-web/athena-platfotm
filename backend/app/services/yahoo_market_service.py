@@ -81,30 +81,19 @@ class YahooMarketService:
             current_price = self._to_float(latest.get("Close"))
             if current_price is None or current_price <= 0:
                 return None
-            open_price = (
-                open_price
-                if open_price is not None
-                else self._to_float(latest.get("Open"))
+            # All OHLCV and the comparison close must refer to the same
+            # historical series. Fast-info can belong to a newer session.
+            open_price = self._to_float(latest.get("Open"))
+            day_high = self._to_float(latest.get("High"))
+            day_low = self._to_float(latest.get("Low"))
+            volume = self._to_float(latest.get("Volume"))
+            previous_close = (
+                self._to_float(history.iloc[-2].get("Close"))
+                if len(history.index) >= 2
+                else None
             )
-            day_high = (
-                day_high
-                if day_high is not None
-                else self._to_float(latest.get("High"))
-            )
-            day_low = (
-                day_low
-                if day_low is not None
-                else self._to_float(latest.get("Low"))
-            )
-            volume = (
-                volume
-                if volume is not None
-                else self._to_float(latest.get("Volume"))
-            )
-            if previous_close is None and len(history.index) >= 2:
-                previous_close = self._to_float(history.iloc[-2].get("Close"))
-                if previous_close is not None and previous_close <= 0:
-                    previous_close = None
+            if previous_close is not None and previous_close <= 0:
+                previous_close = None
 
         if current_price is None:
             return None
