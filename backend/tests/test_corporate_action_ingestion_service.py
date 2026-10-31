@@ -118,7 +118,9 @@ def test_ingest_history_persists_dividend_and_split_with_pit_provenance(
     assert rows[0]["cash_amount"] == 0.25
     assert rows[0]["currency"] == "USD"
     assert rows[0]["source_provider"] == "yahoo"
-    assert rows[0]["retrieved_at"] == retrieved_at
+    assert datetime.fromisoformat(rows[0]["retrieved_at"]) >= datetime.fromisoformat(retrieved_at)
+    assert rows[0]["capture_verified"] == 1
+    assert rows[1]["retrieved_at"] == rows[0]["retrieved_at"]
     assert rows[1]["split_ratio"] == 4.0
     assert rows[1]["currency"] is None
 
@@ -178,6 +180,7 @@ def test_later_retrieval_remains_distinct_and_respects_knowledge_cutoff(
     CorporateActionIngestionService(
         market_provider=first_provider,
         repository=repository,
+        clock=lambda: datetime(2026, 9, 15, tzinfo=timezone.utc),
     ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
 
     second_provider = FakeHistoryProvider(
@@ -185,13 +188,14 @@ def test_later_retrieval_remains_distinct_and_respects_knowledge_cutoff(
             _observation(
                 timestamp="2026-06-01T00:00:00+00:00",
                 retrieved_at="2026-09-01T00:00:00+00:00",
-                split=2.0,
+                split=3.0,
             )
         ]
     )
     CorporateActionIngestionService(
         market_provider=second_provider,
         repository=repository,
+        clock=lambda: datetime(2026, 9, 20, tzinfo=timezone.utc),
     ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
 
     before_discovery = repository.list_for_instrument(
@@ -200,17 +204,18 @@ def test_later_retrieval_remains_distinct_and_respects_knowledge_cutoff(
     )
     after_first = repository.list_for_instrument(
         instrument_id,
-        knowledge_cutoff=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        knowledge_cutoff=datetime(2026, 9, 16, tzinfo=timezone.utc),
     )
     after_second = repository.list_for_instrument(
         instrument_id,
-        knowledge_cutoff=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        knowledge_cutoff=datetime(2026, 9, 21, tzinfo=timezone.utc),
     )
 
     assert before_discovery == []
     assert len(after_first) == 1
     assert len(after_second) == 2
-    assert after_first[0]["retrieved_at"] == "2026-07-01T00:00:00+00:00"
+    assert after_first[0]["retrieved_at"] == "2026-09-15T00:00:00+00:00"
+    assert sorted(row["split_ratio"] for row in after_second) == [2.0, 3.0]
 
 
 def test_ingestion_groups_actions_by_exact_provider_and_retrieval_time(
@@ -247,7 +252,7 @@ def test_ingestion_groups_actions_by_exact_provider_and_retrieval_time(
 
     assert stats.actions_received == 2
     assert stats.inserted == 2
-    assert stats.retrieval_batches == 2
+    assert stats.retrieval_batches == 1
 
 
 def test_empty_history_does_not_touch_repository(tmp_path: Path) -> None:
@@ -578,3 +583,59 @@ def test_ingestion_preserves_distinct_events_at_same_effective_and_retrieval_tim
     rows = repository.list_for_instrument(instrument_id)
     assert len(rows) == 2
     assert sorted(row["cash_amount"] for row in rows) == [0.25, 0.30]
+
+
+def test_provider_backdating_cannot_make_a_dividend_visible_before_local_capture(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = CorporateActionRepository(database)
+    capture = datetime(2026, 10, 30, 15, 0, tzinfo=timezone.utc)
+    provider = FakeHistoryProvider([_observation(
+        timestamp="2026-08-15T00:00:00+00:00",
+        retrieved_at="2026-08-16T00:00:00+00:00",
+        dividend=0.25,
+    )])
+    service = CorporateActionIngestionService(
+        market_provider=provider, repository=repository, clock=lambda: capture,
+    )
+    first = service.ingest_history(instrument_id=instrument_id, symbol="AAPL")
+    replay = service.ingest_history(instrument_id=instrument_id, symbol="AAPL")
+    assert first.inserted == 1 and replay.inserted == 0 and replay.unchanged == 1
+    assert repository.list_for_instrument(
+        instrument_id, knowledge_cutoff=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    ) == []
+    rows = repository.list_for_instrument(instrument_id, knowledge_cutoff=capture)
+    assert len(rows) == 1
+    assert rows[0]["retrieved_at"] == capture.isoformat()
+    assert rows[0]["capture_verified"] == 1
+
+
+def test_legacy_provider_timestamp_cannot_deduplicate_new_local_capture(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = CorporateActionRepository(database)
+    repository.save_many(
+        instrument_id=instrument_id, source_provider="yahoo",
+        retrieved_at=datetime(2026, 9, 11, tzinfo=timezone.utc),
+        actions=[{
+            "type": "split", "effectiveAt": "2026-08-15T00:00:00+00:00",
+            "splitRatio": 4.0, "sourceTimestamp": "2026-08-15T00:00:00+00:00",
+        }],
+    )
+    provider = FakeHistoryProvider([_observation(
+        timestamp="2026-08-15T00:00:00+00:00",
+        retrieved_at="2026-09-11T00:00:00+00:00", split=4.0,
+    )])
+    capture = datetime(2026, 10, 30, tzinfo=timezone.utc)
+    result = CorporateActionIngestionService(
+        market_provider=provider, repository=repository, clock=lambda: capture,
+    ).ingest_history(instrument_id=instrument_id, symbol="AAPL")
+    assert result.inserted == 1
+    rows = repository.list_for_instrument(instrument_id)
+    assert len(rows) == 2
+    assert sorted(row["capture_verified"] for row in rows) == [0, 1]
+    assert max(row["retrieved_at"] for row in rows) == capture.isoformat()
