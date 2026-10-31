@@ -280,6 +280,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout exact source for release gate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Require backend, Flutter and release-build validation
         env:
           BACKEND_RESULT: ${{ needs.backend-tests.result }}
