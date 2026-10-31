@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Protocol
+from typing import Callable, Protocol
 
 from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.services.corporate_action_service import CorporateAction, CorporateActionService
@@ -36,10 +36,12 @@ class CorporateActionIngestionService:
         market_provider: HistoricalMarketProvider | None = None,
         action_service: CorporateActionService | None = None,
         repository: CorporateActionRepository | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._market_provider = market_provider if market_provider is not None else YahooMarketService()
         self._action_service = action_service if action_service is not None else CorporateActionService()
         self._repository = repository if repository is not None else CorporateActionRepository()
+        self._clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
 
     def ingest_history(
         self,
@@ -94,7 +96,7 @@ class CorporateActionIngestionService:
         # Validate the complete provider response, not just rows with actions.
         # The provider's own date filtering and clock are not authority
         # boundaries: one invalid row rejects the instrument before any write.
-        received_at = datetime.now(timezone.utc)
+        received_at = self._aware_timestamp(self._clock(), "clock")
         # Otherwise an unrelated symbol/provider with no dividend or split can
         # silently masquerade as a legitimate empty retrieval.
         for observation in history:
@@ -140,17 +142,17 @@ class CorporateActionIngestionService:
                     "Corporate action provenance mismatch: provider identity rejected."
                 )
 
-        batches: dict[tuple[str, datetime], list[CorporateAction]] = {}
+        # Provider retrievedAt is untrusted metadata, never the PIT clock.
+        # One local receipt timestamp covers the complete validated response.
+        # Replay deduplication only considers previously locally captured rows;
+        # legacy rows cannot manufacture historical knowledge.
+        batches: dict[str, list[CorporateAction]] = {}
         for action in actions:
-            retrieved_at = action.retrieved_at.astimezone(timezone.utc)
-            key = (action.source_provider, retrieved_at)
-            batches.setdefault(key, []).append(action)
+            batches.setdefault(action.source_provider, []).append(action)
 
         inserted = 0
         unchanged = 0
-        for (provider, retrieved_at), batch in sorted(
-            batches.items(), key=lambda item: (item[0][1], item[0][0])
-        ):
+        for provider, batch in sorted(batches.items()):
             payload = [
                 self._to_repository_payload(action, dividend_currency=normalized_currency)
                 for action in batch
@@ -159,7 +161,8 @@ class CorporateActionIngestionService:
                 instrument_id=instrument_id,
                 actions=payload,
                 source_provider=provider,
-                retrieved_at=retrieved_at,
+                retrieved_at=received_at,
+                captured_by_athena=True,
             )
             inserted += stats.inserted
             unchanged += stats.unchanged
