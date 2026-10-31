@@ -289,16 +289,4 @@ jobs:
           BROWSER_RESULT: ${{ needs.deployed-flutter-browser-acceptance.result }}
           BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED }}
           OWNER_BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_OWNER_BROWSER_ACCEPTANCE_ENABLED }}
-        run: |
-          test "$BACKEND_RESULT" = "success"
-          test "$FLUTTER_RESULT" = "success"
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$DEPLOYED_ENABLED" = "true" ]; then
-            test "$DEPLOYED_RESULT" = "success"
-          fi
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$BROWSER_ENABLED" = "true" ]; then
-            test "$BROWSER_RESULT" = "success"
-          fi
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$OWNER_BROWSER_ENABLED" = "true" ]; then
-            test "$BROWSER_ENABLED" = "true"
-            test "$BROWSER_RESULT" = "success"
-          fi
+        run: python3 backend/scripts/release_validation_gate.py

@@ -1,6 +1,6 @@
 # Deployed cross-surface acceptance — operational gate
 
-The deployed API job is an **opt-in part of the existing** `Validate ATHENA TYCHE` push/PR workflow, not a separate manual workflow. It is skipped by default. When enabled, it is mandatory for the push release-validation gate on `dev/real-market-backend`; pull-request checks remain independent of a deployment.
+The deployed API job is an **opt-in part of the existing** `Validate ATHENA TYCHE` push/PR workflow, not a separate manual workflow. It is skipped by default. When enabled, it is mandatory for the push release-validation gate on `dev/real-market-backend`; pull-request checks remain independent of a deployment. Enabling the two-owner Flutter browser journey also requires **this independent deployed API job** and the guest browser job to be enabled and successful for the same push SHA. The release gate rejects malformed opt-in flags rather than silently treating a typo as disabled.
 It checks **a deployed backend**, not a deployed Flutter browser application.
 Never count mocked test fixtures or a green standard CI run as operational proof.
 

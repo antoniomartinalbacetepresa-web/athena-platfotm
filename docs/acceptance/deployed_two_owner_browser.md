@@ -23,8 +23,12 @@ Configure a protected `staging-acceptance` environment with:
 - Repository variables: enable the existing guest gate with
   `ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED=true` **first**; enable
   `ATHENA_DEPLOYED_OWNER_BROWSER_ACCEPTANCE_ENABLED=true` only when the
-  two seeded accounts and synchronized deployment are ready. If the owner
-  gate is enabled without the guest gate, the release gate fails closed.
+  two seeded accounts and synchronized deployment are ready. The owner
+  browser gate additionally requires the independent deployed API gate:
+  set `ATHENA_DEPLOYED_ACCEPTANCE_ENABLED=true` and confirm both the API
+  and guest browser jobs succeed on the **same push SHA**. Missing or
+  malformed opt-in flags, or an enabled-but-skipped job, fail the release
+  gate. A green PR gate is not deployed evidence.
 
 Both accounts must be authorized, disposable, have disjoint seeded positions,
 configured encrypted preferences/personalization, and remain stable during the
