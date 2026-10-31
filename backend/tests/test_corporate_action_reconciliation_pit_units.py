@@ -28,6 +28,7 @@ def _row(provider, *, action_type="dividend", effective_at="2026-08-15T00:00:00+
         "action_type": action_type,
         "effective_at": effective_at,
         "retrieved_at": retrieved_at,
+        "capture_verified": 1,  # synthetic locally captured fixture
         "cash_amount": cash_amount,
         "split_ratio": split_ratio,
         "currency": currency,
