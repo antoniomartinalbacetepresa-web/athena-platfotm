@@ -240,3 +240,22 @@ price evidence remains available for diagnosis. This prevents a substituted
 upstream producer from bypassing the capture quarantine; it does **not**
 verify operational provenance or extend the quarantine to every OOS/portfolio
 reader. Historical rows remain available for audit, not production authority.
+
+
+## UTC-normalized repository PIT reads (legacy offset hardening)
+
+The corporate-action repository's paid-history and known-forward PIT views
+now compare **actual UTC instants**, not SQLite ISO-8601 TEXT ordering.
+Legacy rows with different offsets can otherwise appear known before they
+were retrieved, or disappear despite being known. Both views normalize
+retrieval and effective instants, partition paid versus future-effective
+events at the same UTC cutoff, and apply effective-date bounds in UTC.
+Malformed or timezone-naive stored instants fail closed rather than silently
+passing a PIT filter. The unbounded historical audit view is retained.
+
+This fixes a timestamp-selection boundary only. It does not authenticate
+legacy captures, grant production authority, or establish operational
+coverage, independent reconciliation, OOS skill or total-return correctness.
+PIT reads scan each instrument's history to avoid unsafe lexical prefilters;
+operational performance should be benchmarked against the authorized
+database snapshot before claiming large-universe readiness.

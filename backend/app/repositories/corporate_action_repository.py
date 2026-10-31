@@ -157,46 +157,80 @@ class CorporateActionRepository:
         return False
 
     def list_for_instrument(self, instrument_id: int, *, source_provider: str | None = None, knowledge_cutoff: datetime | None = None, effective_from: datetime | None = None, effective_to: datetime | None = None) -> list[dict[str, Any]]:
-        if instrument_id <= 0:
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
         self._initialize_schema()
         params: list[object] = [instrument_id]
         clauses = ["instrument_id = ?"]
         if source_provider is not None:
-            clauses.append("source_provider = ?"); params.append(self._required_text(source_provider, "source_provider"))
-        cutoff_iso: str | None = None
-        if knowledge_cutoff is not None:
-            cutoff_iso = self._utc_iso(knowledge_cutoff, "knowledge_cutoff")
-            clauses.extend(("retrieved_at <= ?", "effective_at <= ?")); params.extend((cutoff_iso, cutoff_iso))
-        self._append_effective_bounds(clauses, params, effective_from, effective_to)
-        result = self._query(clauses, params)
-        if cutoff_iso is not None:
-            for row in result:
-                if row["retrieved_at"] > cutoff_iso or row["effective_at"] > cutoff_iso:
-                    raise RuntimeError("Una corporate action posterior al knowledge_cutoff atravesó el filtro PIT.")
-        return result
+            clauses.append("source_provider = ?")
+            params.append(self._required_text(source_provider, "source_provider"))
+        if knowledge_cutoff is None:
+            # Unbounded audit view retains its historical contract.
+            self._append_effective_bounds(clauses, params, effective_from, effective_to)
+            return self._query(clauses, params)
+
+        cutoff = datetime.fromisoformat(self._utc_iso(knowledge_cutoff, "knowledge_cutoff"))
+        lower = (datetime.fromisoformat(self._utc_iso(effective_from, "effective_from"))
+                 if effective_from is not None else None)
+        upper = (datetime.fromisoformat(self._utc_iso(effective_to, "effective_to"))
+                 if effective_to is not None else None)
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("effective_from no puede ser posterior a effective_to.")
+        return self._pit_view_rows(clauses, params, cutoff=cutoff, future=False,
+                                   effective_from=lower, effective_to=upper)
 
     def list_known_future_for_instrument(self, instrument_id: int, *, knowledge_cutoff: datetime, source_provider: str | None = None, effective_to: datetime | None = None) -> list[dict[str, Any]]:
-        """Actions ATHENA already knew at cutoff but whose economic date is future.
-
-        This is intentionally separate from list_for_instrument so backtests cannot
-        accidentally mix paid/effective history with declarations known in advance.
-        """
-        if instrument_id <= 0:
+        """Future-effective actions that were genuinely known at the PIT cutoff."""
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
         self._initialize_schema()
-        cutoff_iso = self._utc_iso(knowledge_cutoff, "knowledge_cutoff")
-        params: list[object] = [instrument_id, cutoff_iso, cutoff_iso]
-        clauses = ["instrument_id = ?", "retrieved_at <= ?", "effective_at > ?"]
+        cutoff = datetime.fromisoformat(self._utc_iso(knowledge_cutoff, "knowledge_cutoff"))
+        upper = (datetime.fromisoformat(self._utc_iso(effective_to, "effective_to"))
+                 if effective_to is not None else None)
+        clauses = ["instrument_id = ?"]
+        params: list[object] = [instrument_id]
         if source_provider is not None:
-            clauses.append("source_provider = ?"); params.append(self._required_text(source_provider, "source_provider"))
-        if effective_to is not None:
-            clauses.append("effective_at <= ?"); params.append(self._utc_iso(effective_to, "effective_to"))
-        result = self._query(clauses, params)
-        for row in result:
-            if row["retrieved_at"] > cutoff_iso or row["effective_at"] <= cutoff_iso:
-                raise RuntimeError("Una corporate action violó la vista PIT de acciones futuras conocidas.")
-        return result
+            clauses.append("source_provider = ?")
+            params.append(self._required_text(source_provider, "source_provider"))
+        return self._pit_view_rows(clauses, params, cutoff=cutoff, future=True,
+                                   effective_to=upper)
+
+    @staticmethod
+    def _stored_pit_instant(value: object, field: str) -> datetime:
+        # SQLite TEXT ordering is not chronological when legacy offsets differ.
+        # Never let a noncanonical or malformed stored instant bypass PIT.
+        if not isinstance(value, str):
+            raise RuntimeError(f"Corporate-action PIT {field} is not a valid timestamp.")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("timezone required")
+            return parsed.astimezone(timezone.utc)
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise RuntimeError(f"Corporate-action PIT {field} is not a valid aware timestamp.") from exc
+
+    def _pit_view_rows(
+        self, clauses: list[str], params: list[object], *, cutoff: datetime,
+        future: bool, effective_from: datetime | None = None,
+        effective_to: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        # Read the instrument's complete immutable history before filtering:
+        # SQL string comparisons can include future knowledge or omit valid
+        # observations when historical rows use non-UTC offsets.
+        selected: list[tuple[datetime, int, dict[str, Any]]] = []
+        for row in self._query(clauses, params):
+            retrieved = self._stored_pit_instant(row["retrieved_at"], "retrieved_at")
+            effective = self._stored_pit_instant(row["effective_at"], "effective_at")
+            if retrieved > cutoff or (effective > cutoff) is not future:
+                continue
+            if effective_from is not None and effective < effective_from:
+                continue
+            if effective_to is not None and effective > effective_to:
+                continue
+            selected.append((effective, int(row["id"]), row))
+        selected.sort(key=lambda item: (item[0], item[1]))
+        return [row for _, _, row in selected]
 
     def _append_effective_bounds(self, clauses: list[str], params: list[object], effective_from: datetime | None, effective_to: datetime | None) -> None:
         if effective_from is not None:

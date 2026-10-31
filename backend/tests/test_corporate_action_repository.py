@@ -202,3 +202,80 @@ def test_later_retrieval_can_preserve_a_revised_value_without_rewriting_pit(tmp_
     rows = repository.list_for_instrument(1)
     assert len(rows) == 2
     assert [row["cash_amount"] for row in rows] == [0.25, 0.30]
+
+
+def test_pit_history_uses_utc_instant_not_legacy_retrieval_text_order(tmp_path) -> None:
+    database = _database(tmp_path)
+    repository = CorporateActionRepository(database)
+    known = datetime(2026, 9, 15, 8, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 9, 15, 10, tzinfo=timezone.utc)
+    repository.save_many(
+        instrument_id=1, source_provider="exchange_notice", retrieved_at=known,
+        actions=[
+            {"type": "dividend", "effectiveAt": "2026-09-01T00:00:00+00:00", "cashAmount": 0.2},
+            {"type": "dividend", "effectiveAt": "2026-09-02T00:00:00+00:00", "cashAmount": 0.3},
+        ],
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE corporate_actions SET retrieved_at = ? WHERE cash_amount = ?",
+            ("2026-09-15T11:00:00+02:00", 0.2),  # 09:00 UTC: already known
+        )
+        connection.execute(
+            "UPDATE corporate_actions SET retrieved_at = ? WHERE cash_amount = ?",
+            ("2026-09-15T09:30:00-02:00", 0.3),  # 11:30 UTC: not yet known
+        )
+    assert [row["cash_amount"] for row in repository.list_for_instrument(
+        1, knowledge_cutoff=cutoff
+    )] == [0.2]
+    assert len(repository.list_for_instrument(1)) == 2  # audit view unchanged
+
+
+def test_pit_paid_and_forward_views_partition_legacy_effective_offsets(tmp_path) -> None:
+    database = _database(tmp_path)
+    repository = CorporateActionRepository(database)
+    known = datetime(2026, 9, 15, 8, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 9, 15, 10, tzinfo=timezone.utc)
+    repository.save_many(
+        instrument_id=1, source_provider="exchange_notice", retrieved_at=known,
+        actions=[
+            {"type": "dividend", "effectiveAt": "2026-09-15T09:00:00+00:00", "cashAmount": 0.2},
+            {"type": "dividend", "effectiveAt": "2026-09-15T11:30:00+00:00", "cashAmount": 0.3},
+        ],
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE corporate_actions SET effective_at = ? WHERE cash_amount = ?",
+            ("2026-09-15T11:00:00+02:00", 0.2),  # 09:00 UTC: paid
+        )
+        connection.execute(
+            "UPDATE corporate_actions SET effective_at = ? WHERE cash_amount = ?",
+            ("2026-09-15T09:30:00-02:00", 0.3),  # 11:30 UTC: forward
+        )
+    assert [row["cash_amount"] for row in repository.list_for_instrument(
+        1, knowledge_cutoff=cutoff, effective_to=cutoff
+    )] == [0.2]
+    assert [row["cash_amount"] for row in repository.list_known_future_for_instrument(
+        1, knowledge_cutoff=cutoff
+    )] == [0.3]
+    assert repository.list_known_future_for_instrument(
+        1, knowledge_cutoff=cutoff, effective_to=cutoff
+    ) == []
+
+
+@pytest.mark.parametrize("field", ["retrieved_at", "effective_at"])
+def test_malformed_legacy_timestamp_fails_closed_in_both_pit_views(tmp_path, field) -> None:
+    database = _database(tmp_path)
+    repository = CorporateActionRepository(database)
+    repository.save_many(
+        instrument_id=1, source_provider="exchange_notice",
+        retrieved_at=datetime(2026, 9, 15, 8, tzinfo=timezone.utc),
+        actions=[{"type": "dividend", "effectiveAt": "2026-09-30T00:00:00+00:00", "cashAmount": 0.3}],
+    )
+    with database.connect() as connection:
+        connection.execute(f"UPDATE corporate_actions SET {field} = ?", ("not-an-instant",))
+    cutoff = datetime(2026, 9, 15, 10, tzinfo=timezone.utc)
+    with pytest.raises(RuntimeError, match="Corporate-action PIT"):
+        repository.list_for_instrument(1, knowledge_cutoff=cutoff)
+    with pytest.raises(RuntimeError, match="Corporate-action PIT"):
+        repository.list_known_future_for_instrument(1, knowledge_cutoff=cutoff)
