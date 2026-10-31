@@ -22,3 +22,17 @@ a fixed stage-specific message and does not expose provider payloads.
 
 This is an ingestion no-lookahead boundary, not independent attestation of the
 provider's historical truth or proof of operational 365-day coverage.
+
+## Provider authorization before network I/O
+
+The market-history backfill service now applies the repository's forbidden-source
+policy to `source_provider` **before** initializing SQLite, selecting instruments,
+or calling the history adapter. Plain, separator-obfuscated, URL-encoded and
+HTML-entity-encoded FMP labels are rejected without a provider request.
+Write-time rejection remains in place as a second line of defense.
+
+This prevents an operator from accidentally contacting a forbidden FMP source
+through a custom adapter. It does **not** independently prove that a third-party
+adapter is honest about its declared provider identity or that a free provider's
+license permits a particular production use. Operational source authorization,
+PIT evidence and 365-day coverage remain separate requirements.
