@@ -83,7 +83,7 @@ def test_secondary_backfill_rejects_wrong_provider_family_before_persistence(
     assert report.incomplete_after == 1
     assert report.selected_events_still_incomplete == 1
     assert report.status == "completed_with_failures"
-    assert "alpha_vantage" in report.failures[0]["error"]
+    assert report.failures[0]["error"] == "secondary_provider_or_ingestion_failed"
 
     payload = report.to_api_dict()
     assert payload["policy"]["expectedSecondaryProviderFamily"] == "alpha_vantage"
