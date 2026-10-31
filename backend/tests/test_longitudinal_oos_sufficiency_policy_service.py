@@ -162,7 +162,7 @@ def test_valid_approval_is_still_separate_from_evidence_satisfaction() -> None:
 def test_human_approval_after_observed_oos_evidence_cannot_bless_history() -> None:
     policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement_with_full_distributions(),
         policy_record=policy, approval_record=_approval(fingerprint, approved_at="2026-02-20T00:00:00+00:00"),
     )
     assert result["status"] == "precommitted_policy_not_satisfied"
@@ -198,7 +198,7 @@ def test_future_dated_measurement_cannot_satisfy_policy_as_of_cutoff() -> None:
 def test_test_only_policy_can_prove_mechanics_without_production_claim() -> None:
     policy = _policy(); fingerprint = str(policy["artifact"]["policyFingerprint"])
     result = LongitudinalOosSufficiencyPolicyService().evaluate(
-        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement(),
+        as_of=datetime(2026, 3, 1, tzinfo=timezone.utc), measurement=_measurement_with_full_distributions(),
         policy_record=policy, approval_record=_approval(fingerprint),
     )
     assert result["status"] == "precommitted_policy_satisfied"
@@ -304,14 +304,14 @@ def test_distinct_evaluation_periods_require_at_least_one_error_each() -> None:
 
 
 def test_valid_measured_span_and_reconciled_horizons_remain_accepted() -> None:
-    result = _evaluate_measurement(_measurement())
+    result = _evaluate_measurement(_measurement_with_full_distributions())
     assert result["temporalPrecommitmentVerified"] is True
     assert result["acceptanceEvidenceVerified"] is True
     assert result["productionSufficiencyClaimed"] is False
 
 
 def test_measured_issuer_diversity_reconciles_across_horizons() -> None:
-    measurement = _measurement()
+    measurement = _measurement_with_full_distributions()
     measurement["issuerErrorCounts"] = {"A": 3, "B": 3, "C": 2, "D": 2, "E": 2}
     measurement["resolvedIssuerErrorCount"] = 12
     measurement["maximumErrorsPerResolvedIssuer"] = 3
@@ -370,8 +370,45 @@ def _measurement_with_period_evidence() -> dict[str, object]:
     return measurement
 
 
-def test_measured_period_distribution_reconciles_across_horizons() -> None:
+
+def _measurement_with_full_distributions() -> dict[str, object]:
+    """Reconciled issuer and period evidence for a test-only approved policy."""
     measurement = _measurement_with_period_evidence()
+    measurement["issuerErrorCounts"] = {"A": 3, "B": 3, "C": 2, "D": 2, "E": 2}
+    measurement["resolvedIssuerErrorCount"] = 12
+    measurement["maximumErrorsPerResolvedIssuer"] = 3
+    measurement["horizons"]["604800"].update({
+        "resolvedIssuerErrorCount": 6,
+        "issuerErrorCounts": {"A": 2, "B": 2, "C": 1, "D": 1},
+    })
+    measurement["horizons"]["2592000"].update({
+        "resolvedIssuerErrorCount": 6,
+        "issuerErrorCounts": {"A": 1, "B": 1, "C": 1, "D": 1, "E": 2},
+    })
+    return measurement
+
+
+@pytest.mark.parametrize("missing", ["issuerErrorCounts", "periodEndErrorCounts"])
+def test_missing_measured_distribution_never_passes_sufficiency(missing: str) -> None:
+    measurement = _measurement_with_full_distributions()
+    measurement.pop(missing)
+    result = _evaluate_measurement(measurement)
+    assert result["policyApproved"] is True
+    assert result["temporalPrecommitmentVerified"] is True
+    assert result["acceptanceEvidenceVerified"] is False
+    assert result["productionSufficiencyClaimed"] is False
+
+
+def test_legacy_scalar_only_evidence_does_not_qualify_as_measured() -> None:
+    result = _evaluate_measurement(_measurement())
+    assert result["policyApproved"] is True
+    assert result["temporalPrecommitmentVerified"] is True
+    assert result["acceptanceEvidenceVerified"] is False
+    assert result["status"] == "precommitted_policy_not_satisfied"
+
+
+def test_measured_period_distribution_reconciles_across_horizons() -> None:
+    measurement = _measurement_with_full_distributions()
     assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is True
     measurement["distinctEvaluationPeriodCount"] = 5
     assert _evaluate_measurement(measurement)["acceptanceEvidenceVerified"] is False

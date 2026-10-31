@@ -104,8 +104,9 @@ class LongitudinalOosSufficiencyPolicyService:
                 and sum(horizon_counts.values()) == forecast_errors
                 and all(horizon_counts.get(str(horizon), 0) > 0 for horizon in c["requiredHorizonSeconds"])
             )
-        # Reconcile measured issuer diversity, not merely a summary scalar.
-        # Real OOS diagnostics provide this map; legacy test-only inputs may not.
+        # Issuer diversity cannot be accepted from a scalar alone. Require
+        # its measured distribution, including the per-horizon reconciliation.
+        checks.append("issuerErrorCounts" in measurement)
         if "issuerErrorCounts" in measurement:
             counts = self._issuer_error_counts(
                 measurement["issuerErrorCounts"], "measurement.issuerErrorCounts"
@@ -148,10 +149,9 @@ class LongitudinalOosSufficiencyPolicyService:
                     for issuer, count in per_horizon.items():
                         aggregate[issuer] = aggregate.get(issuer, 0) + count
             checks.append(horizons_consistent and aggregate == counts)
-        # Reconcile the distinct evaluation periods with observed matured
-        # forecast errors.  A scalar period count alone cannot prove diversity.
-        # Legacy synthetic inputs may omit this map; operational diagnostics
-        # always include it and are checked across exact horizons.
+        # A scalar number of periods cannot prove longitudinal diversity.
+        # Require physical period-end distributions across exact horizons.
+        checks.append("periodEndErrorCounts" in measurement)
         if "periodEndErrorCounts" in measurement:
             periods = self._period_end_error_counts(
                 measurement["periodEndErrorCounts"], "measurement.periodEndErrorCounts"
