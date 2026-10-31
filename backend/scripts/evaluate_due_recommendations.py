@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
@@ -26,6 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
             "la hora UTC actual."
         ),
     )
+    parser.add_argument(
+        "--require-complete", action="store_true",
+        help="Sale con código 3 si alguna recomendación vencida no pudo medirse; cero vencidas no acredita evidencia OOS.",
+    )
     return parser
 
 
@@ -45,6 +49,28 @@ def parse_as_of(value: str | None) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def validate_operational_cutoff(
+    as_of: datetime, *, now: datetime | None = None,
+) -> datetime:
+    """Never backdate a new persisted evaluation to a historical PIT cutoff.
+
+    This boundary applies to the mutating CLI. Historical research diagnostics
+    must use read-only evidence rather than minting retroactive outcome rows.
+    """
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise ValueError("El corte operativo debe incluir zona horaria.")
+    current = now if now is not None else datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("El reloj operativo debe incluir zona horaria.")
+    cutoff = as_of.astimezone(timezone.utc)
+    current = current.astimezone(timezone.utc)
+    if cutoff > current:
+        raise ValueError("No se pueden persistir resultados con corte futuro.")
+    if current - cutoff > timedelta(minutes=5):
+        raise ValueError("No se pueden retrofechar resultados operativos.")
+    return cutoff
+
+
 def run(
     *,
     as_of: datetime,
@@ -56,11 +82,22 @@ def run(
     return report.to_api_dict()
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    report = run(as_of=parse_as_of(args.as_of))
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        cutoff = validate_operational_cutoff(parse_as_of(args.as_of))
+    except ValueError:
+        parser.exit(2, "Corte operativo inválido o retrospectivo; no se ha escrito ningún outcome.\n")
+    report = run(as_of=cutoff)
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    if args.require_complete and (
+        report.get("skippedCount") != 0
+        or report.get("dueCount") != report.get("evaluatedCount")
+    ):
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
