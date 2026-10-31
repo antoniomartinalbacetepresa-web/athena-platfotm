@@ -38,6 +38,7 @@ def _save_dividend(database, *, provider: str, amount: float, currency: str | No
         instrument_id=1,
         source_provider=provider,
         retrieved_at=RETRIEVED_AT,
+        captured_by_athena=True,  # controlled test capture; not production evidence
         actions=[
             {
                 "type": "dividend",
@@ -259,3 +260,44 @@ def test_disagreement_inside_one_provider_family_fails_closed(tmp_path) -> None:
     assert report.agreed_event_count == 0
     assert report.conflict_event_count == 1
     assert report.cross_provider_reconciliation_ready is False
+
+
+def test_legacy_provider_capture_blocks_ready_even_with_agreed_economics(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="yahoo", amount=0.25)
+    _save_dividend(database, provider="exchange_notice", amount=0.25)
+    # A legacy observation can numerically agree but its historical
+    # retrieved_at was declared by a provider, not observed by ATHENA.
+    CorporateActionRepository(database).save_many(
+        instrument_id=1, source_provider="yahoo_legacy", retrieved_at=RETRIEVED_AT,
+        actions=[{
+            "type": "dividend", "effectiveAt": "2026-08-15T00:00:00+00:00",
+            "cashAmount": 0.25, "currency": "USD",
+        }],
+    )
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={
+            "yahoo": "yahoo", "yahoo_legacy": "yahoo",
+            "exchange_notice": "exchange",
+        },
+    ).get_report(as_of=AS_OF)
+    assert report.event_count == 1
+    assert report.agreed_event_count == 1
+    assert report.unverified_capture_count == 1
+    assert report.cross_provider_reconciliation_ready is False
+    assert report.to_api_dict()["unverifiedCaptureCount"] == 1
+    # Quarantine is non-destructive; legacy data remains available for audit.
+    assert len(CorporateActionRepository(database).list_for_instrument(1)) == 3
+
+
+def test_verified_captures_have_no_legacy_quarantine(tmp_path) -> None:
+    database = _database(tmp_path)
+    _save_dividend(database, provider="yahoo", amount=0.25)
+    _save_dividend(database, provider="exchange_notice", amount=0.25)
+    report = CorporateActionCoverageService(
+        database=database,
+        provider_families={"yahoo": "yahoo", "exchange_notice": "exchange"},
+    ).get_report(as_of=AS_OF)
+    assert report.unverified_capture_count == 0
+    assert report.cross_provider_reconciliation_ready is True
