@@ -21,9 +21,10 @@ def test_reject_html_encoded_fmp(field, alias):
     with pytest.raises(ValueError, match="FMP"):
         _calculate(**{field: alias})
 
-def test_pit_and_no_trading_unchanged():
+def test_self_declared_pit_timestamps_never_grant_capture_or_trading_authority():
     result = _calculate()
     assert result.total_return == pytest.approx(0.07)
-    assert result.pit_safe is True
+    assert result.pit_safe is False
+    assert result.temporal_evidence_complete is True
     assert result.to_api_dict()["automaticTrading"] is False
     assert result.to_api_dict()["productionEligible"] is False

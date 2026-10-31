@@ -66,7 +66,9 @@ def test_supported_dividend_cadences_are_explicit_pit_contract(
     assert payload["paymentCount"] == payment_count
     assert payload["currency"] == "USD"
     assert payload["currencyConsistent"] is True
-    assert payload["pitSafe"] is True
+    assert payload["pitSafe"] is False
+    assert payload["captureGatePassed"] is False
+    assert payload["productionEligible"] is False
     assert payload["knowledgeCutoff"] == cutoff.isoformat()
     assert payload["trailingYield"] is not None
 
@@ -117,4 +119,6 @@ def test_irregular_dividend_cadence_remains_irregular_without_projection(tmp_pat
     assert payload["suspectedSuspension"] is None
     assert payload["confirmedForwardPaymentCount"] == 0
     assert payload["confirmedForwardCashPerShare"] is None
-    assert payload["pitSafe"] is True
+    assert payload["pitSafe"] is False
+    assert payload["captureGatePassed"] is False
+    assert payload["productionEligible"] is False
