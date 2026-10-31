@@ -243,7 +243,7 @@ jobs:
 
       - name: Install pinned browser runner
         run: |
-          python -m pip install playwright==1.55.0
+          python -m pip install playwright==1.55.0 httpx==0.28.1
           python -m playwright install --with-deps chromium
 
       - name: Verify deployed Flutter Web guest journey
@@ -252,6 +252,22 @@ jobs:
           ATHENA_ACCEPTANCE_BASE_URL: ${{ secrets.ATHENA_ACCEPTANCE_BASE_URL }}
           ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA }}
         run: python backend/scripts/deployed_flutter_browser_acceptance.py
+
+      - name: Verify deployed Flutter Web two-owner browser lifecycle (opt-in)
+        if: vars.ATHENA_DEPLOYED_OWNER_BROWSER_ACCEPTANCE_ENABLED == 'true'
+        env:
+          ATHENA_ACCEPTANCE_WEB_URL: ${{ secrets.ATHENA_ACCEPTANCE_WEB_URL }}
+          ATHENA_ACCEPTANCE_BASE_URL: ${{ secrets.ATHENA_ACCEPTANCE_BASE_URL }}
+          ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA }}
+          ATHENA_ACCEPTANCE_A_EMAIL: ${{ secrets.ATHENA_ACCEPTANCE_A_EMAIL }}
+          ATHENA_ACCEPTANCE_A_PASSWORD: ${{ secrets.ATHENA_ACCEPTANCE_A_PASSWORD }}
+          ATHENA_ACCEPTANCE_A_POSITION_ID: ${{ vars.ATHENA_ACCEPTANCE_A_POSITION_ID }}
+          ATHENA_ACCEPTANCE_A_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_A_CURRENCY }}
+          ATHENA_ACCEPTANCE_B_EMAIL: ${{ secrets.ATHENA_ACCEPTANCE_B_EMAIL }}
+          ATHENA_ACCEPTANCE_B_PASSWORD: ${{ secrets.ATHENA_ACCEPTANCE_B_PASSWORD }}
+          ATHENA_ACCEPTANCE_B_POSITION_ID: ${{ vars.ATHENA_ACCEPTANCE_B_POSITION_ID }}
+          ATHENA_ACCEPTANCE_B_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_B_CURRENCY }}
+        run: python backend/scripts/deployed_owner_browser_acceptance.py
 
   release-validation-gate:
     name: Release validation gate
@@ -272,6 +288,7 @@ jobs:
           DEPLOYED_ENABLED: ${{ vars.ATHENA_DEPLOYED_ACCEPTANCE_ENABLED }}
           BROWSER_RESULT: ${{ needs.deployed-flutter-browser-acceptance.result }}
           BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED }}
+          OWNER_BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_OWNER_BROWSER_ACCEPTANCE_ENABLED }}
         run: |
           test "$BACKEND_RESULT" = "success"
           test "$FLUTTER_RESULT" = "success"
@@ -279,5 +296,9 @@ jobs:
             test "$DEPLOYED_RESULT" = "success"
           fi
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$BROWSER_ENABLED" = "true" ]; then
+            test "$BROWSER_RESULT" = "success"
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$OWNER_BROWSER_ENABLED" = "true" ]; then
+            test "$BROWSER_ENABLED" = "true"
             test "$BROWSER_RESULT" = "success"
           fi
