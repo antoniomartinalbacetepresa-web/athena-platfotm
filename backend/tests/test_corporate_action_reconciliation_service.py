@@ -47,6 +47,7 @@ def _dividend(provider, amount=0.25, currency="usd", retrieved_at="2026-09-10T10
         "currency": currency,
         "source_provider": provider,
         "retrieved_at": retrieved_at,
+        "capture_verified": 1,
     }
 
 
@@ -59,6 +60,7 @@ def _split(provider, ratio=4.0, retrieved_at="2026-09-10T10:00:00+00:00"):
         "currency": None,
         "source_provider": provider,
         "retrieved_at": retrieved_at,
+        "capture_verified": 1,
     }
 
 
@@ -240,3 +242,63 @@ def test_nontext_provider_identity_is_not_coerced_into_provenance():
         service.reconcile(
             instrument_id=21, source_providers=["primary", 123], knowledge_cutoff=CUTOFF
         )
+
+
+
+def test_legacy_matching_values_do_not_certify_reconciliation() -> None:
+    left = _dividend("yahoo_finance")
+    right = _dividend("secondary")
+    left["capture_verified"] = 0
+    right["capture_verified"] = 0
+    report = CorporateActionReconciliationService(
+        repository=FakeRepository({"yahoo_finance": [left], "secondary": [right]})
+    ).reconcile(
+        instrument_id=23,
+        source_providers=["yahoo_finance", "secondary"],
+        knowledge_cutoff=CUTOFF,
+    )
+    assert report.agreed_event_count == 1
+    assert report.unverified_capture_count == 2
+    assert report.reconciled is False
+    payload = report.to_api_dict()
+    assert payload["unverifiedCaptureCount"] == 2
+    assert payload["reconciled"] is False
+    assert payload["automaticCanonicalization"] is False
+
+
+def test_superseded_unverified_snapshot_still_blocks_reconciliation() -> None:
+    earlier = _dividend(
+        "yahoo_finance", retrieved_at="2026-09-01T10:00:00+00:00"
+    )
+    earlier["capture_verified"] = 0
+    report = CorporateActionReconciliationService(
+        repository=FakeRepository({
+            "yahoo_finance": [earlier, _dividend("yahoo_finance")],
+            "secondary": [_dividend("secondary")],
+        })
+    ).reconcile(
+        instrument_id=24,
+        source_providers=["yahoo_finance", "secondary"],
+        knowledge_cutoff=CUTOFF,
+    )
+    assert report.agreed_event_count == 1
+    assert report.unverified_capture_count == 1
+    assert report.reconciled is False
+
+
+def test_missing_capture_marker_is_not_implicitly_verified() -> None:
+    left = _split("yahoo_finance")
+    del left["capture_verified"]
+    report = CorporateActionReconciliationService(
+        repository=FakeRepository({
+            "yahoo_finance": [left],
+            "secondary": [_split("secondary")],
+        })
+    ).reconcile(
+        instrument_id=25,
+        source_providers=["yahoo_finance", "secondary"],
+        knowledge_cutoff=CUTOFF,
+    )
+    assert report.agreed_event_count == 1
+    assert report.unverified_capture_count == 1
+    assert report.reconciled is False

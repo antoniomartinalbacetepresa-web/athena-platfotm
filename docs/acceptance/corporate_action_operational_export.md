@@ -188,3 +188,18 @@ historical consumers. Direct diagnostic readers, OOS pipelines, independent
 total-return bindings and reconciliation worklists still need audited
 capture-aware treatment. The marker does not establish independent
 third-party attestation or operational source authorization.
+
+
+
+## Per-instrument reconciliation capture quarantine
+
+The individual cross-provider reconciliation report now includes
+`unverifiedCaptureCount` and never returns `reconciled=true` if any
+queried PIT-visible snapshot lacks `capture_verified=1`, including an
+older superseded snapshot or a missing marker. `agreedEventCount` remains
+a diagnostic comparison of economic values; it does **not** override the
+capture gate. The service preserves all rows and never selects a provider,
+changes historical timestamps or creates investment authority. Aggregate
+coverage and per-instrument reconciliation now both refuse to certify
+unverified historical capture provenance. The complete worklist, OOS and
+other direct readers still require separate review.

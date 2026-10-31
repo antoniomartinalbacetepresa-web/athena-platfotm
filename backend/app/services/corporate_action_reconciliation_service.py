@@ -24,6 +24,7 @@ class CorporateActionReconciliationReport:
     source_providers: tuple[str, ...]
     knowledge_cutoff: datetime
     events: tuple[CorporateActionReconciliationEvent, ...]
+    unverified_capture_count: int = 0
 
     @property
     def agreed_event_count(self) -> int:
@@ -39,7 +40,7 @@ class CorporateActionReconciliationReport:
 
     @property
     def reconciled(self) -> bool:
-        return bool(self.events) and all(event.status == "agreed" for event in self.events)
+        return bool(self.events) and self.unverified_capture_count == 0 and all(event.status == "agreed" for event in self.events)
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class CorporateActionReconciliationReport:
             "conflictEventCount": self.conflict_event_count,
             "incompleteEventCount": self.incomplete_event_count,
             "reconciled": self.reconciled,
+            "unverifiedCaptureCount": self.unverified_capture_count,
             "automaticCanonicalization": False,
             "events": [
                 {
@@ -67,7 +69,8 @@ class CorporateActionReconciliationReport:
             "warning": (
                 "La reconciliación compara únicamente información visible en el "
                 "knowledge cutoff. Un conflicto o una fuente ausente impide considerar "
-                "la acción corporativa reconciliada y nunca autoriza canonicalización "
+                "la acción corporativa reconciliada. Una captura no verificada "
+                "bloquea reconciled aunque los valores coincidan, y nunca autoriza canonicalización "
                 "automática."
             ),
         }
@@ -114,6 +117,7 @@ class CorporateActionReconciliationService:
 
         latest_by_provider: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
         all_keys: set[tuple[str, str]] = set()
+        unverified_capture_count = 0
 
         for provider in providers:
             rows = self._repository.list_for_instrument(
@@ -124,6 +128,10 @@ class CorporateActionReconciliationService:
             latest: dict[tuple[str, str], dict[str, Any]] = {}
             latest_retrieved_at: dict[tuple[str, str], datetime] = {}
             for row in rows:
+                # Keep economic agreement diagnostic, but never certify a
+                # provider-declared historical timestamp as local PIT capture.
+                if type(row.get("capture_verified")) is not int or row["capture_verified"] != 1:
+                    unverified_capture_count += 1
                 action_type = str(row.get("action_type", "")).strip().lower()
                 effective_at = str(row.get("effective_at", "")).strip()
                 retrieved_at = str(row.get("retrieved_at", "")).strip()
@@ -205,6 +213,7 @@ class CorporateActionReconciliationService:
             source_providers=providers,
             knowledge_cutoff=knowledge_cutoff,
             events=tuple(events),
+            unverified_capture_count=unverified_capture_count,
         )
 
     def _normalize_providers(self, values: Iterable[str]) -> tuple[str, ...]:
