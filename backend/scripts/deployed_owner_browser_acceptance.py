@@ -87,7 +87,8 @@ def _login(page, owner: TestOwner) -> None:
     page.get_by_role("button", name="Perfil", exact=True).wait_for(timeout=30000)
 
 
-def _profile(page, owner: TestOwner, other: TestOwner) -> None:
+def _profile(page, owner: TestOwner, other: TestOwner, *,
+             backend_origin: str) -> None:
     page.get_by_role("button", name="Perfil", exact=True).click(timeout=15000)
     page.get_by_text("Identidad autenticada", exact=True).wait_for(timeout=30000)
     page.get_by_text(re.compile("^" + re.escape(owner.username) + "$", re.I)).wait_for(
@@ -95,7 +96,15 @@ def _profile(page, owner: TestOwner, other: TestOwner) -> None:
     )
     if page.get_by_text(re.compile("^" + re.escape(other.username) + "$", re.I)).count():
         raise BrowserAcceptanceFailure("Other owner's identity visible in Profile")
-    page.get_by_role("button", name="RECARGAR", exact=True).click(timeout=15000)
+    preferences = "/api/v1/user/profile/preferences"
+    with page.expect_response(
+        lambda r: _matches_backend_api(
+            r.url, backend_origin=backend_origin, path=preferences
+        ), timeout=30000,
+    ) as refreshed:
+        page.get_by_role("button", name="RECARGAR", exact=True).click(timeout=15000)
+    if refreshed.value.status != 200:
+        raise BrowserAcceptanceFailure("Owner preferences browser reload failed")
     page.get_by_text("Identidad autenticada", exact=True).wait_for(timeout=15000)
 
 
@@ -170,8 +179,8 @@ def verify_two_owner_browser(browser, *, config, owner_a: TestOwner,
             page_a, page_b = (context.pages[0] for context in contexts)
             _login(page_a, owner_a)
             _login(page_b, owner_b)
-            _profile(page_a, owner_a, owner_b)
-            _profile(page_b, owner_b, owner_a)
+            _profile(page_a, owner_a, owner_b, backend_origin=config.backend_origin)
+            _profile(page_b, owner_b, owner_a, backend_origin=config.backend_origin)
             _portfolio(page_a, backend_origin=config.backend_origin)
             _portfolio(page_b, backend_origin=config.backend_origin)
             token_a, token_b = (observer.token() for observer in observers)
