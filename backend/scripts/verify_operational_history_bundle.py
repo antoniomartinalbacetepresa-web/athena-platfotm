@@ -186,9 +186,23 @@ def verify_bundle(path: Path, *, expected_sha256: str) -> dict[str, object]:
             or actions["totalUnresolvedEventCount"] !=
             actions["totalIncompleteEventCount"] + actions["totalConflictEventCount"]):
             raise ValueError("Inconsistent eligible-universe or action totals")
+    # A verified ZIP can still describe an empty universe or unresolved gaps.
+    # This is a diagnostic readiness gate, never proof of operational origin.
+    eligible = history["eligibleInstrumentCount"]
+    history_blockers = history["totalBlockingCount"]
+    action_blockers = actions["totalUnresolvedEventCount"]
+    blocking_reasons = []
+    if eligible == 0:
+        blocking_reasons.append("empty_eligible_universe")
+    if history_blockers:
+        blocking_reasons.append("history_gaps")
+    if action_blockers:
+        blocking_reasons.append("unresolved_corporate_actions")
     return {
         "status": "paired_diagnostic_bundle_verified",
         "asOf": manifest["asOf"],
+        "diagnosticBlockersZero": not blocking_reasons,
+        "diagnosticBlockingReasons": blocking_reasons,
         "custodySha256Matched": True,
         "sourceGenerationSha256": manifest["sourceGenerationSha256"],
         "eligibleInstrumentCount": history["eligibleInstrumentCount"],
@@ -201,17 +215,23 @@ def verify_bundle(path: Path, *, expected_sha256: str) -> dict[str, object]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--expected-sha256", required=True)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--require-zero-blockers", action="store_true",
+        help="Exit 4 for empty eligible universe, history gaps or unresolved actions; never attests production origin.",
+    )
+    args = parser.parse_args(argv)
     try:
         result = verify_bundle(args.bundle, expected_sha256=args.expected_sha256)
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, KeyError, TypeError):
         print(json.dumps({"status": "failed", "reason": "Evidence integrity or custody check failed"}))
         return 3
     print(json.dumps(result, sort_keys=True))
+    if args.require_zero_blockers and not result["diagnosticBlockersZero"]:
+        return 4
     return 0
 
 

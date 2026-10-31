@@ -145,3 +145,66 @@ def test_rejects_mixed_generations_with_rehashed_child_and_custody_digest(tmp_pa
     with pytest.raises(ValueError, match="child snapshots"):
         verifier.verify_bundle(path, expected_sha256=sha)
 
+
+
+def _zero_blockers(rows, _manifest):
+    history = rows[verifier.HISTORY][0]
+    history["currentDeepHistoryInstrumentCount"] = history["eligibleInstrumentCount"]
+    history["totalBlockingCount"] = 0
+    history["blockingByReason"] = {reason: 0 for reason in verifier.REASONS}
+    del rows[verifier.HISTORY][1:]
+    actions = rows[verifier.ACTIONS][0]
+    actions["totalUnresolvedEventCount"] = 0
+    actions["totalIncompleteEventCount"] = 0
+    actions["totalConflictEventCount"] = 0
+    del rows[verifier.ACTIONS][1:]
+
+
+def test_strict_diagnostic_gate_blocks_history_and_corporate_action_gaps(
+    tmp_path, capsys,
+):
+    path, sha = _bundle(tmp_path)
+    assert verifier.main([
+        "--bundle", str(path), "--expected-sha256", sha,
+        "--require-zero-blockers",
+    ]) == 4
+    result = json.loads(capsys.readouterr().out)
+    assert result["diagnosticBlockingReasons"] == [
+        "history_gaps", "unresolved_corporate_actions",
+    ]
+    assert result["operationalOriginVerified"] is False
+    assert result["productionAuthorization"] is False
+
+
+def test_strict_diagnostic_gate_accepts_zero_blockers_without_production_claim(
+    tmp_path, capsys,
+):
+    path, sha = _bundle(tmp_path, change=_zero_blockers)
+    assert verifier.main([
+        "--bundle", str(path), "--expected-sha256", sha,
+        "--require-zero-blockers",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["eligibleInstrumentCount"] == 2
+    assert result["diagnosticBlockersZero"] is True
+    assert result["diagnosticBlockingReasons"] == []
+    assert result["operationalOriginVerified"] is False
+    assert result["productionCoverageClaimed"] is False
+    assert result["productionAuthorization"] is False
+
+
+def test_strict_diagnostic_gate_rejects_empty_universe_with_zero_gaps(
+    tmp_path, capsys,
+):
+    def empty(rows, manifest):
+        rows[verifier.HISTORY][0]["eligibleInstrumentCount"] = 0
+        _zero_blockers(rows, manifest)
+
+    path, sha = _bundle(tmp_path, change=empty)
+    assert verifier.main([
+        "--bundle", str(path), "--expected-sha256", sha,
+        "--require-zero-blockers",
+    ]) == 4
+    result = json.loads(capsys.readouterr().out)
+    assert result["diagnosticBlockingReasons"] == ["empty_eligible_universe"]
+    assert result["productionAuthorization"] is False

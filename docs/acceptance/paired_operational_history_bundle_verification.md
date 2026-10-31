@@ -22,3 +22,27 @@ SHA-256 is recorded separately: SQLite online backup can rewrite file-header
 counters, so its byte hash need not equal either child snapshot hash. These
 checks establish internal consistency, **not** independent proof that the
 children originated from the claimed source generation or from production.
+
+
+## Fail-closed diagnostic blocker gate (optional)
+
+On the isolated verification host, use the same independently retained custody
+digest and add `--require-zero-blockers` to the command above. Exit code `4`
+means that the verified diagnostic reports **an empty eligible universe**, one
+or more instruments without current 365-day coverage, or one or more unresolved
+dividend/split reconciliation events. The machine-readable output includes
+`diagnosticBlockersZero` and `diagnosticBlockingReasons` without exposing
+individual instruments. Exit code `3` still means the bundle failed integrity
+verification; exit code `0` in strict mode means only that the internally
+consistent diagnostic has a **nonempty** eligible universe and zero reported
+blockers. Without the flag, valid bundles with gaps still exit `0` for
+inspection and export of the complete worklist.
+
+This is deliberately **not** a production-readiness, provenance, external
+timestamp or independent-provider-agreement gate. A zero-blocker diagnostic
+may come from fixtures or an incomplete operational universe. A real acceptance
+requires authorized snapshot custody, independent evidence of the eligible
+universe, operational source and PIT acquisition, plus second-family dividend/
+split agreement. The output retains `operationalOriginVerified=false`,
+`productionCoverageClaimed=false` and `productionAuthorization=false`.
+No automatic backfill, weighting, learning promotion or trading is authorized.
