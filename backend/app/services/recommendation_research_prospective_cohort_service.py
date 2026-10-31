@@ -192,6 +192,14 @@ class RecommendationResearchProspectiveCohortService:
             "descriptiveOnly": True,
         }
 
+    @staticmethod
+    def _measurement_times_consistent(
+        *, period_end: datetime, outcome_as_of: datetime,
+        outcome_created: datetime, error_created: datetime, cutoff: datetime,
+    ) -> bool:
+        """Require a physically possible, non-retroactive OOS outcome chain."""
+        return period_end <= outcome_as_of <= outcome_created <= error_created <= cutoff
+
     def measured_coverage(self, *, cohort_id: str, as_of: datetime) -> dict[str, Any]:
         """Measure the frozen denominator against persisted errors AND outcomes.
 
@@ -206,6 +214,8 @@ class RecommendationResearchProspectiveCohortService:
         )
 
         cutoff = self._time(as_of)
+        if cutoff > self._time(self._now()):
+            raise ValueError("El corte de medición OOS no puede ser futuro.")
         cohort = self.get(cohort_id=cohort_id)
         sealed = self._time(cohort["sealedAt"])
         if cutoff < sealed:
@@ -271,9 +281,13 @@ class RecommendationResearchProspectiveCohortService:
                         outcome = outcomes.validate_record(outcomes._row(outcome_row))
                         payload = outcome["payload"]
                         outcome_created = self._time(outcome["created_at"])
-                        if (outcome_created > created_at or outcome_created > cutoff
-                                or outcome_created < self._time(specification["periodEnd"])
-                                or self._time(payload["asOf"]) > cutoff):
+                        if not self._measurement_times_consistent(
+                            period_end=self._time(specification["periodEnd"]),
+                            outcome_as_of=self._time(payload["asOf"]),
+                            outcome_created=outcome_created,
+                            error_created=created_at,
+                            cutoff=cutoff,
+                        ):
                             raise ValueError("El outcome no respeta la secuencia temporal persistida.")
                         for key in ("cycleHash", "instrumentId", "symbol", "periodStart", "periodEnd"):
                             if payload.get(key) != specification.get(key):

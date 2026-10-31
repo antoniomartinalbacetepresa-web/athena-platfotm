@@ -496,3 +496,18 @@ nested no-advice/no-order research policy and the outer PIT/integrity policy on
 both append and read. Existing hashes are not rewritten; this is a fail-closed
 read/write integrity check, not proof of external source availability or
 prospective precommitment. Real matured OOS evidence remains mandatory.
+
+
+## Prospective measured-outcome physical chronology
+
+The read-only prospective cohort measurement rejects a future `asOf` cutoff
+against its observation clock. A matured forecast does not become eligible
+merely because an operator supplies a date beyond the present. For every
+counted error, the persisted chronology must satisfy
+`periodEnd <= outcome.asOf <= outcome.created_at <= error.created_at <= asOf`.
+In particular, an outcome saved **before** its declared observation timestamp
+cannot qualify as physically observed OOS evidence, even if the later error
+record and all numerical hashes are internally consistent. Synthetic
+regressions can inject a later test clock; they are not operational cohorts.
+This is a local chronology check, not a trusted timestamp, independent market
+source attestation, predictive-skill claim or permission to promote models.

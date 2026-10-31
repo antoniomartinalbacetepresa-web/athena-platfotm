@@ -1,5 +1,5 @@
 """Synthetic regressions only: no operational OOS claim."""
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 import pytest
@@ -20,6 +20,8 @@ def test_measured_reports_matured_missing_without_supplied_hashes(context, tmp_p
     cohort = service.register(cohort_id="measured-empty", specification_hashes=[ref])
     spec = service._specifications.get_by_hash(specification_hash=ref)["artifact"]
     cutoff = service._time(spec["periodEnd"]) + timedelta(days=1)
+    # The fixture deliberately models a later observation clock.
+    service._now = lambda: cutoff + timedelta(seconds=1)
     report = service.measured_coverage(cohort_id="measured-empty", as_of=cutoff)
     assert report["cohortHash"] == cohort["cohortHash"]
     assert report["selectedCount"] == report["maturedCount"] == 1
@@ -38,6 +40,7 @@ def test_measured_rejects_tampered_persisted_error(context, tmp_path):
     service.register(cohort_id="measured-corrupt", specification_hashes=[ref])
     spec = service._specifications.get_by_hash(specification_hash=ref)["artifact"]
     cutoff = service._time(spec["periodEnd"]) + timedelta(days=1)
+    service._now = lambda: cutoff + timedelta(seconds=1)
     RecommendationResearchForecastErrorRepository(service._database).initialize()
     with service._database.connect() as connection:
         connection.execute(
@@ -119,3 +122,39 @@ def test_descriptive_errors_reject_invalid_values_without_overflow():
     ])
     assert large["meanSignedError"] == pytest.approx(0)
     assert large["rootMeanSquaredError"] == pytest.approx(1e154)
+
+
+def test_measured_rejects_future_cutoff_before_reading_outcomes(context, tmp_path):
+    service, ref, _ = setup_cohort(context, tmp_path)
+    service.register(cohort_id="future-cutoff", specification_hashes=[ref])
+    future = service._time(service._now()) + timedelta(days=3)
+    with pytest.raises(ValueError, match="no puede ser futuro"):
+        service.measured_coverage(cohort_id="future-cutoff", as_of=future)
+
+
+def test_measured_requires_physical_outcome_after_declared_observation():
+    check = RecommendationResearchProspectiveCohortService._measurement_times_consistent
+    end = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    observed = end + timedelta(hours=1)
+    persisted = observed + timedelta(minutes=1)
+    error = persisted + timedelta(minutes=1)
+    cutoff = error + timedelta(minutes=1)
+    assert check(
+        period_end=end, outcome_as_of=observed,
+        outcome_created=persisted, error_created=error, cutoff=cutoff,
+    )
+    # A stored outcome cannot describe an observation not yet available when
+    # the outcome itself was persisted, even if its forecast error came later.
+    assert not check(
+        period_end=end, outcome_as_of=error,
+        outcome_created=persisted, error_created=error, cutoff=cutoff,
+    )
+    assert not check(
+        period_end=end, outcome_as_of=observed,
+        outcome_created=error, error_created=persisted, cutoff=cutoff,
+    )
+    assert not check(
+        period_end=end, outcome_as_of=observed,
+        outcome_created=persisted, error_created=error,
+        cutoff=error - timedelta(microseconds=1),
+    )
