@@ -1,0 +1,584 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import math
+import hashlib
+import json
+import re
+from typing import Any
+
+from app.repositories.longitudinal_oos_policy_repository import (
+    LongitudinalOosPolicyRepository,
+)
+from app.services.longitudinal_oos_sufficiency_policy_service import (
+    LongitudinalOosSufficiencyPolicyService,
+)
+from app.services.recommendation_research_forecast_error_oos_service import (
+    RecommendationResearchForecastErrorOosService,
+)
+
+
+class GovernedForecastErrorOosService:
+    """Compose OOS measurement with durable human-governed sufficiency policy.
+
+    Measurement remains descriptive and policy-independent. The policy repository
+    is read point-in-time at the same ``as_of`` cutoff; no policy is created,
+    approved, promoted, or mutated by this service.
+    """
+
+    def __init__(
+        self,
+        *,
+        measurement_service: RecommendationResearchForecastErrorOosService | None = None,
+        policy_service: LongitudinalOosSufficiencyPolicyService | None = None,
+        policy_repository: LongitudinalOosPolicyRepository | None = None,
+    ) -> None:
+        self._measurement = measurement_service or RecommendationResearchForecastErrorOosService()
+        self._policy = policy_service or LongitudinalOosSufficiencyPolicyService()
+        self._repository = policy_repository or LongitudinalOosPolicyRepository()
+
+    def evaluate(
+        self,
+        *,
+        as_of: datetime,
+        cohort_record: dict[str, Any] | None,
+        error_records: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        measurement = self._measurement.evaluate(
+            as_of=as_of,
+            cohort_record=cohort_record,
+            error_records=error_records,
+        )
+        self._validate_measurement_contract(measurement)
+        policy_record = self._repository.get_latest_policy(as_of=as_of)
+        approval_record = None
+        if policy_record is not None:
+            artifact = policy_record.get("artifact")
+            if not isinstance(artifact, dict):
+                raise RuntimeError("La política longitudinal persistida perdió artifact.")
+            fingerprint = artifact.get("policyFingerprint")
+            if not isinstance(fingerprint, str):
+                raise RuntimeError("La política longitudinal persistida perdió policyFingerprint.")
+            approval_record = self._repository.get_latest_approval(
+                policy_fingerprint=fingerprint,
+                as_of=as_of,
+            )
+
+        sufficiency = self._policy.evaluate(
+            as_of=as_of,
+            measurement=measurement,
+            policy_record=policy_record,
+            approval_record=approval_record,
+        )
+        result = dict(measurement)
+        result["longitudinalSufficiency"] = sufficiency
+        result["productionLearningEligible"] = False
+        result["productionEligible"] = False
+        result["recommendationCandidateReady"] = False
+        result["isWeightingReady"] = False
+        policy = result.get("policy")
+        if isinstance(policy, dict):
+            policy = dict(policy)
+            policy["longitudinalSufficiency"] = "durable_precommitted_human_approved_policy_required"
+            policy["automaticProductionPromotion"] = False
+            policy["automaticModelMutation"] = False
+            policy["automaticTrading"] = False
+            result["policy"] = policy
+        return result
+
+    # Self-contained content digest, not an external precommitment or signature.
+    _CHALLENGER_BOUND_FIELDS = (
+        "provider", "modelName", "modelVersion", "modelConfig",
+        "forecastOrigin", "inputObservedThrough", "inputRetrievedAt",
+        "horizonSeconds", "forecastValue", "baselineName", "baselineValue",
+        "sourceProvenance",
+    )
+
+    @classmethod
+    def _challenger_fingerprint(cls, record: dict[str, Any]) -> str:
+        try:
+            bound = {field: record[field] for field in cls._CHALLENGER_BOUND_FIELDS}
+            encoded = json.dumps(
+                bound, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise ValueError("external challenger bound fields are not canonical JSON.") from None
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _verify_challenger_fingerprint(cls, record: dict[str, Any]) -> str:
+        claimed = record.get("contractFingerprint")
+        if (
+            not isinstance(claimed, str)
+            or re.fullmatch(r"[0-9a-f]{64}", claimed) is None
+            or claimed != cls._challenger_fingerprint(record)
+        ):
+            raise ValueError("external challenger contract fingerprint mismatch.")
+        return claimed
+
+    def bind_external_challenger(
+        self,
+        *,
+        provider: str,
+        model_name: str,
+        model_version: str,
+        model_config: dict[str, Any],
+        forecast_origin: datetime,
+        input_observed_through: datetime,
+        input_retrieved_at: datetime,
+        horizon_seconds: int,
+        forecast_value: float,
+        baseline_name: str,
+        baseline_value: float,
+        source_provenance: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Bind an external model to research-only PIT/OOS governance."""
+        origin = self._aware(forecast_origin, "forecast_origin")
+        observed = self._aware(input_observed_through, "input_observed_through")
+        retrieved = self._aware(input_retrieved_at, "input_retrieved_at")
+        if observed > retrieved or retrieved > origin:
+            raise ValueError(
+                "External challenger PIT ordering must satisfy observed <= retrieved <= origin."
+            )
+        if isinstance(horizon_seconds, bool) or not isinstance(horizon_seconds, int) or horizon_seconds <= 0:
+            raise ValueError("horizon_seconds must be a positive integer.")
+        forecast = self._finite(forecast_value, "forecast_value")
+        baseline = self._finite(baseline_value, "baseline_value")
+        if not isinstance(model_config, dict) or not model_config:
+            raise ValueError("model_config must be a non-empty mapping.")
+        try:
+            frozen_config = json.loads(json.dumps(
+                model_config, sort_keys=True, allow_nan=False,
+            ))
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("model_config must contain canonical finite JSON values.") from None
+        if not isinstance(source_provenance, list) or not source_provenance:
+            raise ValueError("source_provenance must preserve at least one source.")
+        provenance: list[dict[str, str]] = []
+        for item in source_provenance:
+            if not isinstance(item, dict):
+                raise ValueError("source_provenance contains an invalid entry.")
+            source = self._text(item.get("source"), "source_provenance.source")
+            source_observed = self._iso(item.get("observedAt"), "source_provenance.observedAt")
+            source_retrieved = self._iso(item.get("retrievedAt"), "source_provenance.retrievedAt")
+            if source_observed > source_retrieved or source_retrieved > origin:
+                raise ValueError("External challenger provenance violates the PIT cutoff.")
+            if source_observed > observed or source_retrieved > retrieved:
+                raise ValueError("External challenger source provenance exceeds declared input cutoff.")
+            provenance.append({
+                "source": source,
+                "observedAt": source_observed.isoformat(),
+                "retrievedAt": source_retrieved.isoformat(),
+            })
+        contract = {
+            "module": "external_forecast_challenger_contract",
+            "provider": self._text(provider, "provider"),
+            "modelName": self._text(model_name, "model_name"),
+            "modelVersion": self._text(model_version, "model_version"),
+            "modelConfig": frozen_config,
+            "forecastOrigin": origin.isoformat(),
+            "inputObservedThrough": observed.isoformat(),
+            "inputRetrievedAt": retrieved.isoformat(),
+            "horizonSeconds": horizon_seconds,
+            "forecastValue": forecast,
+            "baselineName": self._text(baseline_name, "baseline_name"),
+            "baselineValue": baseline,
+            "sourceProvenance": provenance,
+            "evaluationMode": "prospective_oos_paired_with_baseline",
+            "challengerOnly": True,
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "recommendationCandidateReady": False,
+            "isWeightingReady": False,
+            "automaticModelPromotion": False,
+            "automaticWeighting": False,
+            "automaticTrading": False,
+            "policy": {
+                "authority": "research_diagnostic_only",
+                "longitudinalEvidence": "existing_human_governed_oos_gates_required",
+                "baseline": "paired_baseline_required",
+            },
+        }
+        contract["contractFingerprint"] = self._challenger_fingerprint(contract)
+        return contract
+
+    def measure_external_challenger_outcome(
+        self,
+        *,
+        challenger: dict[str, Any],
+        as_of: datetime,
+        outcome_value: float,
+        outcome_observed_at: datetime,
+        outcome_retrieved_at: datetime,
+    ) -> dict[str, Any]:
+        """Measure a matured challenger and its paired baseline on one realized outcome."""
+        cutoff = self._aware(as_of, "as_of")
+        if not isinstance(challenger, dict) or challenger.get("module") != "external_forecast_challenger_contract":
+            raise ValueError("challenger must be a governed external forecast contract.")
+        if challenger.get("challengerOnly") is not True:
+            raise ValueError("external challenger must remain challenger-only.")
+        for field in (
+            "productionLearningEligible",
+            "productionEligible",
+            "recommendationCandidateReady",
+            "isWeightingReady",
+            "automaticModelPromotion",
+            "automaticWeighting",
+            "automaticTrading",
+        ):
+            if challenger.get(field) is not False:
+                raise ValueError(f"external challenger escalated forbidden authority: {field}.")
+        origin = self._iso(challenger.get("forecastOrigin"), "challenger.forecastOrigin")
+        input_observed = self._iso(
+            challenger.get("inputObservedThrough"), "challenger.inputObservedThrough"
+        )
+        input_retrieved = self._iso(
+            challenger.get("inputRetrievedAt"), "challenger.inputRetrievedAt"
+        )
+        if input_observed > input_retrieved or input_retrieved > origin:
+            raise ValueError("external challenger input PIT ordering was corrupted after binding.")
+        model_config = challenger.get("modelConfig")
+        if not isinstance(model_config, dict) or not model_config:
+            raise ValueError("challenger.modelConfig must remain a non-empty mapping.")
+        source_provenance = challenger.get("sourceProvenance")
+        if not isinstance(source_provenance, list) or not source_provenance:
+            raise ValueError("challenger.sourceProvenance must preserve at least one source.")
+        provenance: list[dict[str, str]] = []
+        for item in source_provenance:
+            if not isinstance(item, dict):
+                raise ValueError("challenger.sourceProvenance contains an invalid entry.")
+            source = self._text(item.get("source"), "challenger.sourceProvenance.source")
+            source_observed = self._iso(
+                item.get("observedAt"), "challenger.sourceProvenance.observedAt"
+            )
+            source_retrieved = self._iso(
+                item.get("retrievedAt"), "challenger.sourceProvenance.retrievedAt"
+            )
+            if source_observed > source_retrieved or source_retrieved > origin:
+                raise ValueError("external challenger provenance PIT cutoff was corrupted after binding.")
+            if source_observed > input_observed or source_retrieved > input_retrieved:
+                raise ValueError("external challenger source provenance exceeds declared input cutoff.")
+            provenance.append({
+                "source": source,
+                "observedAt": source_observed.isoformat(),
+                "retrievedAt": source_retrieved.isoformat(),
+            })
+        horizon = challenger.get("horizonSeconds")
+        if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
+            raise ValueError("challenger.horizonSeconds must be a positive integer.")
+        maturity = origin + timedelta(seconds=horizon)
+        observed = self._aware(outcome_observed_at, "outcome_observed_at")
+        retrieved = self._aware(outcome_retrieved_at, "outcome_retrieved_at")
+        if observed < maturity:
+            raise ValueError("realized outcome is not mature for the challenger horizon.")
+        if observed > retrieved or retrieved > cutoff:
+            raise ValueError("outcome PIT ordering must satisfy observed <= retrieved <= as_of.")
+        actual = self._finite(outcome_value, "outcome_value")
+        forecast = self._finite(challenger.get("forecastValue"), "challenger.forecastValue")
+        baseline = self._finite(challenger.get("baselineValue"), "challenger.baselineValue")
+        model_error = forecast - actual
+        baseline_error = baseline - actual
+        derived = {
+            "signedError": model_error,
+            "absoluteError": abs(model_error),
+            "squaredError": model_error * model_error,
+            "baselineSignedError": baseline_error,
+            "baselineAbsoluteError": abs(baseline_error),
+            "baselineSquaredError": baseline_error * baseline_error,
+            "absoluteErrorDeltaVsBaseline": abs(model_error) - abs(baseline_error),
+        }
+        if not all(math.isfinite(value) for value in derived.values()):
+            raise ValueError("external challenger derived errors must be finite.")
+        contract_fingerprint = self._verify_challenger_fingerprint(challenger)
+        return {
+            "module": "external_forecast_challenger_realized_error",
+            "contractFingerprint": contract_fingerprint,
+            "provider": self._text(challenger.get("provider"), "challenger.provider"),
+            "modelName": self._text(challenger.get("modelName"), "challenger.modelName"),
+            "modelVersion": self._text(challenger.get("modelVersion"), "challenger.modelVersion"),
+            "modelConfig": dict(model_config),
+            "forecastOrigin": origin.isoformat(),
+            "inputObservedThrough": input_observed.isoformat(),
+            "inputRetrievedAt": input_retrieved.isoformat(),
+            "sourceProvenance": provenance,
+            "horizonSeconds": horizon,
+            "maturityAt": maturity.isoformat(),
+            "outcomeObservedAt": observed.isoformat(),
+            "outcomeRetrievedAt": retrieved.isoformat(),
+            "asOf": cutoff.isoformat(),
+            "outcomeValue": actual,
+            "forecastValue": forecast,
+            "baselineName": self._text(challenger.get("baselineName"), "challenger.baselineName"),
+            "baselineValue": baseline,
+            **derived,
+            "singleObservationSkillClaimed": False,
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "automaticModelPromotion": False,
+            "automaticWeighting": False,
+            "automaticTrading": False,
+            "longitudinalGateRequired": True,
+        }
+
+
+    def summarize_external_challenger_outcomes(
+        self,
+        *,
+        error_records: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        """Summarize homogeneous realized challenger errors without claiming skill."""
+        if not error_records:
+            raise ValueError("error_records must contain at least one realized outcome.")
+
+        identity: tuple[str, str, str, int, str] | None = None
+        canonical_model_config: dict[str, Any] | None = None
+        model_abs: list[float] = []
+        model_sq: list[float] = []
+        model_signed: list[float] = []
+        baseline_abs: list[float] = []
+        baseline_sq: list[float] = []
+        baseline_signed: list[float] = []
+        wins = ties = losses = 0
+        forecast_origins: set[str] = set()
+
+        for record in error_records:
+            if not isinstance(record, dict) or record.get("module") != "external_forecast_challenger_realized_error":
+                raise ValueError("error_records must contain governed realized challenger errors.")
+            for field in (
+                "singleObservationSkillClaimed",
+                "productionLearningEligible",
+                "productionEligible",
+                "isWeightingReady",
+                "automaticModelPromotion",
+                "automaticWeighting",
+                "automaticTrading",
+            ):
+                if record.get(field) is not False:
+                    raise ValueError(f"realized challenger escalated forbidden authority: {field}.")
+            if record.get("longitudinalGateRequired") is not True:
+                raise ValueError("realized challenger must preserve the longitudinal human gate.")
+            model_config = record.get("modelConfig")
+            if not isinstance(model_config, dict) or not model_config:
+                raise ValueError("error.modelConfig must remain a non-empty mapping.")
+            forecast_origin = self._iso(record.get("forecastOrigin"), "error.forecastOrigin")
+            forecast_origin_key = forecast_origin.isoformat()
+            if forecast_origin_key in forecast_origins:
+                raise ValueError("error_records must contain distinct forecast origins.")
+            forecast_origins.add(forecast_origin_key)
+            provider = self._text(record.get("provider"), "error.provider")
+            model_name = self._text(record.get("modelName"), "error.modelName")
+            model_version = self._text(record.get("modelVersion"), "error.modelVersion")
+            horizon = record.get("horizonSeconds")
+            if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
+                raise ValueError("error.horizonSeconds must be a positive integer.")
+            # Reject mixed cohorts before checking each record's internal PIT
+            # chronology; both checks remain mandatory for a homogeneous cohort.
+            baseline_name = self._text(record.get("baselineName"), "error.baselineName")
+            current = (provider, model_name, model_version, horizon, baseline_name)
+            if identity is None:
+                identity = current
+                canonical_model_config = dict(model_config)
+            elif current != identity:
+                raise ValueError("error_records must share provider/model/version/horizon/baseline.")
+            elif model_config != canonical_model_config:
+                raise ValueError("error_records must share the same modelConfig.")
+
+            # Revalidate the complete PIT chain when a realized error is
+            # consumed. The input is a mutable diagnostic dictionary: a caller
+            # may have changed timestamps after measure_external_challenger_outcome.
+            input_observed = self._iso(
+                record.get("inputObservedThrough"), "error.inputObservedThrough"
+            )
+            input_retrieved = self._iso(
+                record.get("inputRetrievedAt"), "error.inputRetrievedAt"
+            )
+            if input_observed > input_retrieved or input_retrieved > forecast_origin:
+                raise ValueError("error record failed input PIT ordering.")
+            sources = record.get("sourceProvenance")
+            if not isinstance(sources, list) or not sources:
+                raise ValueError("error record requires source provenance.")
+            for source in sources:
+                if not isinstance(source, dict):
+                    raise ValueError("error record contains invalid source provenance.")
+                self._text(source.get("source"), "error.sourceProvenance.source")
+                source_observed = self._iso(
+                    source.get("observedAt"), "error.sourceProvenance.observedAt"
+                )
+                source_retrieved = self._iso(
+                    source.get("retrievedAt"), "error.sourceProvenance.retrievedAt"
+                )
+                if source_observed > source_retrieved or source_retrieved > forecast_origin:
+                    raise ValueError("error record failed source provenance PIT ordering.")
+                if source_observed > input_observed or source_retrieved > input_retrieved:
+                    raise ValueError("error record source provenance exceeds declared input cutoff.")
+            maturity = forecast_origin + timedelta(seconds=horizon)
+            if self._iso(record.get("maturityAt"), "error.maturityAt") != maturity:
+                raise ValueError("error record maturity does not match forecast horizon.")
+            outcome_observed = self._iso(
+                record.get("outcomeObservedAt"), "error.outcomeObservedAt"
+            )
+            outcome_retrieved = self._iso(
+                record.get("outcomeRetrievedAt"), "error.outcomeRetrievedAt"
+            )
+            cutoff = self._iso(record.get("asOf"), "error.asOf")
+            if outcome_observed < maturity:
+                raise ValueError("error record outcome precedes forecast maturity.")
+            if outcome_observed > outcome_retrieved or outcome_retrieved > cutoff:
+                raise ValueError("error record failed outcome PIT ordering.")
+            actual = self._finite(record.get("outcomeValue"), "error.outcomeValue")
+            forecast = self._finite(record.get("forecastValue"), "error.forecastValue")
+            baseline = self._finite(record.get("baselineValue"), "error.baselineValue")
+            signed = forecast - actual
+            baseline_err = baseline - actual
+            expected = {
+                "signedError": signed,
+                "absoluteError": abs(signed),
+                "squaredError": signed * signed,
+                "baselineSignedError": baseline_err,
+                "baselineAbsoluteError": abs(baseline_err),
+                "baselineSquaredError": baseline_err * baseline_err,
+                "absoluteErrorDeltaVsBaseline": abs(signed) - abs(baseline_err),
+            }
+            if not all(math.isfinite(value) for value in expected.values()):
+                raise ValueError("error record derived metrics must be finite.")
+            for field, value in expected.items():
+                stored = self._finite(record.get(field), f"error.{field}")
+                if not math.isclose(stored, value, rel_tol=1e-12, abs_tol=1e-12):
+                    raise ValueError(f"error record failed metric reconciliation: {field}.")
+            self._verify_challenger_fingerprint(record)
+
+            model_signed.append(signed)
+            model_abs.append(abs(signed))
+            model_sq.append(signed * signed)
+            baseline_signed.append(baseline_err)
+            baseline_abs.append(abs(baseline_err))
+            baseline_sq.append(baseline_err * baseline_err)
+            if abs(signed) < abs(baseline_err):
+                wins += 1
+            elif math.isclose(abs(signed), abs(baseline_err), rel_tol=1e-12, abs_tol=1e-12):
+                ties += 1
+            else:
+                losses += 1
+
+        assert identity is not None
+        count = len(model_abs)
+        mae = self._mean_finite(model_abs, "meanAbsoluteError")
+        baseline_mae = self._mean_finite(baseline_abs, "baselineMeanAbsoluteError")
+        return {
+            "module": "external_forecast_challenger_longitudinal_diagnostic",
+            "provider": identity[0],
+            "modelName": identity[1],
+            "modelVersion": identity[2],
+            "horizonSeconds": identity[3],
+            "baselineName": identity[4],
+            "observationCount": count,
+            "distinctForecastOriginCount": len(forecast_origins),
+            "meanAbsoluteError": mae,
+            "rootMeanSquaredError": math.sqrt(self._mean_finite(model_sq, "meanSquaredError")),
+            "meanSignedError": self._mean_finite(model_signed, "meanSignedError"),
+            "baselineMeanAbsoluteError": baseline_mae,
+            "baselineRootMeanSquaredError": math.sqrt(
+                self._mean_finite(baseline_sq, "baselineMeanSquaredError")
+            ),
+            "baselineMeanSignedError": self._mean_finite(baseline_signed, "baselineMeanSignedError"),
+            "meanAbsoluteErrorDeltaVsBaseline": mae - baseline_mae,
+            "wins": wins,
+            "ties": ties,
+            "losses": losses,
+            "winRate": wins / count,
+            "skillClaimed": False,
+            "calibrationClaimed": False,
+            "productionLearningEligible": False,
+            "productionEligible": False,
+            "isWeightingReady": False,
+            "automaticModelPromotion": False,
+            "automaticWeighting": False,
+            "automaticTrading": False,
+            "longitudinalGateRequired": True,
+        }
+
+
+    @staticmethod
+    def _aware(value: datetime, field: str) -> datetime:
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field} must include timezone.")
+        return value.astimezone(timezone.utc)
+
+    def _iso(self, value: Any, field: str) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be ISO-8601.")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} must be ISO-8601.") from exc
+        return self._aware(parsed, field)
+
+    @staticmethod
+    def _mean_finite(values: list[float], field: str) -> float:
+        # Normalize before summing: two finite squared errors may overflow
+        # their raw sum even when their arithmetic mean is representable.
+        try:
+            mean = math.fsum(value / len(values) for value in values)
+        except OverflowError:
+            raise ValueError(f"{field} overflowed finite aggregation.") from None
+        if not math.isfinite(mean):
+            raise ValueError(f"{field} overflowed finite aggregation.")
+        return mean
+
+    @staticmethod
+    def _finite(value: Any, field: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} must be finite.")
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            raise ValueError(f"{field} must be finite.") from None
+        if not math.isfinite(number):
+            raise ValueError(f"{field} must be finite.")
+        return number
+
+    @staticmethod
+    def _text(value: Any, field: str) -> str:
+        text = str(value).strip() if value is not None else ""
+        if not text:
+            raise ValueError(f"{field} is required.")
+        return text
+
+    @classmethod
+    def _validate_measurement_contract(cls, measurement: dict[str, Any]) -> None:
+        if not isinstance(measurement, dict):
+            raise RuntimeError("La medición OOS gobernada no es estructurada.")
+        span = measurement.get("evaluationSpanDays")
+        if isinstance(span, bool) or not isinstance(span, (int, float)) or not math.isfinite(float(span)) or float(span) < 0:
+            raise RuntimeError("La medición OOS contiene evaluationSpanDays inválido.")
+        counts: dict[str, int] = {}
+        for field in (
+            "distinctEvaluationPeriodCount",
+            "eligibleOutcomeCount",
+            "forecastErrorCount",
+            "distinctResolvedIssuerCount",
+        ):
+            counts[field] = cls._require_nonnegative_int(measurement.get(field), field)
+        if counts["forecastErrorCount"] > counts["eligibleOutcomeCount"]:
+            raise RuntimeError("La medición OOS contiene más forecast errors que outcomes elegibles.")
+        horizons = measurement.get("horizons")
+        if not isinstance(horizons, dict):
+            raise RuntimeError("La medición OOS gobernada carece de horizons estructurados.")
+        horizon_error_total = 0
+        for horizon, payload in horizons.items():
+            if not isinstance(horizon, str) or not horizon.strip() or not isinstance(payload, dict):
+                raise RuntimeError("La medición OOS contiene un horizonte inválido.")
+            horizon_error_total += cls._require_nonnegative_int(
+                payload.get("forecastErrorCount"),
+                f"horizons.{horizon}.forecastErrorCount",
+            )
+        if horizon_error_total != counts["forecastErrorCount"]:
+            raise RuntimeError("La medición OOS no reconcilia forecastErrorCount con sus horizontes.")
+
+    @staticmethod
+    def _require_nonnegative_int(value: Any, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RuntimeError(f"La medición OOS contiene {field} inválido.")
+        return value

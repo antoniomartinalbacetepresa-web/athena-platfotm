@@ -1,0 +1,297 @@
+name: Validate ATHENA TYCHE
+
+on:
+  push:
+    branches:
+      - dev/real-market-backend
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: python -m pytest -q --junitxml=pytest-results.xml
+
+      - name: Upload backend test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-results
+          path: backend/pytest-results.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  flutter-validation:
+    name: Flutter analyze, tests and release build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee flutter-analyze.log
+
+      - name: Test
+        if: always()
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee flutter-test.log
+
+      - name: Browser cross-surface acceptance (Chrome)
+        run: |
+          set -o pipefail
+          # All existing Chrome acceptance files remain mandatory. On some
+          # runners Chrome stalls before executing even one test; only that
+          # bootstrap timeout may be retried once. A failing assertion, or a
+          # timeout after test execution begins, always fails the gate.
+          chrome_tests=(
+            test/features/dashboard/dashboard_athena_synthesis_wiring_test.dart
+            test/features/market/market_page_integration_test.dart
+            test/features/news/news_page_full_feed_acceptance_test.dart
+            test/features/dashboard/relevant_investors_panel_test.dart
+            test/features/portfolio/dashboard_portfolio_cross_surface_e2e_test.dart
+            test/features/profile/profile_page_test.dart
+            test/features/profile/profile_personalization_shell_test.dart
+            test/features/profile/profile_session_transition_e2e_test.dart
+            test/features/portfolio/profile_portfolio_logout_cross_surface_e2e_test.dart
+            test/features/portfolio/authenticated_portfolio_page_e2e_test.dart
+          )
+          run_chrome_suite() {
+            timeout --signal=TERM --kill-after=15s 8m \
+              flutter test --platform chrome --reporter expanded "${chrome_tests[@]}" \
+              2>&1 | tee flutter-chrome-acceptance.log
+            return "${PIPESTATUS[0]}"
+          }
+          set +e
+          run_chrome_suite
+          first_status=$?
+          set -e
+          if [ "$first_status" -eq 124 ] && \
+             ! grep -Eq '^[0-9]{2}:[0-9]{2} \+[1-9][0-9]*:' flutter-chrome-acceptance.log; then
+            mv flutter-chrome-acceptance.log flutter-chrome-bootstrap-timeout.log
+            echo "Chrome timed out before any test completed; retrying once."
+            run_chrome_suite
+          else
+            exit "$first_status"
+          fi
+
+      - name: Build release web bundle
+        if: success()
+        env:
+          ATHENA_WEB_BACKEND_ORIGIN: ${{ vars.ATHENA_WEB_BACKEND_ORIGIN }}
+          DEPLOYED_BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ATHENA_WEB_BACKEND_ORIGIN" ]; then
+            backend_origin="$(python3 ../backend/scripts/flutter_web_backend_origin.py)"
+            flutter build web --release --dart-define="ATHENA_BACKEND_URL=$backend_origin"
+          elif [ "$DEPLOYED_BROWSER_ENABLED" = "true" ]; then
+            echo "Deployed browser acceptance requires a configured HTTPS backend origin" >&2
+            exit 1
+          else
+            # Development-only bundle; its default backend points to loopback.
+            flutter build web --release
+          fi
+
+      - name: Stamp release bundle with exact source SHA
+        if: success()
+        env:
+          ATHENA_WEB_BACKEND_ORIGIN: ${{ vars.ATHENA_WEB_BACKEND_ORIGIN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+
+          sha = os.environ["GITHUB_SHA"].lower()
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("Invalid source SHA")
+          manifest = pathlib.Path("build/web/athena-build.json")
+          if not manifest.parent.is_dir():
+              raise SystemExit("Release web bundle missing")
+          manifest.write_text(
+              json.dumps(
+                  {"schema": "athena.web-build.v2", "sourceSha": sha,
+                   "backendOrigin": os.environ.get("ATHENA_WEB_BACKEND_ORIGIN", "").rstrip("/") or None},
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload Flutter validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-validation-logs
+          path: |
+            app/flutter-analyze.log
+            app/flutter-test.log
+            app/flutter-chrome-acceptance.log
+            app/flutter-chrome-bootstrap-timeout.log
+            app/pubspec.lock
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload release web bundle
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-web-release
+          path: app/build/web
+          if-no-files-found: error
+          retention-days: 7
+
+  deployed-api-acceptance:
+    name: Deployed cross-surface API and two-owner isolation (opt-in)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev/real-market-backend' && vars.ATHENA_DEPLOYED_ACCEPTANCE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging-acceptance
+    steps:
+      - name: Checkout exact SHA
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install HTTP client
+        run: python -m pip install httpx==0.28.1
+
+      - name: Require independently attested deployed SHA
+        env:
+          DEPLOYED_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_SHA }}
+        run: |
+          test -n "$DEPLOYED_SHA"
+          test "$DEPLOYED_SHA" = "$GITHUB_SHA"
+
+      - name: Verify deployed canonical bindings, owner isolation and revocation
+        env:
+          ATHENA_ACCEPTANCE_BASE_URL: ${{ secrets.ATHENA_ACCEPTANCE_BASE_URL }}
+          ATHENA_ACCEPTANCE_A_EMAIL: ${{ secrets.ATHENA_ACCEPTANCE_A_EMAIL }}
+          ATHENA_ACCEPTANCE_A_PASSWORD: ${{ secrets.ATHENA_ACCEPTANCE_A_PASSWORD }}
+          ATHENA_ACCEPTANCE_A_POSITION_ID: ${{ vars.ATHENA_ACCEPTANCE_A_POSITION_ID }}
+          ATHENA_ACCEPTANCE_A_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_A_CURRENCY }}
+          ATHENA_ACCEPTANCE_B_EMAIL: ${{ secrets.ATHENA_ACCEPTANCE_B_EMAIL }}
+          ATHENA_ACCEPTANCE_B_PASSWORD: ${{ secrets.ATHENA_ACCEPTANCE_B_PASSWORD }}
+          ATHENA_ACCEPTANCE_B_POSITION_ID: ${{ vars.ATHENA_ACCEPTANCE_B_POSITION_ID }}
+          ATHENA_ACCEPTANCE_B_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_B_CURRENCY }}
+        run: python backend/scripts/deployed_cross_surface_acceptance.py
+
+  deployed-flutter-browser-acceptance:
+    name: Deployed Flutter Web guest research browser (opt-in)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev/real-market-backend' && vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging-acceptance
+    steps:
+      - name: Checkout exact SHA
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned browser runner
+        run: |
+          python -m pip install playwright==1.55.0 httpx==0.28.1
+          python -m playwright install --with-deps chromium
+
+      - name: Verify deployed Flutter Web guest journey
+        env:
+          ATHENA_ACCEPTANCE_WEB_URL: ${{ secrets.ATHENA_ACCEPTANCE_WEB_URL }}
+          ATHENA_ACCEPTANCE_BASE_URL: ${{ secrets.ATHENA_ACCEPTANCE_BASE_URL }}
+          ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA }}
+        run: python backend/scripts/deployed_flutter_browser_acceptance.py
+
+      - name: Verify deployed Flutter Web two-owner browser lifecycle (opt-in)
+        if: vars.ATHENA_DEPLOYED_OWNER_BROWSER_ACCEPTANCE_ENABLED == 'true'
+        env:
+          ATHENA_ACCEPTANCE_WEB_URL: ${{ secrets.ATHENA_ACCEPTANCE_WEB_URL }}
+          ATHENA_ACCEPTANCE_BASE_URL: ${{ secrets.ATHENA_ACCEPTANCE_BASE_URL }}
+          ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA: ${{ vars.ATHENA_ACCEPTANCE_DEPLOYED_WEB_SHA }}
+          ATHENA_ACCEPTANCE_A_EMAIL: ${{ secrets.ATHENA_ACCEPTANCE_A_EMAIL }}
+          ATHENA_ACCEPTANCE_A_PASSWORD: ${{ secrets.ATHENA_ACCEPTANCE_A_PASSWORD }}
+          ATHENA_ACCEPTANCE_A_POSITION_ID: ${{ vars.ATHENA_ACCEPTANCE_A_POSITION_ID }}
+          ATHENA_ACCEPTANCE_A_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_A_CURRENCY }}
+          ATHENA_ACCEPTANCE_B_EMAIL: ${{ secrets.ATHENA_ACCEPTANCE_B_EMAIL }}
+          ATHENA_ACCEPTANCE_B_PASSWORD: ${{ secrets.ATHENA_ACCEPTANCE_B_PASSWORD }}
+          ATHENA_ACCEPTANCE_B_POSITION_ID: ${{ vars.ATHENA_ACCEPTANCE_B_POSITION_ID }}
+          ATHENA_ACCEPTANCE_B_CURRENCY: ${{ vars.ATHENA_ACCEPTANCE_B_CURRENCY }}
+        run: python backend/scripts/deployed_owner_browser_acceptance.py
+
+  release-validation-gate:
+    name: Release validation gate
+    if: always()
+    needs:
+      - backend-tests
+      - flutter-validation
+      - deployed-api-acceptance
+      - deployed-flutter-browser-acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact source for release gate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Require backend, Flutter and release-build validation
+        env:
+          BACKEND_RESULT: ${{ needs.backend-tests.result }}
+          FLUTTER_RESULT: ${{ needs.flutter-validation.result }}
+          DEPLOYED_RESULT: ${{ needs.deployed-api-acceptance.result }}
+          DEPLOYED_ENABLED: ${{ vars.ATHENA_DEPLOYED_ACCEPTANCE_ENABLED }}
+          BROWSER_RESULT: ${{ needs.deployed-flutter-browser-acceptance.result }}
+          BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_BROWSER_ACCEPTANCE_ENABLED }}
+          OWNER_BROWSER_ENABLED: ${{ vars.ATHENA_DEPLOYED_OWNER_BROWSER_ACCEPTANCE_ENABLED }}
+        run: python3 backend/scripts/release_validation_gate.py
