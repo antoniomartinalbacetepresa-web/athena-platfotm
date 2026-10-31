@@ -842,3 +842,23 @@ def test_backfill_uses_response_completion_not_request_start_for_same_day_pit(
     rows = MarketObservationRepository(database=database).list_for_instrument(instrument_id)
     assert len(rows) == 1
     assert rows[0]["retrieved_at"] == "2026-01-02T20:10:00+00:00"
+
+@pytest.mark.parametrize(
+    "forbidden_provider",
+    ("fmp", "financial-modeling-prep", "f%6dp", "f&#109;p"),
+)
+def test_backfill_rejects_forbidden_provider_before_database_or_network(
+    tmp_path: Path, forbidden_provider: str
+) -> None:
+    db_path = tmp_path / "never-opened.db"
+    provider = FakeHistoryProvider({})
+    service = MarketObservationBackfillService(
+        database=AthenaDatabase(db_path),
+        history_provider=provider,
+    )
+
+    with pytest.raises(ValueError, match="FMP"):
+        service.run(limit=1, source_provider=forbidden_provider)
+
+    assert provider.calls == []
+    assert not db_path.exists()
