@@ -49,7 +49,7 @@ class CorporateActionRepository:
         if actual_symbol != expected_symbol:
             raise ValueError("instrument_id y symbol no corresponden al mismo instrumento.")
 
-    def save_many(self, *, instrument_id: int, actions: Iterable[dict[str, Any]], source_provider: str, retrieved_at: datetime) -> CorporateActionSaveStats:
+    def save_many(self, *, instrument_id: int, actions: Iterable[dict[str, Any]], source_provider: str, retrieved_at: datetime, captured_by_athena: bool = False) -> CorporateActionSaveStats:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")
         provider = self._required_text(source_provider, "source_provider")
@@ -72,16 +72,36 @@ class CorporateActionRepository:
                     instrument_id, normalized["action_type"], effective_dt.isoformat(),
                     provider, retrieved,
                 )
+                if captured_by_athena:
+                    # Only a previous locally captured event can establish
+                    # idempotence across fetches. Legacy provider timestamps
+                    # are NOT proof that ATHENA knew the event earlier.
+                    already_captured = connection.execute(
+                        """SELECT id FROM corporate_actions
+                           WHERE instrument_id = ? AND action_type = ? AND effective_at = ?
+                             AND source_provider = ? AND cash_amount IS ?
+                             AND split_ratio IS ? AND currency IS ?
+                             AND source_timestamp IS ? AND capture_verified = 1
+                           LIMIT 1""",
+                        (
+                            instrument_id, normalized["action_type"], effective_dt.isoformat(),
+                            provider, normalized["cash_amount"], normalized["split_ratio"],
+                            normalized["currency"], source_timestamp,
+                        ),
+                    ).fetchone()
+                    if already_captured is not None:
+                        continue
                 cursor = connection.execute(
                     """INSERT INTO corporate_actions (
                         instrument_id, action_type, effective_at, cash_amount,
-                        split_ratio, currency, source_provider, source_timestamp, retrieved_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        split_ratio, currency, source_provider, source_timestamp, retrieved_at, capture_verified
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT DO NOTHING""",
                     (
                         instrument_id, normalized["action_type"], effective_dt.isoformat(),
                         normalized["cash_amount"], normalized["split_ratio"],
                         normalized["currency"], provider, source_timestamp, retrieved,
+                        int(captured_by_athena),
                     ),
                 )
                 if cursor.rowcount == 1:
@@ -169,7 +189,7 @@ class CorporateActionRepository:
                     id INTEGER PRIMARY KEY AUTOINCREMENT, instrument_id INTEGER NOT NULL,
                     action_type TEXT NOT NULL CHECK (action_type IN ('dividend', 'split')),
                     effective_at TEXT NOT NULL, cash_amount REAL, split_ratio REAL, currency TEXT,
-                    source_provider TEXT NOT NULL, source_timestamp TEXT, retrieved_at TEXT NOT NULL,
+                    source_provider TEXT NOT NULL, source_timestamp TEXT, retrieved_at TEXT NOT NULL, capture_verified INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE CASCADE,
                     CHECK ((action_type = 'dividend' AND cash_amount > 0 AND split_ratio IS NULL) OR (action_type = 'split' AND split_ratio > 0 AND cash_amount IS NULL)),
@@ -177,6 +197,18 @@ class CorporateActionRepository:
                 CREATE INDEX IF NOT EXISTS idx_corporate_actions_instrument_effective ON corporate_actions (instrument_id, effective_at);
                 CREATE INDEX IF NOT EXISTS idx_corporate_actions_pit ON corporate_actions (instrument_id, retrieved_at, effective_at);
             """)
+            # Existing databases must not gain historical capture authority.
+            # Their pre-existing rows remain explicitly unverified.
+            columns = {
+                row["name"] for row in connection.execute(
+                    "PRAGMA table_info(corporate_actions)"
+                ).fetchall()
+            }
+            if "capture_verified" not in columns:
+                connection.execute(
+                    "ALTER TABLE corporate_actions ADD COLUMN "
+                    "capture_verified INTEGER NOT NULL DEFAULT 0"
+                )
 
     def _normalize_action(self, value: dict[str, Any]) -> dict[str, Any]:
         action_type = self._required_text(value.get("action_type", value.get("type", "")), "action_type").lower()
