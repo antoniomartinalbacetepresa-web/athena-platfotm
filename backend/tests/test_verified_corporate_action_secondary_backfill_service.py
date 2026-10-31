@@ -64,6 +64,7 @@ def _seed_yahoo_dividend(
         instrument_id=instrument_id,
         source_provider="yahoo",
         retrieved_at=PRIMARY_RETRIEVED,
+        captured_by_athena=True,
         actions=[
             {
                 "type": "dividend",

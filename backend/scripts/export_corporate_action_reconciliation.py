@@ -98,6 +98,7 @@ def export_worklist(
         first = worklist.get_worklist(as_of=cutoff, limit=PAGE_SIZE, offset=0)
         incomplete = first.total_incomplete_event_count
         conflicts = first.total_conflict_event_count
+        unverified = first.total_unverified_capture_count
         total = incomplete + conflicts
         metadata = {
             "recordType": "metadata",
@@ -107,6 +108,7 @@ def export_worklist(
             "totalUnresolvedEventCount": total,
             "totalIncompleteEventCount": incomplete,
             "totalConflictEventCount": conflicts,
+            "totalUnverifiedCaptureCount": unverified,
             "completeExport": True,
             "productionCoverageClaimed": False,
             "automaticCanonicalization": False,
@@ -134,6 +136,7 @@ def export_worklist(
                 previous_identity: tuple[int, str, str] | None = None
                 observed_incomplete = 0
                 observed_conflicts = 0
+                observed_unverified = 0
                 while offset < total:
                     # Each page is reconstructed from the SAME immutable snapshot.
                     # The worklist retains only the requested page in memory.
@@ -147,6 +150,7 @@ def export_worklist(
                         or page.limit != PAGE_SIZE
                         or page.total_incomplete_event_count != incomplete
                         or page.total_conflict_event_count != conflicts
+                        or page.total_unverified_capture_count != unverified
                         or len(page.items) != expected_size
                     ):
                         raise RuntimeError("Inconsistent corporate-action worklist page")
@@ -161,9 +165,13 @@ def export_worklist(
                             observed_conflicts += 1
                         else:
                             raise RuntimeError("Unexpected reconciled event in worklist")
+                        if type(item.unverified_capture_count) is not int or item.unverified_capture_count < 0:
+                            raise RuntimeError("Invalid unverified capture count in worklist")
+                        observed_unverified += item.unverified_capture_count
                         write_record(item.to_api_dict())
                     offset += len(page.items)
-                if observed_incomplete != incomplete or observed_conflicts != conflicts:
+                if (observed_incomplete != incomplete or observed_conflicts != conflicts
+                        or observed_unverified != unverified):
                     raise RuntimeError("Corporate-action worklist totals changed during export")
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -181,6 +189,7 @@ def export_worklist(
         "totalUnresolvedEventCount": total,
         "totalIncompleteEventCount": incomplete,
         "totalConflictEventCount": conflicts,
+        "totalUnverifiedCaptureCount": unverified,
         "snapshotSha256": snapshot_sha,
         "exportSha256": digest.hexdigest(),
         "productionCoverageClaimed": False,

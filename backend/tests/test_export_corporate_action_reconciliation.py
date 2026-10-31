@@ -32,11 +32,13 @@ def _instrument(database: AthenaDatabase, symbol: str) -> int:
 def _dividend(
     database: AthenaDatabase, instrument_id: int, provider: str, amount: float,
     retrieved_at: datetime,
+    captured_by_athena: bool = True,
 ) -> None:
     CorporateActionRepository(database).save_many(
         instrument_id=instrument_id,
         source_provider=provider,
         retrieved_at=retrieved_at,
+        captured_by_athena=captured_by_athena,
         actions=[{
             "type": "dividend",
             "effectiveAt": (AS_OF - timedelta(days=30)).isoformat(),
@@ -182,3 +184,25 @@ def test_export_rejects_snapshot_wal_sidecar_before_publication(tmp_path, monkey
         export_worklist(database_path=source, output_path=output, as_of=AS_OF)
     assert not output.exists()
     assert not list(tmp_path.glob(".athena-ca-export-*"))
+
+
+def test_full_export_retains_economically_agreed_legacy_capture_gap(tmp_path) -> None:
+    source = tmp_path / "source.db"
+    database = AthenaDatabase(source)
+    database.initialize()
+    instrument_id = _instrument(database, "LEGACY")
+    observed = AS_OF - timedelta(days=20)
+    for provider in ("yahoo", "alpha_vantage"):
+        _dividend(database, instrument_id, provider, 0.25, observed,
+                  captured_by_athena=False)
+    output = tmp_path / "legacy.jsonl"
+    summary = export_worklist(database_path=source, output_path=output, as_of=AS_OF)
+    assert summary["totalUnresolvedEventCount"] == 1
+    assert summary["totalIncompleteEventCount"] == 1
+    assert summary["totalUnverifiedCaptureCount"] == 2
+    lines = [json.loads(line) for line in output.read_text().splitlines()]
+    assert len(lines) == 2
+    assert lines[0]["totalUnverifiedCaptureCount"] == 2
+    assert lines[1]["unverifiedCaptureCount"] == 2
+    assert lines[1]["reconciliationStatus"] == "incomplete"
+    assert lines[1]["suggestedProvider"] is None

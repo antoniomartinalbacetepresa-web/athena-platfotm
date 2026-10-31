@@ -49,6 +49,7 @@ def _save_dividend(
         instrument_id=instrument_id,
         source_provider=provider,
         retrieved_at=retrieved_at,
+        captured_by_athena=True,
         actions=[
             {
                 "type": "dividend",
