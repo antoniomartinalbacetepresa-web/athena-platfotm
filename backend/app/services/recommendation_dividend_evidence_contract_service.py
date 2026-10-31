@@ -79,6 +79,32 @@ class RecommendationDividendEvidenceContractService:
         if signal_cutoff != cutoff:
             raise RuntimeError("La señal de dividendos usó otro corte point-in-time.")
 
+        # Quarantine is an invariant of the canonical consumer, not merely a
+        # convention of the upstream signal producer. Never let a stale or
+        # substituted producer reintroduce dividend-derived values.
+        status = signal.get("status")
+        if not isinstance(status, str) or status not in {
+            "diagnostic_ready",
+            "no_dividend_history",
+            "market_evidence_not_ready",
+            "corporate_action_capture_unverified",
+        }:
+            raise RuntimeError("Estado de señal de dividendos no reconocido.")
+        dividend_fields = (
+            "dividend",
+            "totalReturn60d",
+            "earningsPayoutRatio",
+            "fcfPayoutRatio",
+            "financialPeriodSustainability",
+        )
+        if status in {"market_evidence_not_ready", "corporate_action_capture_unverified"}:
+            if any(signal.get(field) is not None for field in dividend_fields):
+                raise RuntimeError("La señal en cuarentena no puede publicar evidencia de dividendos.")
+        elif signal.get("dividend") is None and any(
+            signal.get(field) is not None for field in dividend_fields[1:]
+        ):
+            raise RuntimeError("No se pueden publicar métricas derivadas sin evidencia de dividendos.")
+
         dividend = signal.get("dividend")
         if dividend is not None:
             if not isinstance(dividend, dict) or dividend.get("pitSafe") is not True:

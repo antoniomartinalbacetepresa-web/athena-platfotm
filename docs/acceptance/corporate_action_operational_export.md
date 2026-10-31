@@ -226,3 +226,17 @@ immutable. These counters measure local marker status, not genuine third-party
 custody, legal source independence, or 365-day production coverage. Operational
 closure still requires an authorized consistent database snapshot, complete
 export, independent reconciliation and audited PIT provenance.
+
+
+## Canonical recommendation quarantine boundary
+
+The recommendation dividend evidence contract independently enforces the
+`corporate_action_capture_unverified` and `market_evidence_not_ready` states:
+neither state may carry dividend observations, dividend-derived total return,
+payout ratios, or financial-period sustainability. An unrecognized status
+fails closed, and a purportedly ready signal cannot publish derived return or
+payout metrics without a dividend evidence object. Independent market-only
+price evidence remains available for diagnosis. This prevents a substituted
+upstream producer from bypassing the capture quarantine; it does **not**
+verify operational provenance or extend the quarantine to every OOS/portfolio
+reader. Historical rows remain available for audit, not production authority.

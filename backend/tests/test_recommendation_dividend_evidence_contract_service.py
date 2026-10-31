@@ -128,3 +128,76 @@ def test_contract_rejects_sustainability_without_explicit_pit_safety():
     payload = _payload(); payload["financialPeriodSustainability"]["pitSafe"] = False
     with pytest.raises(RuntimeError, match="sostenibilidad.*PIT-safe"):
         RecommendationDividendEvidenceContractService(signal_service=_Signal(payload)).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def _quarantined_payload():
+    payload = _payload()
+    payload.update(
+        status="corporate_action_capture_unverified",
+        dividend=None,
+        totalReturn60d=None,
+        earningsPayoutRatio=None,
+        fcfPayoutRatio=None,
+        financialPeriodSustainability=None,
+    )
+    return payload
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "dividend",
+        "totalReturn60d",
+        "earningsPayoutRatio",
+        "fcfPayoutRatio",
+        "financialPeriodSustainability",
+    ],
+)
+def test_unverified_capture_status_cannot_reintroduce_derived_evidence(field):
+    payload = _quarantined_payload()
+    payload[field] = _payload()[field]
+    with pytest.raises(RuntimeError, match="cuarentena"):
+        RecommendationDividendEvidenceContractService(
+            signal_service=_Signal(payload)
+        ).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def test_quarantined_capture_keeps_independent_market_evidence_without_dividend_authority():
+    payload = _quarantined_payload()
+    payload["priceReturn60d"] = 0.04
+    result = RecommendationDividendEvidenceContractService(
+        signal_service=_Signal(payload)
+    ).evaluate(symbol="DIV", as_of=AS_OF).to_api_dict()
+    assert result["signal"]["priceReturn60d"] == pytest.approx(0.04)
+    assert result["signal"]["totalReturn60d"] is None
+    assert result["productionEligible"] is False
+    assert result["automaticTrading"] is False
+
+
+def test_unready_market_status_cannot_publish_dividend_metrics():
+    payload = _quarantined_payload()
+    payload["status"] = "market_evidence_not_ready"
+    payload["dividend"] = _payload()["dividend"]
+    with pytest.raises(RuntimeError, match="cuarentena"):
+        RecommendationDividendEvidenceContractService(
+            signal_service=_Signal(payload)
+        ).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def test_unknown_dividend_signal_status_fails_closed():
+    payload = _quarantined_payload()
+    payload["status"] = "unknown_capture_status"
+    with pytest.raises(RuntimeError, match="no reconocido"):
+        RecommendationDividendEvidenceContractService(
+            signal_service=_Signal(payload)
+        ).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def test_derived_total_return_requires_dividend_evidence_even_if_status_claims_ready():
+    payload = _quarantined_payload()
+    payload["status"] = "diagnostic_ready"
+    payload["totalReturn60d"] = 0.07
+    with pytest.raises(RuntimeError, match="sin evidencia de dividendos"):
+        RecommendationDividendEvidenceContractService(
+            signal_service=_Signal(payload)
+        ).evaluate(symbol="DIV", as_of=AS_OF)
