@@ -367,3 +367,50 @@ def test_forecast_error_oos_reports_measured_period_distribution_per_horizon() -
     assert result["horizons"][str(HORIZON_30)]["periodEndErrorCounts"] == {end_30: 2}
     assert result["horizons"][str(HORIZON_90)]["periodEndErrorCounts"] == {end_90: 1}
     assert result["productionLearningEligible"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    [
+        ("signedError", 0.0),
+        ("absoluteError", 0.0),
+        ("squaredError", 0.0),
+    ],
+)
+def test_oos_rejects_non_reconciling_forecast_error_metrics(
+    field: str, tampered_value: float
+) -> None:
+    row = _temporal_row()
+    record = _error(row, error_seed="7", expected=0.10)
+    record["artifact"][field] = tampered_value
+    with pytest.raises(ValueError, match=field):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=_cohort([row]), error_records=[record],
+        )
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["total_count", "horizon_count", "extra_horizon", "wrong_horizon_days"],
+)
+def test_oos_rejects_forged_cohort_coverage_even_without_errors(corruption: str) -> None:
+    row = _temporal_row()
+    cohort = _cohort([row])
+    artifact = cohort["artifact"]
+    key = str(HORIZON_30)
+    if corruption == "total_count":
+        artifact["observationCount"] = 3
+    elif corruption == "horizon_count":
+        artifact["horizons"][key]["observationCount"] = 3
+    elif corruption == "extra_horizon":
+        artifact["horizons"][str(HORIZON_90)] = {
+            "horizonSeconds": HORIZON_90,
+            "horizonDays": 90,
+            "observationCount": 1,
+        }
+    else:
+        artifact["horizons"][key]["horizonDays"] = 90
+    with pytest.raises(ValueError, match="cohort\\.|horizons"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=cohort, error_records=[],
+        )

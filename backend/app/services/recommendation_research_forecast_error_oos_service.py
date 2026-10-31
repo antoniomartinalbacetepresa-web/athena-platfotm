@@ -48,6 +48,11 @@ class RecommendationResearchForecastErrorOosService:
             self._validate_period(row, cutoff=cohort_as_of, field="cohort")
             by_outcome[outcome_hash] = row
 
+        # Reconcile the eligible denominator with the actual matured rows before
+        # accepting even an empty error set. A forged cohort count must not
+        # manufacture a reassuring OOS measurement-coverage percentage.
+        cohort_horizons = self._validated_cohort_horizons(artifact, rows)
+
         normalized_errors: list[dict[str, Any]] = []
         seen_error_hashes: set[str] = set()
         seen_outcomes: set[str] = set()
@@ -84,9 +89,6 @@ class RecommendationResearchForecastErrorOosService:
         for item in normalized_errors:
             horizon_rows.setdefault(int(item["horizonSeconds"]), []).append(item)
 
-        cohort_horizons = artifact.get("horizons")
-        if not isinstance(cohort_horizons, dict):
-            raise ValueError("La cohorte OOS perdió horizons.")
         for horizon_key, cohort_horizon in sorted(
             cohort_horizons.items(), key=lambda pair: int(pair[0])
         ):
@@ -283,6 +285,41 @@ class RecommendationResearchForecastErrorOosService:
             ),
         }
 
+    def _validated_cohort_horizons(
+        self, artifact: dict[str, Any], rows: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        declared_total = self._nonnegative_int(
+            artifact.get("observationCount"), "cohort.observationCount"
+        )
+        if declared_total != len(rows):
+            raise ValueError("cohort.observationCount no coincide con rows.")
+        actual_counts = Counter(
+            self._positive_int(row.get("horizonSeconds"), "cohort.horizonSeconds")
+            for row in rows
+        )
+        horizons = artifact.get("horizons")
+        if not isinstance(horizons, dict):
+            raise ValueError("La cohorte OOS perdió horizons.")
+        if set(horizons) != {str(seconds) for seconds in actual_counts}:
+            raise ValueError("cohort.horizons no coincide con los horizontes reales de rows.")
+        for seconds, count in actual_counts.items():
+            key = str(seconds)
+            entry = horizons[key]
+            if not isinstance(entry, dict):
+                raise ValueError("La cohorte OOS contiene un horizonte inválido.")
+            if self._positive_int(
+                entry.get("horizonSeconds"), f"cohort.horizons.{key}.horizonSeconds"
+            ) != seconds:
+                raise ValueError("cohort.horizons contiene horizonSeconds inconsistente.")
+            if self._nonnegative_int(
+                entry.get("observationCount"), f"cohort.horizons.{key}.observationCount"
+            ) != count:
+                raise ValueError("cohort.horizons.observationCount no coincide con rows.")
+            days = seconds // 86400 if seconds % 86400 == 0 else None
+            if entry.get("horizonDays") != days:
+                raise ValueError("cohort.horizons contiene horizonDays inconsistente.")
+        return horizons
+
     def _normalize_error(
         self, record: dict[str, Any], *, cutoff: datetime
     ) -> dict[str, Any]:
@@ -303,6 +340,20 @@ class RecommendationResearchForecastErrorOosService:
         period_end = self._validate_period(artifact, cutoff=cutoff, field="error")
         if created_at < period_end:
             raise ValueError("Forecast error fue persistido antes de madurar su horizonte.")
+        expected = self._finite(artifact.get("expectedValue"), "error.expectedValue")
+        realized = self._finite(artifact.get("realizedValue"), "error.realizedValue")
+        signed = self._finite(artifact.get("signedError"), "error.signedError")
+        absolute = self._finite(artifact.get("absoluteError"), "error.absoluteError")
+        squared = self._finite(artifact.get("squaredError"), "error.squaredError")
+        # Do not trust a stored scalar error merely because its declared hash
+        # matches the database row. All metrics must reconcile before OOS use.
+        for name, actual, calculated in (
+            ("signedError", signed, realized - expected),
+            ("absoluteError", absolute, abs(signed)),
+            ("squaredError", squared, signed * signed),
+        ):
+            if not math.isclose(actual, calculated, rel_tol=1e-12, abs_tol=1e-12):
+                raise ValueError(f"Forecast error {name} no reconcilia con sus componentes.")
         return {
             "errorHash": error_hash,
             "specificationHash": self._sha_text(
@@ -319,11 +370,11 @@ class RecommendationResearchForecastErrorOosService:
             "horizonSeconds": self._positive_int(
                 artifact.get("horizonSeconds"), "error.horizonSeconds"
             ),
-            "expectedValue": self._finite(artifact.get("expectedValue"), "error.expectedValue"),
-            "realizedValue": self._finite(artifact.get("realizedValue"), "error.realizedValue"),
-            "signedError": self._finite(artifact.get("signedError"), "error.signedError"),
-            "absoluteError": self._finite(artifact.get("absoluteError"), "error.absoluteError"),
-            "squaredError": self._finite(artifact.get("squaredError"), "error.squaredError"),
+            "expectedValue": expected,
+            "realizedValue": realized,
+            "signedError": signed,
+            "absoluteError": absolute,
+            "squaredError": squared,
         }
 
     def _validate_period(

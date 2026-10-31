@@ -25,3 +25,18 @@ Those require a real precommitted cohort, physically persisted horizon-matured
 outcomes, externally authorized provenance, and independent operational review.
 Do not use fixtures as evidence of production readiness or authorize learning,
 weighting, advice, or trading through this policy.
+
+## OOS diagnostic input reconciliation (2026-11-01)
+
+The research forecast-error OOS diagnostic now rejects inconsistent stored
+error arithmetic (signed, absolute and squared errors must match the persisted
+expected and realized values). It also reconciles the cohort-wide eligible
+outcome count and every exact-horizon count and duration against actual cohort
+rows **before** computing measurement coverage, including when no forecast
+errors have matured. A forged denominator cannot inflate or dilute apparent
+longitudinal coverage.
+
+These are structural checks, not independent proof of a persisted hash,
+source capture time, corporate-action provenance, or predictive skill. The
+underlying persistence layer must continue to verify canonical artifact hashes
+and PIT records; no operational OOS cohort is claimed by these regressions.
