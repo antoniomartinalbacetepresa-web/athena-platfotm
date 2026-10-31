@@ -126,6 +126,36 @@ class CorporateActionRepository:
                     )
         return CorporateActionSaveStats(received=len(buffered), inserted=inserted, unchanged=len(buffered)-inserted)
 
+    def has_unverified_pit_actions(self, instrument_id: int, *, knowledge_cutoff: datetime) -> bool:
+        """Detect legacy or malformed capture evidence without hiding audit rows.
+
+        Scan the instrument's stored timestamps as UTC datetimes rather than
+        comparing text: old SQLite rows may contain noncanonical UTC offsets.
+        A malformed timestamp cannot be certified as PIT evidence.
+        """
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int) or instrument_id <= 0:
+            raise ValueError("instrument_id debe ser un entero positivo.")
+        cutoff = datetime.fromisoformat(self._utc_iso(knowledge_cutoff, "knowledge_cutoff"))
+        self._initialize_schema()
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                "SELECT retrieved_at, capture_verified FROM corporate_actions WHERE instrument_id = ?",
+                (instrument_id,),
+            ).fetchall()
+        for row in rows:
+            try:
+                retrieved = datetime.fromisoformat(str(row["retrieved_at"]).replace("Z", "+00:00"))
+                if retrieved.tzinfo is None or retrieved.utcoffset() is None:
+                    return True
+                if (
+                    retrieved.astimezone(timezone.utc) <= cutoff
+                    and (type(row["capture_verified"]) is not int or row["capture_verified"] != 1)
+                ):
+                    return True
+            except (TypeError, ValueError, OverflowError):
+                return True
+        return False
+
     def list_for_instrument(self, instrument_id: int, *, source_provider: str | None = None, knowledge_cutoff: datetime | None = None, effective_from: datetime | None = None, effective_to: datetime | None = None) -> list[dict[str, Any]]:
         if instrument_id <= 0:
             raise ValueError("instrument_id debe ser positivo.")

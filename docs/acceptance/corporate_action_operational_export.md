@@ -162,3 +162,29 @@ capture path, not an independent third-party timestamp attestation or proof
 of a production provider agreement. Other legacy readers, total-return and
 OOS consumers still require a reviewed end-to-end quarantine/verified-only
 policy before their outputs can be accepted as operational evidence.
+
+
+
+## Strict dividend/recommendation capture quarantine
+
+The repository now exposes a non-destructive PIT capture-verification query.
+It normalizes legacy retrieval timestamps to UTC before deciding whether a
+legacy or malformed row was already known at the requested cutoff; a
+noncanonical timezone offset cannot bypass the check. Invalid retrieval
+timestamps fail closed rather than being silently ignored.
+
+The default recommendation-dividend service uses strict capture verification.
+If any known dividend **or split** for that instrument lacks verified local
+capture provenance, the signal returns
+`corporate_action_capture_unverified`, without dividend metrics, payout
+ratios, dividend total return, or production authority. A separate strict
+mode in the dividend analysis service rejects such data even when invoked
+outside the recommendation layer. Legacy rows are preserved for audit, and
+an observation first retrieved *after* the cutoff does not invalidate
+otherwise verified earlier evidence.
+
+This closes the recommendation-dividend consumption boundary, **not** all
+historical consumers. Direct diagnostic readers, OOS pipelines, independent
+total-return bindings and reconciliation worklists still need audited
+capture-aware treatment. The marker does not establish independent
+third-party attestation or operational source authorization.

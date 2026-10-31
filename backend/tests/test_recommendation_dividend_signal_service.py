@@ -34,7 +34,7 @@ def _database(tmp_path: Path) -> AthenaDatabase:
 
 def _seed(database: AthenaDatabase) -> int:
     instrument_id=InstrumentRepository(database=database).upsert({"symbol":"DIV","companyName":"Dividend Co","country":"United States","regionKey":"america","exchangeShortName":"NYSE","currency":"USD","instrumentType":"EQUITY","marketCap":1000.0})
-    CorporateActionRepository(database=database).save_many(instrument_id=instrument_id,source_provider="primary",retrieved_at=AS_OF,actions=[{"action_type":"dividend","effective_at":datetime(2026,2,1,tzinfo=timezone.utc),"cash_amount":0.5,"currency":"USD"},{"action_type":"dividend","effective_at":datetime(2026,5,1,tzinfo=timezone.utc),"cash_amount":0.5,"currency":"USD"},{"action_type":"dividend","effective_at":datetime(2026,7,15,tzinfo=timezone.utc),"cash_amount":0.25,"currency":"USD"}]); return instrument_id
+    CorporateActionRepository(database=database).save_many(instrument_id=instrument_id,source_provider="primary",retrieved_at=AS_OF,captured_by_athena=True,actions=[{"action_type":"dividend","effective_at":datetime(2026,2,1,tzinfo=timezone.utc),"cash_amount":0.5,"currency":"USD"},{"action_type":"dividend","effective_at":datetime(2026,5,1,tzinfo=timezone.utc),"cash_amount":0.5,"currency":"USD"},{"action_type":"dividend","effective_at":datetime(2026,7,15,tzinfo=timezone.utc),"cash_amount":0.25,"currency":"USD"}]); return instrument_id
 
 def test_dividend_signal_uses_same_pit_price_and_cutoff(tmp_path: Path) -> None:
     database=_database(tmp_path); assert _seed(database)==1
@@ -112,3 +112,91 @@ def test_dividend_signal_binds_explicit_repository_backed_sustainability_without
     assert result.earnings_payout_ratio==pytest.approx(0.40)
     assert result.fcf_payout_ratio==pytest.approx(0.50)
     assert result.production_eligible is False
+
+
+
+def test_unverified_historical_capture_quarantines_dividend_signal(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _seed(database)
+    CorporateActionRepository(database=database).save_many(
+        instrument_id=instrument_id, source_provider="legacy", retrieved_at=AS_OF,
+        actions=[{"action_type": "dividend", "effective_at": datetime(2026, 3, 1, tzinfo=timezone.utc),
+                  "cash_amount": 0.45, "currency": "USD"}],
+    )
+    result = RecommendationDividendSignalService(
+        database=database, market_service=_Market(), valuation_service=_Valuation()
+    ).evaluate(symbol="DIV", as_of=AS_OF)
+    assert result.status == "corporate_action_capture_unverified"
+    assert result.dividend is None
+    assert result.total_return_60d is None
+    assert result.earnings_payout_ratio is None
+    assert result.fcf_payout_ratio is None
+    assert result.production_eligible is False
+
+
+def test_unverified_known_future_action_also_quarantines_signal(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _seed(database)
+    CorporateActionRepository(database=database).save_many(
+        instrument_id=instrument_id, source_provider="legacy", retrieved_at=AS_OF,
+        actions=[{"action_type": "split", "effective_at": datetime(2026, 10, 1, tzinfo=timezone.utc),
+                  "split_ratio": 2.0}],
+    )
+    result = RecommendationDividendSignalService(
+        database=database, market_service=_Market(), valuation_service=_Valuation()
+    ).evaluate(symbol="DIV", as_of=AS_OF)
+    assert result.status == "corporate_action_capture_unverified"
+    assert result.dividend is None
+    assert result.total_return_60d is None
+
+
+def test_capture_after_cutoff_cannot_quarantine_earlier_verified_pit_signal(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _seed(database)
+    CorporateActionRepository(database=database).save_many(
+        instrument_id=instrument_id, source_provider="legacy",
+        retrieved_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+        actions=[{"action_type": "dividend", "effective_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+                  "cash_amount": 0.25, "currency": "USD"}],
+    )
+    result = RecommendationDividendSignalService(
+        database=database, market_service=_Market(), valuation_service=_Valuation()
+    ).evaluate(symbol="DIV", as_of=AS_OF)
+    assert result.status == "diagnostic_ready"
+    assert result.dividend is not None
+    assert result.total_return_60d is not None
+
+
+def test_strict_dividend_reader_rejects_unverified_capture_even_outside_signal(tmp_path: Path) -> None:
+    from app.services.dividend_analysis_service import DividendAnalysisService
+
+    database = _database(tmp_path)
+    instrument_id = _seed(database)
+    repository = CorporateActionRepository(database=database)
+    repository.save_many(
+        instrument_id=instrument_id, source_provider="legacy", retrieved_at=AS_OF,
+        actions=[{"action_type": "dividend", "effective_at": datetime(2026, 4, 1, tzinfo=timezone.utc),
+                  "cash_amount": 0.20, "currency": "USD"}],
+    )
+    with pytest.raises(RuntimeError, match="capture provenance no verificada"):
+        DividendAnalysisService(
+            database=database, require_verified_capture=True
+        ).analyze(instrument_id=instrument_id, knowledge_cutoff=AS_OF)
+
+
+def test_noncanonical_legacy_retrieval_offset_does_not_bypass_quarantine(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _seed(database)
+    repository = CorporateActionRepository(database=database)
+    repository.save_many(
+        instrument_id=instrument_id, source_provider="legacy",
+        retrieved_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+        actions=[{"action_type": "split", "effective_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                  "split_ratio": 2.0}],
+    )
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE corporate_actions SET retrieved_at = ? WHERE source_provider = 'legacy'",
+            ("2026-08-02T03:00:00+03:00",),
+        )
+    assert repository.has_unverified_pit_actions(instrument_id, knowledge_cutoff=AS_OF)

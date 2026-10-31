@@ -141,9 +141,12 @@ class DividendAnalysisService:
             str(row["effective_at"]),
         )), conflicts
 
-    def __init__(self, *, database: AthenaDatabase | None = None) -> None:
+    def __init__(self, *, database: AthenaDatabase | None = None, require_verified_capture: bool = False) -> None:
+        if type(require_verified_capture) is not bool:
+            raise ValueError("require_verified_capture debe ser booleano.")
         self._database = database if database is not None else AthenaDatabase()
         self._repository = CorporateActionRepository(database=self._database)
+        self._require_verified_capture = require_verified_capture
 
     def analyze(self, *, instrument_id: int, knowledge_cutoff: datetime, lookback_days: int = 730, pit_price: float | None = None) -> DividendAnalysis:
         if instrument_id <= 0: raise ValueError("instrument_id debe ser positivo.")
@@ -151,6 +154,10 @@ class DividendAnalysisService:
         if lookback_days < 365: raise ValueError("lookback_days debe ser al menos 365 para inferir frecuencia.")
         if pit_price is not None and (not isfinite(pit_price) or pit_price <= 0): raise ValueError("pit_price debe ser finito y positivo cuando se proporciona.")
         cutoff = knowledge_cutoff.astimezone(timezone.utc)
+        if self._require_verified_capture and self._repository.has_unverified_pit_actions(
+            instrument_id, knowledge_cutoff=cutoff
+        ):
+            raise RuntimeError("Corporate-action capture provenance no verificada; análisis PIT bloqueado.")
         actions = self._repository.list_for_instrument(instrument_id, knowledge_cutoff=cutoff)
         dividends = [row for row in actions if row["action_type"] == "dividend"]
         historical_rows: list[dict[str, Any]] = []
@@ -164,6 +171,10 @@ class DividendAnalysisService:
 
         # Forward horizon is explicitly one year and contains only actions known PIT.
         future_rows=[r for r in self._repository.list_known_future_for_instrument(instrument_id,knowledge_cutoff=cutoff,effective_to=cutoff+timedelta(days=365)) if r["action_type"]=="dividend"]
+        if self._require_verified_capture and self._repository.has_unverified_pit_actions(
+            instrument_id, knowledge_cutoff=cutoff
+        ):
+            raise RuntimeError("Corporate-action capture provenance no verificada; análisis PIT bloqueado.")
         future, forward_conflicts = self._reconcile_dividend_observations(future_rows)
         # Opposite sides of an intraday cutoff can describe the same UTC-day
         # economic payment. Quarantine rather than counting both paid and future.

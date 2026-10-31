@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.corporate_action_repository import CorporateActionRepository
 from app.repositories.sec_fundamental_pit_repository import SecFundamentalPitRepository
 from app.services.dividend_analysis_service import DividendAnalysisService
 from app.services.dividend_sustainability_service import DividendSustainabilityService
@@ -52,7 +53,7 @@ class RecommendationDividendSignalService:
     def __init__(self, *, database: AthenaDatabase | None = None, market_service: _MarketDiagnosticService | None = None, dividend_service: DividendAnalysisService | None = None, valuation_service: _ValuationDiagnosticService | None = None, free_cash_flow_service: _FreeCashFlowDiagnosticService | None = None, sustainability_service: DividendSustainabilityService | None = None) -> None:
         self._database = database if database is not None else AthenaDatabase()
         self._market_service = market_service or RecommendationMarketSignalService(database=self._database)
-        self._dividend_service = dividend_service or DividendAnalysisService(database=self._database)
+        self._dividend_service = dividend_service or DividendAnalysisService(database=self._database, require_verified_capture=True)
         self._valuation_service = valuation_service or RecommendationValuationSignalService(database=self._database, market_service=self._market_service)
         self._free_cash_flow_service = free_cash_flow_service or SecFreeCashFlowService(SecFundamentalEvidenceResolver(SecFundamentalPitRepository(database=self._database)))
         self._sustainability_service = sustainability_service or DividendSustainabilityService(database=self._database)
@@ -73,6 +74,19 @@ class RecommendationDividendSignalService:
         common = dict(symbol=normalized_symbol, instrument_id=instrument_id, as_of=as_of_utc.isoformat(), latest_price=latest_price, price_60d_start=price_60d_start, latest_price_observed_at=self._optional_text(market.get("latestObservedAt")), latest_price_retrieved_at=self._optional_text(market.get("latestRetrievedAt")), market_source_providers=source_providers, production_eligible=False, price_return_60d=self._optional_float(market.get("return60d")))
         if str(market.get("status") or "") != "diagnostic_ready" or instrument_id is None or latest_price is None or latest_price <= 0:
             return RecommendationDividendSignal(status="market_evidence_not_ready", dividend=None, total_return_60d=None, earnings_payout_ratio=None, fcf_payout_ratio=None, financial_period_sustainability=None, reason="El análisis de dividendos requiere primero un precio point-in-time válido y trazable.", **common)
+        if CorporateActionRepository(database=self._database).has_unverified_pit_actions(
+            instrument_id, knowledge_cutoff=as_of_utc
+        ):
+            return RecommendationDividendSignal(
+                status="corporate_action_capture_unverified",
+                dividend=None,
+                total_return_60d=None,
+                earnings_payout_ratio=None,
+                fcf_payout_ratio=None,
+                financial_period_sustainability=None,
+                reason="Las capturas históricas de dividendos o splits carecen de verificación local; evidencia analítica en cuarentena.",
+                **common,
+            )
         dividend = self._dividend_service.analyze(instrument_id=instrument_id, knowledge_cutoff=as_of_utc, pit_price=latest_price).to_api_dict()
         price_return_60d = self._optional_float(market.get("return60d")); dividend_cash_60d = self._optional_float(dividend.get("cashPerShare60d"))
         total_return_60d = None
