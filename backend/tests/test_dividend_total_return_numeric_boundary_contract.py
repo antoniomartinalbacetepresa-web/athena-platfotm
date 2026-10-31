@@ -54,7 +54,8 @@ def test_timezone_offsets_are_normalized_to_utc_for_pit():
         dividend_observed_at=datetime(2024, 5, 31, 2, tzinfo=offset),
     )
     assert result.knowledge_cutoff == "2024-06-01T00:00:00+00:00"
-    assert result.pit_safe is True
+    assert result.pit_safe is False
+    assert result.temporal_evidence_complete is True
     assert result.to_api_dict()["productionEligible"] is False
     assert result.to_api_dict()["automaticTrading"] is False
 
@@ -65,7 +66,8 @@ def test_same_instant_different_offsets_do_not_trigger_false_pit_ordering():
         start_observed_at=datetime(2024, 5, 30, 2, tzinfo=plus_two),
         end_observed_at=datetime(2024, 5, 30, 0, tzinfo=timezone.utc),
     )
-    assert result.pit_safe is True
+    assert result.pit_safe is False
+    assert result.temporal_evidence_complete is True
     assert result.start_observed_at == result.end_observed_at
 
 
@@ -96,5 +98,6 @@ def test_mixed_sources_remain_separate_and_never_claim_production():
     assert payload["priceSourceProvider"] == "yahoo_finance"
     assert payload["dividendSourceProvider"] == "exchange_disclosure"
     assert payload["sourceProvider"] == "issuer_filing"
-    assert payload["pitSafe"] is True
+    assert payload["pitSafe"] is False
+    assert payload["componentTimestampsWithinCutoff"] is True
     assert payload["productionEligible"] is False

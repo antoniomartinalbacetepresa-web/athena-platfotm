@@ -33,7 +33,8 @@ def test_incomplete_component_evidence_never_claims_pit_safe(present):
 
 def test_complete_evidence_marks_only_structural_pit_not_production():
     result = _calculate(start_observed_at=OBSERVED, end_observed_at=OBSERVED, dividend_observed_at=OBSERVED)
-    assert result["pitSafe"] is True
+    assert result["pitSafe"] is False
+    assert result["componentTimestampsWithinCutoff"] is True
     assert result["startObservedAt"] == OBSERVED.isoformat()
     assert result["endObservedAt"] == OBSERVED.isoformat()
     assert result["dividendObservedAt"] == OBSERVED.isoformat()
@@ -63,7 +64,8 @@ def test_timezone_normalization_keeps_pit_causality():
     plus_two = timezone(timedelta(hours=2))
     result = _calculate(start_observed_at=OBSERVED.astimezone(plus_two),
                         end_observed_at=OBSERVED, dividend_observed_at=OBSERVED)
-    assert result["pitSafe"] is True
+    assert result["pitSafe"] is False
+    assert result["componentTimestampsWithinCutoff"] is True
     assert result["startObservedAt"] == OBSERVED.isoformat()
 
 

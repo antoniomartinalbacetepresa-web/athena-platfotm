@@ -275,3 +275,25 @@ The extractor accepts provider-declared `retrievedAt` timestamps, which alone
 cannot prove when ATHENA actually knew an event. Operational PIT/OOS/total-return
 acceptance still requires verified local capture, independent reconciliation,
 the authorized production snapshot and explicit release gates.
+
+
+## Direct dividend and standalone total-return PIT claims
+
+A direct `DividendAnalysisService` call in its legacy-compatible diagnostic mode
+(`require_verified_capture=False`) may display historical observations for
+non-authoritative audit, but its API now reports `pitSafe=false` and
+`captureGatePassed=false`. Only an explicitly strict reader that rejects all
+PIT-visible unverified captures may report `captureGatePassed=true` and
+structural `pitSafe=true`. This gate does not attest provider independence,
+license, custody, complete history, or production readiness;
+`productionEligible=false` remains mandatory.
+
+The standalone `DividendTotalReturnService` accepts caller-supplied component
+observation times and may establish `componentTimestampsWithinCutoff=true`,
+but these timestamps alone do **not** independently prove when ATHENA acquired
+corporate-action evidence. It therefore always reports `pitSafe=false` and
+`productionEligible=false`; its numeric decomposition remains a research
+calculation, never an operational OOS or investment-authority attestation.
+No legacy rows are deleted or silently reclassified. Production/OOS acceptance
+still requires independently audited capture evidence and an authorized
+consistent operational database snapshot.

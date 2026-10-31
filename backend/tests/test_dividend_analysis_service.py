@@ -341,3 +341,47 @@ def test_pit_same_utc_day_different_hours_is_one_economic_payment(tmp_path: Path
         instrument_id=instrument_id, knowledge_cutoff=cutoff, pit_price=20.0)
     assert result.confirmed_forward_conflict_count == 1
     assert result.confirmed_forward_cash_per_share is None
+
+
+def test_direct_dividend_diagnostic_does_not_certify_legacy_capture(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    CorporateActionRepository(database=database).save_many(
+        instrument_id=instrument_id, source_provider="issuer_notice",
+        retrieved_at=cutoff,
+        actions=[{"action_type": "dividend",
+                  "effective_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+                  "cash_amount": 0.5, "currency": "USD"}],
+    )
+    diagnostic = DividendAnalysisService(database=database).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff
+    ).to_api_dict()
+    assert diagnostic["paymentCount"] == 1  # retained for non-authoritative audit
+    assert diagnostic["pitSafe"] is False
+    assert diagnostic["captureGatePassed"] is False
+    assert diagnostic["productionEligible"] is False
+    with pytest.raises(RuntimeError, match="no verificada"):
+        DividendAnalysisService(database=database, require_verified_capture=True).analyze(
+            instrument_id=instrument_id, knowledge_cutoff=cutoff
+        )
+
+
+def test_direct_dividend_diagnostic_strict_capture_gate_is_explicit(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    cutoff = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    CorporateActionRepository(database=database).save_many(
+        instrument_id=instrument_id, source_provider="issuer_notice",
+        retrieved_at=cutoff, captured_by_athena=True,
+        actions=[{"action_type": "dividend",
+                  "effective_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
+                  "cash_amount": 0.5, "currency": "USD"}],
+    )
+    payload = DividendAnalysisService(database=database, require_verified_capture=True).analyze(
+        instrument_id=instrument_id, knowledge_cutoff=cutoff
+    ).to_api_dict()
+    assert payload["paymentCount"] == 1
+    assert payload["captureGatePassed"] is True
+    assert payload["pitSafe"] is True
+    assert payload["productionEligible"] is False

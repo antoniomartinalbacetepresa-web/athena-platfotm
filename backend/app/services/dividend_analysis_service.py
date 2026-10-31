@@ -39,6 +39,7 @@ class DividendAnalysis:
     confirmed_forward_latest_retrieved_at: str | None = None
     historical_conflict_count: int = 0
     confirmed_forward_conflict_count: int = 0
+    capture_gate_passed: bool = False
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -50,7 +51,10 @@ class DividendAnalysis:
             "consecutiveFullYearsWithoutCut": self.consecutive_full_years_without_cut,
             "paymentStabilityScore": self.payment_stability_score, "suspectedSuspension": self.suspected_suspension,
             "currency": self.currency, "currencyConsistent": self.currency_consistent,
-            "knowledgeCutoff": self.knowledge_cutoff, "pitSafe": True,
+            "knowledgeCutoff": self.knowledge_cutoff,
+            "pitSafe": self.capture_gate_passed,
+            "captureGatePassed": self.capture_gate_passed,
+            "productionEligible": False,
             "confirmedForwardPaymentCount": self.confirmed_forward_payment_count,
             "confirmedForwardCashPerShare": self.confirmed_forward_cash_per_share,
             "confirmedForwardYield": self.confirmed_forward_yield,
@@ -200,7 +204,8 @@ class DividendAnalysisService:
                 confirmed_forward_source_providers=forward_providers,
                 confirmed_forward_latest_retrieved_at=forward_latest,
                 historical_conflict_count=historical_conflicts,
-                confirmed_forward_conflict_count=forward_conflicts)
+                confirmed_forward_conflict_count=forward_conflicts,
+                capture_gate_passed=self._require_verified_capture)
             for metric_name, metric_value in result.to_api_dict().items():
                 if isinstance(metric_value, float) and not isfinite(metric_value):
                     raise ValueError(f"Non-finite dividend metric: {metric_name}")

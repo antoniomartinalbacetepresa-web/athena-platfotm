@@ -25,6 +25,7 @@ class DividendTotalReturn:
     start_observed_at: str | None
     end_observed_at: str | None
     dividend_observed_at: str | None
+    temporal_evidence_complete: bool
     pit_safe: bool
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -43,6 +44,7 @@ class DividendTotalReturn:
             "startObservedAt": self.start_observed_at,
             "endObservedAt": self.end_observed_at,
             "dividendObservedAt": self.dividend_observed_at,
+            "componentTimestampsWithinCutoff": self.temporal_evidence_complete,
             "pitSafe": self.pit_safe,
             "dividendsReinvested": False,
             "productionEligible": False,
@@ -166,7 +168,9 @@ class DividendTotalReturnService:
             and observed["start_observed_at"] > observed["end_observed_at"]
         ):
             raise ValueError("start_observed_at no puede ser posterior a end_observed_at.")
-        pit_safe = all(value is not None for value in observed.values())
+        # Caller-supplied timestamps establish temporal consistency, not an
+        # independently attested local capture. Never certify PIT provenance here.
+        temporal_evidence_complete = all(value is not None for value in observed.values())
 
         price_return = end / start - 1.0
         dividend_return = cash / start
@@ -188,5 +192,6 @@ class DividendTotalReturnService:
             start_observed_at=observed["start_observed_at"],
             end_observed_at=observed["end_observed_at"],
             dividend_observed_at=observed["dividend_observed_at"],
-            pit_safe=pit_safe,
+            temporal_evidence_complete=temporal_evidence_complete,
+            pit_safe=False,
         )

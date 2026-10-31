@@ -42,7 +42,8 @@ def test_pit_timestamps_do_not_grant_production_or_trading_authority():
         dividend_observed_at=CUTOFF - timedelta(hours=1),
     )
     payload = result.to_api_dict()
-    assert result.pit_safe is True
+    assert result.pit_safe is False
+    assert result.temporal_evidence_complete is True
     assert payload["productionEligible"] is False
     assert payload["automaticTrading"] is False
     assert payload["dividendsReinvested"] is False
