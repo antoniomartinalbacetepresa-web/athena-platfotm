@@ -13,8 +13,6 @@ class YahooMarketService:
 
     def get_quote(self, symbol: str) -> dict[str, Any] | None:
         normalized_symbol = self._normalize_symbol(symbol)
-        retrieved_at = datetime.now(timezone.utc)
-
         ticker = yf.Ticker(normalized_symbol)
         fast_info = ticker.fast_info
 
@@ -50,6 +48,15 @@ class YahooMarketService:
             self._get_fast_info_value(fast_info, "timezone", "timezone")
         )
 
+        # Fast-info may be delayed; a nonpositive price is not a usable quote.
+        if current_price is not None and current_price <= 0:
+            current_price = None
+        if previous_close is not None and previous_close <= 0:
+            previous_close = None
+        quote_mode = "provider_fast_info"
+        price_session_date: str | None = None
+        fallback_session_start: datetime | None = None
+
         if current_price is None:
             history = ticker.history(
                 period="5d",
@@ -61,7 +68,19 @@ class YahooMarketService:
                 return None
 
             latest = history.iloc[-1]
+            fallback_session_start = history.index[-1]
+            # A daily candle is a session-level observation, not a live quote.
+            if (
+                not isinstance(fallback_session_start, datetime)
+                or fallback_session_start.tzinfo is None
+                or fallback_session_start.utcoffset() is None
+            ):
+                return None
+            price_session_date = fallback_session_start.date().isoformat()
+            quote_mode = "historical_daily_close_fallback"
             current_price = self._to_float(latest.get("Close"))
+            if current_price is None or current_price <= 0:
+                return None
             open_price = (
                 open_price
                 if open_price is not None
@@ -84,8 +103,18 @@ class YahooMarketService:
             )
             if previous_close is None and len(history.index) >= 2:
                 previous_close = self._to_float(history.iloc[-2].get("Close"))
+                if previous_close is not None and previous_close <= 0:
+                    previous_close = None
 
         if current_price is None:
+            return None
+
+        # The observation is not knowable before provider I/O finishes.
+        retrieved_at = datetime.now(timezone.utc)
+        if (
+            fallback_session_start is not None
+            and fallback_session_start.astimezone(timezone.utc) > retrieved_at
+        ):
             return None
 
         change = None
@@ -100,6 +129,10 @@ class YahooMarketService:
             "timestamp": retrieved_at.isoformat(),
             "retrievedAt": retrieved_at.isoformat(),
             "sourceProvider": self.PROVIDER_ID,
+            "quoteMode": quote_mode,
+            "priceSessionDate": price_session_date,
+            "realTimePriceVerified": False,
+            "historicalPointInTimeEligible": False,
             "currency": currency.upper() if currency is not None else None,
             "exchange": exchange,
             "quoteType": quote_type,
