@@ -142,3 +142,23 @@ The operator must inspect and reconcile the persisted observations rather
 than certify the entire instrument as accepted. Regression evidence here
 uses fixtures, not an operational provider, and does not close independent
 reconciliation or production gates.
+
+
+## Quarantine gate for historical capture provenance
+
+The aggregate corporate-action coverage report now exposes
+`unverifiedCaptureCount`. Every legacy row (`capture_verified=0`) visible
+at the PIT cutoff is counted, including rows whose amounts happen to agree
+between independent provider families. A missing, malformed, or noncanonical
+capture marker also fails closed. `crossProviderReconciliationReady` **must
+remain false** while this count is nonzero. Existing rows remain queryable for
+non-authoritative audit and reconciliation diagnostics; no destructive
+migration, timestamp rewriting, or automatic provider selection is performed.
+
+`agreedEventCount` is a **diagnostic economic comparison only**. It must not
+be interpreted as verified historical PIT evidence when
+`unverifiedCaptureCount > 0`. The marker identifies a locally observed
+capture path, not an independent third-party timestamp attestation or proof
+of a production provider agreement. Other legacy readers, total-return and
+OOS consumers still require a reviewed end-to-end quarantine/verified-only
+policy before their outputs can be accepted as operational evidence.
