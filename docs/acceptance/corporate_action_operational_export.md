@@ -93,11 +93,26 @@ unattempted actionable events or failed instruments. A zero exit status from
 any bounded command is **not** evidence of complete eligible-universe
 coverage, independent operational provider agreement, or production readiness.
 
-Provider-supplied historical `retrievedAt` remains untrusted evidence of when
-the data was *originally* learned; these checks reject impossible future
-timestamps but cannot independently attest a provider's earlier claimed
-retrieval time. Only separately audited acquisition logs and independent
-source custody can close that provenance criterion.
+Provider-supplied historical `retrievedAt` is **never** treated as proof
+of ATHENA's own acquisition time during shared-history ingestion. New actions
+are stored with the locally observed UTC response receipt time, after complete
+response validation. The new `capture_verified=1` marker distinguishes those
+rows from pre-existing rows (`capture_verified=0` after additive migration).
+A replay with the same provider, economic identity and source timestamp is
+idempotent across separate local captures **only** when a previously captured
+row has that marker. A different dividend amount, split ratio, currency or
+source timestamp remains a distinct immutable observation; no automatic
+canonicalization or investment authority follows.
+
+**Legacy PIT warning:** this additive migration does not rewrite or erase
+older provider-declared `retrieved_at` values. Legacy rows are marked
+unverified but existing readers can still see them. Consequently, historical
+PIT/OOS/total-return evidence derived from legacy corporate actions remains
+unfit for operational acceptance until a separately approved, audited
+quarantine/backfill or explicit verified-capture filter is applied across
+every downstream reader. A green CI cannot repair historical provenance.
+Only separately audited acquisition logs and independent source custody can
+close that provenance criterion.
 
 
 ## Immutable PIT event identity and provenance replay
@@ -119,9 +134,11 @@ legitimate distributions, and the reconciliation layer must evaluate their
 meaning independently. A later retrieval instant can also preserve a revised
 observation without rewriting older PIT evidence.
 
-Each provider/retrieval-time batch is transactional, but **different batches
-in one provider response are not one transaction**. An earlier committed batch
-may remain when a later batch fails; the operator must inspect and reconcile
-the persisted observations, and must not certify the whole instrument as
-accepted. The regression evidence here uses fixtures, not an operational
-provider, and does not close independent reconciliation or production gates.
+The shared ingestion path now groups a validated response by provider and
+uses one local receipt timestamp for all its actions. Each provider batch is
+transactional; **different provider batches are not one transaction**.
+A prior committed provider batch may remain if a later provider batch fails.
+The operator must inspect and reconcile the persisted observations rather
+than certify the entire instrument as accepted. Regression evidence here
+uses fixtures, not an operational provider, and does not close independent
+reconciliation or production gates.
