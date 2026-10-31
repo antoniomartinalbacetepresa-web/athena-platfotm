@@ -266,6 +266,10 @@ class VerifiedCorporateActionSecondaryBackfillService:
         ingestion = CorporateActionIngestionService(
             market_provider=_ExpectedSecondaryProvider(self._history_provider),
             repository=self._repository,
+            # One observation clock for the trusted receipt and subsequent
+            # verification cutoff. Tests may inject a historical clock, while
+            # the operational default remains the real UTC wall clock.
+            clock=self._clock,
         )
 
         for index, instrument_id in enumerate(instrument_ids, start=1):
