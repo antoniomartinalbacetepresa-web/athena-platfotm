@@ -227,3 +227,67 @@ def test_yahoo_history_keeps_explicit_date_range_without_period(
     assert calls[0]["end"] == "2026-01-02"
     assert result[0]["dividend"] is None
     assert result[0]["stockSplit"] is None
+
+
+
+def test_split_factor_counts_independent_matching_providers_once() -> None:
+    service = CorporateActionService()
+    actions = service.extract_from_history([
+        _history_observation(stock_split=4.0),
+        {**_history_observation(stock_split=4.0), "sourceProvider": "alpha_vantage"},
+    ])
+    factor = service.cumulative_split_factor(
+        actions, symbol="AAPL",
+        knowledge_cutoff=datetime(2026, 9, 11, 7, tzinfo=timezone.utc),
+    )
+    assert factor == 4.0
+
+
+def test_split_factor_quarantines_conflicting_provider_ratios() -> None:
+    service = CorporateActionService()
+    actions = service.extract_from_history([
+        _history_observation(stock_split=4.0),
+        {**_history_observation(stock_split=2.0), "sourceProvider": "alpha_vantage"},
+    ])
+    with pytest.raises(ValueError, match="incompatibles"):
+        service.cumulative_split_factor(
+            actions, symbol="AAPL",
+            knowledge_cutoff=datetime(2026, 9, 11, 7, tzinfo=timezone.utc),
+        )
+
+
+def test_split_factor_quarantines_same_provider_same_day_duplicates() -> None:
+    service = CorporateActionService()
+    actions = service.extract_from_history([
+        _history_observation(stock_split=4.0),
+        _history_observation(timestamp="2026-01-15T12:00:00+00:00", stock_split=4.0),
+    ])
+    with pytest.raises(ValueError, match="duplicados"):
+        service.cumulative_split_factor(
+            actions, symbol="AAPL",
+            knowledge_cutoff=datetime(2026, 9, 11, 7, tzinfo=timezone.utc),
+        )
+
+
+def test_split_factor_multiplies_distinct_economic_days() -> None:
+    service = CorporateActionService()
+    actions = service.extract_from_history([
+        _history_observation(stock_split=4.0),
+        _history_observation(timestamp="2026-02-15T00:00:00+00:00", stock_split=2.0),
+    ])
+    assert service.cumulative_split_factor(
+        actions, symbol="AAPL",
+        knowledge_cutoff=datetime(2026, 9, 11, 7, tzinfo=timezone.utc),
+    ) == 8.0
+
+
+@pytest.mark.parametrize("ratio", [0.0, -2.0, float("nan"), float("inf")])
+def test_split_factor_rejects_invalid_ratios_even_in_direct_objects(ratio: float) -> None:
+    from dataclasses import replace
+    service = CorporateActionService()
+    action = service.extract_from_history([_history_observation(stock_split=4.0)])[0]
+    with pytest.raises(ValueError, match="finito y positivo"):
+        service.cumulative_split_factor(
+            [replace(action, value=ratio)], symbol="AAPL",
+            knowledge_cutoff=datetime(2026, 9, 11, 7, tzinfo=timezone.utc),
+        )

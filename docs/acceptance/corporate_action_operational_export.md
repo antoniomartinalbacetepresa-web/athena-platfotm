@@ -259,3 +259,19 @@ coverage, independent reconciliation, OOS skill or total-return correctness.
 PIT reads scan each instrument's history to avoid unsafe lexical prefilters;
 operational performance should be benchmarked against the authorized
 database snapshot before claiming large-universe readiness.
+
+
+## Research split-factor reconciliation boundary
+
+`CorporateActionService.cumulative_split_factor` no longer multiplies the
+same UTC-day split once per reporting provider. Matching independent-provider
+ratios count as one economic action; conflicting ratios and repeated
+same-provider observations on the same day fail closed because an economic
+event identifier is unavailable. Distinct UTC-day splits still compound.
+Non-finite or non-positive ratios are rejected before multiplication.
+
+This is a **research diagnostic**, not an attestation of historical capture.
+The extractor accepts provider-declared `retrievedAt` timestamps, which alone
+cannot prove when ATHENA actually knew an event. Operational PIT/OOS/total-return
+acceptance still requires verified local capture, independent reconciliation,
+the authorized production snapshot and explicit release gates.

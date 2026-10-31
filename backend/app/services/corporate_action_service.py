@@ -126,17 +126,35 @@ class CorporateActionService:
         knowledge_cutoff: datetime,
     ) -> float:
         normalized_symbol = self._required_text(symbol, "symbol").upper()
-        factor = 1.0
+        # A split reported by two independent providers is one economic event,
+        # not two multiplicative adjustments. Without an event identifier, two
+        # different ratios or repeated same-provider events on one UTC day are
+        # ambiguous and must not produce a plausible-looking adjusted price.
+        by_day: dict[str, list[CorporateAction]] = {}
         for action in self.visible_as_of(
             actions,
             knowledge_cutoff=knowledge_cutoff,
         ):
-            if action.symbol != normalized_symbol:
+            if action.symbol != normalized_symbol or action.action_type != "stock_split":
                 continue
-            if action.action_type == "stock_split":
-                factor *= action.value
-        if not math.isfinite(factor) or factor <= 0:
-            raise RuntimeError("El factor acumulado de split no es válido.")
+            if not math.isfinite(action.value) or action.value <= 0:
+                raise ValueError("El ratio de split debe ser finito y positivo.")
+            day = action.effective_at.astimezone(timezone.utc).date().isoformat()
+            by_day.setdefault(day, []).append(action)
+
+        factor = 1.0
+        for day, candidates in sorted(by_day.items()):
+            ratios = {action.value for action in candidates}
+            providers = [action.source_provider for action in candidates]
+            if len(ratios) != 1:
+                raise ValueError(f"Ratios de split incompatibles para {day}.")
+            if any(not isinstance(p, str) or not p.strip() for p in providers):
+                raise ValueError("La procedencia del split es obligatoria.")
+            if len(set(providers)) != len(providers):
+                raise ValueError(f"Splits duplicados del mismo proveedor para {day}.")
+            factor *= next(iter(ratios))
+            if not math.isfinite(factor) or factor <= 0:
+                raise RuntimeError("El factor acumulado de split no es válido.")
         return factor
 
     def _required_text(self, value: Any, field: str) -> str:
