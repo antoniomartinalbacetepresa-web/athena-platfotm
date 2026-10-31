@@ -7,7 +7,10 @@ from typing import Any, Callable, Protocol
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.instrument_repository import InstrumentRepository
-from app.repositories.market_observation_repository import MarketObservationRepository
+from app.repositories.market_observation_repository import (
+    MarketObservationRepository,
+    validated_market_source_provider,
+)
 from app.services.market_history_gap_service import MarketHistoryGapService
 from app.services.yahoo_market_service import YahooMarketService
 
@@ -153,9 +156,10 @@ class MarketObservationBackfillService:
             raise ValueError("limit debe ser mayor que 0.")
         if offset < 0:
             raise ValueError("offset no puede ser negativo.")
-        provider = str(source_provider or "").strip()
-        if not provider:
-            raise ValueError("source_provider es obligatorio.")
+        # Reject forbidden provider families before opening SQLite or making
+        # any network request. Repository write-time validation alone is too late:
+        # an unauthorized FMP adapter could already have been contacted.
+        provider = validated_market_source_provider(source_provider)
         # A configured adapter must not be relabelled as another source,
         # even if its observations omit sourceProvider metadata.
         adapter_provider = getattr(self._history_provider, "PROVIDER_ID", None)
