@@ -266,7 +266,7 @@ def test_governed_oos_rejects_retroactive_approval_of_historical_evidence(tmp_pa
     assert sufficiency["policyApproved"] is True
     assert sufficiency["temporalPrecommitmentVerified"] is False
     assert sufficiency["acceptanceEvidenceVerified"] is False
-    assert sufficiency["criteriaCheckCount"] == 13  # Includes issuer and period distributions.
+    assert sufficiency["criteriaCheckCount"] == 15  # Both distribution presence and reconciliation.
     assert sufficiency["satisfiedCriteriaCount"] == sufficiency["criteriaCheckCount"] - 1
     assert result["productionLearningEligible"] is False
 
