@@ -41,11 +41,13 @@ def _save(
     effective_at: datetime,
     retrieved_at: datetime,
     amount: float = 0.25,
+    captured_by_athena: bool = True,
 ) -> None:
     CorporateActionRepository(database).save_many(
         instrument_id=instrument_id,
         source_provider=provider,
         retrieved_at=retrieved_at,
+        captured_by_athena=captured_by_athena,
         actions=[
             {
                 "type": "dividend",
@@ -268,3 +270,69 @@ def test_unclassified_provenance_does_not_disappear_when_two_families_agree(tmp_
     assert payload["totalConflictEventCount"] == 0
     assert payload["items"][0]["unclassifiedProviders"] == ["unclassified_feed"]
     assert payload["items"][0]["reconciliationStatus"] == "incomplete"
+
+
+def test_economic_agreement_with_legacy_captures_stays_actionable(tmp_path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "LEGACY")
+    effective = AS_OF - timedelta(days=30)
+    retrieved = AS_OF - timedelta(days=20)
+    for provider in ("yahoo", "alpha_vantage"):
+        _save(database, instrument_id=instrument_id, provider=provider,
+              effective_at=effective, retrieved_at=retrieved,
+              captured_by_athena=False)
+
+    result = CorporateActionReconciliationWorklistService(database).get_worklist(as_of=AS_OF)
+    payload = result.to_api_dict()
+    assert payload["totalIncompleteEventCount"] == 1
+    assert payload["totalConflictEventCount"] == 0
+    assert payload["totalUnverifiedCaptureCount"] == 2
+    assert payload["totalUnresolvedEventCount"] == 1
+    item = payload["items"][0]
+    assert item["reconciliationStatus"] == "incomplete"
+    assert item["unverifiedCaptureCount"] == 2
+    assert item["missingIndependentFamilyCount"] == 0
+    assert item["suggestedProvider"] is None
+    assert item["automaticCanonicalization"] is False
+
+
+def test_superseded_unverified_capture_is_not_hidden_by_verified_replay(tmp_path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "REVISION")
+    effective = AS_OF - timedelta(days=30)
+    retrieved = AS_OF - timedelta(days=20)
+    _save(database, instrument_id=instrument_id, provider="yahoo",
+          effective_at=effective, retrieved_at=retrieved,
+          captured_by_athena=False)
+    _save(database, instrument_id=instrument_id, provider="yahoo",
+          effective_at=effective, retrieved_at=retrieved + timedelta(hours=1))
+    _save(database, instrument_id=instrument_id, provider="alpha_vantage",
+          effective_at=effective, retrieved_at=retrieved + timedelta(hours=2))
+
+    payload = CorporateActionReconciliationWorklistService(database).get_worklist(
+        as_of=AS_OF
+    ).to_api_dict()
+    assert payload["totalIncompleteEventCount"] == 1
+    assert payload["totalUnverifiedCaptureCount"] == 1
+    assert payload["items"][0]["unverifiedCaptureCount"] == 1
+    assert payload["items"][0]["reconciliationStatus"] == "incomplete"
+
+
+def test_future_legacy_capture_does_not_contaminate_prior_pit_cutoff(tmp_path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "CUTOFF")
+    effective = AS_OF - timedelta(days=30)
+    retrieved = AS_OF - timedelta(days=20)
+    for provider in ("yahoo", "alpha_vantage"):
+        _save(database, instrument_id=instrument_id, provider=provider,
+              effective_at=effective, retrieved_at=retrieved)
+    _save(database, instrument_id=instrument_id, provider="yahoo",
+          effective_at=effective, retrieved_at=AS_OF + timedelta(days=1),
+          amount=0.30, captured_by_athena=False)
+
+    payload = CorporateActionReconciliationWorklistService(database).get_worklist(
+        as_of=AS_OF
+    ).to_api_dict()
+    assert payload["totalIncompleteEventCount"] == 0
+    assert payload["totalUnverifiedCaptureCount"] == 0
+    assert payload["items"] == []

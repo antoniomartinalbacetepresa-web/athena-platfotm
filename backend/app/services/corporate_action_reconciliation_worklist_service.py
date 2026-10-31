@@ -20,6 +20,7 @@ class CorporateActionReconciliationItem:
     observed_provider_families: tuple[str, ...]
     unclassified_providers: tuple[str, ...]
     missing_independent_family_count: int
+    unverified_capture_count: int
     suggested_provider: str | None
 
     def to_api_dict(self) -> dict[str, Any]:
@@ -34,6 +35,7 @@ class CorporateActionReconciliationItem:
             "unclassifiedProviders": list(self.unclassified_providers),
             "requiredIndependentFamilyCount": 2,
             "missingIndependentFamilyCount": self.missing_independent_family_count,
+            "unverifiedCaptureCount": self.unverified_capture_count,
             "suggestedProvider": self.suggested_provider,
             "automaticCanonicalization": False,
         }
@@ -44,6 +46,7 @@ class CorporateActionReconciliationWorklist:
     as_of: datetime
     total_incomplete_event_count: int
     total_conflict_event_count: int
+    total_unverified_capture_count: int
     limit: int
     offset: int
     items: tuple[CorporateActionReconciliationItem, ...]
@@ -55,6 +58,7 @@ class CorporateActionReconciliationWorklist:
             "asOf": self.as_of.astimezone(timezone.utc).isoformat(),
             "totalIncompleteEventCount": self.total_incomplete_event_count,
             "totalConflictEventCount": self.total_conflict_event_count,
+            "totalUnverifiedCaptureCount": self.total_unverified_capture_count,
             "totalUnresolvedEventCount": self.total_incomplete_event_count + self.total_conflict_event_count,
             "selectedCount": selected,
             "limit": self.limit,
@@ -72,7 +76,8 @@ class CorporateActionReconciliationWorklist:
                 "La worklist identifica evidencia PIT que aún carece de dos familias "
                 "técnicamente independientes o contiene evidencia económica conflictiva. "
                 "Una sugerencia de proveedor no demuestra independencia contractual "
-                "u operativa y no autoriza canonicalización."
+                "u operativa y no autoriza canonicalización. Capturas históricas "
+                "no verificadas permanecen en la lista aunque haya acuerdo económico."
             ),
         }
 
@@ -133,6 +138,7 @@ class CorporateActionReconciliationWorklistService:
         unresolved_count = 0
         incomplete_count = 0
         conflict_count = 0
+        unverified_capture_count = 0
         for instrument in instruments:
             instrument_id = int(instrument["id"])
             symbol = str(instrument["symbol"] or "").strip().upper()
@@ -144,6 +150,7 @@ class CorporateActionReconciliationWorklistService:
                 tuple[str, str], dict[str, dict[str, Any]]
             ] = {}
             ambiguous_snapshots: set[tuple[tuple[str, str], str]] = set()
+            unverified_by_event: dict[tuple[str, str], int] = {}
             for raw in actions:
                 row = dict(raw)
                 provider = str(row.get("source_provider") or "").strip()
@@ -165,6 +172,10 @@ class CorporateActionReconciliationWorklistService:
                     raise RuntimeError("Corporate action persistida viola el corte PIT.")
                 key = (action_type, effective.astimezone(timezone.utc).isoformat())
                 snapshot_key = (key, provider)
+                # Count every PIT-visible snapshot, including superseded legacy
+                # revisions. Economic agreement cannot attest historical capture.
+                if type(row.get("capture_verified")) is not int or row["capture_verified"] != 1:
+                    unverified_by_event[key] = unverified_by_event.get(key, 0) + 1
                 by_provider = latest_by_event_provider.setdefault(key, {})
                 previous = by_provider.get(provider)
                 if previous is None:
@@ -231,6 +242,10 @@ class CorporateActionReconciliationWorklistService:
                         )
                         else "conflict"
                     )
+                unverified_count = unverified_by_event.get(key, 0)
+                unverified_capture_count += unverified_count
+                if status == "agreed" and unverified_count:
+                    status = "incomplete"
                 if status == "agreed":
                     continue
                 if status == "conflict":
@@ -248,6 +263,7 @@ class CorporateActionReconciliationWorklistService:
                         observed_provider_families=families,
                         unclassified_providers=unclassified,
                         missing_independent_family_count=max(0, 2 - len(families)),
+                        unverified_capture_count=unverified_count,
                         suggested_provider=self._suggest_provider(families),
                     ))
                 unresolved_count += 1
@@ -257,6 +273,7 @@ class CorporateActionReconciliationWorklistService:
             as_of=cutoff,
             total_incomplete_event_count=incomplete_count,
             total_conflict_event_count=conflict_count,
+            total_unverified_capture_count=unverified_capture_count,
             limit=limit,
             offset=offset,
             items=page,

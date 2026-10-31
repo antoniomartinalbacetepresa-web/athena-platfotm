@@ -203,3 +203,26 @@ changes historical timestamps or creates investment authority. Aggregate
 coverage and per-instrument reconciliation now both refuse to certify
 unverified historical capture provenance. The complete worklist, OOS and
 other direct readers still require separate review.
+
+
+## Complete worklist quarantine for unverified capture evidence
+
+The PIT reconciliation worklist now keeps economically agreed events in its
+unresolved export when **any** PIT-visible snapshot of that event lacks a
+canonical local `capture_verified=1` marker, including superseded revisions.
+Those events are classified as `incomplete` (unless already `conflict`),
+not as accepted. Each worklist item exposes `unverifiedCaptureCount`, and
+the complete-universe result exposes `totalUnverifiedCaptureCount` across
+all pages. The unresolved count and pagination include these items so an
+apparently complete economic match cannot silently disappear from the
+operational remediation queue. A legacy capture first retrieved after the
+PIT cutoff does not contaminate the earlier worklist.
+
+Where two provider families already agree, `missingIndependentFamilyCount`
+remains zero and `suggestedProvider` may remain null: this requires independent
+capture attestation or reviewed remediation, **not** blind repeated fetching.
+No provider is selected automatically and historical observations remain
+immutable. These counters measure local marker status, not genuine third-party
+custody, legal source independence, or 365-day production coverage. Operational
+closure still requires an authorized consistent database snapshot, complete
+export, independent reconciliation and audited PIT provenance.
