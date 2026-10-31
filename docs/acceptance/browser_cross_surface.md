@@ -85,3 +85,15 @@ by the Chrome lane, and a failure blocks the release gate.
 A green exact-SHA CI is required before this browser regression is considered
 closed. Even then, this is **not** deployed E2E, a production backend test, or
 proof of real owner isolation. The deployed two-account acceptance remains open.
+
+## Deployed stale-response ordering evidence
+
+The opt-in staging Chromium journey must observe the *actual delayed HTTP 200*
+completing after the newer controlled 503, and allow Flutter two rendering
+frames before checking that the error and fail-closed provenance boundary
+remain visible. A fixed 600 ms sleep alone could produce a false positive
+when a slow browser had not yet delivered the held response. A failed or
+incomplete delayed response now fails acceptance rather than being treated as
+proof of correct response ordering. This improves the deployed gate's
+observability; it does **not** mean the gate has run when its CI job is
+`skipped`, and it does not establish production authorization.

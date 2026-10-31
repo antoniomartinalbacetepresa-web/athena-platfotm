@@ -469,3 +469,51 @@ def test_deployed_market_status_rejects_fallback_even_when_counts_positive():
     ):
         with pytest.raises(module.BrowserAcceptanceFailure):
             _check_live_surface(_LiveSurfaceResponse(path, data), path)
+
+
+class _DelayedCanonicalResponse:
+    def __init__(self, failure=None):
+        self.failure = failure
+        self.completed = False
+
+    def finished(self):
+        self.completed = True
+        return self.failure
+
+
+class _RenderAfterNetworkPage:
+    def __init__(self, response):
+        self.response = response
+        self.rendered = False
+
+    def evaluate(self, expression):
+        assert self.response.completed
+        assert expression.count("requestAnimationFrame") == 2
+        self.rendered = True
+
+
+def test_delayed_canonical_response_waits_for_network_and_render_frames():
+    response = _DelayedCanonicalResponse()
+    page = _RenderAfterNetworkPage(response)
+    module._await_delayed_browser_response(page, response)
+    assert response.completed is True
+    assert page.rendered is True
+
+
+def test_delayed_canonical_response_rejects_network_failure_before_render():
+    response = _DelayedCanonicalResponse("failed")
+    page = _RenderAfterNetworkPage(response)
+    with pytest.raises(module.BrowserAcceptanceFailure, match="did not finish"):
+        module._await_delayed_browser_response(page, response)
+    assert response.completed is True
+    assert page.rendered is False
+
+
+def test_delayed_canonical_response_redacts_browser_failure():
+    class BrokenPage:
+        def evaluate(self, expression):
+            raise RuntimeError("https://staging.example.test/?token=private")
+
+    with pytest.raises(module.BrowserAcceptanceFailure) as error:
+        module._await_delayed_browser_response(BrokenPage(), _DelayedCanonicalResponse())
+    assert "private" not in str(error.value)

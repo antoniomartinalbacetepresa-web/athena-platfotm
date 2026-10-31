@@ -451,6 +451,28 @@ def verify_live_canonical_cycle(page, *, backend_origin: str) -> str:
         raise BrowserAcceptanceFailure("Canonical deployed research binding invalid") from None
 
 
+def _await_delayed_browser_response(page, response) -> None:
+    """Require the held reply to finish before checking stale UI authority.
+
+    A fixed sleep alone could pass while the browser has not yet delivered
+    the old HTTP response to Flutter. Wait for network completion and two
+    rendering frames without exposing response contents or staging URLs.
+    """
+    try:
+        if response.finished() is not None:
+            raise BrowserAcceptanceFailure("Delayed canonical response did not finish")
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame("
+            "() => requestAnimationFrame(() => resolve(true))))"
+        )
+    except BrowserAcceptanceFailure:
+        raise
+    except Exception:
+        raise BrowserAcceptanceFailure(
+            "Delayed canonical response could not settle"
+        ) from None
+
+
 def verify_stale_synthesis_ordering(page, *, backend_origin: str) -> None:
     """A delayed genuine 200 must not override a newer browser-injected 503."""
     path = "/api/v1/recommendations/professional-research/athena-synthesis/latest"
@@ -500,9 +522,13 @@ def verify_stale_synthesis_ordering(page, *, backend_origin: str) -> None:
         if requests_seen != 2:
             raise BrowserAcceptanceFailure("Unexpected canonical refresh requests")
 
-        held_routes[0].fulfill(response=live_response)
+        with page.expect_response(
+            lambda response: response.status == 200 and matches(response.url),
+            timeout=30000,
+        ) as delayed_response:
+            held_routes[0].fulfill(response=live_response)
         released = True
-        page.wait_for_timeout(600)
+        _await_delayed_browser_response(page, delayed_response.value)
         page.get_by_text(
             "No se pudo verificar la síntesis ATHENA.", exact=True
         ).wait_for(state="visible", timeout=1500)
