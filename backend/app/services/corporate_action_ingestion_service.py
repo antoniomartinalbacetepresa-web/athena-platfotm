@@ -122,8 +122,7 @@ class CorporateActionIngestionService:
                 ).lower()
                 if observation_provider != normalized_expected_provider:
                     raise ValueError(
-                        "Corporate action provenance mismatch: "
-                        f"expected {normalized_expected_provider}, got {observation_provider}."
+                        "Corporate action provenance mismatch: provider identity rejected."
                     )
 
         actions = self._action_service.extract_from_history(history)
@@ -138,8 +137,7 @@ class CorporateActionIngestionService:
                 and action.source_provider.strip().lower() != normalized_expected_provider
             ):
                 raise ValueError(
-                    "Corporate action provenance mismatch: "
-                    f"expected {normalized_expected_provider}, got {action.source_provider}."
+                    "Corporate action provenance mismatch: provider identity rejected."
                 )
 
         batches: dict[tuple[str, datetime], list[CorporateAction]] = {}

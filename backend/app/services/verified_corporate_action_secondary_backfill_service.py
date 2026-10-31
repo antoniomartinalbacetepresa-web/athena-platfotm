@@ -311,10 +311,12 @@ class VerifiedCorporateActionSecondaryBackfillService:
                     no_action += 1
                     status = "no_actions"
                 self._emit(index, len(instrument_ids), symbol, status, stats.actions_received)
-            except Exception as exc:
+            except Exception:
+                # Never return provider exception text: it may include credentials.
                 failed += 1
                 failures.append(
-                    {"instrumentId": str(instrument_id), "symbol": symbol, "error": str(exc)}
+                    {"instrumentId": str(instrument_id), "symbol": symbol,
+                     "error": "secondary_provider_or_ingestion_failed"}
                 )
                 self._emit(index, len(instrument_ids), symbol, "failed", 0)
 

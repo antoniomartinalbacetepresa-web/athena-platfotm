@@ -392,3 +392,23 @@ def test_secondary_rejects_out_of_window_provider_rows_without_partial_write(
     assert report.incomplete_before == report.incomplete_after == 1
     assert report.agreed_after == 0
     assert report.status == "completed_with_failures"
+
+
+def test_verified_secondary_backfill_redacts_provider_credentials(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database, "AAPL")
+    effective = "2026-08-15T00:00:00+00:00"
+    _seed_yahoo_dividend(database, instrument_id, effective_at=effective)
+
+    class FailingProvider:
+        def get_history(self, symbol, from_date=None, to_date=None):
+            raise RuntimeError("Alpha Vantage API key DO_NOT_LOG in provider response")
+
+    report = VerifiedCorporateActionSecondaryBackfillService(
+        database=database, history_provider=FailingProvider(),
+        clock=lambda: VERIFIED_AT,
+    ).run(as_of=AS_OF, limit=10)
+    assert report.failed_count == 1
+    assert report.actions_inserted == 0
+    assert report.failures[0]["error"] == "secondary_provider_or_ingestion_failed"
+    assert "DO_NOT_LOG" not in str(report.to_api_dict())

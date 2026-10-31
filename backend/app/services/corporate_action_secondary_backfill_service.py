@@ -102,9 +102,11 @@ class CorporateActionSecondaryBackfillService:
                     persisted += 1
                     status = "persisted"
                 self._emit(symbol, index, len(rows), status, stats.actions_received)
-            except Exception as exc:
+            except Exception:
+                # Provider errors can embed API keys, URLs or response bodies.
+                # Reports are an untrusted presentation boundary.
                 failed += 1
-                failures.append({"symbol": symbol, "error": str(exc)})
+                failures.append({"symbol": symbol, "error": "secondary_provider_or_ingestion_failed"})
                 self._emit(symbol, index, len(rows), "failed", 0)
 
         return CorporateActionSecondaryBackfillReport(len(rows), len(rows), persisted, skipped, no_action, failed, received, inserted, unchanged, tuple(failures))

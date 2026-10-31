@@ -63,7 +63,7 @@ def test_secondary_backfill_reports_provider_failures_without_fabricating_succes
     assert report.persisted_instrument_count == 0
     assert report.failed_count == 1
     assert report.actions_inserted == 0
-    assert report.failures == ({"symbol": "AAPL", "error": "secondary provider unavailable"},)
+    assert report.failures == ({"symbol": "AAPL", "error": "secondary_provider_or_ingestion_failed"},)
 
 
 def test_secondary_backfill_rejects_primary_provider_provenance(tmp_path: Path) -> None:
@@ -76,7 +76,37 @@ def test_secondary_backfill_rejects_primary_provider_provenance(tmp_path: Path) 
     assert report.failed_count == 1
     assert report.actions_received == 0
     assert report.actions_inserted == 0
-    assert "provenance mismatch" in report.failures[0]["error"]
+    assert report.failures[0]["error"] == "secondary_provider_or_ingestion_failed"
     with database.connect() as connection:
         instrument_id = int(connection.execute("SELECT id FROM instruments WHERE symbol = 'AAPL'").fetchone()["id"])
     assert CorporateActionRepository(database).list_for_instrument(instrument_id) == []
+
+
+def test_secondary_backfill_never_echoes_provider_credentials(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    class FailingProvider:
+        def get_history(self, symbol, from_date=None, to_date=None):
+            raise ValueError("Alpha Vantage URL ?apikey=DO_NOT_LOG")
+    report = CorporateActionSecondaryBackfillService(
+        database=database, history_provider=FailingProvider()
+    ).run(limit=1)
+    assert report.failed_count == 1
+    assert report.actions_inserted == 0
+    assert report.failures[0]["error"] == "secondary_provider_or_ingestion_failed"
+    assert "DO_NOT_LOG" not in str(report.to_api_dict())
+
+
+def test_secondary_backfill_never_echoes_untrusted_provenance(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    class MislabelledProvider:
+        def get_history(self, symbol, from_date=None, to_date=None):
+            return [{"symbol": symbol, "sourceProvider": "DO_NOT_LOG",
+                     "timestamp": "2026-08-10T00:00:00+00:00",
+                     "retrievedAt": "2026-09-12T11:00:00+00:00",
+                     "dividend": 0.25}]
+    report = CorporateActionSecondaryBackfillService(
+        database=database, history_provider=MislabelledProvider()
+    ).run(limit=1)
+    assert report.failed_count == 1
+    assert report.actions_inserted == 0
+    assert "DO_NOT_LOG" not in str(report.to_api_dict())
