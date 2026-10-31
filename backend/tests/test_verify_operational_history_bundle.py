@@ -11,8 +11,8 @@ import pytest
 from scripts import verify_operational_history_bundle as verifier
 
 CUTOFF = "2026-10-01T12:00:00+00:00"
-SOURCE_SHA = "a" * 64
 SNAPSHOT_SHA = "b" * 64
+SOURCE_SHA = SNAPSHOT_SHA
 
 
 def _bundle(tmp_path: Path, *, change=None, extra_member=False):
@@ -63,7 +63,7 @@ def _bundle(tmp_path: Path, *, change=None, extra_member=False):
                 if name == verifier.HISTORY else
                 ("totalUnresolvedEventCount", "totalIncompleteEventCount", "totalConflictEventCount"))
         summaries[name] = {key: meta[key] for key in keys}
-        summaries[name].update({"asOf": CUTOFF, "snapshotSha256": SNAPSHOT_SHA,
+        summaries[name].update({"asOf": CUTOFF, "snapshotSha256": meta["snapshotSha256"],
                                 "productionCoverageClaimed": False,
                                 "exportSha256": hashlib.sha256(contents[name]).hexdigest()})
     manifest.update({"history": summaries[verifier.HISTORY],
@@ -135,4 +135,20 @@ def test_rejects_inconsistent_rehashed_action_status(tmp_path):
         rows[verifier.ACTIONS][1]["reconciliationStatus"] = "conflict"
     path, sha = _bundle(tmp_path, change=mismatch)
     with pytest.raises(ValueError, match="totals"):
+        verifier.verify_bundle(path, expected_sha256=sha)
+
+
+def test_rejects_mixed_generations_with_rehashed_child_and_custody_digest(tmp_path):
+    def mix(rows, manifest):
+        rows[verifier.ACTIONS][0]["snapshotSha256"] = "c" * 64
+    path, sha = _bundle(tmp_path, change=mix)
+    with pytest.raises(ValueError, match="source generations"):
+        verifier.verify_bundle(path, expected_sha256=sha)
+
+
+def test_rejects_forged_source_generation_even_if_children_match(tmp_path):
+    def forge(rows, manifest):
+        manifest["sourceGenerationSha256"] = "a" * 64
+    path, sha = _bundle(tmp_path, change=forge)
+    with pytest.raises(ValueError, match="source generations"):
         verifier.verify_bundle(path, expected_sha256=sha)

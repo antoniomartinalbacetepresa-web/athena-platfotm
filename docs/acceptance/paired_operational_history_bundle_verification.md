@@ -13,3 +13,10 @@ The command requires an independently supplied, lowercase 64-character SHA-256. 
 **Scope boundary:** a valid digest is not an authenticity signature. The verifier cannot prove that the separately retained digest came from a trusted operator, that the input database was operational, that the eligible universe is complete, that the providers are independent, or that a historical PIT claim is genuine. It cannot authorize production, learning, weighting or trading. A green result must be accompanied by a separately audited source snapshot, custody records, acquisition provenance, real 365-day eligible-universe measurement, and independent corporate-action reconciliation. Never publish instrument-level operational exports or database files in GitHub Actions artifacts or source control.
 
 This verifier is deliberately independent of the exporters' runtime and databases, allowing an operator to detect transfer corruption and internal contradictions on an isolated audit host. It is **not** a substitute for executing the full acceptance on an authorized operational snapshot.
+
+**Same-generation binding:** the exporter refuses to publish if either child report's
+SQLite snapshot SHA-256 differs from the frozen source-generation SHA-256. The
+offline verifier independently enforces the same equality across both child
+metadata records and the manifest, even if a transferred ZIP, its child hashes,
+and the externally supplied custody digest have all been recalculated. This
+checks internal consistency, not whether the source was truly operational.

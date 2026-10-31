@@ -176,6 +176,12 @@ def verify_bundle(path: Path, *, expected_sha256: str) -> dict[str, object]:
                                  cutoff=manifest["asOf"], expected_digest=manifest["members"][HISTORY])
         actions = _verify_report(archive, ACTIONS, manifest.get("corporateActions"),
                                  cutoff=manifest["asOf"], expected_digest=manifest["members"][ACTIONS])
+        # An independently rehashed child report is not sufficient: the two
+        # reports must be attributable to the very same frozen generation
+        # named by the manifest, not merely to individually valid snapshots.
+        if (history["snapshotSha256"] != manifest["sourceGenerationSha256"]
+            or actions["snapshotSha256"] != manifest["sourceGenerationSha256"]):
+            raise ValueError("Paired diagnostic source generations do not match")
         if (history["eligibleInstrumentCount"] !=
             history["currentDeepHistoryInstrumentCount"] + history["totalBlockingCount"]
             or actions["totalUnresolvedEventCount"] !=

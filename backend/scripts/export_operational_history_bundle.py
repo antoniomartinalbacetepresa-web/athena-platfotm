@@ -173,6 +173,14 @@ def export_operational_history_bundle(
                 ):
                     raise RuntimeError("Paired diagnostic metadata mismatch")
                 _validate_report_rows(path, summary, kind=kind)
+            # Both child exporters back up the same immutable SQLite generation.
+            # A child may have internally valid rows/hashes while referring to
+            # a different generation; never publish such a mixed-evidence ZIP.
+            if (
+                history.get("snapshotSha256") != source_sha
+                or actions.get("snapshotSha256") != source_sha
+            ):
+                raise RuntimeError("Paired diagnostic source generations do not match")
             if (
                 history["eligibleInstrumentCount"]
                 != history["currentDeepHistoryInstrumentCount"] + history["totalBlockingCount"]

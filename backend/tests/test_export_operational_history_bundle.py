@@ -172,3 +172,31 @@ def test_paired_bundle_rejects_rehashed_misclassified_action(tmp_path, monkeypat
     assert not output.exists()
 
 
+
+
+def test_paired_bundle_rejects_self_consistent_child_from_another_generation(
+    tmp_path, monkeypatch,
+):
+    """A child can have valid rows and hashes but belong to another snapshot."""
+    source = _seed(tmp_path)
+    output = tmp_path / "mixed-generation.zip"
+    original = bundle.export_worklist
+
+    def switch_generation(**kwargs):
+        summary = original(**kwargs)
+        path = kwargs["output_path"]
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        metadata = json.loads(lines[0])
+        metadata["snapshotSha256"] = "c" * 64
+        lines[0] = json.dumps(metadata, sort_keys=True) + "\n"
+        path.write_text("".join(lines), encoding="utf-8")
+        summary["snapshotSha256"] = metadata["snapshotSha256"]
+        summary["exportSha256"] = bundle._sha256_file(path)
+        return summary
+
+    monkeypatch.setattr(bundle, "export_worklist", switch_generation)
+    with pytest.raises(RuntimeError, match="source generations"):
+        bundle.export_operational_history_bundle(
+            database_path=source, output_path=output, as_of=CUTOFF,
+        )
+    assert not output.exists()
