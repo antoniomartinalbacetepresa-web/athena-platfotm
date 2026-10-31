@@ -33,6 +33,7 @@ def _row(provider: str, *, amount: float, retrieved_at: str) -> dict:
         "currency": "USD",
         "source_provider": provider,
         "retrieved_at": retrieved_at,
+        "capture_verified": 1,  # synthetic verified marker for PIT leak fixtures
     }
 
 
@@ -167,3 +168,27 @@ def test_aggregate_coverage_accepts_effective_instant_exactly_at_cutoff(tmp_path
     report = _service(tmp_path, [yahoo, exchange]).get_report(as_of=AS_OF)
     assert report.agreed_event_count == 1
     assert report.cross_provider_reconciliation_ready is True
+
+
+def test_missing_capture_marker_cannot_claim_reconciliation_ready(tmp_path) -> None:
+    rows = [
+        _row("yahoo", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+        _row("exchange_notice", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+    ]
+    rows[0].pop("capture_verified")
+    report = _service(tmp_path, rows).get_report(as_of=AS_OF)
+    assert report.agreed_event_count == 1  # diagnostics remain visible
+    assert report.unverified_capture_count == 1
+    assert report.cross_provider_reconciliation_ready is False
+
+
+@pytest.mark.parametrize("bad_marker", [None, False, True, "1", 2])
+def test_noncanonical_capture_marker_fails_closed(tmp_path, bad_marker) -> None:
+    rows = [
+        _row("yahoo", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+        _row("exchange_notice", amount=0.25, retrieved_at="2026-09-11T08:00:00+00:00"),
+    ]
+    rows[0]["capture_verified"] = bad_marker
+    report = _service(tmp_path, rows).get_report(as_of=AS_OF)
+    assert report.unverified_capture_count == 1
+    assert report.cross_provider_reconciliation_ready is False
