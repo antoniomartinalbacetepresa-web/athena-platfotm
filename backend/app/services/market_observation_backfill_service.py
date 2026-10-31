@@ -231,6 +231,9 @@ class MarketObservationBackfillService:
                     from_date=effective_from_date,
                     to_date=effective_to_date,
                 )
+                # This is the earliest trustworthy PIT knowledge instant for
+                # this provider response, not the start of the network call.
+                retrieved_at = datetime.now(timezone.utc)
                 # A concurrent universe refresh can change a listing during I/O.
                 failure_stage = "identity"
                 self._assert_selected_identity(row)
@@ -258,10 +261,8 @@ class MarketObservationBackfillService:
                     observations=history,
                     from_date=effective_from_date,
                     to_date=effective_to_date,
+                    retrieved_at=retrieved_at,
                 )
-                # The observation was not available when the batch began.
-                # Recording that earlier time would create false PIT knowledge.
-                retrieved_at = datetime.now(timezone.utc)
                 failure_stage = "persistence"
                 stats = self._observations.save_many(
                     instrument_id=instrument_id,
@@ -366,8 +367,9 @@ class MarketObservationBackfillService:
         observations: list[dict[str, Any]],
         from_date: str | None,
         to_date: str | None,
+        retrieved_at: datetime,
     ) -> None:
-        """Validate all provider timestamps, including conflicting aliases."""
+        """Reject contradictory, out-of-window and future-known provider instants."""
         lower = self._parse_iso_date(from_date, field="from_date") if from_date else None
         upper = self._parse_iso_date(to_date, field="to_date") if to_date else self._today_provider()
         for observation in observations:
@@ -395,6 +397,10 @@ class MarketObservationBackfillService:
             observed_day = instants[0].date()
             if (lower is not None and observed_day < lower) or observed_day > upper:
                 raise ValueError("Observación histórica fuera de la ventana PIT solicitada.")
+            # A date-only upper bound permits 23:59 UTC today even when the
+            # provider responded at 09:00 UTC. That is future knowledge.
+            if instants[0] > retrieved_at:
+                raise ValueError("Observación posterior a la recuperación del proveedor.")
 
     def _resolve_history_window(
         self,

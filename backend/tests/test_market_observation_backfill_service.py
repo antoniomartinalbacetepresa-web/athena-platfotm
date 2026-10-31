@@ -766,3 +766,79 @@ def test_backfill_accepts_equivalent_timestamp_aliases_inside_pit_window(
     assert report.failed_count == 0
     assert report.observations_inserted == 1
     assert len(MarketObservationRepository(database=database).list_for_instrument(instrument_id)) == 1
+
+
+@pytest.mark.parametrize("future_field", ["timestamp", "observed_at"])
+def test_backfill_rejects_future_instant_on_current_utc_day_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, future_field: str
+) -> None:
+    """Today's date is not sufficient: a later clock time is still lookahead."""
+    class ControlledDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(
+        "app.services.market_observation_backfill_service.datetime",
+        ControlledDateTime,
+    )
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA", instrument_type="common_stock",
+    )
+    provider = FakeHistoryProvider({"AAA": [
+        {"timestamp": "2026-01-02T19:00:00+00:00", "close": 100.0},
+        {future_field: "2026-01-02T21:00:00+00:00", "close": 101.0},
+    ]})
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 1, 2),
+    ).run(limit=1, from_date="2026-01-01", to_date="2026-01-02")
+
+    assert provider.calls == ["AAA"]
+    assert report.failed_count == 1
+    assert report.observations_inserted == 0
+    assert "ventana temporal" in report.failures[0]["error"]
+    assert MarketObservationRepository(database=database).list_for_instrument(instrument_id) == []
+
+
+def test_backfill_uses_response_completion_not_request_start_for_same_day_pit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A response available at 20:10 can legitimately contain a 20:05 event."""
+    class ControlledDateTime(datetime):
+        current = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz) if tz is not None else cls.current.replace(tzinfo=None)
+
+    class DelayedProvider(FakeHistoryProvider):
+        def get_history(self, symbol, from_date=None, to_date=None):
+            ControlledDateTime.current += timedelta(minutes=10)
+            return super().get_history(symbol, from_date, to_date)
+
+    monkeypatch.setattr(
+        "app.services.market_observation_backfill_service.datetime",
+        ControlledDateTime,
+    )
+    database = _database(tmp_path)
+    instrument_id = _insert(
+        InstrumentRepository(database=database),
+        symbol="AAA", instrument_type="common_stock",
+    )
+    provider = DelayedProvider({"AAA": [
+        {"timestamp": "2026-01-02T20:05:00+00:00", "close": 100.0},
+    ]})
+    report = MarketObservationBackfillService(
+        database=database, history_provider=provider,
+        today_provider=lambda: date(2026, 1, 2),
+    ).run(limit=1, from_date="2026-01-01", to_date="2026-01-02")
+
+    assert report.failed_count == 0
+    assert report.observations_inserted == 1
+    rows = MarketObservationRepository(database=database).list_for_instrument(instrument_id)
+    assert len(rows) == 1
+    assert rows[0]["retrieved_at"] == "2026-01-02T20:10:00+00:00"

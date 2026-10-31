@@ -7,3 +7,18 @@ Stages distinguish instrument identity, provider I/O, provenance (including decl
 Regression coverage injects credential-bearing provider errors (including ValueError), untrusted provider fields and persistence errors, and verifies that neither the report nor its API serialization reveals those values. No production credentials or database snapshot are used.
 
 The same confidentiality boundary applies to secondary corporate-action backfills, including the targeted verified reconciliation workflow. Both return a fixed `secondary_provider_or_ingestion_failed` code rather than arbitrary Alpha Vantage exception strings; corporate-action ingestion itself no longer interpolates untrusted provider labels into provenance exceptions. Existing event-conflict and incomplete-status rules remain unchanged. This does not prove that an independent source has been deployed or that any production event has been reconciled.
+
+## Same-day PIT observation boundary
+
+The requested `to_date` is a **calendar-day limit**, not proof that every
+intraday instant on that date was already observable. After each provider
+response, the service captures its UTC completion instant and rejects the
+**entire instrument response** if either timestamp alias identifies an instant
+later than that completion time, even when its date equals `to_date`.
+No partial observations are persisted from a rejected response. Legitimate
+observations received after a slow request remain eligible when their event
+instant is no later than the response completion instant. The failure remains
+a fixed stage-specific message and does not expose provider payloads.
+
+This is an ingestion no-lookahead boundary, not independent attestation of the
+provider's historical truth or proof of operational 365-day coverage.
