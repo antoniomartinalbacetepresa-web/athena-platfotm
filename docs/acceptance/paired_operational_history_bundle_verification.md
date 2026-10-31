@@ -14,9 +14,11 @@ The command requires an independently supplied, lowercase 64-character SHA-256. 
 
 This verifier is deliberately independent of the exporters' runtime and databases, allowing an operator to detect transfer corruption and internal contradictions on an isolated audit host. It is **not** a substitute for executing the full acceptance on an authorized operational snapshot.
 
-**Same-generation binding:** the exporter refuses to publish if either child report's
-SQLite snapshot SHA-256 differs from the frozen source-generation SHA-256. The
-offline verifier independently enforces the same equality across both child
-metadata records and the manifest, even if a transferred ZIP, its child hashes,
-and the externally supplied custody digest have all been recalculated. This
-checks internal consistency, not whether the source was truly operational.
+**Child-snapshot consistency:** the exporter refuses to publish if the two
+independently generated child reports have different SQLite snapshot SHA-256
+values. The offline verifier enforces the same equality even if the child
+reports and custody digest have been recalculated. The frozen source-generation
+SHA-256 is recorded separately: SQLite online backup can rewrite file-header
+counters, so its byte hash need not equal either child snapshot hash. These
+checks establish internal consistency, **not** independent proof that the
+children originated from the claimed source generation or from production.

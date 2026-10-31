@@ -176,12 +176,11 @@ def verify_bundle(path: Path, *, expected_sha256: str) -> dict[str, object]:
                                  cutoff=manifest["asOf"], expected_digest=manifest["members"][HISTORY])
         actions = _verify_report(archive, ACTIONS, manifest.get("corporateActions"),
                                  cutoff=manifest["asOf"], expected_digest=manifest["members"][ACTIONS])
-        # An independently rehashed child report is not sufficient: the two
-        # reports must be attributable to the very same frozen generation
-        # named by the manifest, not merely to individually valid snapshots.
-        if (history["snapshotSha256"] != manifest["sourceGenerationSha256"]
-            or actions["snapshotSha256"] != manifest["sourceGenerationSha256"]):
-            raise ValueError("Paired diagnostic source generations do not match")
+        # Independently rehashed child reports must agree on the same SQLite
+        # snapshot. SQLite online backup can rewrite file-header counters, so
+        # child snapshot bytes are not required to equal the frozen source SHA.
+        if history["snapshotSha256"] != actions["snapshotSha256"]:
+            raise ValueError("Paired diagnostic child snapshots do not match")
         if (history["eligibleInstrumentCount"] !=
             history["currentDeepHistoryInstrumentCount"] + history["totalBlockingCount"]
             or actions["totalUnresolvedEventCount"] !=

@@ -195,7 +195,7 @@ def test_paired_bundle_rejects_self_consistent_child_from_another_generation(
         return summary
 
     monkeypatch.setattr(bundle, "export_worklist", switch_generation)
-    with pytest.raises(RuntimeError, match="source generations"):
+    with pytest.raises(RuntimeError, match="child snapshots"):
         bundle.export_operational_history_bundle(
             database_path=source, output_path=output, as_of=CUTOFF,
         )
