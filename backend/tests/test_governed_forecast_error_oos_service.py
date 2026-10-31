@@ -55,6 +55,42 @@ def _measurement(*, first_period_end: datetime | None = None) -> dict:
     }
 
 
+
+def _measurement_with_distributions(*, first_period_end: datetime) -> dict:
+    """Synthetic governance fixture with reconciled issuer and period evidence."""
+    measurement = _measurement(first_period_end=first_period_end)
+    ends = [
+        (first_period_end + timedelta(days=30 * i)).isoformat()
+        for i in range(8)
+    ]
+    issuer_keys = [f"issuer-{i:02d}" for i in range(24)]
+    measurement.update({
+        "issuerErrorCounts": {issuer: 5 for issuer in issuer_keys},
+        "resolvedIssuerErrorCount": 120,
+        "maximumErrorsPerResolvedIssuer": 5,
+        "periodEndErrorCounts": {end: 15 for end in ends},
+    })
+    for horizon, period_indexes, first_half in (
+        ("86400", range(4), True),
+        ("604800", range(4, 8), False),
+    ):
+        per_issuer = {
+            issuer: (3 if i < 12 else 2) if first_half
+            else (2 if i < 12 else 3)
+            for i, issuer in enumerate(issuer_keys)
+        }
+        measurement["horizons"][horizon].update({
+            "issuerErrorCounts": per_issuer,
+            "resolvedIssuerErrorCount": 60,
+            "periodEndErrorCounts": {ends[i]: 15 for i in period_indexes},
+            "distinctEvaluationPeriodCount": 4,
+            "firstEvaluationPeriodEnd": ends[period_indexes.start],
+            "lastEvaluationPeriodEnd": ends[period_indexes.stop - 1],
+            "evaluationSpanDays": 90.0,
+        })
+    return measurement
+
+
 def _criteria() -> dict:
     return {
         "minimumEvaluationSpanDays": 180,
@@ -86,7 +122,7 @@ def test_governed_oos_reads_persisted_policy_and_human_approval(tmp_path) -> Non
     first_period = datetime.now(timezone.utc) + timedelta(days=1)
     service = GovernedForecastErrorOosService(
         measurement_service=_MeasurementService(
-            _measurement(first_period_end=first_period)
+            _measurement_with_distributions(first_period_end=first_period)
         ),
         policy_repository=repository,
     )
@@ -214,7 +250,7 @@ def test_governed_oos_rejects_retroactive_approval_of_historical_evidence(tmp_pa
     first_period = datetime.now(timezone.utc) - timedelta(days=211)
     service = GovernedForecastErrorOosService(
         measurement_service=_MeasurementService(
-            _measurement(first_period_end=first_period)
+            _measurement_with_distributions(first_period_end=first_period)
         ),
         policy_repository=repository,
     )
@@ -230,7 +266,7 @@ def test_governed_oos_rejects_retroactive_approval_of_historical_evidence(tmp_pa
     assert sufficiency["policyApproved"] is True
     assert sufficiency["temporalPrecommitmentVerified"] is False
     assert sufficiency["acceptanceEvidenceVerified"] is False
-    assert sufficiency["criteriaCheckCount"] == 9  # Includes span and evidence-count coherence.
+    assert sufficiency["criteriaCheckCount"] == 13  # Includes issuer and period distributions.
     assert sufficiency["satisfiedCriteriaCount"] == sufficiency["criteriaCheckCount"] - 1
     assert result["productionLearningEligible"] is False
 
