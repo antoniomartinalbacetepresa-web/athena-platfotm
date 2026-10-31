@@ -1,0 +1,7 @@
+# Backfill failure-report confidentiality boundary
+
+Market-history backfill results can be returned to API clients or printed by the operational CLI. A provider or SQLite exception may include a credential, request URL, private filesystem path, or server-supplied content. The backfill now records **fixed stage-specific failure messages**, never raw exception strings, while retaining the selected public instrument symbol, failed count, progress status and successful per-instrument continuation. Validation failures remain fail-closed and cannot persist an invalid provider response.
+
+Stages distinguish instrument identity, provider I/O, provenance (including declared symbol), PIT observation window, and persistence. The stage is diagnostic only: it does not attest the provider, establish historical depth, prove the origin of the SQLite database, or authorize any market action. Detailed provider diagnostics belong in a separately protected observability system with explicit redaction and access controls; they must not be inserted into user-facing failure reports.
+
+Regression coverage injects credential-bearing provider errors (including ValueError), untrusted provider fields and persistence errors, and verifies that neither the report nor its API serialization reveals those values. No production credentials or database snapshot are used.

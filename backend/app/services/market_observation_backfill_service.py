@@ -196,6 +196,16 @@ class MarketObservationBackfillService:
         unchanged = 0
         failures: list[dict[str, str]] = []
 
+        # Failure details are returned to callers and may reach operational logs.
+        # Never echo third-party exception text (URLs, headers or credentials).
+        safe_errors = {
+            "identity": "La identidad del instrumento no pudo verificarse.",
+            "provider": "No se pudo consultar el proveedor histórico.",
+            "provenance": "El símbolo declarado o la procedencia del histórico no son válidos.",
+            "window": "La ventana temporal del histórico no supera la validación PIT.",
+            "persistence": "No se pudo persistir el histórico validado.",
+        }
+
         for index, row in enumerate(rows, start=1):
             instrument_id = int(row["id"])
             symbol = str(row.get("symbol") or "").strip().upper()
@@ -212,14 +222,17 @@ class MarketObservationBackfillService:
                 )
                 continue
 
+            failure_stage = "identity"
             try:
                 self._assert_selected_identity(row)
+                failure_stage = "provider"
                 history = self._history_provider.get_history(
                     symbol=symbol,
                     from_date=effective_from_date,
                     to_date=effective_to_date,
                 )
                 # A concurrent universe refresh can change a listing during I/O.
+                failure_stage = "identity"
                 self._assert_selected_identity(row)
                 if not history:
                     no_history += 1
@@ -232,6 +245,7 @@ class MarketObservationBackfillService:
                     )
                     continue
 
+                failure_stage = "provenance"
                 self._validate_source_provenance(
                     observations=history,
                     expected_provider=provider,
@@ -239,6 +253,7 @@ class MarketObservationBackfillService:
                 )
                 # Provider filtering is not an authority boundary. Reject the
                 # entire response if any timestamp escapes the PIT window.
+                failure_stage = "window"
                 self._validate_observation_window(
                     observations=history,
                     from_date=effective_from_date,
@@ -247,6 +262,7 @@ class MarketObservationBackfillService:
                 # The observation was not available when the batch began.
                 # Recording that earlier time would create false PIT knowledge.
                 retrieved_at = datetime.now(timezone.utc)
+                failure_stage = "persistence"
                 stats = self._observations.save_many(
                     instrument_id=instrument_id,
                     observations=history,
@@ -265,12 +281,12 @@ class MarketObservationBackfillService:
                     status="persisted",
                     observations=stats.received,
                 )
-            except Exception as exc:
+            except Exception:
                 failed += 1
                 failures.append(
                     {
                         "symbol": symbol,
-                        "error": str(exc),
+                        "error": safe_errors[failure_stage],
                     }
                 )
                 self._emit(
