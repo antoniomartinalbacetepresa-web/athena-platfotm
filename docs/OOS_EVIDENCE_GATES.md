@@ -1,5 +1,20 @@
 # Forecast-error OOS evidence gates
 
+## External challenger contract mutation boundary
+
+Research-only external challengers now carry a canonical SHA-256 fingerprint of the
+model identity/configuration, forecast, baseline, horizon, input PIT timestamps and
+source provenance. The binding freezes nested model configuration; matured outcome
+measurement and longitudinal replay reject later edits even if numeric error fields
+are recalculated consistently. Existing authority flags remain disabled and the
+challenger remains separate from the production learning and recommendation path.
+
+This fingerprint is **not a signature, trusted timestamp, immutable storage or proof
+of prospective registration**: a party able to rewrite the entire record and digest
+can still forge it. Real precommitted, physically sealed cohorts, observed mature
+outcomes and human policy approval remain mandatory; no skill or production claim
+follows from this software integrity check.
+
 ## Challenger numeric integrity (research only)
 
 The external challenger adapter rejects finite inputs whose subtraction or squared

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import math
+import hashlib
+import json
+import re
 from typing import Any
 
 from app.repositories.longitudinal_oos_policy_repository import (
@@ -83,6 +86,37 @@ class GovernedForecastErrorOosService:
             result["policy"] = policy
         return result
 
+    # Self-contained content digest, not an external precommitment or signature.
+    _CHALLENGER_BOUND_FIELDS = (
+        "provider", "modelName", "modelVersion", "modelConfig",
+        "forecastOrigin", "inputObservedThrough", "inputRetrievedAt",
+        "horizonSeconds", "forecastValue", "baselineName", "baselineValue",
+        "sourceProvenance",
+    )
+
+    @classmethod
+    def _challenger_fingerprint(cls, record: dict[str, Any]) -> str:
+        try:
+            bound = {field: record[field] for field in cls._CHALLENGER_BOUND_FIELDS}
+            encoded = json.dumps(
+                bound, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise ValueError("external challenger bound fields are not canonical JSON.") from None
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _verify_challenger_fingerprint(cls, record: dict[str, Any]) -> str:
+        claimed = record.get("contractFingerprint")
+        if (
+            not isinstance(claimed, str)
+            or re.fullmatch(r"[0-9a-f]{64}", claimed) is None
+            or claimed != cls._challenger_fingerprint(record)
+        ):
+            raise ValueError("external challenger contract fingerprint mismatch.")
+        return claimed
+
     def bind_external_challenger(
         self,
         *,
@@ -113,6 +147,12 @@ class GovernedForecastErrorOosService:
         baseline = self._finite(baseline_value, "baseline_value")
         if not isinstance(model_config, dict) or not model_config:
             raise ValueError("model_config must be a non-empty mapping.")
+        try:
+            frozen_config = json.loads(json.dumps(
+                model_config, sort_keys=True, allow_nan=False,
+            ))
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("model_config must contain canonical finite JSON values.") from None
         if not isinstance(source_provenance, list) or not source_provenance:
             raise ValueError("source_provenance must preserve at least one source.")
         provenance: list[dict[str, str]] = []
@@ -131,12 +171,12 @@ class GovernedForecastErrorOosService:
                 "observedAt": source_observed.isoformat(),
                 "retrievedAt": source_retrieved.isoformat(),
             })
-        return {
+        contract = {
             "module": "external_forecast_challenger_contract",
             "provider": self._text(provider, "provider"),
             "modelName": self._text(model_name, "model_name"),
             "modelVersion": self._text(model_version, "model_version"),
-            "modelConfig": dict(model_config),
+            "modelConfig": frozen_config,
             "forecastOrigin": origin.isoformat(),
             "inputObservedThrough": observed.isoformat(),
             "inputRetrievedAt": retrieved.isoformat(),
@@ -160,6 +200,8 @@ class GovernedForecastErrorOosService:
                 "baseline": "paired_baseline_required",
             },
         }
+        contract["contractFingerprint"] = self._challenger_fingerprint(contract)
+        return contract
 
     def measure_external_challenger_outcome(
         self,
@@ -248,8 +290,10 @@ class GovernedForecastErrorOosService:
         }
         if not all(math.isfinite(value) for value in derived.values()):
             raise ValueError("external challenger derived errors must be finite.")
+        contract_fingerprint = self._verify_challenger_fingerprint(challenger)
         return {
             "module": "external_forecast_challenger_realized_error",
+            "contractFingerprint": contract_fingerprint,
             "provider": self._text(challenger.get("provider"), "challenger.provider"),
             "modelName": self._text(challenger.get("modelName"), "challenger.modelName"),
             "modelVersion": self._text(challenger.get("modelVersion"), "challenger.modelVersion"),
@@ -403,6 +447,7 @@ class GovernedForecastErrorOosService:
                 stored = self._finite(record.get(field), f"error.{field}")
                 if not math.isclose(stored, value, rel_tol=1e-12, abs_tol=1e-12):
                     raise ValueError(f"error record failed metric reconciliation: {field}.")
+            self._verify_challenger_fingerprint(record)
 
             model_signed.append(signed)
             model_abs.append(abs(signed))

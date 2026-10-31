@@ -336,7 +336,7 @@ def test_external_challenger_rejects_provenance_retrieved_after_forecast_origin(
         )
 
 
-def _external_challenger(service: GovernedForecastErrorOosService, origin: datetime) -> dict:
+def _external_challenger(service: GovernedForecastErrorOosService, origin: datetime, *, forecast_value: float = 105.0, baseline_value: float = 100.0) -> dict:
     return service.bind_external_challenger(
         provider="google",
         model_name="timesfm",
@@ -346,9 +346,9 @@ def _external_challenger(service: GovernedForecastErrorOosService, origin: datet
         input_observed_through=origin - timedelta(hours=2),
         input_retrieved_at=origin - timedelta(hours=1),
         horizon_seconds=86400,
-        forecast_value=105.0,
+        forecast_value=forecast_value,
         baseline_name="last_value",
-        baseline_value=100.0,
+        baseline_value=baseline_value,
         source_provenance=[{
             "source": "market_history",
             "observedAt": (origin - timedelta(hours=2)).isoformat(),
@@ -565,9 +565,7 @@ def test_external_challenger_longitudinal_diagnostic_reconciles_paired_errors(tm
         outcome_retrieved_at=first_observed + timedelta(minutes=1),
     )
     second_origin = origin + timedelta(days=1)
-    second_challenger = _external_challenger(service, second_origin)
-    second_challenger["forecastValue"] = 98.0
-    second_challenger["baselineValue"] = 100.0
+    second_challenger = _external_challenger(service, second_origin, forecast_value=98.0)
     second_observed = second_origin + timedelta(days=1)
     second = service.measure_external_challenger_outcome(
         challenger=second_challenger,
@@ -855,9 +853,7 @@ def test_challenger_longitudinal_rms_uses_finite_mean_before_square_root(tmp_pat
     errors = []
     for day in (0, 1):
         origin = datetime(2026, 9, 20 + day, 18, 0, tzinfo=timezone.utc)
-        challenger = _external_challenger(service, origin)
-        challenger["forecastValue"] = 1e154
-        challenger["baselineValue"] = 0.0
+        challenger = _external_challenger(service, origin, forecast_value=1e154, baseline_value=0.0)
         observed = origin + timedelta(days=1)
         errors.append(service.measure_external_challenger_outcome(
             challenger=challenger,
@@ -957,3 +953,86 @@ def test_challenger_provenance_must_fit_declared_input_window(
     realized["sourceProvenance"][0][source_field] = offending_time
     with pytest.raises(ValueError, match="exceeds declared input cutoff"):
         service.summarize_external_challenger_outcomes(error_records=[realized])
+
+
+@pytest.mark.parametrize("field", ["forecastValue", "baselineValue", "modelConfig", "sourceProvenance"])
+def test_external_challenger_bound_content_cannot_change_before_maturity(tmp_path, field):
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    challenger = _external_challenger(service, origin)
+    assert len(challenger["contractFingerprint"]) == 64
+    if field == "modelConfig":
+        challenger["modelConfig"]["contextLength"] = 256
+    elif field == "sourceProvenance":
+        challenger["sourceProvenance"][0]["source"] = "relabelled_history"
+    else:
+        challenger[field] += 1.0
+    observed = origin + timedelta(days=1)
+    with pytest.raises(ValueError, match="contract fingerprint mismatch"):
+        service.measure_external_challenger_outcome(
+            challenger=challenger, as_of=observed + timedelta(minutes=2),
+            outcome_value=104.0, outcome_observed_at=observed,
+            outcome_retrieved_at=observed + timedelta(minutes=1),
+        )
+
+
+def test_external_challenger_model_config_is_detached_from_caller(tmp_path):
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    config = {"quantiles": [0.1, 0.5, 0.9]}
+    challenger = service.bind_external_challenger(
+        provider="google", model_name="timesfm", model_version="pinned",
+        model_config=config, forecast_origin=origin,
+        input_observed_through=origin - timedelta(hours=2),
+        input_retrieved_at=origin - timedelta(hours=1),
+        horizon_seconds=86400, forecast_value=105.0,
+        baseline_name="last_value", baseline_value=100.0,
+        source_provenance=[{
+            "source": "market_history",
+            "observedAt": (origin - timedelta(hours=2)).isoformat(),
+            "retrievedAt": (origin - timedelta(hours=1)).isoformat(),
+        }],
+    )
+    config["quantiles"][0] = 0.99
+    assert challenger["modelConfig"]["quantiles"] == [0.1, 0.5, 0.9]
+    observed = origin + timedelta(days=1)
+    measured = service.measure_external_challenger_outcome(
+        challenger=challenger, as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0, outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    assert measured["contractFingerprint"] == challenger["contractFingerprint"]
+    assert service.summarize_external_challenger_outcomes(
+        error_records=[measured]
+    )["observationCount"] == 1
+
+
+def test_external_challenger_summary_rejects_recomputed_forecast_after_outcome(tmp_path):
+    service = GovernedForecastErrorOosService(
+        policy_repository=LongitudinalOosPolicyRepository(
+            database=AthenaDatabase(tmp_path / "athena.db")
+        )
+    )
+    origin = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+    observed = origin + timedelta(days=1)
+    measured = service.measure_external_challenger_outcome(
+        challenger=_external_challenger(service, origin),
+        as_of=observed + timedelta(minutes=2),
+        outcome_value=104.0, outcome_observed_at=observed,
+        outcome_retrieved_at=observed + timedelta(minutes=1),
+    )
+    measured.update({
+        "forecastValue": 106.0, "signedError": 2.0,
+        "absoluteError": 2.0, "squaredError": 4.0,
+        "absoluteErrorDeltaVsBaseline": -2.0,
+    })
+    with pytest.raises(ValueError, match="contract fingerprint mismatch"):
+        service.summarize_external_challenger_outcomes(error_records=[measured])
