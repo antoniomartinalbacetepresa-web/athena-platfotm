@@ -20,6 +20,7 @@ class CorporateActionCoverageReport:
     source_providers: tuple[str, ...]
     independent_provider_families: tuple[str, ...]
     unclassified_source_providers: tuple[str, ...]
+    unverified_capture_count: int = 0
 
     @property
     def agreement_coverage(self) -> float:
@@ -29,6 +30,7 @@ class CorporateActionCoverageReport:
     def cross_provider_reconciliation_ready(self) -> bool:
         return (
             self.event_count > 0
+            and self.unverified_capture_count == 0
             and len(self.independent_provider_families) >= 2
             and not self.unclassified_source_providers
             and self.agreed_event_count == self.event_count
@@ -50,6 +52,7 @@ class CorporateActionCoverageReport:
             "sourceProviders": list(self.source_providers),
             "independentProviderFamilies": list(self.independent_provider_families),
             "unclassifiedSourceProviders": list(self.unclassified_source_providers),
+            "unverifiedCaptureCount": self.unverified_capture_count,
             "crossProviderReconciliationReady": self.cross_provider_reconciliation_ready,
             "automaticCanonicalization": False,
             "productionIndependenceClaimed": False,
@@ -57,7 +60,9 @@ class CorporateActionCoverageReport:
                 "La cobertura exige que cada corporate action visible al knowledge cutoff "
                 "coincida entre al menos dos familias de proveedor configuradas, incluya "
                 "unidades económicas completas y que no exista provenance de proveedor sin "
-                "clasificar. La clasificación técnica no demuestra independencia operativa y "
+                "clasificar. Cualquier captura histórica sin verificación local bloquea "
+                "la preparación de reconciliación aunque los importes coincidan. "
+                "La clasificación técnica no demuestra independencia operativa y "
                 "nunca autoriza canonicalización automática."
             ),
         }
@@ -89,7 +94,7 @@ class CorporateActionCoverageService:
         providers: set[str] = set()
         families_seen: set[str] = set()
         unclassified: set[str] = set()
-        bearing = agreed = conflicts = incomplete = 0
+        bearing = agreed = conflicts = incomplete = unverified = 0
 
         for instrument_id in instrument_ids:
             actions = self._repository.list_for_instrument(instrument_id, knowledge_cutoff=cutoff)
@@ -102,6 +107,12 @@ class CorporateActionCoverageService:
             # Never silently select one and manufacture cross-family agreement.
             ambiguous_snapshots: set[tuple[tuple[str, str], str]] = set()
             for row in actions:
+                # Keep legacy observations visible for audit, but never count
+                # their provider-declared timestamps as verified PIT readiness.
+                # Missing/boolean/invalid markers are unverified (fail closed).
+                capture_marker = row.get("capture_verified")
+                if type(capture_marker) is not int or capture_marker != 1:
+                    unverified += 1
                 provider = str(row.get("source_provider") or "").strip()
                 if not provider:
                     raise RuntimeError("Corporate action persistida sin source_provider.")
@@ -185,6 +196,7 @@ class CorporateActionCoverageService:
             conflict_event_count=conflicts, incomplete_event_count=incomplete,
             source_providers=tuple(sorted(providers)), independent_provider_families=tuple(sorted(families_seen)),
             unclassified_source_providers=tuple(sorted(unclassified)),
+            unverified_capture_count=unverified,
         )
 
     def _has_complete_economic_value(self, row: dict[str, Any]) -> bool:
