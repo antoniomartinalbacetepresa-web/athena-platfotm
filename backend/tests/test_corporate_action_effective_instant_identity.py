@@ -23,6 +23,7 @@ def test_equivalent_effective_instants_reconcile_across_provider_timezones(tmp_p
             instrument_id=1,
             source_provider=provider,
             retrieved_at=retrieved,
+            captured_by_athena=True,  # synthetic local-capture fixture
             actions=[{
                 "type": "dividend",
                 "effectiveAt": effective_at,
