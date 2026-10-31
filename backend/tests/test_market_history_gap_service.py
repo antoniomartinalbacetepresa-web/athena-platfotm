@@ -484,3 +484,16 @@ def test_price_history_acceptance_excludes_priceless_and_corrupt_legacy_rows(
     assert gaps.total_blocking_count + coverage.current_deep_history_instrument_count == 2
     assert coverage.to_api_dict()["positiveFiniteCloseRequired"] is True
     assert gaps.to_api_dict()["positiveFiniteCloseRequired"] is True
+
+
+@pytest.mark.parametrize("service_type", [
+    MarketObservationCoverageService, MarketHistoryGapService,
+])
+def test_future_pit_cutoff_fails_before_opening_database(
+    tmp_path: Path, service_type: type,
+) -> None:
+    source = tmp_path / "must-not-create.db"
+    service = service_type(database=AthenaDatabase(source))
+    with pytest.raises(ValueError, match="fecha futura"):
+        service.get_report(as_of=datetime.now(timezone.utc) + timedelta(days=1))
+    assert not source.exists()

@@ -118,7 +118,12 @@ class MarketHistoryGapService:
         cutoff = as_of if as_of is not None else datetime.now(timezone.utc)
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
             raise ValueError("as_of debe incluir zona horaria.")
-        cutoff_iso = cutoff.astimezone(timezone.utc).isoformat()
+        cutoff_utc = cutoff.astimezone(timezone.utc)
+        # Match the coverage service: reject unobserved future cutoffs before
+        # opening SQLite, so both sides of the readiness equation agree.
+        if cutoff_utc > datetime.now(timezone.utc):
+            raise ValueError("as_of no puede ser una fecha futura.")
+        cutoff_iso = cutoff_utc.isoformat()
 
         self._database.initialize()
         params = (

@@ -141,6 +141,10 @@ class MarketObservationCoverageService:
             as_of if as_of is not None else datetime.now(timezone.utc),
             "as_of",
         )
+        # A future cutoff cannot be presented as observed PIT history, even
+        # when the caller bypasses the operational snapshot CLI.
+        if cutoff > datetime.now(timezone.utc):
+            raise ValueError("as_of no puede ser una fecha futura.")
         cutoff_iso = cutoff.isoformat()
         self._database.initialize()
         with self._database.connect() as connection:

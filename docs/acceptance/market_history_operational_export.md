@@ -152,3 +152,13 @@ requested independently are not a paired operational snapshot**. For auditable
 existing single-generation read-only snapshot/paired evidence export on an
 authorized operational database. Fixture regressions and green CI do not
 establish real production coverage, provider agreement or deployment readiness.
+
+## Future-cutoff boundary in the live diagnostic services
+
+Both `MarketObservationCoverageService` and `MarketHistoryGapService` now
+reject a future `as_of` instant **before opening the database**. The check
+applies to direct Python/API callers, not only to the snapshot/export CLI.
+An unobserved future date must not produce a `currentHistoryDepthReady` or
+zero-blocker diagnostic that could be mistaken for PIT evidence. Historical
+cutoffs remain supported; a passing diagnostic still does not attest the
+operational origin, eligible-universe completeness or independent sources.
