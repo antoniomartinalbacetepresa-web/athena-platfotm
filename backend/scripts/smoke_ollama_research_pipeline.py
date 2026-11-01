@@ -2,15 +2,18 @@
 
 Usage (from backend):
     .\\.venv\\Scripts\\python.exe scripts/smoke_ollama_research_pipeline.py
+    .\\.venv\\Scripts\\python.exe scripts/smoke_ollama_research_pipeline.py --real-clock
 
 No database writes, network news fetch, investment orders or production promotion.
 The cycle/news hashes below are synthetic test fixtures, NOT persisted evidence.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
@@ -33,11 +36,11 @@ def _digest(value: object) -> str:
     ).hexdigest()
 
 
-def run() -> dict[str, object]:
+def run(*, real_clock: bool = False) -> dict[str, object]:
     # News uses a forward cutoff to permit real inference; ATHENA then
     # explains that frozen cycle only after the cutoff has elapsed.
     now = datetime.now(timezone.utc)
-    as_of = now + timedelta(minutes=10)
+    as_of = now + timedelta(seconds=90 if real_clock else 600)
     available_at = now - timedelta(minutes=10)
     evidence = AthenaRadarEvidenceInput(
         evidence_id="synthetic-news-1",
@@ -87,14 +90,24 @@ def run() -> dict[str, object]:
         "radar_hash": radar_hash,
         "synthesis_hash": _digest(news_api),
     }
-    # The historical model contract forbids ATHENA generation before inputAsOf.
-    # Do not sleep for ten minutes: inject a deterministic, future generation
-    # clock ONLY for this synthetic smoke fixture (not a production timestamp).
-    synthetic_generation_clock = lambda: as_of + timedelta(seconds=1)
-    athena = OllamaAthenaResearchAdapter(
-        client=client, model_version="local-qwen3-1.7b",
-        now_provider=synthetic_generation_clock,
-    ).build(cycle_record=cycle_record, news_synthesis_record=news_record)
+    # A true wall-clock run must wait for the frozen cutoff before ATHENA.
+    # The default quick fixture retains a clearly labeled synthetic clock.
+    if real_clock:
+        remaining = (as_of - datetime.now(timezone.utc)).total_seconds()
+        if remaining > 0:
+            time.sleep(remaining)
+        athena_adapter = OllamaAthenaResearchAdapter(
+            client=client, model_version="local-qwen3-1.7b",
+        )
+    else:
+        synthetic_generation_clock = lambda: as_of + timedelta(seconds=1)
+        athena_adapter = OllamaAthenaResearchAdapter(
+            client=client, model_version="local-qwen3-1.7b",
+            now_provider=synthetic_generation_clock,
+        )
+    athena = athena_adapter.build(
+        cycle_record=cycle_record, news_synthesis_record=news_record,
+    )
     athena_api = athena.to_api_dict()
 
     assert news.assessed_count == 1
@@ -107,11 +120,20 @@ def run() -> dict[str, object]:
         "status": "local_synthetic_e2e_passed",
         "realModelCalls": 2,
         "fixtureType": "synthetic_not_persisted",
-        "athenaGenerationTime": "synthetic_clock_not_actual_execution_time",
+        "athenaGenerationTime": (
+            "actual_utc_clock" if real_clock
+            else "synthetic_clock_not_actual_execution_time"
+        ),
         "news": news_api,
         "athena": athena_api,
     }
 
 
 if __name__ == "__main__":
-    print(json.dumps(run(), indent=2, ensure_ascii=False))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--real-clock", action="store_true",
+        help="Wait for the real cutoff and record actual ATHENA generation time.",
+    )
+    args = parser.parse_args()
+    print(json.dumps(run(real_clock=args.real_clock), indent=2, ensure_ascii=False))
