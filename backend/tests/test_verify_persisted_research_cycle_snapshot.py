@@ -327,6 +327,8 @@ def _deployed_contract_for(report, snapshot):
         "inputAsOf": report["inputAsOf"],
         "evidenceIds": ["news-1"],
         "coveredCategories": ["news"],
+        "requiredCoverage": "all_cycle_radar_evidence",
+        "canonicalCategorySynthesesRequired": ["news"],
         "newsProvenance": {
             "artifactHash": report["newsSynthesisHash"],
             "artifactType": "canonical_news_synthesis",
@@ -348,7 +350,9 @@ def test_deployed_contract_matches_verified_snapshot_without_writes(tmp_path):
     before = snapshot.read_bytes()
     result = deployed_gate.compare_contract(report, _deployed_contract_for(report, snapshot))
     assert result["status"] == "snapshot_deployed_input_contract_matched"
-    assert result["readyForNewLocalDraft"] is True
+    assert result["snapshotReadyForNewLocalDraft"] is True
+    assert result["readyForNewLocalDraft"] is False
+    assert result["deployedAthenaAbsenceVerified"] is False
     assert result["deployedPersistenceVerified"] is False
     assert result["modelExecutionVerified"] is False
     assert result["productionEligible"] is False
@@ -363,7 +367,13 @@ def test_deployed_contract_matches_verified_snapshot_without_writes(tmp_path):
     ("evidenceIds", ["different-news-id"]),
     ("evidenceIds", ["news-1", "news-1"]),
     ("coveredCategories", ["investors"]),
+    ("requiredCoverage", "partial_evidence"),
+    ("canonicalCategorySynthesesRequired", []),
+    ("canonicalCategorySynthesesRequired", ["news", "investors"]),
     ("advisoryStatus", "advice"),
+    ("modelExecutionVerified", True),
+    ("productionEligible", True),
+    ("sourceAuthenticityIndependentlyVerified", True),
     ("recommendationInfluence", True),
     ("automaticTrading", True),
 ])
@@ -478,3 +488,22 @@ def test_deployed_gate_rejects_missing_snapshot_provenance_digest(tmp_path):
     report.pop("newsProvenanceSha256")
     with pytest.raises(ValueError, match="provenance news"):
         deployed_gate.compare_contract(report, _deployed_contract_for(report, snapshot))
+
+
+def test_deployed_gate_rejects_missing_coverage_declaration(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report, snapshot)
+    del live["requiredCoverage"]
+    with pytest.raises(ValueError, match="cobertura"):
+        deployed_gate.compare_contract(report, live)
+
+
+def test_deployed_gate_does_not_infer_deployed_absence_from_old_snapshot(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    result = deployed_gate.compare_contract(report, _deployed_contract_for(report, snapshot))
+    assert report["readyForNewLocalDraft"] is True
+    assert result["snapshotReadyForNewLocalDraft"] is True
+    assert result["readyForNewLocalDraft"] is False
+    assert result["deployedAthenaAbsenceVerified"] is False
