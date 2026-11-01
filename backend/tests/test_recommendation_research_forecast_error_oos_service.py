@@ -247,7 +247,12 @@ def test_forecast_error_oos_rejects_error_outside_cohort_future_or_realized_mism
         )
 
     mismatch = _error(row, error_seed="6", expected=0.02)
+    # Keep the forged error internally arithmetically consistent so this
+    # regression reaches the independent outcome/cohort identity boundary.
     mismatch["artifact"]["realizedValue"] = 0.99
+    mismatch["artifact"]["signedError"] = 0.97
+    mismatch["artifact"]["absoluteError"] = 0.97
+    mismatch["artifact"]["squaredError"] = 0.97 * 0.97
     with pytest.raises(ValueError, match="realizedValue"):
         service.evaluate(
             as_of=AS_OF,
