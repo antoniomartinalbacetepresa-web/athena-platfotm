@@ -18,7 +18,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.api.recommendation_athena_synthesis import _cycle_evidence_contract, _input_contract
+from app.api.recommendation_athena_synthesis import _canonical_hash, _cycle_evidence_contract, _input_contract
+from app.repositories.recommendation_athena_synthesis_repository import RecommendationAthenaSynthesisRepository
 from app.repositories.recommendation_investors_synthesis_repository import RecommendationInvestorsSynthesisRepository
 from app.repositories.recommendation_news_synthesis_repository import RecommendationNewsSynthesisRepository
 from app.repositories.recommendation_professional_research_cycle_repository import RecommendationProfessionalResearchCycleRepository
@@ -77,6 +78,7 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
     cycle_repo = RecommendationProfessionalResearchCycleRepository()
     news_repo = RecommendationNewsSynthesisRepository()
     investors_repo = RecommendationInvestorsSynthesisRepository()
+    athena_repo = RecommendationAthenaSynthesisRepository()
     # immutable=1 avoids WAL/shm sidecars; caller MUST supply a checkpointed copy.
     with closing(sqlite3.connect(snapshot.as_uri() + "?mode=ro&immutable=1", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
@@ -132,7 +134,41 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
             if investors["cycle_hash"] != cycle_hash or investors["radar_hash"] != cycle["radar_hash"]:
                 raise ValueError("La síntesis Investors no coincide con el ciclo/Radar.")
         input_contract = _input_contract(cycle, news, investors, contract)
-        existing_athena = fetch("athena") is not None
+        athena_row = fetch("athena")
+        existing_athena = athena_row is not None
+        if athena_row is not None:
+            # A row's existence alone is not proof of a valid, canonical
+            # artifact. Reject corrupt/retrospectively substituted outputs.
+            persisted = athena_repo.validate_record(athena_repo._row(athena_row))
+            stored = persisted["package"]["synthesis"]
+            expected_news = news["synthesis_hash"] if news else None
+            expected_investors = investors["synthesis_hash"] if investors else None
+            if (
+                persisted["cycle_hash"] != cycle_hash
+                or persisted["radar_hash"] != cycle["radar_hash"]
+                or persisted["news_synthesis_hash"] != expected_news
+                or stored.get("investorsSynthesisHash") != expected_investors
+                or stored.get("inputFingerprint") != input_contract["inputFingerprint"]
+                or _utc(stored.get("inputAsOf"), "athena.inputAsOf") != contract["inputAsOf"]
+                or _utc(stored.get("generatedAt"), "athena.generatedAt") < contract["inputAsOf"]
+                or set(stored.get("evidenceIds", [])) != set(contract["evidenceIds"])
+                or set(stored.get("coveredCategories", [])) != set(contract["coveredCategories"])
+            ):
+                raise ValueError("La ATHENA synthesis persistida no coincide con el contrato canónico.")
+            expected_output = _canonical_hash({
+                "inputFingerprint": input_contract["inputFingerprint"],
+                "modelProvider": stored["modelProvider"],
+                "modelName": stored["modelName"],
+                "modelVersion": stored["modelVersion"],
+                "generatedAt": stored["generatedAt"],
+                "summary": stored["summary"],
+                "rationale": stored["rationale"],
+                "uncertainties": stored["uncertainties"],
+                "evidenceIds": stored["evidenceIds"],
+                "investorsSynthesisHash": expected_investors,
+            })
+            if stored.get("outputFingerprint") != expected_output:
+                raise ValueError("El outputFingerprint ATHENA no coincide con la síntesis persistida.")
 
     # Detect auxiliary journals or main-file changes during verification.
     _assert_checkpointed(snapshot)
@@ -149,6 +185,7 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
         "evidenceCount": len(contract["evidenceIds"]),
         "categories": list(contract["coveredCategories"]),
         "athenaAlreadyPersisted": existing_athena,
+        "persistedAthenaIntegrityVerified": existing_athena,
         "readyForNewLocalDraft": not existing_athena,
         "sourceAuthenticityIndependentlyVerified": False,
         "modelExecutionVerified": False,
