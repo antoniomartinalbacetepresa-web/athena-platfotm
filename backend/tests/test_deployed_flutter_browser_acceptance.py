@@ -517,3 +517,189 @@ def test_delayed_canonical_response_redacts_browser_failure():
     with pytest.raises(module.BrowserAcceptanceFailure) as error:
         module._await_delayed_browser_response(BrokenPage(), _DelayedCanonicalResponse())
     assert "private" not in str(error.value)
+
+
+# Deployed News refresh must verify the returned canonical content, not
+# merely count HTTP 200 requests or a heading rendered from stale state.
+_NEWS_PATH = "/api/v1/recommendations/professional-research/news-synthesis/latest"
+_FEED_PATH = "/api/v1/news/feed"
+_API_ORIGIN = "https://api.staging.example.test"
+
+
+class _NewsRefreshResponse:
+    def __init__(self, path, payload, *, status=200, content_type="application/json",
+                 origin=_API_ORIGIN):
+        self.status = status
+        self.url = origin + path
+        self.headers = {"content-type": content_type}
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
+def _news_refresh_payload():
+    return {"data": {
+        "cycleBindingVerified": True, "presentationOnly": True,
+        "recommendationInfluence": False, "automaticScoring": False,
+        "automaticTrading": False, "cycleHash": "a" * 64,
+        "radarHash": "b" * 64, "synthesis": {},
+        "persistence": {
+            "appendOnly": True, "packageIntegrityVerified": True,
+            "synthesisHash": "c" * 64,
+        },
+    }}
+
+
+def _feed_refresh_payload():
+    return {
+        "status": "news_feed_ready", "sourceProvider": "google_news_rss",
+        "count": 0, "items": [], "advisoryStatus": "no_advice",
+        "productionEligible": False,
+        "policy": {
+            "athenaRecommendationInfluence": False,
+            "automaticScoring": False, "automaticTrading": False,
+        },
+        "synthesis": {
+            "status": "diagnostic_only", "count": 0, "items": [],
+            "advisoryStatus": "no_advice", "productionEligible": False,
+            "policy": {
+                "automaticAthenaScoreImpact": False,
+                "automaticRecommendationImpact": False,
+                "automaticTrading": False,
+            },
+        },
+    }
+
+
+def _check_news_refresh(response, path):
+    return module._require_news_refresh_payload(
+        response, backend_origin=_API_ORIGIN, path=path
+    )
+
+
+def test_deployed_news_refresh_requires_canonical_payload_and_safe_empty_feed():
+    assert _check_news_refresh(
+        _NewsRefreshResponse(_NEWS_PATH, _news_refresh_payload()), _NEWS_PATH
+    ) == ("a" * 64, "c" * 64)
+    assert _check_news_refresh(
+        _NewsRefreshResponse(_FEED_PATH, _feed_refresh_payload()), _FEED_PATH
+    ) is None
+
+
+@pytest.mark.parametrize("fault", [
+    "status", "content_type", "origin", "cycle", "artifact",
+    "integrity", "scoring", "presentation", "envelope",
+])
+def test_deployed_news_refresh_rejects_unverified_synthesis(fault):
+    payload = _news_refresh_payload()
+    kwargs = {}
+    if fault == "status":
+        kwargs["status"] = 503
+    elif fault == "content_type":
+        kwargs["content_type"] = "text/html"
+    elif fault == "origin":
+        kwargs["origin"] = "https://other.example.test"
+    elif fault == "cycle":
+        payload["data"]["cycleHash"] = "invalid"
+    elif fault == "artifact":
+        payload["data"]["persistence"]["synthesisHash"] = None
+    elif fault == "integrity":
+        payload["data"]["persistence"]["packageIntegrityVerified"] = False
+    elif fault == "scoring":
+        payload["data"]["automaticScoring"] = True
+    elif fault == "presentation":
+        payload["data"]["presentationOnly"] = False
+    elif fault == "envelope":
+        payload = {"data": []}
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        _check_news_refresh(
+            _NewsRefreshResponse(_NEWS_PATH, payload, **kwargs), _NEWS_PATH
+        )
+
+
+@pytest.mark.parametrize("fault", [
+    "provider", "count", "authority", "synthesis_authority",
+    "synthesis_count", "unsafe_item",
+])
+def test_deployed_news_refresh_rejects_unsafe_feed(fault):
+    payload = _feed_refresh_payload()
+    if fault == "provider":
+        payload["sourceProvider"] = "FMP"
+    elif fault == "count":
+        payload["count"] = 1
+    elif fault == "authority":
+        payload["policy"]["automaticTrading"] = True
+    elif fault == "synthesis_authority":
+        payload["synthesis"]["policy"]["automaticRecommendationImpact"] = True
+    elif fault == "synthesis_count":
+        payload["synthesis"]["count"] = 1
+    elif fault == "unsafe_item":
+        payload["items"] = [{"sourceProvider": "FMP"}]
+        payload["count"] = 1
+        payload["synthesis"]["items"] = [{}]
+        payload["synthesis"]["count"] = 1
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        _check_news_refresh(
+            _NewsRefreshResponse(_FEED_PATH, payload), _FEED_PATH
+        )
+
+
+class _NewsBindingPage:
+    def __init__(self, payload):
+        self.request = self
+        self.payload = payload
+
+    def get(self, url, *, headers, max_redirects, timeout):
+        assert url == (
+            _API_ORIGIN
+            + "/api/v1/recommendations/professional-research/athena-synthesis/latest"
+        )
+        assert headers["Cache-Control"] == "no-cache"
+        assert max_redirects == 0
+        return _CanonicalLiveResponse(payload=self.payload)
+
+
+def _athena_refresh_payload():
+    return {"data": {
+        "artifactBindingVerified": True, "cycleHash": "a" * 64,
+        "synthesis": {"inputFingerprint": "d" * 64},
+        "provenance": {
+            "inputFingerprint": "d" * 64,
+            "news": {"artifactHash": "c" * 64},
+        },
+        "selection": {
+            "presentationOnly": True, "recommendationInfluence": False,
+            "automaticTrading": False,
+        },
+    }}
+
+
+def test_news_refresh_matches_live_athena_cycle_and_news_artifact():
+    module._require_news_refresh_binding(
+        _NewsBindingPage(_athena_refresh_payload()),
+        backend_origin=_API_ORIGIN,
+        cycle_hash="a" * 64, news_hash="c" * 64,
+    )
+
+
+@pytest.mark.parametrize("fault", [
+    "cycle", "news_hash", "fingerprint", "authority", "missing_provenance",
+])
+def test_news_refresh_rejects_unbound_or_escalated_live_athena(fault):
+    payload = _athena_refresh_payload()
+    if fault == "cycle":
+        payload["data"]["cycleHash"] = "e" * 64
+    elif fault == "news_hash":
+        payload["data"]["provenance"]["news"]["artifactHash"] = "f" * 64
+    elif fault == "fingerprint":
+        payload["data"]["provenance"]["inputFingerprint"] = "invalid"
+    elif fault == "authority":
+        payload["data"]["selection"]["recommendationInfluence"] = True
+    elif fault == "missing_provenance":
+        del payload["data"]["provenance"]
+    with pytest.raises(module.BrowserAcceptanceFailure):
+        module._require_news_refresh_binding(
+            _NewsBindingPage(payload), backend_origin=_API_ORIGIN,
+            cycle_hash="a" * 64, news_hash="c" * 64,
+        )

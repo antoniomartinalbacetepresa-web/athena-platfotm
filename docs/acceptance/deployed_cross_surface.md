@@ -42,7 +42,19 @@ exact API path. A same-path response from another host, an HTTP downgrade,
 or a cross-origin request during selective News refresh fails acceptance.
 The controlled 503 fault is routed only to that configured backend; recovery
 must include a fresh successful response from that backend, not just a
-reappearing UI label. These checks do not replace independent provider
+reappearing UI label.
+
+Both selective and full News refreshes must now return canonical JSON contracts,
+not just HTTP 200: the refreshed News synthesis must carry verified cycle and
+package integrity, no scoring/trading authority, and a valid artifact hash.
+Each observed refresh is independently bound to the live ATHENA synthesis
+cycle, PIT fingerprint and matching News artifact hash. The full refresh also
+requires the real Google News RSS feed and its diagnostic synthesis to agree
+on counts and remain `no_advice`/non-production/non-trading. Empty feeds are
+valid when explicitly reported; fallback, FMP, malformed payloads and stale
+cross-cycle provenance fail closed. Staging must keep its canonical research
+cycle stable during the journey. These checks are implemented acceptance
+contracts, **not deployed evidence while the opt-in job is skipped**. These checks do not replace independent provider
 provenance verification or the opt-in two-owner API acceptance.
 
 Deploy the exact `dev/real-market-backend` Flutter Web build to HTTPS.

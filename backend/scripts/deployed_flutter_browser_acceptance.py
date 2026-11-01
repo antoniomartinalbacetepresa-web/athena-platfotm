@@ -298,6 +298,130 @@ def verify_market_fault_recovery(page, *, backend_origin: str) -> None:
     ).first.wait_for(state="visible", timeout=30000)
 
 
+
+def _require_news_refresh_payload(
+    response, *, backend_origin: str, path: str,
+) -> tuple[str, str] | None:
+    """Reject a 200 that is not canonical News evidence or a safe feed.
+
+    Network status and a visible heading alone cannot certify refresh.
+    No response bodies, URLs, or private source fingerprints are logged.
+    """
+    try:
+        if (
+            response.status != 200
+            or not _matches_backend_api(
+                response.url, backend_origin=backend_origin, path=path
+            )
+            or "application/json" not in response.headers.get(
+                "content-type", ""
+            ).lower()
+        ):
+            raise ValueError("untrusted News response")
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("invalid News envelope")
+        if path == "/api/v1/recommendations/professional-research/news-synthesis/latest":
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                raise ValueError("missing News synthesis")
+            persistence = data.get("persistence")
+            if not isinstance(persistence, dict):
+                raise ValueError("missing News persistence")
+            cycle = data.get("cycleHash")
+            artifact = persistence.get("synthesisHash")
+            radar = data.get("radarHash")
+            if (
+                any(
+                    not isinstance(value, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                    for value in (cycle, artifact, radar)
+                )
+                or data.get("cycleBindingVerified") is not True
+                or data.get("presentationOnly") is not True
+                or data.get("recommendationInfluence") is not False
+                or data.get("automaticScoring") is not False
+                or data.get("automaticTrading") is not False
+                or persistence.get("appendOnly") is not True
+                or persistence.get("packageIntegrityVerified") is not True
+                or not isinstance(data.get("synthesis"), dict)
+            ):
+                raise ValueError("unverified News synthesis")
+            return cycle, artifact
+        if path == "/api/v1/news/feed":
+            items = payload.get("items")
+            count = payload.get("count")
+            policy = payload.get("policy")
+            synthesis = payload.get("synthesis")
+            if not isinstance(policy, dict) or not isinstance(synthesis, dict):
+                raise ValueError("missing News policies")
+            synthesis_policy = synthesis.get("policy")
+            if (
+                payload.get("status") != "news_feed_ready"
+                or payload.get("sourceProvider") != "google_news_rss"
+                or type(count) is not int or count < 0
+                or not isinstance(items, list) or len(items) != count
+                or any(
+                    not isinstance(item, dict)
+                    or item.get("sourceProvider") != "google_news_rss"
+                    for item in items
+                )
+                or payload.get("advisoryStatus") != "no_advice"
+                or payload.get("productionEligible") is not False
+                or policy.get("athenaRecommendationInfluence") is not False
+                or policy.get("automaticScoring") is not False
+                or policy.get("automaticTrading") is not False
+                or synthesis.get("status") != "diagnostic_only"
+                or synthesis.get("count") != count
+                or not isinstance(synthesis.get("items"), list)
+                or len(synthesis["items"]) != count
+                or synthesis.get("advisoryStatus") != "no_advice"
+                or synthesis.get("productionEligible") is not False
+                or not isinstance(synthesis_policy, dict)
+                or synthesis_policy.get("automaticAthenaScoreImpact") is not False
+                or synthesis_policy.get("automaticRecommendationImpact") is not False
+                or synthesis_policy.get("automaticTrading") is not False
+            ):
+                raise ValueError("unverified News feed")
+            return None
+        raise ValueError("unexpected News endpoint")
+    except Exception:
+        raise BrowserAcceptanceFailure(
+            "Deployed News refresh evidence invalid"
+        ) from None
+
+
+def _require_news_refresh_binding(
+    page, *, backend_origin: str, cycle_hash: str, news_hash: str,
+) -> None:
+    """Bind each actual browser refresh to the live ATHENA PIT provenance."""
+    path = "/api/v1/recommendations/professional-research/athena-synthesis/latest"
+    response = _fetch_live_canonical_synthesis(
+        page, backend_origin=backend_origin, path=path
+    )
+    try:
+        data = response.json()["data"]
+        provenance = data["provenance"]
+        selection = data["selection"]
+        fingerprint = data["synthesis"]["inputFingerprint"]
+        if (
+            data.get("artifactBindingVerified") is not True
+            or data.get("cycleHash") != cycle_hash
+            or provenance["news"]["artifactHash"] != news_hash
+            or not isinstance(fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+            or provenance.get("inputFingerprint") != fingerprint
+            or selection.get("presentationOnly") is not True
+            or selection.get("recommendationInfluence") is not False
+            or selection.get("automaticTrading") is not False
+        ):
+            raise ValueError("News/ATHENA refresh mismatch")
+    except Exception:
+        raise BrowserAcceptanceFailure(
+            "Deployed News refresh canonical binding invalid"
+        ) from None
+
+
 def verify_news_refresh_scope(page, *, backend_origin: str) -> None:
     """Exercise independent News synthesis refresh and full News refresh in staging.
 
@@ -332,8 +456,15 @@ def verify_news_refresh_scope(page, *, backend_origin: str) -> None:
             page.get_by_role(
                 "button", name="Actualizar análisis ATHENA de noticias", exact=True
             ).click(timeout=15000)
-        if synthesis_response.value.status != 200:
-            raise BrowserAcceptanceFailure("News selective refresh unavailable")
+        selective_binding = _require_news_refresh_payload(
+            synthesis_response.value, backend_origin=backend_origin, path=synthesis
+        )
+        if selective_binding is None:
+            raise BrowserAcceptanceFailure("News selective refresh missing binding")
+        _require_news_refresh_binding(
+            page, backend_origin=backend_origin,
+            cycle_hash=selective_binding[0], news_hash=selective_binding[1],
+        )
         _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
         _require_news_refresh_requests(requested, selective=True)
 
@@ -352,8 +483,18 @@ def verify_news_refresh_scope(page, *, backend_origin: str) -> None:
             page.get_by_role(
                 "button", name="Actualizar noticias y análisis ATHENA", exact=True
             ).click(timeout=15000)
-        if synthesis_response.value.status != 200 or feed_response.value.status != 200:
-            raise BrowserAcceptanceFailure("News full refresh unavailable")
+        full_binding = _require_news_refresh_payload(
+            synthesis_response.value, backend_origin=backend_origin, path=synthesis
+        )
+        _require_news_refresh_payload(
+            feed_response.value, backend_origin=backend_origin, path=feed
+        )
+        if full_binding is None:
+            raise BrowserAcceptanceFailure("News full refresh missing binding")
+        _require_news_refresh_binding(
+            page, backend_origin=backend_origin,
+            cycle_hash=full_binding[0], news_hash=full_binding[1],
+        )
         _heading(page, "ANÁLISIS ATHENA DE NOTICIAS")
         _require_news_refresh_requests(requested, selective=False)
     finally:
