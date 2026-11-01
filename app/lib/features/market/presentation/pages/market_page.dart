@@ -26,9 +26,11 @@ class _MarketPageState extends State<MarketPage> {
     super.dispose();
   }
 
-  void _openResearch() {
-    final symbol = _symbolController.text.trim().toUpperCase();
-    if (symbol.isEmpty) return;
+  void _openResearch() => _openResearchForSymbol(_symbolController.text);
+
+  void _openResearchForSymbol(String requestedSymbol) {
+    final symbol = requestedSymbol.trim().toUpperCase();
+    if (symbol.isEmpty || symbol != _symbolController.text.trim().toUpperCase()) return;
     Navigator.of(context).pushNamed(
       '${AppRoutes.stockResearch}?symbol=${Uri.encodeQueryComponent(symbol)}',
     );
@@ -104,6 +106,7 @@ class _MarketPageState extends State<MarketPage> {
                 builder: (context, value, _) => VerifiedMarketQuotePanel(
                   symbol: value.text,
                   repository: widget.quoteRepository,
+                  onOpenResearch: _openResearchForSymbol,
                 ),
               ),
               const SizedBox(height: 12),
