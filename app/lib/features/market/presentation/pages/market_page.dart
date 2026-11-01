@@ -103,10 +103,15 @@ class _MarketPageState extends State<MarketPage> {
               const SizedBox(height: 8),
               ValueListenableBuilder<TextEditingValue>(
                 valueListenable: _symbolController,
-                builder: (context, value, _) => VerifiedMarketQuotePanel(
-                  symbol: value.text,
-                  repository: widget.quoteRepository,
-                  onOpenResearch: _openResearchForSymbol,
+                builder: (context, value, _) => ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 160),
+                  child: SingleChildScrollView(
+                    child: VerifiedMarketQuotePanel(
+                      symbol: value.text,
+                      repository: widget.quoteRepository,
+                      onOpenResearch: _openResearchForSymbol,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
