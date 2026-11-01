@@ -119,10 +119,29 @@ def compare_contract(
         or sorted(categories) != snapshot_report.get("categories")
     ):
         raise ValueError("Las evidencias o categorías del despliegue difieren del snapshot.")
+    # These fields are outside the fingerprint and must be checked explicitly:
+    # otherwise a deployed response could claim partial coverage while matching
+    # the same evidence hashes, or advertise authority the gate never grants.
+    required_categories = [
+        category for category in ("news", "investors")
+        if expected[f"{category}SynthesisHash"] is not None
+    ]
+    if (
+        deployed_contract.get("requiredCoverage") != "all_cycle_radar_evidence"
+        or deployed_contract.get("canonicalCategorySynthesesRequired") != required_categories
+    ):
+        raise ValueError("El despliegue no declara cobertura canónica completa.")
     if (
         deployed_contract.get("advisoryStatus") != "no_advice"
         or deployed_contract.get("recommendationInfluence") is not False
         or deployed_contract.get("automaticTrading") is not False
+        or any(
+            deployed_contract.get(field) is not False
+            for field in (
+                "modelExecutionVerified", "productionEligible",
+                "sourceAuthenticityIndependentlyVerified",
+            ) if field in deployed_contract
+        )
     ):
         raise ValueError("El despliegue no conserva los límites de autoridad.")
     for category, hash_field, provenance_field in (
@@ -152,7 +171,11 @@ def compare_contract(
         "inputFingerprint": expected["inputFingerprint"],
         "snapshotSha256": snapshot_report["snapshotSha256"],
         "athenaAlreadyPersistedInSnapshot": snapshot_report["athenaAlreadyPersisted"],
-        "readyForNewLocalDraft": snapshot_report["readyForNewLocalDraft"],
+        "snapshotReadyForNewLocalDraft": snapshot_report["readyForNewLocalDraft"],
+        # An input-contract GET cannot prove the deployed database has no ATHENA
+        # synthesis: another process may have persisted one after the snapshot.
+        "readyForNewLocalDraft": False,
+        "deployedAthenaAbsenceVerified": False,
         "deployedPersistenceVerified": False,
         "modelExecutionVerified": False,
         "sourceAuthenticityIndependentlyVerified": False,
