@@ -66,6 +66,15 @@ def _utc(value: object, field: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _same_string_members(value: object, expected: tuple[str, ...]) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, str) and item for item in value)
+        and len(value) == len(expected)
+        and set(value) == set(expected)
+    )
+
+
 def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str, object]:
     if not _SHA.fullmatch(expected_sha256) or not _SHA.fullmatch(cycle_hash):
         raise ValueError("Se requieren hashes SHA-256 hexadecimales en minúsculas.")
@@ -151,10 +160,16 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
                 or stored.get("inputFingerprint") != input_contract["inputFingerprint"]
                 or _utc(stored.get("inputAsOf"), "athena.inputAsOf") != contract["inputAsOf"]
                 or _utc(stored.get("generatedAt"), "athena.generatedAt") < contract["inputAsOf"]
-                or set(stored.get("evidenceIds", [])) != set(contract["evidenceIds"])
-                or set(stored.get("coveredCategories", [])) != set(contract["coveredCategories"])
+                or not _same_string_members(stored.get("evidenceIds"), contract["evidenceIds"])
+                or not _same_string_members(stored.get("coveredCategories"), contract["coveredCategories"])
             ):
                 raise ValueError("La ATHENA synthesis persistida no coincide con el contrato canónico.")
+            output_fields = (
+                "modelProvider", "modelName", "modelVersion", "generatedAt",
+                "summary", "rationale", "uncertainties", "evidenceIds",
+            )
+            if any(field not in stored for field in output_fields):
+                raise ValueError("La ATHENA synthesis persistida carece de campos de salida.")
             expected_output = _canonical_hash({
                 "inputFingerprint": input_contract["inputFingerprint"],
                 "modelProvider": stored["modelProvider"],
