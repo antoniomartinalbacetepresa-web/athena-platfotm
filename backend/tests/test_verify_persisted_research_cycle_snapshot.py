@@ -302,7 +302,23 @@ def test_existing_athena_rehashed_package_still_must_match_canonical_contract(
 from scripts import compare_deployed_research_input_contract as deployed_gate
 
 
-def _deployed_contract_for(report):
+def _deployed_contract_for(report, snapshot):
+    # Reconstruct the exact deployed API binding from the persisted fixture.
+    # A fake artifactHash-only provenance must never pass this gate.
+    with closing(sqlite3.connect(snapshot)) as conn:
+        row = conn.execute(
+            "SELECT package_json FROM athena_news_syntheses WHERE cycle_hash = ?",
+            (report["cycleHash"],),
+        ).fetchone()
+    assessments = json.loads(row[0])["synthesis"]["assessments"]
+    bindings = sorted((
+        {
+            "evidenceId": str(item["evidenceId"]).strip(),
+            "assessmentFingerprint": str(item["assessmentFingerprint"]).strip().lower(),
+            "sourceRef": str(item["sourceRef"]).strip(),
+        }
+        for item in assessments
+    ), key=lambda item: item["evidenceId"])
     return {
         "cycleHash": report["cycleHash"],
         "radarHash": report["radarHash"],
@@ -311,7 +327,14 @@ def _deployed_contract_for(report):
         "inputAsOf": report["inputAsOf"],
         "evidenceIds": ["news-1"],
         "coveredCategories": ["news"],
-        "newsProvenance": {"artifactHash": report["newsSynthesisHash"]},
+        "newsProvenance": {
+            "artifactHash": report["newsSynthesisHash"],
+            "artifactType": "canonical_news_synthesis",
+            "assessmentBindings": bindings,
+            "userFacingTraceability": True,
+            "recommendationInfluence": False,
+            "automaticTrading": False,
+        },
         "advisoryStatus": "no_advice",
         "recommendationInfluence": False,
         "automaticTrading": False,
@@ -323,7 +346,7 @@ def test_deployed_contract_matches_verified_snapshot_without_writes(tmp_path):
     digest = _file_hash(snapshot)
     report = verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
     before = snapshot.read_bytes()
-    result = deployed_gate.compare_contract(report, _deployed_contract_for(report))
+    result = deployed_gate.compare_contract(report, _deployed_contract_for(report, snapshot))
     assert result["status"] == "snapshot_deployed_input_contract_matched"
     assert result["readyForNewLocalDraft"] is True
     assert result["deployedPersistenceVerified"] is False
@@ -347,7 +370,7 @@ def test_deployed_contract_matches_verified_snapshot_without_writes(tmp_path):
 def test_deployed_contract_mismatch_fails_closed(tmp_path, field, value):
     snapshot, cycle_hash = _snapshot(tmp_path)
     report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
-    live = _deployed_contract_for(report)
+    live = _deployed_contract_for(report, snapshot)
     live[field] = value
     with pytest.raises(ValueError):
         deployed_gate.compare_contract(report, live)
@@ -356,7 +379,7 @@ def test_deployed_contract_mismatch_fails_closed(tmp_path, field, value):
 def test_deployed_gate_rejects_missing_news_provenance(tmp_path):
     snapshot, cycle_hash = _snapshot(tmp_path)
     report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
-    live = _deployed_contract_for(report)
+    live = _deployed_contract_for(report, snapshot)
     del live["newsProvenance"]
     with pytest.raises(ValueError, match="provenance"):
         deployed_gate.compare_contract(report, live)
@@ -365,7 +388,7 @@ def test_deployed_gate_rejects_missing_news_provenance(tmp_path):
 def test_deployed_gate_does_not_allow_redrafting_existing_athena(tmp_path):
     snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
     report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
-    result = deployed_gate.compare_contract(report, _deployed_contract_for(report))
+    result = deployed_gate.compare_contract(report, _deployed_contract_for(report, snapshot))
     assert result["athenaAlreadyPersistedInSnapshot"] is True
     assert result["readyForNewLocalDraft"] is False
 
@@ -397,7 +420,7 @@ def test_deployed_gate_cli_reports_match_with_stubbed_network(tmp_path, monkeypa
     report = verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
     monkeypatch.setattr(
         deployed_gate, "fetch_deployed_contract",
-        lambda **kwargs: _deployed_contract_for(report),
+        lambda **kwargs: _deployed_contract_for(report, snapshot),
     )
     assert deployed_gate.main([
         "--snapshot", str(snapshot), "--expected-sha256", digest,
@@ -410,7 +433,7 @@ def test_deployed_gate_cli_rejects_live_mismatch(tmp_path, monkeypatch, capsys):
     snapshot, cycle_hash = _snapshot(tmp_path)
     digest = _file_hash(snapshot)
     report = verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
-    live = _deployed_contract_for(report)
+    live = _deployed_contract_for(report, snapshot)
     live["inputFingerprint"] = "f" * 64
     monkeypatch.setattr(deployed_gate, "fetch_deployed_contract", lambda **kwargs: live)
     assert deployed_gate.main([
@@ -418,3 +441,40 @@ def test_deployed_gate_cli_rejects_live_mismatch(tmp_path, monkeypatch, capsys):
         "--cycle-hash", cycle_hash, "--backend-origin", "https://example.org",
     ]) == 2
     assert json.loads(capsys.readouterr().out)["status"] == "blocked"
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("artifactType", "untrusted_news"),
+    ("assessmentBindings", []),
+    ("userFacingTraceability", False),
+    ("recommendationInfluence", True),
+    ("automaticTrading", True),
+])
+def test_deployed_gate_rejects_modified_news_provenance_binding(
+    tmp_path, field, replacement,
+):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    deployed = _deployed_contract_for(report, snapshot)
+    deployed["newsProvenance"][field] = replacement
+    with pytest.raises(ValueError, match="provenance news"):
+        deployed_gate.compare_contract(report, deployed)
+
+
+def test_deployed_gate_rejects_modified_assessment_source_with_same_artifact_hash(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    deployed = _deployed_contract_for(report, snapshot)
+    deployed["newsProvenance"]["assessmentBindings"][0]["sourceRef"] = (
+        "https://example.org/forged-source"
+    )
+    with pytest.raises(ValueError, match="provenance news"):
+        deployed_gate.compare_contract(report, deployed)
+
+
+def test_deployed_gate_rejects_missing_snapshot_provenance_digest(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    report.pop("newsProvenanceSha256")
+    with pytest.raises(ValueError, match="provenance news"):
+        deployed_gate.compare_contract(report, _deployed_contract_for(report, snapshot))
