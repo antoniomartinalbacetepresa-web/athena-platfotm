@@ -12,8 +12,9 @@ verified PIT synthesis; neither 404 proves the corresponding route is absent.
 When the operational database is accessible on the operator's machine, use
 `create_consistent_research_snapshot.py` instead of copying its `.db` file
 directly. SQLite's online backup API includes committed WAL transactions and
-produces a separate checkpointed database without writing to the source.
-The source is opened in read-only mode; the destination must not already
+produces a separate checkpointed database without changing source rows or schema.
+SQLite may still manage source WAL/shared-memory sidecars as part of normal
+read access. The source is opened in read-only mode; the destination must not already
 exist. This operation does **not** query market providers or execute Ollama.
 
 From `backend` in PowerShell, with an existing access-restricted destination
