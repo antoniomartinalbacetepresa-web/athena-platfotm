@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from scripts.deployed_flutter_browser_acceptance import BrowserAcceptanceFailure
-from scripts.deployed_owner_browser_acceptance import BrowserAuthorityObserver, _revoked
+from scripts.deployed_owner_browser_acceptance import BrowserAuthorityObserver, _guest_portfolio, _revoked
 
 
 BACKEND = "https://staging-api.example.test"
@@ -60,3 +60,56 @@ def test_revocation_fails_closed_on_one_still_authorized_surface():
     with httpx.Client(base_url=BACKEND, transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BrowserAcceptanceFailure, match="Revoked"):
             _revoked(client, "disposable-token")
+
+
+@pytest.mark.parametrize("url", [
+    "https://exfiltration.invalid/collect",
+    "https://staging-api.example.test.evil.invalid/collect",
+    BACKEND + "/unrelated-static-asset",
+])
+def test_browser_authority_rejects_bearer_on_any_untrusted_request(url):
+    observer = BrowserAuthorityObserver(BACKEND)
+    observer.observe(request(BACKEND + "/api/v1/auth/me", "Bearer test-owner-a"))
+    observer.observe(request(url, "Bearer test-owner-a"))
+    with pytest.raises(BrowserAcceptanceFailure, match="authority"):
+        observer.token()
+
+
+def test_browser_authority_rejects_reuse_after_logout():
+    observer = BrowserAuthorityObserver(BACKEND)
+    observer.observe(request(BACKEND + "/api/v1/user/portfolio", "Bearer test-owner-a"))
+    observer.mark_revoked("test-owner-a")
+    observer.observe(request(BACKEND + "/api/v1/market/universe", "Bearer test-owner-a"))
+    with pytest.raises(BrowserAcceptanceFailure, match="Revoked"):
+        observer.assert_no_revoked_use()
+
+
+def test_browser_authority_allows_noncredentialed_public_requests_after_logout():
+    observer = BrowserAuthorityObserver(BACKEND)
+    observer.observe(request(BACKEND + "/api/v1/user/portfolio", "Bearer test-owner-a"))
+    observer.mark_revoked("test-owner-a")
+    observer.observe(request("https://public.example.test/static.js", ""))
+    observer.assert_no_revoked_use()
+
+
+def test_guest_portfolio_rejects_owner_only_content():
+    class Locator:
+        def __init__(self, *, count=0):
+            self._count = count
+        def click(self, **kwargs):
+            return None
+        def wait_for(self, **kwargs):
+            return None
+        def count(self):
+            return self._count
+    class Page:
+        def goto(self, *args, **kwargs):
+            return None
+        def locator(self, *args, **kwargs):
+            return Locator()
+        def get_by_role(self, role, *, name, exact=True):
+            return Locator()
+        def get_by_text(self, text, *, exact=True):
+            return Locator(count=1 if text == "POSICIONES AUTENTICADAS" else 0)
+    with pytest.raises(BrowserAcceptanceFailure, match="owner-only data"):
+        _guest_portfolio(Page())

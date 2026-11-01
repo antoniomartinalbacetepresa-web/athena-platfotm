@@ -43,9 +43,13 @@ checks identity and owner-specific state, reloads preferences, refreshes
 holdings plus Profile currency through live HTTPS APIs, and verifies private
 state via a read-only independent API snapshot using the **browser-issued**
 bearer tokens. It logs out A through the UI, confirms revocation on all
-protected endpoints and the guest Profile boundary, then checks that B can
+protected endpoints and both guest Profile and Portfolio boundaries. The browser
+observer rejects bearer credentials sent to any non-API or foreign origin and
+flags replay of revoked credentials during subsequent guest navigation. It
+then checks that B can
 still refresh and that B's entire private state is unchanged. It logs out B
-through the UI and checks B's revocation. All issued tokens are revoked
+through the UI, checks B's revocation and guest Portfolio boundary, and checks
+that neither browser reused revoked bearer authority. All issued tokens are revoked
 best-effort on failure, and browser contexts are closed.
 
 Only safe booleans are emitted. No screenshots, traces, tokens, identities,

@@ -34,27 +34,42 @@ class BrowserAuthorityObserver:
     def __init__(self, backend_origin: str):
         self.backend_origin = backend_origin
         self._tokens: set[str] = set()
+        self._revoked_tokens: set[str] = set()
         self._invalid = False
 
     def observe(self, request) -> None:
+        """Detect bearer exfiltration on ANY browser request, not just owner APIs."""
         try:
-            url = urlsplit(request.url)
-            if url.path not in _PROTECTED_PATHS:
-                return
             authorization = request.headers.get("authorization", "")
             if not authorization:
                 return
-            if not _matches_backend_api(
-                request.url, backend_origin=self.backend_origin, path=url.path
+            url = urlsplit(request.url)
+            if (
+                not authorization.startswith("Bearer ")
+                or not authorization[7:]
+                or any(character.isspace() for character in authorization[7:])
+                or not url.path.startswith("/api/v1/")
+                or not _matches_backend_api(
+                    request.url, backend_origin=self.backend_origin, path=url.path
+                )
             ):
                 self._invalid = True
                 return
-            if not authorization.startswith("Bearer ") or not authorization[7:]:
+            token = authorization[7:]
+            if token in self._revoked_tokens:
                 self._invalid = True
-                return
-            self._tokens.add(authorization[7:])
-        except (TypeError, ValueError):
+            self._tokens.add(token)
+        except (TypeError, ValueError, AttributeError):
             self._invalid = True
+
+    def mark_revoked(self, token: str) -> None:
+        if token not in self._tokens:
+            raise BrowserAcceptanceFailure("Revoked browser authority was not observed")
+        self._revoked_tokens.add(token)
+
+    def assert_no_revoked_use(self) -> None:
+        if self._invalid:
+            raise BrowserAcceptanceFailure("Revoked or untrusted browser bearer request observed")
 
     def token(self) -> str:
         if self._invalid or len(self._tokens) != 1:
@@ -130,6 +145,22 @@ def _portfolio(page, *, backend_origin: str) -> None:
     page.get_by_text("POSICIONES AUTENTICADAS", exact=True).wait_for(timeout=15000)
 
 
+def _guest_portfolio(page) -> None:
+    """A revoked owner must not regain authenticated Portfolio UI authority."""
+    _dashboard(page)
+    page.get_by_role("button", name="Cartera", exact=True).click(timeout=15000)
+    page.get_by_role("heading", name="MI CARTERA", exact=True).wait_for(timeout=30000)
+    for private_text in (
+        "POSICIONES AUTENTICADAS",
+        "Posiciones personales protegidas por tu cuenta ATHENA",
+    ):
+        if page.get_by_text(private_text, exact=True).count():
+            raise BrowserAcceptanceFailure("Guest Portfolio retained owner-only data")
+    for private_control in ("Actualizar cartera y preferencias", "Historial de cuenta"):
+        if page.get_by_role("button", name=private_control, exact=True).count():
+            raise BrowserAcceptanceFailure("Guest Portfolio retained owner-only controls")
+
+
 def _revoked(client: httpx.Client, token: str) -> None:
     for path in _PROTECTED_PATHS:
         response = client.get(path, headers={"Authorization": f"Bearer {token}"})
@@ -193,11 +224,14 @@ def verify_two_owner_browser(browser, *, config, owner_a: TestOwner,
                 raise BrowserAcceptanceFailure("Browser owner isolation failed")
             _logout_ui(page_a)
             _revoked(client, token_a)
+            observers[0].mark_revoked(token_a)
             page_a.get_by_role("button", name="Continuar como invitado").click(timeout=15000)
             page_a.get_by_role("button", name="Perfil", exact=True).click(timeout=15000)
             page_a.get_by_role("heading", name="Perfil protegido", exact=True).wait_for(
                 timeout=30000
             )
+            _guest_portfolio(page_a)
+            observers[0].assert_no_revoked_use()
             _portfolio(page_b, backend_origin=config.backend_origin)
             snapshot_b_after = _owner_snapshot(
                 client, token_b, owner_b, "browser owner B after A logout"
@@ -206,12 +240,18 @@ def verify_two_owner_browser(browser, *, config, owner_a: TestOwner,
                 raise BrowserAcceptanceFailure("Other owner changed after browser logout")
             _logout_ui(page_b)
             _revoked(client, token_b)
+            observers[1].mark_revoked(token_b)
+            page_b.get_by_role("button", name="Continuar como invitado").click(timeout=15000)
+            _guest_portfolio(page_b)
+            observers[1].assert_no_revoked_use()
             return {
                 "status": "passed",
                 "deployedTwoOwnerFlutterBrowserVerified": True,
                 "ownerScopedProfileAndPortfolioRefreshVerified": True,
                 "ownerRevocationAndOtherOwnerContinuityVerified": True,
                 "anonymousProfileBoundaryVerified": True,
+                "revokedOwnerGuestPortfolioBoundaryVerified": True,
+                "browserBearerOriginAndRevocationVerified": True,
                 "deployedExactShaWebAndBackendVerified": True,
                 "productionAuthorization": False,
             }
