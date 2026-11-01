@@ -397,6 +397,86 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('stale News retrieval is visibly labelled instead of appearing live',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 400,
+          height: 340,
+          child: NewsFeedPanel(
+            limit: 1,
+            loadFeed: (_) async => _feed(1),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('news-feed-stale-warning')), findsOneWidget);
+    expect(find.textContaining('Datos antiguos (más de 24 h)'), findsOneWidget);
+    expect(find.text('Noticia verificada 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('future-dated News retrieval fails closed without exposing articles',
+      (tester) async {
+    final fixture = _feed(1);
+    final futureFeed = VerifiedNewsFeed(
+      query: fixture.query,
+      sourceProvider: fixture.sourceProvider,
+      retrievedAt: DateTime.now().toUtc().add(const Duration(days: 1)),
+      items: fixture.items,
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 400,
+          height: 340,
+          child: NewsFeedPanel(
+            limit: 1,
+            loadFeed: (_) async => futureFeed,
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Fecha de noticias inválida'), findsOneWidget);
+    expect(find.text('Noticia verificada 1'), findsNothing);
+    expect(find.text('https://example.com/article/1'), findsNothing);
+    expect(find.byIcon(Icons.copy_outlined), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('current News retrieval does not show the stale warning',
+      (tester) async {
+    final fixture = _feed(1);
+    final currentFeed = VerifiedNewsFeed(
+      query: fixture.query,
+      sourceProvider: fixture.sourceProvider,
+      retrievedAt: DateTime.now().toUtc(),
+      items: fixture.items,
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 400,
+          height: 340,
+          child: NewsFeedPanel(
+            limit: 1,
+            loadFeed: (_) async => currentFeed,
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('news-feed-stale-warning')), findsNothing);
+    expect(find.text('Noticia verificada 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('News feed failure hides sources and retry restores verified provenance',
       (tester) async {
     var calls = 0;
