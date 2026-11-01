@@ -105,3 +105,23 @@ without persisted timestamps is not proof of ex-ante issuance.
 These checks detect inconsistent inputs, not independently signed capture
 times, operational market provenance, real matured OOS cohorts or predictive
 skill. No learning, weighting, advice or trading authority is granted.
+
+
+## Forecast-error canonical attribution consumer gate (2026-11-01)
+
+The forecast-error evaluator now independently checks the current currency-pair
+Performance Attribution contract before using realized total return. A matching
+outer outcome hash alone cannot authorize altered nested returns or a fabricated
+attribution key. The consumer recomputes the nested canonical attribution,
+reconciles the outcome's FX pair, benchmark and attribution identity, and rejects
+source evidence dated before the observation horizon ends or after outcome asOf.
+FMP source markers and duplicated component provenance are rejected. Older
+research-only attribution records retain their existing read contract without
+being promoted to production.
+
+The regressions use an actual canonical Performance Attribution producer in
+addition to legacy research fixtures. This is **structural integrity**, not
+proof of independent source capture, real matured OOS cohorts, signed precommit
+timestamps, predictive skill or permission to trade, weight or learn. Staging
+browser acceptance, operational history coverage and real OOS evidence remain
+open.

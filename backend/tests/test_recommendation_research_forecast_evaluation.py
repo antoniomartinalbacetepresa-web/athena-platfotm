@@ -21,6 +21,14 @@ from app.services.recommendation_research_evaluation_specification_service impor
 from app.services.recommendation_research_forecast_error_service import (
     RecommendationResearchForecastErrorService,
 )
+from app.services.recommendation_performance_attribution_service import (
+    AttributionEvidence,
+    RecommendationPerformanceAttributionInput,
+    RecommendationPerformanceAttributionService,
+)
+from app.services.recommendation_research_outcome_attribution_service import (
+    RecommendationResearchOutcomeAttributionService,
+)
 
 
 CYCLE_AS_OF = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
@@ -428,3 +436,138 @@ def test_forecast_error_rejects_outcome_persisted_before_observation_when_presen
             specification_record={"specification_hash": specification["specificationHash"], "artifact": specification},
             outcome_record=outcome,
         )
+
+
+def _canonical_attribution(
+    *,
+    evidence_time: datetime | None = None,
+    total_source: str = "observed-return",
+    market_source: str = "market-index",
+) -> dict:
+    period_end = CYCLE_AS_OF + timedelta(days=30)
+    available_at = evidence_time if evidence_time is not None else period_end
+
+    def component(value: float, source: str) -> AttributionEvidence:
+        return AttributionEvidence(
+            value=value,
+            available_at=available_at,
+            source=source,
+            source_ref=f"urn:research:attribution:{source}",
+        )
+
+    return RecommendationPerformanceAttributionService().evaluate(
+        as_of=period_end,
+        item=RecommendationPerformanceAttributionInput(
+            instrument_id="instrument-aapl",
+            symbol="AAPL",
+            instrument_currency="USD",
+            reporting_currency="USD",
+            fx_pair="USD/USD",
+            benchmark_id="SPY",
+            period_start=CYCLE_AS_OF,
+            period_end=period_end,
+            total_return=component(0.08, total_source),
+            market_contribution=component(0.03, market_source),
+            fx_contribution=component(0.0, "fx-zero"),
+            factor_contributions=(),
+        ),
+    ).to_api_dict()
+
+
+def _canonical_outcome_record() -> dict:
+    payload = RecommendationResearchOutcomeAttributionService().bind(
+        outcome_id="outcome-aapl-canonical",
+        cycle_record=_cycle_record(),
+        attribution_payload=_canonical_attribution(),
+    )
+    return {
+        "outcome_hash": payload["outcomeHash"],
+        "cycle_hash": CYCLE_HASH,
+        "payload": payload,
+    }
+
+
+def _recommit_canonical_outcome(outcome: dict, attribution: dict | None = None) -> None:
+    payload = outcome["payload"]
+    if attribution is not None:
+        payload["attribution"] = attribution
+        payload["attributionKey"] = attribution["attributionKey"]
+    payload["outcomeHash"] = _canonical_hash({
+        "outcomeId": payload["outcomeId"],
+        "cycleHash": payload["cycleHash"],
+        "instrumentId": payload["instrumentId"],
+        "symbol": payload["symbol"],
+        "cycleAsOf": payload["cycleAsOf"],
+        "attribution": payload["attribution"],
+    })
+    outcome["outcome_hash"] = payload["outcomeHash"]
+
+
+def _evaluate_canonical_outcome(outcome: dict) -> dict:
+    specification = _specification()
+    return RecommendationResearchForecastErrorService().evaluate(
+        specification_record={
+            "specification_hash": specification["specificationHash"],
+            "artifact": specification,
+        },
+        outcome_record=outcome,
+    )
+
+
+def test_forecast_error_accepts_producer_bound_canonical_attribution() -> None:
+    result = _evaluate_canonical_outcome(_canonical_outcome_record())
+    assert result["realizedValue"] == pytest.approx(0.08)
+    assert result["productionEligible"] is False
+    assert result["productionLearningEligible"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    [
+        ("attributionKey", "f" * 64),
+        ("benchmarkId", "OTHER-BENCHMARK"),
+        ("currency", {"instrumentCurrency": "EUR", "reportingCurrency": "USD",
+                      "fxPair": "EUR/USD", "conversionRequired": True}),
+    ],
+)
+def test_forecast_error_rejects_canonical_outer_identity_forgery(field: str, forged: object) -> None:
+    outcome = _canonical_outcome_record()
+    outcome["payload"][field] = forged
+    with pytest.raises(ValueError, match="canónic"):
+        _evaluate_canonical_outcome(outcome)
+
+
+def test_forecast_error_rejects_forged_nested_return_with_rehashed_outer_outcome() -> None:
+    outcome = _canonical_outcome_record()
+    attribution = outcome["payload"]["attribution"]
+    attribution["totalReturn"] = 0.25
+    attribution["residualReturn"] = 0.22
+    _recommit_canonical_outcome(outcome)
+    with pytest.raises(ValueError, match="Performance Attribution"):
+        _evaluate_canonical_outcome(outcome)
+
+
+def test_forecast_error_rejects_canonical_evidence_before_horizon_maturity() -> None:
+    outcome = _canonical_outcome_record()
+    premature = _canonical_attribution(
+        evidence_time=CYCLE_AS_OF + timedelta(days=30, seconds=-1)
+    )
+    _recommit_canonical_outcome(outcome, premature)
+    with pytest.raises(ValueError, match="antes de cerrar el periodo"):
+        _evaluate_canonical_outcome(outcome)
+
+
+def test_forecast_error_rejects_canonical_fmp_provenance_even_when_rehashed() -> None:
+    outcome = _canonical_outcome_record()
+    forbidden = _canonical_attribution(total_source="Financial Modeling Prep")
+    _recommit_canonical_outcome(outcome, forbidden)
+    with pytest.raises(ValueError, match="FMP/Financial Modeling Prep"):
+        _evaluate_canonical_outcome(outcome)
+
+
+def test_forecast_error_rejects_duplicate_canonical_component_provenance() -> None:
+    outcome = _canonical_outcome_record()
+    duplicated = _canonical_attribution(market_source="observed-return")
+    _recommit_canonical_outcome(outcome, duplicated)
+    with pytest.raises(ValueError, match="provenance duplicada"):
+        _evaluate_canonical_outcome(outcome)

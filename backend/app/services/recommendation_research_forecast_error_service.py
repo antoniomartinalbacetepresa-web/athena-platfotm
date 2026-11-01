@@ -11,6 +11,9 @@ from typing import Any
 from app.services.recommendation_research_evaluation_specification_service import (
     RecommendationResearchEvaluationSpecificationService,
 )
+from app.services.recommendation_performance_attribution_service import (
+    RecommendationPerformanceAttributionService,
+)
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -94,6 +97,65 @@ class RecommendationResearchForecastErrorService:
             raise ValueError("Outcome contiene periodo o disponibilidad temporal inválidos.")
         if self._aware_iso(attribution.get("asOf"), "attribution.asOf") != outcome_as_of:
             raise ValueError("Performance Attribution no coincide con outcome.asOf.")
+
+        # The canonical currency-pair producer binds a second, independent
+        # attribution identity. Rehashing the outer outcome cannot validate
+        # forged nested returns, FX, benchmarks or source capture metadata.
+        attribution_policy = attribution.get("policy")
+        outcome_policy = outcome.get("policy")
+        canonical_fx = "explicit_currency_pair_bound_fail_closed"
+        if (
+            (isinstance(attribution_policy, dict) and attribution_policy.get("fx") == canonical_fx)
+            or (isinstance(outcome_policy, dict) and outcome_policy.get("fx") == canonical_fx)
+        ):
+            if (
+                not isinstance(attribution_policy, dict)
+                or not isinstance(outcome_policy, dict)
+                or attribution_policy.get("fx") != canonical_fx
+                or outcome_policy.get("fx") != canonical_fx
+            ):
+                raise ValueError("Outcome y Performance Attribution no coinciden en FX canónico.")
+            if outcome.get("currency") != attribution.get("currency"):
+                raise ValueError("Outcome perdió identidad FX canónica.")
+            if self._sha256(outcome.get("attributionKey"), "outcome.attributionKey") != self._sha256(
+                attribution.get("attributionKey"), "attribution.attributionKey"
+            ):
+                raise ValueError("Outcome perdió attributionKey canónica.")
+            if (
+                not isinstance(outcome.get("benchmarkId"), str)
+                or not outcome["benchmarkId"].strip()
+                or outcome["benchmarkId"] != attribution.get("benchmarkId")
+            ):
+                raise ValueError("Outcome perdió benchmarkId canónico.")
+            RecommendationPerformanceAttributionService.verify_canonical_payload(attribution)
+            evidence = attribution.get("evidence")
+            if not isinstance(evidence, dict) or not isinstance(evidence.get("factorContributions"), dict):
+                raise ValueError("Performance Attribution perdió provenance canónica.")
+            metas = [evidence.get(key) for key in ("totalReturn", "marketContribution", "fxContribution")]
+            metas.extend(evidence["factorContributions"].values())
+            seen_sources: set[tuple[str, str]] = set()
+            for meta in metas:
+                if not isinstance(meta, dict):
+                    raise ValueError("Performance Attribution perdió provenance de un componente.")
+                available_at = self._aware_iso(meta.get("availableAt"), "attribution.evidence.availableAt")
+                if available_at < period_end or available_at > outcome_as_of:
+                    raise ValueError("Evidencia de outcome disponible antes de cerrar el periodo o después de asOf.")
+                source_key: list[str] = []
+                for field in ("source", "sourceRef"):
+                    value = meta.get(field)
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError("Evidencia de outcome carece de fuente verificable.")
+                    normalized = value.casefold().replace("_", " ").replace("-", " ")
+                    if normalized.replace(" ", "") == "fmp" or any(
+                        forbidden in normalized
+                        for forbidden in ("financialmodelingprep", "financial modeling prep")
+                    ):
+                        raise ValueError("FMP/Financial Modeling Prep está prohibido en outcomes.")
+                    source_key.append(value.casefold())
+                identity = (source_key[0], source_key[1])
+                if identity in seen_sources:
+                    raise ValueError("Evidencia de outcome contiene provenance duplicada.")
+                seen_sources.add(identity)
         # Repositories remain authoritative for mandatory physical timestamps.
         if "created_at" in specification_record:
             sealed_at = self._aware_iso(specification_record["created_at"], "specification.created_at")
