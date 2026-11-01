@@ -137,6 +137,12 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       providerId: providerId,
       sourceProvider: sourceProvider,
       retrievedAt: retrievedAt,
+      quoteMode: _optionalText(data['quoteMode']),
+      priceSessionDate: _optionalText(data['priceSessionDate']),
+      realTimePriceVerified: data['realTimePriceVerified'] is bool
+          ? data['realTimePriceVerified'] as bool : null,
+      historicalPointInTimeEligible: data['historicalPointInTimeEligible'] is bool
+          ? data['historicalPointInTimeEligible'] as bool : null,
     );
   }
 
