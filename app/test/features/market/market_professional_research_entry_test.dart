@@ -114,6 +114,7 @@ void main() {
     )));
     await tester.pump();
     await tester.enterText(find.byType(TextField), ' aapl ');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pumpAndSettle();
     expect(repository.requested, ['AAPL']);
@@ -132,6 +133,7 @@ void main() {
     )));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
@@ -151,6 +153,7 @@ void main() {
     )));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'MSFT');
@@ -178,6 +181,7 @@ void main() {
     )));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-stale')), findsOneWidget);
