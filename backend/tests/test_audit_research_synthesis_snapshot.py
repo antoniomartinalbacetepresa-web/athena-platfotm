@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
@@ -114,3 +115,31 @@ def test_missing_schema_is_explicit_not_silent(tmp_path):
     report = audit(path)
     assert "missing_table_cycles" in report["blockers"]
     assert report["counts"]["cycles"] is None
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_inventory_rejects_sqlite_sidecars_even_with_valid_main_file_digest(tmp_path, suffix):
+    path = _snapshot(tmp_path, with_cycle=True)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    Path(str(path) + suffix).write_bytes(b"uncheckpointed-sidecar")
+    with pytest.raises(ValueError, match="SQLite sidecars"):
+        audit(path, expected_sha256=digest)
+    assert main(["--snapshot", str(path), "--expected-sha256", digest]) == 2
+
+
+def test_inventory_rejects_committed_wal_rows_hidden_from_immutable_reader(tmp_path):
+    path = _snapshot(tmp_path, with_cycle=True)
+    with closing(sqlite3.connect(path)) as writer:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        writer.execute(
+            "UPDATE athena_professional_research_cycles SET radar_hash = ?",
+            ("0" * 64,),
+        )
+        writer.commit()
+        assert Path(str(path) + "-wal").exists()
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        with pytest.raises(ValueError, match="SQLite sidecars"):
+            audit(path, expected_sha256=digest)
+        assert main(["--snapshot", str(path), "--expected-sha256", digest]) == 2
