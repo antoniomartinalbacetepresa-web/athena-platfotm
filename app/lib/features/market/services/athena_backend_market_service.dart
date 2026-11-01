@@ -36,6 +36,10 @@ class AthenaBackendMarketService implements MarketService {
       updatedAt: point.timestamp,
       sourceProvider: point.sourceProvider,
       retrievedAt: point.retrievedAt,
+      quoteMode: point.quoteMode,
+      priceSessionDate: point.priceSessionDate,
+      realTimePriceVerified: point.realTimePriceVerified,
+      historicalPointInTimeEligible: point.historicalPointInTimeEligible,
     );
   }
 }
