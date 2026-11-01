@@ -144,6 +144,16 @@ matches the trusted snapshot; exit `2` indicates a hard stop. A 404 indicates
 that the backend has not persisted the cycle or required dependency syntheses
 under the current deployment, **not** that the verifier should invent them.
 
+The snapshot verifier also reports `newsProvenanceSha256` and
+`investorsProvenanceSha256` (null when the corresponding category is absent).
+These are canonical digests of the complete provenance bindings, not just the
+artifact hashes. The deployed comparison must match the full News/Investors
+provenance object against these digests, including assessment/source bindings
+and presentation-only authority flags. This closes the previous gap where a
+matching artifact hash plus a placeholder provenance object could pass.
+The digests do not prove that external sources or model calls were authentic;
+they only bind the two representations of the same persisted input.
+
 A successful comparison is a **point-in-time consistency check only**.
 The deployed database may change after the GET, and the tool cannot attest
 the external model, source authenticity, or production eligibility. It must
