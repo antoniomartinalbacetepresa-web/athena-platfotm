@@ -89,3 +89,19 @@ This is structural tamper detection, **not** a signed timestamp, independently
 verified provider capture, genuine OOS prediction precommitment or permission
 to learn, weight, recommend or trade. Operational longitudinal acceptance
 remains open until those separate evidentiary gates are satisfied.
+
+
+## Forecast-error source commitment re-verification (2026-11-01)
+
+The forecast-error evaluator now independently validates the canonical
+evaluation-specification hash and recomputes the original outcome content hash
+before calculating errors. It reconciles nested attribution identity, period
+and observation timestamps with the outcome envelope. Where physical
+persistence timestamps are supplied, it rejects retrospective forecast sealing
+and outcomes stored before their observation. The repositories remain the
+mandatory source of physical timestamp validation; an isolated service call
+without persisted timestamps is not proof of ex-ante issuance.
+
+These checks detect inconsistent inputs, not independently signed capture
+times, operational market provenance, real matured OOS cohorts or predictive
+skill. No learning, weighting, advice or trading authority is granted.

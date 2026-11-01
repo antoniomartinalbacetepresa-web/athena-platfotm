@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
 import re
 from typing import Any
+
+
+from app.services.recommendation_research_evaluation_specification_service import (
+    RecommendationResearchEvaluationSpecificationService,
+)
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -30,6 +36,10 @@ class RecommendationResearchForecastErrorService:
             raise ValueError("Se requiere un research outcome attribution canónico.")
         self._assert_research_only(specification, "specification")
         self._assert_research_only(outcome, "outcome")
+        # Comparing two copies of a claimed hash is not content verification.
+        RecommendationResearchEvaluationSpecificationService().validate_artifact(
+            specification
+        )
 
         specification_hash = self._sha256(
             specification.get("specificationHash"), "specificationHash"
@@ -42,6 +52,16 @@ class RecommendationResearchForecastErrorService:
         outcome_hash = self._sha256(outcome.get("outcomeHash"), "outcomeHash")
         if self._sha256(outcome_record.get("outcome_hash"), "outcome_record.outcome_hash") != outcome_hash:
             raise ValueError("El registro de outcome no coincide con outcomeHash.")
+        canonical_outcome = {
+            "outcomeId": outcome.get("outcomeId"),
+            "cycleHash": outcome.get("cycleHash"),
+            "instrumentId": outcome.get("instrumentId"),
+            "symbol": outcome.get("symbol"),
+            "cycleAsOf": outcome.get("cycleAsOf"),
+            "attribution": outcome.get("attribution"),
+        }
+        if self._canonical_hash(canonical_outcome) != outcome_hash:
+            raise ValueError("El contenido original del outcome no coincide con outcomeHash.")
 
         cycle_hash = self._sha256(specification.get("cycleHash"), "specification.cycleHash")
         if self._sha256(outcome.get("cycleHash"), "outcome.cycleHash") != cycle_hash:
@@ -60,6 +80,32 @@ class RecommendationResearchForecastErrorService:
         attribution = outcome.get("attribution")
         if not isinstance(attribution, dict):
             raise ValueError("El outcome perdió Performance Attribution.")
+        for field in ("instrumentId", "symbol", "periodStart", "periodEnd"):
+            left, right = attribution.get(field), outcome.get(field)
+            if field == "symbol" and isinstance(left, str) and isinstance(right, str):
+                left, right = left.upper(), right.upper()
+            if left != right:
+                raise ValueError(f"Performance Attribution no coincide con outcome.{field}.")
+        period_start = self._aware_iso(outcome.get("periodStart"), "outcome.periodStart")
+        period_end = self._aware_iso(outcome.get("periodEnd"), "outcome.periodEnd")
+        outcome_as_of = self._aware_iso(outcome.get("asOf"), "outcome.asOf")
+        cycle_as_of = self._aware_iso(outcome.get("cycleAsOf"), "outcome.cycleAsOf")
+        if period_start < cycle_as_of or period_end <= period_start or period_end > outcome_as_of:
+            raise ValueError("Outcome contiene periodo o disponibilidad temporal inválidos.")
+        if self._aware_iso(attribution.get("asOf"), "attribution.asOf") != outcome_as_of:
+            raise ValueError("Performance Attribution no coincide con outcome.asOf.")
+        # Repositories remain authoritative for mandatory physical timestamps.
+        if "created_at" in specification_record:
+            sealed_at = self._aware_iso(specification_record["created_at"], "specification.created_at")
+            available_at = self._aware_iso(
+                specification["forecastEvidence"]["availableAt"], "forecastEvidence.availableAt"
+            )
+            if sealed_at > period_start or sealed_at < available_at:
+                raise ValueError("Specification no fue sellada ex-ante con evidencia disponible.")
+        if "created_at" in outcome_record:
+            persisted_at = self._aware_iso(outcome_record["created_at"], "outcome.created_at")
+            if persisted_at < outcome_as_of:
+                raise ValueError("Outcome fue persistido antes de su observación.")
         expected = self._finite(specification.get("expectedValue"), "expectedValue")
         realized = self._finite(attribution.get("totalReturn"), "realizedTotalReturn")
         signed_error = realized - expected
@@ -162,6 +208,17 @@ class RecommendationResearchForecastErrorService:
         ):
             raise ValueError("Forecast error fue modificado tras crear errorHash.")
         return artifact
+
+    def _aware_iso(self, value: object, field: str) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} debe ser ISO-8601 con zona horaria.")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{field} debe ser ISO-8601 válido.") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return parsed.astimezone(timezone.utc)
 
     def _artifact(self, record: dict[str, Any], name: str) -> dict[str, Any]:
         if not isinstance(record, dict):

@@ -365,3 +365,66 @@ def test_forecast_error_pit_cutoff_compares_instants(
     assert [row["error_hash"] for row in result] == (
         [record["error_hash"]] if included else []
     )
+
+
+def test_forecast_error_reverifies_specification_hash_not_only_database_column() -> None:
+    specification = _specification()
+    specification["expectedValue"] = 0.99
+    with pytest.raises(ValueError, match="specificationHash"):
+        RecommendationResearchForecastErrorService().evaluate(
+            specification_record={"specification_hash": specification["specificationHash"], "artifact": specification},
+            outcome_record=_outcome_record(),
+        )
+
+
+def test_forecast_error_reverifies_original_outcome_hash() -> None:
+    specification = _specification()
+    outcome = _outcome_record()
+    outcome["payload"]["attribution"]["totalReturn"] = 0.99
+    with pytest.raises(ValueError, match="outcomeHash"):
+        RecommendationResearchForecastErrorService().evaluate(
+            specification_record={"specification_hash": specification["specificationHash"], "artifact": specification},
+            outcome_record=outcome,
+        )
+
+
+def test_forecast_error_rejects_rehashed_attribution_with_different_period() -> None:
+    specification = _specification()
+    outcome = _outcome_record()
+    payload = outcome["payload"]
+    payload["attribution"]["periodEnd"] = (CYCLE_AS_OF + timedelta(days=31)).isoformat()
+    payload["outcomeHash"] = _canonical_hash({
+        "outcomeId": payload["outcomeId"], "cycleHash": payload["cycleHash"],
+        "instrumentId": payload["instrumentId"], "symbol": payload["symbol"],
+        "cycleAsOf": payload["cycleAsOf"], "attribution": payload["attribution"],
+    })
+    outcome["outcome_hash"] = payload["outcomeHash"]
+    with pytest.raises(ValueError, match="outcome.periodEnd"):
+        RecommendationResearchForecastErrorService().evaluate(
+            specification_record={"specification_hash": specification["specificationHash"], "artifact": specification},
+            outcome_record=outcome,
+        )
+
+
+def test_forecast_error_rejects_late_physical_precommit_when_present() -> None:
+    specification = _specification()
+    with pytest.raises(ValueError, match="sellada ex-ante"):
+        RecommendationResearchForecastErrorService().evaluate(
+            specification_record={
+                "specification_hash": specification["specificationHash"],
+                "artifact": specification,
+                "created_at": (CYCLE_AS_OF + timedelta(microseconds=1)).isoformat(),
+            },
+            outcome_record=_outcome_record(),
+        )
+
+
+def test_forecast_error_rejects_outcome_persisted_before_observation_when_present() -> None:
+    specification = _specification()
+    outcome = _outcome_record()
+    outcome["created_at"] = (CYCLE_AS_OF + timedelta(days=29)).isoformat()
+    with pytest.raises(ValueError, match="antes de su observación"):
+        RecommendationResearchForecastErrorService().evaluate(
+            specification_record={"specification_hash": specification["specificationHash"], "artifact": specification},
+            outcome_record=outcome,
+        )
