@@ -34,7 +34,11 @@ def _digest(value: object) -> str:
 
 
 def run() -> dict[str, object]:
-    # News uses a forward cutoff to permit real inference; ATHENA then\n    # explains that frozen cycle only after the cutoff has elapsed.\n    now = datetime.now(timezone.utc)\n    as_of = now + timedelta(minutes=10)\n    available_at = now - timedelta(minutes=10)
+    # News uses a forward cutoff to permit real inference; ATHENA then
+    # explains that frozen cycle only after the cutoff has elapsed.
+    now = datetime.now(timezone.utc)
+    as_of = now + timedelta(minutes=10)
+    available_at = now - timedelta(minutes=10)
     evidence = AthenaRadarEvidenceInput(
         evidence_id="synthetic-news-1",
         category="news",
@@ -83,7 +87,15 @@ def run() -> dict[str, object]:
         "radar_hash": radar_hash,
         "synthesis_hash": _digest(news_api),
     }
-    # The historical model contract forbids ATHENA generation before inputAsOf.\n    # Do not sleep for ten minutes: inject a deterministic, future generation\n    # clock ONLY for this synthetic smoke fixture (not a production timestamp).\n    synthetic_generation_clock = lambda: as_of + timedelta(seconds=1)\n    athena = OllamaAthenaResearchAdapter(\n        client=client, model_version="local-qwen3-1.7b",\n        now_provider=synthetic_generation_clock,\n    ).build(cycle_record=cycle_record, news_synthesis_record=news_record)\n    athena_api = athena.to_api_dict()
+    # The historical model contract forbids ATHENA generation before inputAsOf.
+    # Do not sleep for ten minutes: inject a deterministic, future generation
+    # clock ONLY for this synthetic smoke fixture (not a production timestamp).
+    synthetic_generation_clock = lambda: as_of + timedelta(seconds=1)
+    athena = OllamaAthenaResearchAdapter(
+        client=client, model_version="local-qwen3-1.7b",
+        now_provider=synthetic_generation_clock,
+    ).build(cycle_record=cycle_record, news_synthesis_record=news_record)
+    athena_api = athena.to_api_dict()
 
     assert news.assessed_count == 1
     assert athena.evidence_ids == ("synthetic-news-1",)
@@ -94,7 +106,8 @@ def run() -> dict[str, object]:
     return {
         "status": "local_synthetic_e2e_passed",
         "realModelCalls": 2,
-        "fixtureType": "synthetic_not_persisted",\n        "athenaGenerationTime": "synthetic_clock_not_actual_execution_time",
+        "fixtureType": "synthetic_not_persisted",
+        "athenaGenerationTime": "synthetic_clock_not_actual_execution_time",
         "news": news_api,
         "athena": athena_api,
     }
