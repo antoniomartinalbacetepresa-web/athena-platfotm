@@ -213,6 +213,8 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
         "categories": list(contract["coveredCategories"]),
         "athenaAlreadyPersisted": existing_athena,
         "persistedAthenaIntegrityVerified": existing_athena,
+        "persistedAthenaSynthesisHash": persisted["synthesis_hash"] if existing_athena else None,
+        "persistedAthenaOutputFingerprint": stored["outputFingerprint"] if existing_athena else None,
         "readyForNewLocalDraft": not existing_athena,
         "sourceAuthenticityIndependentlyVerified": False,
         "modelExecutionVerified": False,
