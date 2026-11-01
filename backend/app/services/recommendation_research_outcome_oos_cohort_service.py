@@ -313,6 +313,14 @@ class RecommendationResearchOutcomeOosCohortService:
         outcome_as_of = self._aware_iso(payload.get("asOf"), "outcome.asOf")
         if outcome_as_of > cutoff:
             raise ValueError("La cohorte intentó incluir un outcome posterior a cohort asOf.")
+        # The analytical outcome asOf is not evidence of when the row was
+        # actually stored. A retrospectively inserted outcome must never
+        # enter a historical OOS cohort, even when its period has matured.
+        persisted_at = self._aware_iso(record.get("created_at"), "outcome.created_at")
+        if persisted_at > cutoff:
+            raise ValueError("La cohorte incluye un outcome persistido después de cohort asOf.")
+        if persisted_at < outcome_as_of:
+            raise ValueError("El outcome fue persistido antes de su observación asOf.")
         period_start = self._aware_iso(payload.get("periodStart"), "outcome.periodStart")
         period_end = self._aware_iso(payload.get("periodEnd"), "outcome.periodEnd")
         cycle_as_of = self._aware_iso(payload.get("cycleAsOf"), "outcome.cycleAsOf")

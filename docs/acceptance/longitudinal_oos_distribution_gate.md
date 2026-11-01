@@ -58,3 +58,17 @@ explicitly model historical insertion times and are not production evidence.
 This closes a retrospective-availability route; it does **not** independently
 verify the underlying hash signatures, precommitted forecast issuance, or
 external market provenance. Longitudinal OOS acceptance remains open.
+
+## Original outcome persistence gate (2026-11-01)
+
+The issuer-aware OOS cohort builder now verifies each source outcome's physical
+`created_at` independently of its analytical `asOf`. A row inserted after
+the cohort cutoff, lacking a timezone-aware persistence timestamp, or claiming
+to have been stored before its own observation `asOf` is rejected before
+aggregation or persistence. Comparisons normalize actual UTC instants and
+preserve microsecond precision across offsets. Existing synthetic tests mark
+their fictional insertion times explicitly; they do not count as operational
+OOS observations. This complements, rather than replaces, the separate gate
+on the cohort's own physical insertion timestamp. Hash integrity, prospective
+forecast issuance and independently observed outcomes still require operational
+evidence before longitudinal acceptance.

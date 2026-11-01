@@ -115,6 +115,9 @@ def _record(
         "cycle_hash": cycle_hash,
         "outcome_hash": outcome_hash,
         "payload": payload,
+        # This synthetic outcome was stored after its maturity and before
+        # the historical cohort cutoff; it is not operational evidence.
+        "created_at": (COHORT_AS_OF - timedelta(hours=1)).isoformat(),
     }
 
 
@@ -207,8 +210,58 @@ def _canonical_outcome_record() -> dict[str, object]:
         "cycle_hash": outcome["cycleHash"],
         "outcome_hash": outcome["outcomeHash"],
         "payload": outcome,
+        "created_at": (COHORT_AS_OF - timedelta(hours=1)).isoformat(),
     }
 
+
+
+
+@pytest.mark.parametrize(
+    ("created_at", "message"),
+    [
+        (None, "outcome.created_at"),
+        ("2026-06-01T12:00:00", "zona horaria"),
+        ("not-an-instant", "ISO"),
+        ((COHORT_AS_OF + timedelta(microseconds=1)).isoformat(), "persistido después"),
+        ((CYCLE_AS_OF - timedelta(seconds=1)).isoformat(), "antes de su observación"),
+    ],
+)
+def test_oos_cohort_rejects_unverifiable_or_retrospective_outcome_persistence(
+    created_at: str | None, message: str,
+) -> None:
+    record = _record(
+        outcome_id="outcome-pit", instrument_id="instrument-pit",
+        symbol="PIT", cycle_seed="cycle-pit",
+    )
+    if created_at is None:
+        del record["created_at"]
+    else:
+        record["created_at"] = created_at
+
+    with pytest.raises(ValueError, match=message):
+        RecommendationResearchOutcomeOosCohortService().build(
+            cohort_id="cohort-pit",
+            as_of=COHORT_AS_OF,
+            outcome_records=[record],
+            issuer_evidence=[_identity("instrument-pit", "issuer-pit")],
+        )
+
+
+def test_oos_cohort_accepts_offset_timestamp_at_exact_persistence_cutoff() -> None:
+    record = _record(
+        outcome_id="outcome-boundary", instrument_id="instrument-boundary",
+        symbol="BND", cycle_seed="cycle-boundary",
+    )
+    # Same instant as 12:00 UTC, not a future record despite the local clock.
+    record["created_at"] = "2026-06-01T14:00:00+02:00"
+    artifact = RecommendationResearchOutcomeOosCohortService().build(
+        cohort_id="cohort-boundary",
+        as_of=COHORT_AS_OF,
+        outcome_records=[record],
+        issuer_evidence=[_identity("instrument-boundary", "issuer-boundary")],
+    )
+    assert artifact["observationCount"] == 1
+    assert artifact["productionLearningEligible"] is False
 
 def test_actual_canonical_outcome_contract_is_accepted_for_oos_research() -> None:
     record = _canonical_outcome_record()
