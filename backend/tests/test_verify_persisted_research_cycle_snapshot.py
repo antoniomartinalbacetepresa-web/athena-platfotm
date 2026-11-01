@@ -507,3 +507,121 @@ def test_deployed_gate_does_not_infer_deployed_absence_from_old_snapshot(tmp_pat
     assert result["snapshotReadyForNewLocalDraft"] is True
     assert result["readyForNewLocalDraft"] is False
     assert result["deployedAthenaAbsenceVerified"] is False
+
+
+def _persisted_readback_for(report, snapshot, deployed_contract):
+    with closing(sqlite3.connect(snapshot)) as conn:
+        row = conn.execute(
+            "SELECT package_json, synthesis_hash FROM athena_research_syntheses WHERE cycle_hash = ?",
+            (report["cycleHash"],),
+        ).fetchone()
+    package = json.loads(row[0])
+    return {
+        "artifactBindingVerified": True,
+        "synthesis": package["synthesis"],
+        "provenance": {
+            "news": deployed_contract["newsProvenance"],
+            "inputFingerprint": report["snapshotDerivedInputFingerprint"],
+        },
+        "persistence": {
+            "appendOnly": True,
+            "packageIntegrityVerified": True,
+            "synthesisHash": row[1],
+            "cycleHash": report["cycleHash"],
+            "radarHash": report["radarHash"],
+            "newsSynthesisHash": report["newsSynthesisHash"],
+            "investorsSynthesisHash": report["investorsSynthesisHash"],
+        },
+    }
+
+
+def test_deployed_readback_matches_exact_persisted_athena_artifact(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    assert len(report["persistedAthenaSynthesisHash"]) == 64
+    assert len(report["persistedAthenaOutputFingerprint"]) == 64
+    live = _deployed_contract_for(report, snapshot)
+    before = snapshot.read_bytes()
+    readback = _persisted_readback_for(report, snapshot, live)
+    result = deployed_gate.compare_persisted_readback(report, live, readback)
+    assert result["status"] == "snapshot_deployed_athena_readback_matched"
+    assert result["deployedPersistenceVerified"] is True
+    assert result["modelExecutionVerified"] is False
+    assert result["productionEligible"] is False
+    assert snapshot.read_bytes() == before
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("summary", "Substituted after persistence"),
+    ("outputFingerprint", "0" * 64),
+    ("automaticTrading", True),
+    ("modelExecutionVerified", True),
+    ("evidenceIds", ["different-evidence"]),
+    ("generatedAt", (AS_OF - timedelta(days=1)).isoformat()),
+])
+def test_deployed_readback_rejects_modified_synthesis(tmp_path, field, replacement):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report, snapshot)
+    readback = _persisted_readback_for(report, snapshot, live)
+    readback["synthesis"][field] = replacement
+    with pytest.raises(ValueError):
+        deployed_gate.compare_persisted_readback(report, live, readback)
+
+
+def test_deployed_readback_rejects_changed_persistence_hash(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report, snapshot)
+    readback = _persisted_readback_for(report, snapshot, live)
+    readback["persistence"]["synthesisHash"] = "f" * 64
+    with pytest.raises(ValueError, match="persistencia"):
+        deployed_gate.compare_persisted_readback(report, live, readback)
+
+
+def test_deployed_readback_rejects_changed_provenance(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report, snapshot)
+    readback = _persisted_readback_for(report, snapshot, live)
+    readback["provenance"]["news"]["assessmentBindings"][0]["sourceRef"] = "https://example.org/substitute"
+    with pytest.raises(ValueError, match="provenance"):
+        deployed_gate.compare_persisted_readback(report, live, readback)
+
+
+def test_deployed_readback_rejects_snapshot_without_persisted_athena(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    assert report["persistedAthenaSynthesisHash"] is None
+    live = _deployed_contract_for(report, snapshot)
+    with pytest.raises(ValueError, match="no contiene ATHENA"):
+        deployed_gate.compare_persisted_readback(report, live, {})
+
+
+def test_deployed_readback_cli_requires_existing_snapshot_artifact_before_network(tmp_path, monkeypatch, capsys):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    monkeypatch.setattr(deployed_gate, "fetch_deployed_contract", lambda **kwargs: _deployed_contract_for(report, snapshot))
+    monkeypatch.setattr(deployed_gate, "fetch_deployed_synthesis", lambda **kwargs: pytest.fail("No GET synthesis allowed"))
+    assert deployed_gate.main([
+        "--snapshot", str(snapshot), "--expected-sha256", _file_hash(snapshot),
+        "--cycle-hash", cycle_hash, "--backend-origin", "https://example.org",
+        "--verify-persisted-readback",
+    ]) == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "blocked"
+
+
+def test_deployed_readback_cli_validates_stubbed_exact_artifact(tmp_path, monkeypatch, capsys):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report, snapshot)
+    monkeypatch.setattr(deployed_gate, "fetch_deployed_contract", lambda **kwargs: live)
+    monkeypatch.setattr(deployed_gate, "fetch_deployed_synthesis", lambda **kwargs: _persisted_readback_for(report, snapshot, live))
+    assert deployed_gate.main([
+        "--snapshot", str(snapshot), "--expected-sha256", _file_hash(snapshot),
+        "--cycle-hash", cycle_hash, "--backend-origin", "https://example.org",
+        "--verify-persisted-readback",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["deployedPersistenceVerified"] is True
+    assert result["modelExecutionVerified"] is False
