@@ -51,7 +51,15 @@ availability timestamps and PIT generation interval against the stored Radar,
 and derives the **snapshot-local** ATHENA input fingerprint using the same
 input-contract algorithm as the backend API. It does not write, migrate, invoke
 Ollama, publish research, or authorize investment orders. The verifier also rejects any adjacent SQLite `-wal`, `-shm` or `-journal` file: an immutable reader can otherwise silently ignore committed WAL changes while the main-file SHA-256 still matches. Produce a consistent, closed, checkpointed copy using SQLite backup facilities; never validate a live database or copy only its main file while a writer is active. The expected digest
-is mandatory. Exit `2` means validation blocked; `0` means the inspected
+is mandatory. If an ATHENA synthesis already exists in the snapshot, the
+verifier now validates its stored package hash, cycle/Radar/News/Investors
+bindings, canonical input fingerprint, evidence/category coverage, PIT
+generation time and recomputed output fingerprint. A corrupt existing artifact
+**blocks** verification; it is never treated as a valid reason to skip a new
+draft. A valid existing artifact yields `athenaAlreadyPersisted=true`,
+`persistedAthenaIntegrityVerified=true` and `readyForNewLocalDraft=false`.
+These checks verify internal consistency, **not** whether an external model
+actually ran. Exit `2` means validation blocked; `0` means the inspected
 snapshot passed these checks, **not** that any source is independently
 authentic or that the deployed database contains the same records.
 
