@@ -187,3 +187,27 @@ def test_rejects_auxiliary_sqlite_files_even_with_matching_main_file_hash(tmp_pa
     sidecar.write_bytes(b"uncheckpointed-or-untrusted-sidecar")
     with pytest.raises(ValueError, match="archivos auxiliares SQLite"):
         verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
+
+
+def test_committed_uncheckpointed_wal_cannot_hide_tampering_from_immutable_reader(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    main_file_digest = _file_hash(snapshot)
+    # Keep the writer open: the committed change lives in the WAL and
+    # the SHA-256 of the main database alone remains unchanged.
+    with closing(sqlite3.connect(snapshot)) as conn:
+        assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        conn.execute("PRAGMA wal_autocheckpoint=0")
+        package = json.loads(conn.execute(
+            "SELECT package_json FROM athena_professional_research_cycles WHERE cycle_hash = ?",
+            (cycle_hash,),
+        ).fetchone()[0])
+        package["radar"]["candidates"][0]["evidence"][0]["summary"] = "UNTRUSTED WAL CHANGE"
+        conn.execute(
+            "UPDATE athena_professional_research_cycles SET package_json = ? WHERE cycle_hash = ?",
+            (json.dumps(package), cycle_hash),
+        )
+        conn.commit()
+        assert Path(str(snapshot) + "-wal").exists()
+        assert _file_hash(snapshot) == main_file_digest
+        with pytest.raises(ValueError, match="archivos auxiliares SQLite"):
+            verify(snapshot, expected_sha256=main_file_digest, cycle_hash=cycle_hash)
