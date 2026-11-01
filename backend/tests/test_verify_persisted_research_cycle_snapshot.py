@@ -1,6 +1,7 @@
 """Offline canonical cycle verification uses real repository fixtures, not mock hashes."""
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -134,7 +135,7 @@ def test_snapshot_digest_mismatch_fails_before_database_read(tmp_path):
 
 def test_tampered_radar_rejected_even_with_new_snapshot_digest(tmp_path):
     snapshot, cycle_hash = _snapshot(tmp_path)
-    with sqlite3.connect(snapshot) as conn:
+    with closing(sqlite3.connect(snapshot)) as conn:
         package = json.loads(conn.execute(
             "SELECT package_json FROM athena_professional_research_cycles WHERE cycle_hash = ?",
             (cycle_hash,),
@@ -144,13 +145,14 @@ def test_tampered_radar_rejected_even_with_new_snapshot_digest(tmp_path):
             "UPDATE athena_professional_research_cycles SET package_json = ? WHERE cycle_hash = ?",
             (json.dumps(package), cycle_hash),
         )
+        conn.commit()  # Close/checkpoint WAL before verifying the immutable snapshot.
     with pytest.raises(ValueError, match="radarHash"):
         verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
 
 
 def test_news_source_binding_rejected_even_if_news_hash_is_recomputed(tmp_path):
     snapshot, cycle_hash = _snapshot(tmp_path)
-    with sqlite3.connect(snapshot) as conn:
+    with closing(sqlite3.connect(snapshot)) as conn:
         package = json.loads(conn.execute(
             "SELECT package_json FROM athena_news_syntheses WHERE cycle_hash = ?",
             (cycle_hash,),
@@ -165,6 +167,7 @@ def test_news_source_binding_rejected_even_if_news_hash_is_recomputed(tmp_path):
             "UPDATE athena_news_syntheses SET package_json = ?, synthesis_hash = ? WHERE cycle_hash = ?",
             (serialized, digest, cycle_hash),
         )
+        conn.commit()  # Persist changes to the main database before immutable read.
     with pytest.raises(ValueError, match="provenance News"):
         verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
 
@@ -174,3 +177,13 @@ def test_cli_rejects_wrong_digest_with_nonzero_exit(tmp_path, capsys):
     assert main(["--snapshot", str(snapshot), "--expected-sha256", "f" * 64,
                  "--cycle-hash", cycle_hash]) == 2
     assert json.loads(capsys.readouterr().out)["status"] == "blocked"
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_rejects_auxiliary_sqlite_files_even_with_matching_main_file_hash(tmp_path, suffix):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    digest = _file_hash(snapshot)
+    sidecar = Path(str(snapshot) + suffix)
+    sidecar.write_bytes(b"uncheckpointed-or-untrusted-sidecar")
+    with pytest.raises(ValueError, match="archivos auxiliares SQLite"):
+        verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
