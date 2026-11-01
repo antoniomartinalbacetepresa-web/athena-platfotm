@@ -197,6 +197,16 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
         "newsSynthesisHash": news["synthesis_hash"] if news else None,
         "investorsSynthesisHash": investors["synthesis_hash"] if investors else None,
         "snapshotDerivedInputFingerprint": input_contract["inputFingerprint"],
+        # Bind the deployed provenance to the exact canonical snapshot records.
+        # Only digests are exposed: source URLs and assessments remain in the snapshot.
+        "newsProvenanceSha256": (
+            _canonical_hash(input_contract["newsProvenance"])
+            if "newsProvenance" in input_contract else None
+        ),
+        "investorsProvenanceSha256": (
+            _canonical_hash(input_contract["investorsProvenance"])
+            if "investorsProvenance" in input_contract else None
+        ),
         "inputAsOf": contract["inputAsOf"].isoformat(),
         "evidenceIdsSha256": _canonical_hash(list(contract["evidenceIds"])),
         "evidenceCount": len(contract["evidenceIds"]),
