@@ -31,6 +31,9 @@ jobs:
       - name: Install backend dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Compile manual research pipeline smoke runner
+        run: python -m py_compile scripts/smoke_ollama_research_pipeline.py
+
       - name: Run backend tests
         run: python -m pytest -q --junitxml=pytest-results.xml
 
