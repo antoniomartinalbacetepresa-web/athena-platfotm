@@ -10,7 +10,12 @@ import sqlite3
 
 import pytest
 
+from app.api.recommendation_athena_synthesis import _canonical_hash, _cycle_evidence_contract, _input_contract
 from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_athena_synthesis_repository import RecommendationAthenaSynthesisRepository
+from app.services.recommendation_athena_synthesis_service import (
+    AthenaSynthesisModelInput, RecommendationAthenaSynthesisService,
+)
 from app.repositories.recommendation_news_synthesis_repository import RecommendationNewsSynthesisRepository
 from app.repositories.recommendation_professional_research_cycle_repository import RecommendationProfessionalResearchCycleRepository
 from app.services.recommendation_athena_radar_service import (
@@ -34,7 +39,7 @@ AVAILABLE = AS_OF - timedelta(hours=1)
 SOURCE = "https://example.org/issuer-news"
 
 
-def _snapshot(tmp_path: Path, *, persist_news: bool = True) -> tuple[Path, str]:
+def _snapshot(tmp_path: Path, *, persist_news: bool = True, persist_athena: bool = False) -> tuple[Path, str]:
     db_path = tmp_path / "operational.db"
     db = AthenaDatabase(db_path)
     radar = RecommendationAthenaRadarService().build(
@@ -76,6 +81,7 @@ def _snapshot(tmp_path: Path, *, persist_news: bool = True) -> tuple[Path, str]:
         cycle_payload=cycle.to_api_dict(), radar_payload=radar.to_api_dict(),
         journal_payload=journal.to_api_dict(), devils_advocate_payload=devil.to_api_dict(),
     )
+    news_record = None
     if persist_news:
         service = RecommendationNewsSynthesisService()
         evidence = radar.candidates[0].evidence[0]
@@ -93,9 +99,43 @@ def _snapshot(tmp_path: Path, *, persist_news: bool = True) -> tuple[Path, str]:
             ),),
             minimum_importance="low",
         )
-        RecommendationNewsSynthesisRepository(db).append(
+        news_record = RecommendationNewsSynthesisRepository(db).append(
             cycle_hash=record["cycle_hash"], radar_hash=record["radar_hash"],
             synthesis_payload=news.to_api_dict(),
+        )
+    if persist_athena:
+        assert news_record is not None
+        input_contract = _input_contract(
+            record, news_record, None, _cycle_evidence_contract(record),
+        )
+        service = RecommendationAthenaSynthesisService()
+        payload = service.build(
+            cycle_record=record, news_synthesis_record=news_record,
+            canonical_input_fingerprint=input_contract["inputFingerprint"],
+            model_output=AthenaSynthesisModelInput(
+                model_provider="fixture", model_name="test", model_version="v1",
+                input_fingerprint=input_contract["inputFingerprint"],
+                generated_at=AS_OF + timedelta(minutes=1),
+                summary="Synthetic research summary.", rationale="Only frozen evidence.",
+                uncertainties=("Unknown future impact.",), evidence_ids=("news-1",),
+            ),
+        ).to_api_dict()
+        payload["outputFingerprint"] = _canonical_hash({
+            "inputFingerprint": input_contract["inputFingerprint"],
+            "modelProvider": payload["modelProvider"],
+            "modelName": payload["modelName"],
+            "modelVersion": payload["modelVersion"],
+            "generatedAt": payload["generatedAt"],
+            "summary": payload["summary"],
+            "rationale": payload["rationale"],
+            "uncertainties": payload["uncertainties"],
+            "evidenceIds": payload["evidenceIds"],
+            "investorsSynthesisHash": None,
+        })
+        RecommendationAthenaSynthesisRepository(db).append(
+            cycle_hash=record["cycle_hash"], radar_hash=record["radar_hash"],
+            news_synthesis_hash=news_record["synthesis_hash"],
+            synthesis_payload=payload,
         )
     snapshot = tmp_path / "checkpointed-snapshot.db"
     with sqlite3.connect(db_path) as source, sqlite3.connect(snapshot) as dest:
@@ -211,3 +251,48 @@ def test_committed_uncheckpointed_wal_cannot_hide_tampering_from_immutable_reade
         assert _file_hash(snapshot) == main_file_digest
         with pytest.raises(ValueError, match="archivos auxiliares SQLite"):
             verify(snapshot, expected_sha256=main_file_digest, cycle_hash=cycle_hash)
+
+
+def test_existing_canonical_athena_is_validated_and_blocks_new_draft(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    assert report["athenaAlreadyPersisted"] is True
+    assert report["persistedAthenaIntegrityVerified"] is True
+    assert report["readyForNewLocalDraft"] is False
+
+
+def test_existing_athena_tampered_hash_is_rejected_not_merely_reported_present(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    with closing(sqlite3.connect(snapshot)) as conn:
+        conn.execute(
+            "UPDATE athena_research_syntheses SET synthesis_hash = ? WHERE cycle_hash = ?",
+            ("0" * 64, cycle_hash),
+        )
+        conn.commit()
+    with pytest.raises(ValueError, match="synthesis_hash"):
+        verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+
+
+@pytest.mark.parametrize("field,invalid,expected_error", [
+    ("inputFingerprint", "0" * 64, "contrato canónico"),
+    ("outputFingerprint", "0" * 64, "outputFingerprint"),
+    ("generatedAt", (AS_OF - timedelta(minutes=1)).isoformat(), "contrato canónico"),
+])
+def test_existing_athena_rehashed_package_still_must_match_canonical_contract(
+    tmp_path, field, invalid, expected_error,
+):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    with closing(sqlite3.connect(snapshot)) as conn:
+        package = json.loads(conn.execute(
+            "SELECT package_json FROM athena_research_syntheses WHERE cycle_hash = ?",
+            (cycle_hash,),
+        ).fetchone()[0])
+        package["synthesis"][field] = invalid
+        conn.execute(
+            "UPDATE athena_research_syntheses SET package_json = ?, synthesis_hash = ? WHERE cycle_hash = ?",
+            (json.dumps(package, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+             _canonical_hash(package), cycle_hash),
+        )
+        conn.commit()
+    with pytest.raises(ValueError, match=expected_error):
+        verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
