@@ -50,7 +50,7 @@ class _QuoteRepository implements MarketRepository {
   }
 }
 
-MarketQuote _quote(String symbol, {bool stale = false, String? source = 'yahoo'}) {
+MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bool sessionDate = true, String? source = 'yahoo'}) {
   final now = DateTime.now().toUtc();
   return MarketQuote(
     symbol: symbol, companyName: symbol, currentPrice: 123.45,
@@ -58,6 +58,10 @@ MarketQuote _quote(String symbol, {bool stale = false, String? source = 'yahoo'}
     updatedAt: now.subtract(Duration(hours: stale ? 72 : 1)),
     retrievedAt: now.subtract(const Duration(minutes: 1)),
     sourceProvider: source,
+    quoteMode: fallback ? 'historical_daily_close_fallback' : 'provider_fast_info',
+    priceSessionDate: fallback && sessionDate ? '2026-10-30' : null,
+    realTimePriceVerified: false,
+    historicalPointInTimeEligible: false,
   );
 }
 
@@ -239,6 +243,47 @@ void main() {
     expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
     expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
     expect(find.byKey(const Key('market-quote-research-boundary')), findsNothing);
+  });
+
+
+  testWidgets('daily-close fallback is never presented as a live quote',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository(
+      (symbol) async => _quote(symbol, fallback: true),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('ÚLTIMO CIERRE DIARIO DISPONIBLE'), findsOneWidget);
+    expect(find.textContaining('sesión 2026-10-30'), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-stale')), findsOneWidget);
+  });
+
+  testWidgets('daily-close fallback without a session date fails closed',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository(
+      (symbol) async => _quote(symbol, fallback: true, sessionDate: false),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
+    expect(find.byKey(const Key('market-quote-price')), findsNothing);
   });
 
 }
