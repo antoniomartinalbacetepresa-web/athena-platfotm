@@ -36,6 +36,12 @@ class MarketDataPoint {
   /// Momento en que el backend recuperó la evidencia desde la fuente externa.
   final DateTime? retrievedAt;
 
+  /// Contractual classification: fast-info or last available daily close.
+  final String? quoteMode;
+  final String? priceSessionDate;
+  final bool? realTimePriceVerified;
+  final bool? historicalPointInTimeEligible;
+
   const MarketDataPoint({
     required this.symbol,
     required this.timestamp,
@@ -54,5 +60,9 @@ class MarketDataPoint {
     required this.providerId,
     this.sourceProvider,
     this.retrievedAt,
+    this.quoteMode,
+    this.priceSessionDate,
+    this.realTimePriceVerified,
+    this.historicalPointInTimeEligible,
   });
 }
