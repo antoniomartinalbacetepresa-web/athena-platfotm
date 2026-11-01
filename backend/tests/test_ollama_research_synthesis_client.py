@@ -1,7 +1,7 @@
 """Contract tests for the local-only Ollama research transport."""
 import io
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -33,15 +33,15 @@ def response(output='{"summary":"Validado","uncertainties":["sin corroboración"
 
 def test_local_json_success_and_transport_options():
     client = OllamaResearchSynthesisClient()
-    with patch("app.services.ollama_research_synthesis_client.urlopen", return_value=FakeResponse(response())) as mocked:
+    with patch("app.services.ollama_research_synthesis_client.build_opener", return_value=Mock(open=Mock(return_value=FakeResponse(response())))) as mocked:
         result = client.generate_json(prompt="Prueba", required_fields=("summary", "uncertainties"))
     assert result["summary"] == "Validado"
-    request = mocked.call_args.args[0]
+    request = mocked.return_value.open.call_args.args[0]
     assert request.full_url == "http://127.0.0.1:11434/api/generate"
     body = json.loads(request.data)
     assert body["stream"] is False and body["think"] is False
     assert body["options"]["temperature"] == 0
-    assert mocked.call_args.kwargs["timeout"] == 240
+    assert mocked.return_value.open.call_args.kwargs["timeout"] == 240
 
 
 @pytest.mark.parametrize("endpoint", [
@@ -63,7 +63,7 @@ def test_noncanonical_endpoints_rejected(endpoint):
 ])
 def test_invalid_model_outputs_fail_closed(output):
     client = OllamaResearchSynthesisClient()
-    with patch("app.services.ollama_research_synthesis_client.urlopen", return_value=FakeResponse(response(output))):
+    with patch("app.services.ollama_research_synthesis_client.build_opener", return_value=Mock(open=Mock(return_value=FakeResponse(response(output))))):
         with pytest.raises(OllamaResearchSynthesisError):
             client.generate_json(prompt="Prueba", required_fields=("summary", "uncertainties"))
 
@@ -74,7 +74,7 @@ def test_invalid_model_outputs_fail_closed(output):
 ])
 def test_invalid_envelopes_fail_closed(body):
     client = OllamaResearchSynthesisClient()
-    with patch("app.services.ollama_research_synthesis_client.urlopen", return_value=FakeResponse(body)):
+    with patch("app.services.ollama_research_synthesis_client.build_opener", return_value=Mock(open=Mock(return_value=FakeResponse(body)))):
         with pytest.raises(OllamaResearchSynthesisError):
             client.generate_json(prompt="Prueba", required_fields=("summary",))
 
@@ -82,7 +82,7 @@ def test_invalid_envelopes_fail_closed(body):
 def test_connection_failure_fails_closed():
     from urllib.error import URLError
     client = OllamaResearchSynthesisClient()
-    with patch("app.services.ollama_research_synthesis_client.urlopen", side_effect=URLError("offline")):
+    with patch("app.services.ollama_research_synthesis_client.build_opener", return_value=Mock(open=Mock(side_effect=URLError("offline")))):
         with pytest.raises(OllamaResearchSynthesisError):
             client.generate_json(prompt="Prueba", required_fields=("summary",))
 
