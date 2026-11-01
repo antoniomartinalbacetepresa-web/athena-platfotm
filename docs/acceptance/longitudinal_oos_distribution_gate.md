@@ -72,3 +72,20 @@ OOS observations. This complements, rather than replaces, the separate gate
 on the cohort's own physical insertion timestamp. Hash integrity, prospective
 forecast issuance and independently observed outcomes still require operational
 evidence before longitudinal acceptance.
+
+## Canonical OOS outcome hash and nested evidence re-verification (2026-11-01)
+
+The issuer-aware cohort builder independently recomputes the producer's
+`outcomeHash` from the exact outcome ID, cycle hash, instrument identity,
+frozen cycle timestamp and complete attribution payload. Comparing a database
+hash column against an identical self-declared JSON field is not sufficient.
+For the current canonical currency-pair contract it also recalculates the
+nested Performance Attribution evidence and deterministic `attributionKey`,
+so rehashing a forged outer payload cannot silently launder a false attribution.
+Legacy research-only observations retain their existing non-production status
+and are checked against their exact original hash envelope.
+
+This is structural tamper detection, **not** a signed timestamp, independently
+verified provider capture, genuine OOS prediction precommitment or permission
+to learn, weight, recommend or trade. Operational longitudinal acceptance
+remains open until those separate evidentiary gates are satisfied.

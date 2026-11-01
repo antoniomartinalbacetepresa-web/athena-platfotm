@@ -10,6 +10,8 @@ import re
 from statistics import median
 from typing import Any
 
+from app.services.recommendation_performance_attribution_service import RecommendationPerformanceAttributionService
+
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _FORBIDDEN_SOURCE_MARKERS = ("financialmodelingprep", "financial modeling prep")
@@ -412,6 +414,23 @@ class RecommendationResearchOutcomeOosCohortService:
         instrument_id = self._text(payload.get("instrumentId"), "outcome.instrumentId")
         symbol = self._text(payload.get("symbol"), "outcome.symbol").upper()
         outcome_id = self._text(payload.get("outcomeId"), "outcome.outcomeId")
+        # Recompute the producer's exact canonical commitment. Matching the
+        # database column to a payload-supplied hash is not integrity proof:
+        # both could have been altered together before reaching this builder.
+        canonical_outcome = {
+            "outcomeId": outcome_id,
+            "cycleHash": cycle_hash,
+            "instrumentId": instrument_id,
+            "symbol": symbol,
+            "cycleAsOf": payload.get("cycleAsOf"),
+            "attribution": attribution,
+        }
+        if self._canonical_hash(canonical_outcome) != outcome_hash:
+            raise ValueError("El outcome persistido no coincide con outcomeHash canónico.")
+        if fx_contract == "explicit_currency_pair_bound_fail_closed":
+            # Even a recomputed outer hash cannot certify forged inner PIT
+            # evidence or a self-declared attributionKey.
+            RecommendationPerformanceAttributionService.verify_canonical_payload(attribution)
         return {
             "outcomeId": outcome_id,
             "outcomeHash": outcome_hash,

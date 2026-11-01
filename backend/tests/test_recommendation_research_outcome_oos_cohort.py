@@ -263,6 +263,59 @@ def test_oos_cohort_accepts_offset_timestamp_at_exact_persistence_cutoff() -> No
     assert artifact["observationCount"] == 1
     assert artifact["productionLearningEligible"] is False
 
+
+def test_oos_cohort_rejects_legacy_outcome_mutated_without_recomputing_hash() -> None:
+    record = _record(
+        outcome_id="legacy-tampered", instrument_id="instrument-legacy",
+        symbol="LEG", cycle_seed="legacy-hash",
+    )
+    record["payload"]["symbol"] = "FORGED"
+    with pytest.raises(ValueError, match="outcomeHash canónico"):
+        RecommendationResearchOutcomeOosCohortService().build(
+            cohort_id="legacy-tampered",
+            as_of=COHORT_AS_OF,
+            outcome_records=[record],
+            issuer_evidence=[_identity("instrument-legacy", "issuer-legacy")],
+        )
+
+
+def test_oos_cohort_rejects_canonical_outcome_with_modified_nested_evidence() -> None:
+    record = _canonical_outcome_record()
+    record["payload"]["attribution"]["evidence"]["totalReturn"]["sourceRef"] = "urn:outcome:forged"
+    with pytest.raises(ValueError, match="outcomeHash canónico"):
+        RecommendationResearchOutcomeOosCohortService().build(
+            cohort_id="canonical-evidence-tampered",
+            as_of=COHORT_AS_OF,
+            outcome_records=[record],
+            issuer_evidence=[_identity("instrument-a", "issuer-a")],
+        )
+
+
+def test_oos_cohort_rejects_rehashed_forged_canonical_attribution() -> None:
+    record = _canonical_outcome_record()
+    payload = record["payload"]
+    # Rehashing a forged outer envelope is not a substitute for deriving
+    # attributionKey from the original canonical evidence.
+    payload["attribution"]["attributionKey"] = "b" * 64
+    payload["attributionKey"] = "b" * 64
+    payload["outcomeHash"] = _hash({
+        "outcomeId": payload["outcomeId"],
+        "cycleHash": payload["cycleHash"],
+        "instrumentId": payload["instrumentId"],
+        "symbol": payload["symbol"],
+        "cycleAsOf": payload["cycleAsOf"],
+        "attribution": payload["attribution"],
+    })
+    record["outcome_hash"] = payload["outcomeHash"]
+    with pytest.raises(ValueError, match="atribución canónica recalculada"):
+        RecommendationResearchOutcomeOosCohortService().build(
+            cohort_id="canonical-attribution-forged",
+            as_of=COHORT_AS_OF,
+            outcome_records=[record],
+            issuer_evidence=[_identity("instrument-a", "issuer-a")],
+        )
+
+
 def test_actual_canonical_outcome_contract_is_accepted_for_oos_research() -> None:
     record = _canonical_outcome_record()
     service = RecommendationResearchOutcomeOosCohortService()
