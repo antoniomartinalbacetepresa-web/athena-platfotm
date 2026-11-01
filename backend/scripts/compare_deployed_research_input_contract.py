@@ -132,6 +132,20 @@ def compare_contract(
         required = expected[hash_field] is not None
         if (provenance_field in deployed_contract) != required:
             raise ValueError(f"Falta o sobra provenance {category}.")
+        if required:
+            provenance = deployed_contract[provenance_field]
+            digest = snapshot_report.get(f"{category}ProvenanceSha256")
+            if (
+                not isinstance(provenance, dict)
+                or not isinstance(digest, str)
+                or not _SHA.fullmatch(digest)
+                or _canonical_hash(provenance) != digest
+            ):
+                raise ValueError(
+                    f"La provenance {category} desplegada difiere del snapshot canónico."
+                )
+        elif snapshot_report.get(f"{category}ProvenanceSha256") is not None:
+            raise ValueError(f"El snapshot conserva provenance {category} inesperada.")
     return {
         "status": "snapshot_deployed_input_contract_matched",
         "cycleHash": expected["cycleHash"],
