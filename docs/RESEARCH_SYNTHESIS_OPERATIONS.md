@@ -177,3 +177,32 @@ scoring, or trading. Do not pass a Gmail password, Ollama account credential,
 broker token, or other secret to this CLI. If the endpoint requires an
 authenticated operator, use an approved secure access method rather than
 embedding a credential in the URL or chat.
+
+
+## Optional deployed ATHENA readback against an already persisted snapshot artifact
+
+When a **trusted checkpointed snapshot already contains a validated ATHENA synthesis**,
+run the same comparator with `--verify-persisted-readback`. This makes an
+additional read-only GET to the deployed cycle's
+`/athena-synthesis` endpoint and requires the deployed response to contain
+**exactly the same synthesis package hash** as the snapshot, with matching
+input/output fingerprints, evidence set, provenance, PIT dates, append-only
+metadata and no-advice/no-trading boundaries.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\compare_deployed_research_input_contract.py `
+  --snapshot "D:\secure-snapshots\athena-consistent.db" `
+  --expected-sha256 "<SHA-256 FROM TRUSTED BACKUP MANIFEST>" `
+  --cycle-hash "<EXISTING 64-CHAR CYCLE HASH>" `
+  --backend-origin "https://YOUR-DEPLOYED-BACKEND" `
+  --verify-persisted-readback
+```
+
+This mode **fails closed** if the snapshot contains no ATHENA artifact, the
+deployed endpoint returns 404, or either response differs from the snapshot.
+It does not infer that a 404 proves the live database is empty. A successful
+`deployedPersistenceVerified=true` means the **GET returned an exact artifact
+match at the time of the request**; it is not a durability test, a live backup
+restore test, external model execution attestation, independent source
+corroboration, authorization to generate a second draft, or permission to
+trade. Never substitute synthetic fixtures for operational evidence.
