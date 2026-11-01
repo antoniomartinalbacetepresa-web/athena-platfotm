@@ -91,6 +91,8 @@ def _safe_oos_row():
 def _safe_oos_record():
     return {
         "cohort_hash": "a" * 64,
+        # Synthetic historical insertion must precede the requested OOS cutoff.
+        "created_at": "2026-08-31T12:15:00+00:00",
         "artifact": {
             "module": "research_outcome_oos_cohort",
             "cohortId": "cohort-1",
