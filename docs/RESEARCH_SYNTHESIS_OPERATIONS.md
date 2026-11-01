@@ -54,7 +54,13 @@ consistent copy** of the operational SQLite database, preferably with an
 independently recorded SHA-256. Do not copy the live `.db` file while WAL
 transactions are active or point this tool at the live database. The auditor
 opens its input using SQLite `mode=ro&immutable=1` and never initializes a
-repository, migrates schema, executes research or calls an LLM.
+repository, migrates schema, executes research or calls an LLM. It now rejects
+any adjacent SQLite `-wal`, `-shm` or `-journal` file before reading and
+rechecks the absence of sidecars and the main-file SHA-256 after reading.
+An unchanged main-file hash alone does not prove a WAL database is complete:
+committed transactions can still be present only in its WAL. In that case,
+regenerate a checkpointed copy with `create_consistent_research_snapshot.py`
+and rerun the inventory; never delete a live WAL file to bypass the gate.
 
 From `backend`:
 
