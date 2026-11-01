@@ -296,3 +296,125 @@ def test_existing_athena_rehashed_package_still_must_match_canonical_contract(
         conn.commit()
     with pytest.raises(ValueError, match=expected_error):
         verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+
+
+# Deployed comparison is a read-only gate, not a model execution or promotion.
+from scripts import compare_deployed_research_input_contract as deployed_gate
+
+
+def _deployed_contract_for(report):
+    return {
+        "cycleHash": report["cycleHash"],
+        "radarHash": report["radarHash"],
+        "newsSynthesisHash": report["newsSynthesisHash"],
+        "inputFingerprint": report["snapshotDerivedInputFingerprint"],
+        "inputAsOf": report["inputAsOf"],
+        "evidenceIds": ["news-1"],
+        "coveredCategories": ["news"],
+        "newsProvenance": {"artifactHash": report["newsSynthesisHash"]},
+        "advisoryStatus": "no_advice",
+        "recommendationInfluence": False,
+        "automaticTrading": False,
+    }
+
+
+def test_deployed_contract_matches_verified_snapshot_without_writes(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    digest = _file_hash(snapshot)
+    report = verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
+    before = snapshot.read_bytes()
+    result = deployed_gate.compare_contract(report, _deployed_contract_for(report))
+    assert result["status"] == "snapshot_deployed_input_contract_matched"
+    assert result["readyForNewLocalDraft"] is True
+    assert result["deployedPersistenceVerified"] is False
+    assert result["modelExecutionVerified"] is False
+    assert result["productionEligible"] is False
+    assert snapshot.read_bytes() == before
+
+
+@pytest.mark.parametrize("field,value", [
+    ("inputFingerprint", "0" * 64),
+    ("radarHash", "0" * 64),
+    ("newsSynthesisHash", "0" * 64),
+    ("inputAsOf", (AS_OF + timedelta(days=1)).isoformat()),
+    ("evidenceIds", ["different-news-id"]),
+    ("evidenceIds", ["news-1", "news-1"]),
+    ("coveredCategories", ["investors"]),
+    ("advisoryStatus", "advice"),
+    ("recommendationInfluence", True),
+    ("automaticTrading", True),
+])
+def test_deployed_contract_mismatch_fails_closed(tmp_path, field, value):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report)
+    live[field] = value
+    with pytest.raises(ValueError):
+        deployed_gate.compare_contract(report, live)
+
+
+def test_deployed_gate_rejects_missing_news_provenance(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report)
+    del live["newsProvenance"]
+    with pytest.raises(ValueError, match="provenance"):
+        deployed_gate.compare_contract(report, live)
+
+
+def test_deployed_gate_does_not_allow_redrafting_existing_athena(tmp_path):
+    snapshot, cycle_hash = _snapshot(tmp_path, persist_athena=True)
+    report = verify(snapshot, expected_sha256=_file_hash(snapshot), cycle_hash=cycle_hash)
+    result = deployed_gate.compare_contract(report, _deployed_contract_for(report))
+    assert result["athenaAlreadyPersistedInSnapshot"] is True
+    assert result["readyForNewLocalDraft"] is False
+
+
+@pytest.mark.parametrize("origin,allow", [
+    ("http://example.org", False),
+    ("http://localhost:8000", True),
+    ("http://127.0.0.2:8000", True),
+    ("https://example.org/other-path", False),
+    ("https://user:secret@example.org", False),
+    ("https://example.org?token=secret", False),
+])
+def test_deployed_gate_rejects_unsafe_origins(origin, allow):
+    with pytest.raises(ValueError):
+        deployed_gate._validated_origin(origin, allow_loopback_http=allow)
+
+
+def test_deployed_gate_loopback_requires_explicit_opt_in():
+    with pytest.raises(ValueError):
+        deployed_gate._validated_origin("http://127.0.0.1:8000", allow_loopback_http=False)
+    assert deployed_gate._validated_origin(
+        "http://127.0.0.1:8000", allow_loopback_http=True
+    ) == "http://127.0.0.1:8000"
+
+
+def test_deployed_gate_cli_reports_match_with_stubbed_network(tmp_path, monkeypatch, capsys):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    digest = _file_hash(snapshot)
+    report = verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
+    monkeypatch.setattr(
+        deployed_gate, "fetch_deployed_contract",
+        lambda **kwargs: _deployed_contract_for(report),
+    )
+    assert deployed_gate.main([
+        "--snapshot", str(snapshot), "--expected-sha256", digest,
+        "--cycle-hash", cycle_hash, "--backend-origin", "https://example.org",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["productionEligible"] is False
+
+
+def test_deployed_gate_cli_rejects_live_mismatch(tmp_path, monkeypatch, capsys):
+    snapshot, cycle_hash = _snapshot(tmp_path)
+    digest = _file_hash(snapshot)
+    report = verify(snapshot, expected_sha256=digest, cycle_hash=cycle_hash)
+    live = _deployed_contract_for(report)
+    live["inputFingerprint"] = "f" * 64
+    monkeypatch.setattr(deployed_gate, "fetch_deployed_contract", lambda **kwargs: live)
+    assert deployed_gate.main([
+        "--snapshot", str(snapshot), "--expected-sha256", digest,
+        "--cycle-hash", cycle_hash, "--backend-origin", "https://example.org",
+    ]) == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "blocked"
