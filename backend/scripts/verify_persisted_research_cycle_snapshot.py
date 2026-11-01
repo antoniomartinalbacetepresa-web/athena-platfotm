@@ -40,6 +40,19 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _assert_checkpointed(snapshot: Path) -> None:
+    """An immutable SQLite reader ignores WAL, so sidecars must be absent.
+
+    Otherwise the SHA-256 of the main database can match while committed
+    changes live only in the WAL and are silently omitted from validation.
+    """
+    for suffix in ("-wal", "-shm", "-journal"):
+        if Path(str(snapshot) + suffix).exists():
+            raise ValueError(
+                "El snapshot no está aislado/checkpointed: existen archivos auxiliares SQLite."
+            )
+
+
 def _utc(value: object, field: str) -> datetime:
     if not isinstance(value, str):
         raise ValueError(f"{field}: timestamp ISO obligatorio.")
@@ -58,6 +71,7 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
     snapshot = snapshot.expanduser().resolve(strict=True)
     if not snapshot.is_file():
         raise ValueError("El snapshot debe ser un archivo regular.")
+    _assert_checkpointed(snapshot)
     if _file_hash(snapshot) != expected_sha256:
         raise ValueError("El SHA-256 del snapshot no coincide con el manifiesto.")
     cycle_repo = RecommendationProfessionalResearchCycleRepository()
@@ -120,7 +134,8 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
         input_contract = _input_contract(cycle, news, investors, contract)
         existing_athena = fetch("athena") is not None
 
-    # Detect accidental snapshot changes between custody check and read.
+    # Detect auxiliary journals or main-file changes during verification.
+    _assert_checkpointed(snapshot)
     if _file_hash(snapshot) != expected_sha256:
         raise ValueError("El snapshot cambió durante la verificación.")
     return {
