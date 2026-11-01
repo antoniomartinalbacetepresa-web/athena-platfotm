@@ -182,7 +182,7 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
                   ),
                   if (isStale) ...[
                     const SizedBox(height: 6),
-                    const Semantics(
+                    Semantics(
                       liveRegion: true,
                       label: 'Noticias antiguas: recuperación hace más de 24 horas.',
                       child: Text(
