@@ -193,4 +193,52 @@ void main() {
     expect(find.textContaining('provider-secret'), findsNothing);
   });
 
+
+  testWidgets('a traceable quote opens the dossier for that exact symbol',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository((symbol) async => _quote(symbol));
+    String? route;
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+      onGenerateRoute: (settings) {
+        route = settings.name;
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => const SizedBox(),
+        );
+      },
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), ' aapl ');
+    await tester.pump();
+    expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-research-boundary')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('market-quote-open-research')));
+    await tester.tap(find.byKey(const Key('market-quote-open-research')));
+    await tester.pump();
+    expect(route, '${AppRoutes.stockResearch}?symbol=AAPL');
+  });
+
+  testWidgets('a rejected quote never offers the verified research entry',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository((_) async => _quote('MSFT'));
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
+    expect(find.byKey(const Key('market-quote-research-boundary')), findsNothing);
+  });
+
 }
