@@ -12,6 +12,10 @@ class MarketQuote {
   final DateTime updatedAt;
   final String? sourceProvider;
   final DateTime? retrievedAt;
+  final String? quoteMode;
+  final String? priceSessionDate;
+  final bool? realTimePriceVerified;
+  final bool? historicalPointInTimeEligible;
 
   const MarketQuote({
     required this.symbol,
@@ -27,6 +31,10 @@ class MarketQuote {
     required this.updatedAt,
     this.sourceProvider,
     this.retrievedAt,
+    this.quoteMode,
+    this.priceSessionDate,
+    this.realTimePriceVerified,
+    this.historicalPointInTimeEligible,
   });
 
   bool get isPositive => change > 0;
@@ -50,6 +58,10 @@ class MarketQuote {
       'updatedAt': updatedAt.toIso8601String(),
       'sourceProvider': sourceProvider,
       'retrievedAt': retrievedAt?.toIso8601String(),
+      'quoteMode': quoteMode,
+      'priceSessionDate': priceSessionDate,
+      'realTimePriceVerified': realTimePriceVerified,
+      'historicalPointInTimeEligible': historicalPointInTimeEligible,
     };
   }
 
@@ -69,6 +81,12 @@ class MarketQuote {
       exchangeTimezone: map['exchangeTimezone']?.toString(),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
       sourceProvider: map['sourceProvider']?.toString(),
+      quoteMode: map['quoteMode']?.toString(),
+      priceSessionDate: map['priceSessionDate']?.toString(),
+      realTimePriceVerified: map['realTimePriceVerified'] is bool
+          ? map['realTimePriceVerified'] as bool : null,
+      historicalPointInTimeEligible: map['historicalPointInTimeEligible'] is bool
+          ? map['historicalPointInTimeEligible'] as bool : null,
       retrievedAt: retrievedAtRaw == null
           ? null
           : DateTime.tryParse(retrievedAtRaw.toString()),
