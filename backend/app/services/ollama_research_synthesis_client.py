@@ -9,11 +9,16 @@ import math
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 class OllamaResearchSynthesisError(RuntimeError):
     """Local inference failed or returned an invalid response."""
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise OllamaResearchSynthesisError("Ollama no permite redirecciones HTTP.")
 
 
 class OllamaResearchSynthesisClient:
@@ -70,7 +75,7 @@ class OllamaResearchSynthesisClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self._timeout) as response:
+            with build_opener(ProxyHandler({}), _RejectRedirects()).open(request, timeout=self._timeout) as response:
                 if response.status != 200:
                     raise OllamaResearchSynthesisError("Ollama devolvió un estado HTTP inesperado.")
                 raw = response.read(131073)
