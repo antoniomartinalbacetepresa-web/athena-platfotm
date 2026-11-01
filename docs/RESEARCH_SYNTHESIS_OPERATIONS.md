@@ -50,7 +50,7 @@ News/Investors syntheses, checks the News evidence IDs, source references,
 availability timestamps and PIT generation interval against the stored Radar,
 and derives the **snapshot-local** ATHENA input fingerprint using the same
 input-contract algorithm as the backend API. It does not write, migrate, invoke
-Ollama, publish research, or authorize investment orders. The expected digest
+Ollama, publish research, or authorize investment orders. The verifier also rejects any adjacent SQLite `-wal`, `-shm` or `-journal` file: an immutable reader can otherwise silently ignore committed WAL changes while the main-file SHA-256 still matches. Produce a consistent, closed, checkpointed copy using SQLite backup facilities; never validate a live database or copy only its main file while a writer is active. The expected digest
 is mandatory. Exit `2` means validation blocked; `0` means the inspected
 snapshot passed these checks, **not** that any source is independently
 authentic or that the deployed database contains the same records.
