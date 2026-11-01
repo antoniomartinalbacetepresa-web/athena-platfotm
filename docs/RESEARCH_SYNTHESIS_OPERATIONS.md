@@ -32,6 +32,38 @@ structural/hash mismatch. A structurally complete inventory still requires
 canonical HTTP validation and independent model/source provenance. Never use
 this report as an authorization to trade, weight, train or promote a model.
 
+## Second: revalidate one persisted cycle canonically (no model calls)
+
+The inventory above intentionally checks structure only. For an existing real
+`cycleHash`, run the stricter **read-only** verifier against the same
+checkpointed snapshot and the SHA-256 recorded in its trusted backup manifest:
+
+```powershell
+.\\.venv\\Scripts\\python.exe scripts\\verify_persisted_research_cycle_snapshot.py `
+  --snapshot "D:\\secure-snapshots\\athena-consistent.db" `
+  --expected-sha256 "<TRUSTED SNAPSHOT SHA-256>" `
+  --cycle-hash "<EXISTING 64-CHAR CYCLE HASH>"
+```
+
+This reuses the canonical repository validators for the cycle and required
+News/Investors syntheses, checks the News evidence IDs, source references,
+availability timestamps and PIT generation interval against the stored Radar,
+and derives the **snapshot-local** ATHENA input fingerprint using the same
+input-contract algorithm as the backend API. It does not write, migrate, invoke
+Ollama, publish research, or authorize investment orders. The expected digest
+is mandatory. Exit `2` means validation blocked; `0` means the inspected
+snapshot passed these checks, **not** that any source is independently
+authentic or that the deployed database contains the same records.
+
+Before executing or persisting any model output, compare
+`snapshotDerivedInputFingerprint` to the deployed
+`GET /research-cycle/{cycle_hash}/athena-synthesis/input-contract`
+fingerprint. A mismatch is a hard stop: the deployment or its dependencies
+differ from the snapshot. An existing ATHENA artifact also blocks a new draft
+(`readyForNewLocalDraft=false`) to avoid retrospective model shopping.
+Never treat this read-only snapshot check as a substitute for deployed
+authentication, external model execution evidence, or source corroboration.
+
 ## Canonical execution order (no fake evidence)
 
 1. Obtain real instrument-specific PIT evidence with `availableAt` no later
