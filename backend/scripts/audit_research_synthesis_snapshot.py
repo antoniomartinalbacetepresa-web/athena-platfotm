@@ -73,10 +73,17 @@ def _shape_errors(row: sqlite3.Row, kind: str) -> tuple[list[str], dict[str, Any
     return errors, package
 
 
+def _assert_checkpointed(snapshot: Path) -> None:
+    """Reject SQLite sidecars: immutable readers can silently ignore WAL commits."""
+    if any(Path(str(snapshot) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")):
+        raise ValueError("snapshot has SQLite sidecars; create a consistent offline backup")
+
+
 def audit(snapshot: Path, *, expected_sha256: str | None = None) -> dict[str, Any]:
     snapshot = snapshot.expanduser().resolve(strict=True)
     if not snapshot.is_file():
         raise ValueError("snapshot must be a regular file")
+    _assert_checkpointed(snapshot)
     digest = _sha256_file(snapshot)
     if expected_sha256 is not None:
         if not _SHA256.fullmatch(expected_sha256) or digest != expected_sha256:
@@ -144,6 +151,12 @@ def audit(snapshot: Path, *, expected_sha256: str | None = None) -> dict[str, An
             blockers.append("no_latest_news_synthesis_for_flutter")
         if latest.get("athena") is None:
             blockers.append("no_latest_athena_synthesis_for_flutter")
+
+    # Recheck after reading: never report an inventory from an uncheckpointed
+    # or modified snapshot even when the initial main-file digest matched.
+    _assert_checkpointed(snapshot)
+    if _sha256_file(snapshot) != digest:
+        raise ValueError("snapshot changed while inventory was being read")
 
     return {
         "status": "blocked" if blockers else "inventory_complete_requires_canonical_revalidation",
