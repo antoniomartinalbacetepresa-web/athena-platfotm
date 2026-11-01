@@ -59,7 +59,11 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
     return _dataSource.getLatest(symbol: symbol);
   }
 
-  void _retry() => setState(() => _future = _load());
+  void _retry() {
+    setState(() {
+      _future = _load();
+    });
+  }
 
   @override
   void dispose() {
