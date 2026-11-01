@@ -34,6 +34,14 @@ class RecommendationResearchForecastErrorOosService:
         cohort_as_of = self._aware_iso(artifact.get("asOf"), "cohort.asOf")
         if cohort_as_of > cutoff:
             raise ValueError("La cohorte OOS es posterior al as_of del diagnóstico.")
+        # An old analytical asOf does not make a newly persisted cohort
+        # available to a past diagnostic. This boundary is independent of
+        # the outcomes' maturity and of the cohort's claimed hash.
+        cohort_created_at = self._aware_iso(
+            cohort_record.get("created_at"), "cohort.created_at"
+        )
+        if cohort_created_at > cutoff:
+            raise ValueError("La cohorte OOS fue persistida después del as_of del diagnóstico.")
 
         rows = artifact.get("rows")
         if not isinstance(rows, list) or not rows:

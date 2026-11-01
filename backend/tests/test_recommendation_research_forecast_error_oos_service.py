@@ -61,6 +61,7 @@ def _cohort(rows: list[dict[str, object]]) -> dict[str, object]:
         horizon["observationCount"] = int(horizon["observationCount"]) + 1
     return {
         "cohort_hash": "f" * 64,
+        "created_at": (AS_OF - timedelta(hours=1)).isoformat(),
         "artifact": {
             "module": "research_outcome_oos_cohort",
             "cohortId": "cohort-errors",
@@ -323,6 +324,7 @@ def test_horizon_maturity_boundary_accepts_same_instant_with_different_offset() 
     row["periodEnd"] = end.astimezone(timezone(timedelta(hours=-5))).isoformat()
     cohort = _cohort([row])
     cohort["artifact"]["asOf"] = end.isoformat()
+    cohort["created_at"] = end.isoformat()
     result = RecommendationResearchForecastErrorOosService().evaluate(
         as_of=end, cohort_record=cohort,
         error_records=[_error(row, error_seed="1", expected=0.1, created_at=end)],
@@ -416,6 +418,27 @@ def test_oos_rejects_forged_cohort_coverage_even_without_errors(corruption: str)
     else:
         artifact["horizons"][key]["horizonDays"] = 90
     with pytest.raises(ValueError, match="cohort\\.|horizons"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=cohort, error_records=[],
+        )
+
+
+
+def test_oos_measurement_rejects_cohort_backfilled_after_diagnostic_cutoff() -> None:
+    row = _temporal_row()
+    cohort = _cohort([row])
+    cohort["created_at"] = (AS_OF + timedelta(microseconds=1)).isoformat()
+    with pytest.raises(ValueError, match="persistida después"):
+        RecommendationResearchForecastErrorOosService().evaluate(
+            as_of=AS_OF, cohort_record=cohort, error_records=[],
+        )
+
+
+def test_oos_measurement_rejects_missing_cohort_persistence_timestamp() -> None:
+    row = _temporal_row()
+    cohort = _cohort([row])
+    del cohort["created_at"]
+    with pytest.raises(ValueError, match="cohort.created_at"):
         RecommendationResearchForecastErrorOosService().evaluate(
             as_of=AS_OF, cohort_record=cohort, error_records=[],
         )

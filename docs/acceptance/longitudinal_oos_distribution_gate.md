@@ -40,3 +40,21 @@ These are structural checks, not independent proof of a persisted hash,
 source capture time, corporate-action provenance, or predictive skill. The
 underlying persistence layer must continue to verify canonical artifact hashes
 and PIT records; no operational OOS cohort is claimed by these regressions.
+
+
+## Persisted-cohort availability is not its analytical asOf (2026-11-01)
+
+A cohort built today from older matured outcomes must not be discoverable
+in a historical OOS read merely because its artifact carries an older `asOf`.
+`RecommendationResearchOutcomeOosCohortRepository.get_latest_at_or_before`
+now requires **both** the analytical cohort `as_of` and the physical
+`created_at` to be at or before the requested instant. Comparisons use
+timezone-aware UTC instants, including microseconds and legacy offsets, not
+lexicographic SQLite text order. Invalid persistence timestamps fail closed.
+The direct forecast-error OOS measurement also rejects cohort records with
+missing or post-cutoff persistence timestamps. Existing synthetic fixtures
+explicitly model historical insertion times and are not production evidence.
+
+This closes a retrospective-availability route; it does **not** independently
+verify the underlying hash signatures, precommitted forecast issuance, or
+external market provenance. Longitudinal OOS acceptance remains open.

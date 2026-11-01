@@ -36,6 +36,7 @@ def _row(*, seed: str, period_start: datetime) -> dict[str, object]:
 def _cohort(rows: list[dict[str, object]]) -> dict[str, object]:
     return {
         "cohort_hash": "f" * 64,
+        "created_at": (AS_OF - timedelta(hours=1)).isoformat(),
         "artifact": {
             "module": "research_outcome_oos_cohort",
             "cohortId": "longitudinal-regression",

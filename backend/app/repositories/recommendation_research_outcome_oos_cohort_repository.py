@@ -120,21 +120,29 @@ class RecommendationResearchOutcomeOosCohortRepository:
         self.initialize()
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise ValueError("as_of debe incluir zona horaria.")
-        cutoff = as_of.astimezone(timezone.utc).isoformat()
+        cutoff = as_of.astimezone(timezone.utc)
+        # as_of is the cohort's analytical cutoff, not proof of when the
+        # artifact was actually persisted. Never expose a backfilled cohort
+        # to a historical query that predates its physical insertion.
+        # Compare parsed instants: ISO text order is unsafe across offsets,
+        # and SQLite julianday() loses sub-millisecond boundary precision.
+        selected = None
+        selected_key = None
         with self._database.connect() as connection:
-            row = connection.execute(
-                """
-                SELECT *
-                FROM athena_research_outcome_oos_cohorts
-                WHERE as_of <= ?
-                ORDER BY as_of DESC, id DESC
-                LIMIT 1
-                """,
-                (cutoff,),
-            ).fetchone()
-        if row is None:
+            for row in connection.execute(
+                "SELECT * FROM athena_research_outcome_oos_cohorts ORDER BY id DESC"
+            ):
+                cohort_as_of = self._aware_iso(row["as_of"], "cohort.as_of")
+                created_at = self._aware_iso(row["created_at"], "cohort.created_at")
+                if cohort_as_of > cutoff or created_at > cutoff:
+                    continue
+                key = (cohort_as_of, int(row["id"]))
+                if selected_key is None or key > selected_key:
+                    selected = row
+                    selected_key = key
+        if selected is None:
             return None
-        return self.validate_record(self._row(row))
+        return self.validate_record(self._row(selected))
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(record, dict):
@@ -174,6 +182,18 @@ class RecommendationResearchOutcomeOosCohortRepository:
             "artifact": artifact,
             "created_at": str(row["created_at"]),
         }
+
+    @staticmethod
+    def _aware_iso(value: object, field: str) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} debe ser una fecha ISO con zona horaria.")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{field} debe ser una fecha ISO válida.") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"{field} debe incluir zona horaria.")
+        return parsed.astimezone(timezone.utc)
 
     def _sha256(self, value: object, field: str) -> str:
         text = str(value or "").strip().lower()
