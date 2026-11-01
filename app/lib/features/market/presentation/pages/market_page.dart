@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../controllers/global_market_context_controller.dart';
+import '../../repositories/market_repository.dart';
 import '../widgets/global_market_panel.dart';
+import '../widgets/verified_market_quote_panel.dart';
 
 class MarketPage extends StatefulWidget {
   final GlobalMarketContextController? controller;
+  final MarketRepository? quoteRepository;
 
-  const MarketPage({super.key, this.controller});
+  const MarketPage({super.key, this.controller, this.quoteRepository});
 
   @override
   State<MarketPage> createState() => _MarketPageState();
@@ -93,6 +96,14 @@ class _MarketPageState extends State<MarketPage> {
                       },
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _symbolController,
+                builder: (context, value, _) => VerifiedMarketQuotePanel(
+                  symbol: value.text,
+                  repository: widget.quoteRepository,
                 ),
               ),
               const SizedBox(height: 12),
