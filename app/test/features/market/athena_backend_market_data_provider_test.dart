@@ -21,6 +21,9 @@ void main() {
               'timestamp': '2026-08-29T15:30:00Z',
               'retrievedAt': '2026-08-29T15:30:02Z',
               'sourceProvider': 'yahoo',
+              'quoteMode': 'provider_fast_info',
+              'realTimePriceVerified': false,
+              'historicalPointInTimeEligible': false,
               'currency': 'usd',
               'exchange': 'NMS',
               'quoteType': 'EQUITY',
@@ -63,6 +66,9 @@ void main() {
       expect(quote.exchangeTimezone, 'America/New_York');
       expect(quote.providerId, 'athena_backend');
       expect(quote.sourceProvider, 'yahoo');
+      expect(quote.quoteMode, 'provider_fast_info');
+      expect(quote.realTimePriceVerified, isFalse);
+      expect(quote.historicalPointInTimeEligible, isFalse);
       expect(
         quote.retrievedAt,
         DateTime.parse('2026-08-29T15:30:02Z'),
@@ -286,6 +292,32 @@ void main() {
         throwsA(isA<TimeoutException>()),
       );
       stalled.complete(http.Response('{"data":[]}', 200));
+      provider.dispose();
+    });
+
+
+    test('preserves daily-close fallback session identity', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': {
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-01T23:00:00Z',
+            'retrievedAt': '2026-11-01T23:00:00Z',
+            'sourceProvider': 'yahoo',
+            'close': 250.0,
+            'quoteMode': 'historical_daily_close_fallback',
+            'priceSessionDate': '2026-10-30',
+            'realTimePriceVerified': false,
+            'historicalPointInTimeEligible': false,
+          },
+        }), 200)),
+      );
+      final point = await provider.getQuote('AAPL');
+      expect(point?.quoteMode, 'historical_daily_close_fallback');
+      expect(point?.priceSessionDate, '2026-10-30');
+      expect(point?.realTimePriceVerified, isFalse);
+      expect(point?.historicalPointInTimeEligible, isFalse);
       provider.dispose();
     });
 
