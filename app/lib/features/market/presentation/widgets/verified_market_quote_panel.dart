@@ -112,15 +112,15 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
           ),
         ),
         if (_loading)
-          const Semantics(
+          Semantics(
             liveRegion: true,
             label: 'Consultando cotización y procedencia.',
-            child: LinearProgressIndicator(),
+            child: const LinearProgressIndicator(),
           ),
         if (_failed)
-          const Semantics(
+          Semantics(
             liveRegion: true,
-            child: Text(
+            child: const Text(
               'COTIZACIÓN NO VERIFICABLE. Reintentar o consultar otra empresa.',
               key: Key('market-quote-error'),
               style: TextStyle(color: AthenaColors.danger),
@@ -144,9 +144,9 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 10),
           ),
           if (historical)
-            const Semantics(
+            Semantics(
               liveRegion: true,
-              child: Text(
+              child: const Text(
                 'COTIZACIÓN HISTÓRICA: observación o recuperación de más de 24 horas; no es un precio en tiempo real.',
                 key: Key('market-quote-stale'),
                 style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
