@@ -113,3 +113,42 @@ real PIT evidence and source custody, deployed authenticated E2E, complete
 365-day eligible-universe market history, longitudinal OOS outcomes, external
 backup/restore and SMTP recovery acceptance. This runbook does not reduce
 `MASTER_PROJECT.md` or `ROADMAP.md` scope or change completion percentages.
+
+
+## Read-only comparison with the actual deployed input contract
+
+Once the checkpointed snapshot passes canonical verification, compare its
+cycle/Radar/News/Investors hashes, exact PIT cutoff, evidence-set digest,
+categories, canonical ATHENA input fingerprint and read-only authority
+boundaries with the **actual backend**. This is a separate gate; a snapshot
+alone cannot prove that the deployed backend uses the same database revision.
+
+From `backend`, with an explicitly chosen **HTTPS origin** (no path, token,
+credentials, or query string in the URL):
+
+```powershell
+.\.venv\Scripts\python.exe scripts\compare_deployed_research_input_contract.py `
+  --snapshot "D:\secure-snapshots\athena-consistent.db" `
+  --expected-sha256 "<SHA-256 FROM TRUSTED BACKUP MANIFEST>" `
+  --cycle-hash "<EXISTING 64-CHAR CYCLE HASH>" `
+  --backend-origin "https://YOUR-DEPLOYED-BACKEND"
+```
+
+For a backend running **on the same machine only**, use
+`--backend-origin "http://127.0.0.1:8000" --allow-loopback-http`.
+This development exception is never allowed for a non-loopback HTTP host.
+The tool uses a bounded GET without redirects or ambient HTTP proxy settings,
+does not transmit the snapshot contents, does not call Ollama, and does not
+write to either database. It returns exit `0` only when the deployed contract
+matches the trusted snapshot; exit `2` indicates a hard stop. A 404 indicates
+that the backend has not persisted the cycle or required dependency syntheses
+under the current deployment, **not** that the verifier should invent them.
+
+A successful comparison is a **point-in-time consistency check only**.
+The deployed database may change after the GET, and the tool cannot attest
+the external model, source authenticity, or production eligibility. It must
+not be used to authorize automatic inference persistence, model promotion,
+scoring, or trading. Do not pass a Gmail password, Ollama account credential,
+broker token, or other secret to this CLI. If the endpoint requires an
+authenticated operator, use an approved secure access method rather than
+embedding a credential in the URL or chat.
