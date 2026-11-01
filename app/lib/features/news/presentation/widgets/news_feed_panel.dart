@@ -132,6 +132,26 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
               }
 
               final feed = snapshot.data;
+              // A provider timestamp in the future is not reliable evidence.
+              // Allow minor clock skew, but never present impossible provenance
+              // as a current verified feed.
+              if (feed != null &&
+                  feed.retrievedAt.isAfter(
+                    DateTime.now().toUtc().add(const Duration(minutes: 5)),
+                  )) {
+                return Semantics(
+                  liveRegion: true,
+                  label: 'Fecha de recuperación de noticias inválida.',
+                  child: _NewsState(
+                    icon: Icons.warning_amber_outlined,
+                    title: 'Fecha de noticias inválida',
+                    detail: 'La fecha del proveedor está adelantada. '
+                        'No se muestran artículos hasta verificar el reloj.',
+                    actionLabel: 'Reintentar',
+                    onAction: _reload,
+                  ),
+                );
+              }
               if (feed == null || feed.items.isEmpty) {
                 return Semantics(
                   liveRegion: true,
@@ -146,6 +166,9 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
                 );
               }
 
+              final isStale = DateTime.now().toUtc()
+                      .difference(feed.retrievedAt) >
+                  const Duration(hours: 24);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -157,6 +180,23 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
                       fontSize: 11,
                     ),
                   ),
+                  if (isStale) ...[
+                    const SizedBox(height: 6),
+                    const Semantics(
+                      liveRegion: true,
+                      label: 'Noticias antiguas: recuperación hace más de 24 horas.',
+                      child: Text(
+                        'Datos antiguos (más de 24 h). Actualiza antes de '
+                        'analizar el mercado.',
+                        key: Key('news-feed-stale-warning'),
+                        style: TextStyle(
+                          color: AthenaColors.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   if (widget.shrinkWrap)
                     _buildItems(feed)
