@@ -154,6 +154,21 @@ matching artifact hash plus a placeholder provenance object could pass.
 The digests do not prove that external sources or model calls were authentic;
 they only bind the two representations of the same persisted input.
 
+The deployed gate now requires `requiredCoverage=all_cycle_radar_evidence` and
+`canonicalCategorySynthesesRequired` to name exactly the required News/Investors
+categories. Missing or weakened coverage declarations fail closed, even if
+hashes match. Any advertised model execution, source authenticity or production
+authority must not be interpreted as verified by this read-only gate.
+
+**Important:** `snapshotReadyForNewLocalDraft` only describes the inspected
+backup. The comparison deliberately reports `readyForNewLocalDraft=false`
+and `deployedAthenaAbsenceVerified=false` even after a match: the input-contract
+endpoint does not prove that a synthesis is absent from the live database, and
+another process may have persisted one after the backup. Before any new draft
+or persistence, an authorized operator must re-check current deployed state
+and use server-side append-only/idempotency guards. Never promote the snapshot
+readiness flag into authorization.
+
 A successful comparison is a **point-in-time consistency check only**.
 The deployed database may change after the GET, and the tool cannot attest
 the external model, source authenticity, or production eligibility. It must
