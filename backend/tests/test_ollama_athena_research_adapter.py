@@ -97,3 +97,37 @@ def test_duplicate_evidence_fails_before_inference():
     with pytest.raises(ValueError, match="repetirse"):
         adapter(client).build(cycle_record=bad, news_synthesis_record=news())
     assert client.calls == []
+
+
+def test_future_cycle_cutoff_fails_before_model_inference():
+    client = StubClient()
+    future_cycle = cycle()
+    future_as_of = (NOW + timedelta(minutes=10)).isoformat()
+    future_cycle["package"]["cycle"]["asOf"] = future_as_of
+    future_cycle["package"]["radar"]["asOf"] = future_as_of
+    with pytest.raises(ValueError, match="antes del inputAsOf"):
+        adapter(client).build(cycle_record=future_cycle, news_synthesis_record=news())
+    assert client.calls == []
+
+
+def test_clock_rollback_during_inference_fails_closed():
+    client = StubClient()
+    readings = iter((NOW, NOW - timedelta(seconds=1)))
+    runner = OllamaAthenaResearchAdapter(
+        client=client, model_version="8f68893c685c",
+        now_provider=lambda: next(readings),
+    )
+    with pytest.raises(ValueError, match="reloj retrocedió"):
+        runner.build(cycle_record=cycle(), news_synthesis_record=news())
+    assert len(client.calls) == 1
+
+
+def test_naive_generation_clock_fails_before_inference():
+    client = StubClient()
+    runner = OllamaAthenaResearchAdapter(
+        client=client, model_version="8f68893c685c",
+        now_provider=lambda: NOW.replace(tzinfo=None),
+    )
+    with pytest.raises(ValueError, match="timezone"):
+        runner.build(cycle_record=cycle(), news_synthesis_record=news())
+    assert client.calls == []
