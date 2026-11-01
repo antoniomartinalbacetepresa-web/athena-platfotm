@@ -197,6 +197,8 @@ def verify(snapshot: Path, *, expected_sha256: str, cycle_hash: str) -> dict[str
         "newsSynthesisHash": news["synthesis_hash"] if news else None,
         "investorsSynthesisHash": investors["synthesis_hash"] if investors else None,
         "snapshotDerivedInputFingerprint": input_contract["inputFingerprint"],
+        "inputAsOf": contract["inputAsOf"].isoformat(),
+        "evidenceIdsSha256": _canonical_hash(list(contract["evidenceIds"])),
         "evidenceCount": len(contract["evidenceIds"]),
         "categories": list(contract["coveredCategories"]),
         "athenaAlreadyPersisted": existing_athena,
