@@ -6,6 +6,46 @@ returns `404: No existe ninguna ATHENA synthesis persistida` and
 while `/api/v1/news/feed` responds `200`. A live RSS feed is **not** a persisted,
 verified PIT synthesis; neither 404 proves the corresponding route is absent.
 
+
+## Create a consistent offline snapshot from a local authorized SQLite database
+
+When the operational database is accessible on the operator's machine, use
+`create_consistent_research_snapshot.py` instead of copying its `.db` file
+directly. SQLite's online backup API includes committed WAL transactions and
+produces a separate checkpointed database without writing to the source.
+The source is opened in read-only mode; the destination must not already
+exist. This operation does **not** query market providers or execute Ollama.
+
+From `backend` in PowerShell, with an existing access-restricted destination
+directory and a **new** filename:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\create_consistent_research_snapshot.py `
+  --source "D:\secure-data\athena-operational.db" `
+  --destination "D:\secure-snapshots\athena-consistent-20261101.db" `
+  --acknowledge-sensitive-copy
+```
+
+The explicit acknowledgement is required because the copied database can
+contain private account and portfolio information. Store the copy outside
+web-served folders, cloud-synced public folders and the Git repository; restrict
+filesystem ACLs (including Windows inherited permissions), encrypt and control
+retention according to the operator's security policy. Do **not** upload the
+snapshot or share its contents in chat. The command prints only the digest,
+size and safety flags, not rows, paths or secrets. A successful
+`sqliteIntegrityCheck=ok` confirms SQLite structural integrity of the
+new copy; it does **not** prove source authenticity, operational market coverage,
+external model execution, off-site backup success or production readiness.
+
+Record `snapshotSha256` in a separately protected operator manifest. A hash
+printed by the exporter and copied alongside the same database is **not**
+independent chain-of-custody evidence. The existing canonical verifier accepts
+that hash as `--expected-sha256` to detect later changes, but an independent
+trusted manifest/backup procedure is still needed for operational attestation.
+Never use a live database as `--snapshot`; only the new exported file is
+eligible for immutable read-only verification. If the destination already
+exists, the export fails without overwriting it.
+
 ## First: inspect an authorized, consistent SQLite snapshot (no writes)
 
 Use the existing verified-backup/export procedure to obtain a **checkpointed,
