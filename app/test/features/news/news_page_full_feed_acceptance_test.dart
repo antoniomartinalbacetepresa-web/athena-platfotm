@@ -421,12 +421,8 @@ void main() {
 
   testWidgets('future-dated News retrieval fails closed without exposing articles',
       (tester) async {
-    final fixture = _feed(1);
-    final futureFeed = VerifiedNewsFeed(
-      query: fixture.query,
-      sourceProvider: fixture.sourceProvider,
-      retrievedAt: DateTime.now().toUtc().add(const Duration(days: 1)),
-      items: fixture.items,
+    final futureFeed = _feedAt(
+      DateTime.now().toUtc().add(const Duration(days: 1)),
     );
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
@@ -451,13 +447,7 @@ void main() {
 
   testWidgets('current News retrieval does not show the stale warning',
       (tester) async {
-    final fixture = _feed(1);
-    final currentFeed = VerifiedNewsFeed(
-      query: fixture.query,
-      sourceProvider: fixture.sourceProvider,
-      retrievedAt: DateTime.now().toUtc(),
-      items: fixture.items,
-    );
+    final currentFeed = _feedAt(DateTime.now().toUtc());
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: SizedBox(
@@ -605,6 +595,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+}
+
+VerifiedNewsFeed _feedAt(DateTime retrievedAt) {
+  final retrieved = retrievedAt.toUtc().toIso8601String();
+  final published = retrievedAt.toUtc()
+      .subtract(const Duration(minutes: 30)).toIso8601String();
+  return VerifiedNewsFeed.fromMap({
+    'status': 'news_feed_ready',
+    'query': 'stock market earnings economy',
+    'count': 1,
+    'sourceProvider': 'google_news_rss',
+    'retrievedAt': retrieved,
+    'items': [{
+      'title': 'Noticia verificada 1',
+      'publisher': 'Fuente verificable',
+      'publisherUrl': 'https://example.com',
+      'articleUrl': 'https://example.com/article/1',
+      'publishedAt': published,
+      'retrievedAt': retrieved,
+      'sourceProvider': 'google_news_rss',
+    }],
+    'policy': {
+      'athenaRecommendationInfluence': false,
+      'automaticScoring': false,
+      'automaticTrading': false,
+    },
+    'advisoryStatus': 'no_advice',
+    'productionEligible': false,
+  });
 }
 
 VerifiedNewsFeed _feed(int count, {String prefix = 'Noticia verificada'}) {
