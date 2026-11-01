@@ -94,6 +94,8 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
         quote.currentPrice.isFinite && quote.currentPrice > 0 &&
         quote.sourceProvider != null && quote.sourceProvider!.trim().isNotEmpty &&
         retrieved != null &&
+        (quote.quoteMode != 'historical_daily_close_fallback' ||
+            (quote.priceSessionDate?.trim().isNotEmpty ?? false)) &&
         !retrieved.isAfter(now.add(const Duration(minutes: 5))) &&
         !observed.isAfter(now.add(const Duration(minutes: 5))) &&
         !observed.isAfter(retrieved.add(const Duration(minutes: 5)));
@@ -103,8 +105,10 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
   Widget build(BuildContext context) {
     final symbol = widget.symbol.trim().toUpperCase();
     final quote = _quote;
+    final dailyCloseFallback = quote?.quoteMode == 'historical_daily_close_fallback';
     final historical = quote != null &&
-        (DateTime.now().toUtc().difference(quote.updatedAt.toUtc()) > const Duration(hours: 24) ||
+        (dailyCloseFallback ||
+         DateTime.now().toUtc().difference(quote.updatedAt.toUtc()) > const Duration(hours: 24) ||
          DateTime.now().toUtc().difference(quote.retrievedAt!.toUtc()) > const Duration(hours: 24));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -144,10 +148,17 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
           ),
           Text(
-            'Observada: ${quote.updatedAt.toUtc().toIso8601String()} · '
+            'Marca temporal del backend: ${quote.updatedAt.toUtc().toIso8601String()} · '
             'recuperada: ${quote.retrievedAt!.toUtc().toIso8601String()}',
             key: const Key('market-quote-timestamps'),
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 10),
+          ),
+          Text(
+            dailyCloseFallback
+                ? 'ÚLTIMO CIERRE DIARIO DISPONIBLE · sesión ${quote.priceSessionDate}. No es un precio en tiempo real.'
+                : 'Precio de proveedor: tiempo real no acreditado. Puede existir retraso.',
+            key: const Key('market-quote-mode'),
+            style: const TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
           ),
           const Text(
             'La cotización consultada no es evidencia PIT del dosier ATHENA. El análisis recupera sus propias fuentes.',
@@ -167,7 +178,7 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             Semantics(
               liveRegion: true,
               child: const Text(
-                'COTIZACIÓN HISTÓRICA: observación o recuperación de más de 24 horas; no es un precio en tiempo real.',
+                'COTIZACIÓN HISTÓRICA: último cierre diario o marca temporal de más de 24 horas; no es un precio en tiempo real.',
                 key: Key('market-quote-stale'),
                 style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
               ),
