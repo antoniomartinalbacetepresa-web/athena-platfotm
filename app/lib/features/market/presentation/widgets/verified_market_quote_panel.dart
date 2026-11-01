@@ -10,8 +10,14 @@ import '../../repositories/market_repository.dart';
 class VerifiedMarketQuotePanel extends StatefulWidget {
   final String symbol;
   final MarketRepository? repository;
+  final ValueChanged<String>? onOpenResearch;
 
-  const VerifiedMarketQuotePanel({super.key, required this.symbol, this.repository});
+  const VerifiedMarketQuotePanel({
+    super.key,
+    required this.symbol,
+    this.repository,
+    this.onOpenResearch,
+  });
 
   @override
   State<VerifiedMarketQuotePanel> createState() => _VerifiedMarketQuotePanelState();
@@ -143,6 +149,20 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             key: const Key('market-quote-timestamps'),
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 10),
           ),
+          const Text(
+            'La cotización consultada no es evidencia PIT del dosier ATHENA. El análisis recupera sus propias fuentes.',
+            key: Key('market-quote-research-boundary'),
+            style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+          ),
+          if (widget.onOpenResearch != null)
+            OutlinedButton(
+              key: const Key('market-quote-open-research'),
+              onPressed: () {
+                if (widget.symbol.trim().toUpperCase() != quote.symbol.trim().toUpperCase()) return;
+                widget.onOpenResearch!(quote.symbol.trim().toUpperCase());
+              },
+              child: const Text('ANALIZAR ESTA EMPRESA'),
+            ),
           if (historical)
             Semantics(
               liveRegion: true,
