@@ -111,11 +111,14 @@ class ProfessionalDossier {
 class AthenaBackendProfessionalDossierDataSource {
   final String baseUrl;
   final http.Client client;
+  final Duration requestTimeout;
 
   AthenaBackendProfessionalDossierDataSource({
     required this.baseUrl,
     http.Client? client,
-  }) : client = client ?? http.Client();
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
 
   Future<ProfessionalDossier> getLatest({
     DateTime? asOf,
@@ -137,7 +140,7 @@ class AthenaBackendProfessionalDossierDataSource {
     final uri = Uri.parse(
       '$baseUrl/api/v1/recommendations/production/professional-dossier',
     ).replace(queryParameters: query.isEmpty ? null : query);
-    final response = await client.get(uri);
+    final response = await client.get(uri).timeout(requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
         'El backend de ATHENA TYCHE respondió con código HTTP '
@@ -172,6 +175,11 @@ class AthenaBackendProfessionalDossierDataSource {
 
   ProfessionalDossier _mapDossier(Map<String, dynamic> json) {
     final cutoff = _utc(json['asOf'], 'asOf');
+    if (cutoff.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 5)))) {
+      throw const FormatException(
+        'El dossier profesional declara un corte PIT futuro no verificable.',
+      );
+    }
     final dossierSymbol = _optionalSymbol(json['symbol']);
     final dossierInstrumentId = _optionalInstrumentId(json['instrumentId']);
     final advisoryStatus = _string(json['advisoryStatus'], 'advisoryStatus');

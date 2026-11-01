@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -36,6 +37,30 @@ Map<String, dynamic> _dossier() => {
     };
 
 void main() {
+  test('rechaza dossier con corte PIT futuro', () async {
+    final data = _dossier()
+      ..['asOf'] = DateTime.now().toUtc()
+          .add(const Duration(hours: 1)).toIso8601String();
+    final source = AthenaBackendProfessionalDossierDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async => http.Response(jsonEncode({'data': data}), 200)),
+    );
+    addTearDown(source.dispose);
+    expect(source.getLatest(symbol: 'AAPL'), throwsFormatException);
+  });
+
+  test('un proveedor bloqueado termina por timeout y no muestra dossier', () async {
+    final pending = Completer<http.Response>();
+    final source = AthenaBackendProfessionalDossierDataSource(
+      baseUrl: 'https://api.athena.test',
+      requestTimeout: const Duration(milliseconds: 10),
+      client: MockClient((_) => pending.future),
+    );
+    addTearDown(source.dispose);
+    expect(source.getLatest(symbol: 'AAPL'),
+        throwsA(isA<TimeoutException>()));
+  });
+
   group('AthenaBackendProfessionalDossierDataSource', () {
     test('mapea los once módulos como no productivos y mantiene no_advice',
         () async {

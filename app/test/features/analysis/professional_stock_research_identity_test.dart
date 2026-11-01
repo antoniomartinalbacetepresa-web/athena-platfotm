@@ -43,6 +43,72 @@ ProfessionalDossier _dossier(String symbol, {String? evidenceTag}) => Profession
     );
 
 void main() {
+  testWidgets('research discloses missing evidence and historical cutoff',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    source.pending['AAPL']!.complete(_dossier('AAPL'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Evidencia adjunta: 0 de 11 módulos'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('professional-research-stale-warning')),
+        findsOneWidget);
+    expect(find.byKey(const Key('professional-research-content')),
+        findsOneWidget);
+  });
+
+  testWidgets('refresh reissues dossier retrieval without hiding failure',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    expect(source.requested, ['AAPL']);
+    await tester.tap(find.byTooltip('Actualizar dossier profesional'));
+    await tester.pump();
+    expect(source.requested, ['AAPL', 'AAPL']);
+    source.pending['AAPL']!.complete(_dossier('AAPL'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-content')),
+        findsOneWidget);
+  });
+
+  testWidgets('a future PIT cutoff from an injected source is rejected',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    final base = _dossier('AAPL');
+    source.pending['AAPL']!.complete(ProfessionalDossier(
+      asOf: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      symbol: 'AAPL',
+      advisoryStatus: base.advisoryStatus,
+      productionEligible: false,
+      allocationEligible: false,
+      executionEligible: false,
+      orderRoutingEligible: false,
+      automaticTrading: false,
+      readOnly: true,
+      modules: base.modules,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-error')),
+        findsOneWidget);
+    expect(find.byKey(const Key('professional-research-content')),
+        findsNothing);
+  });
+
   testWidgets('changing a research symbol cannot show the old dossier',
       (tester) async {
     final source = _PendingDossierSource();

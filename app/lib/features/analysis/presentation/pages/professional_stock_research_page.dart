@@ -76,6 +76,13 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
         backgroundColor: const Color(0xFF081423),
         foregroundColor: Colors.white,
         title: Semantics(header: true, child: Text('ANÁLISIS ATHENA · $symbol')),
+        actions: [
+          IconButton(
+            tooltip: 'Actualizar dossier profesional',
+            onPressed: _retry,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: SafeArea(
         child: FutureBuilder<ProfessionalDossier>(
@@ -93,7 +100,10 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
             if (snapshot.hasError ||
                 !snapshot.hasData ||
                 !snapshot.data!.isSafe ||
-                snapshot.data!.symbol != symbol) {
+                snapshot.data!.symbol != symbol ||
+                snapshot.data!.asOf.isAfter(
+                  DateTime.now().toUtc().add(const Duration(minutes: 5)),
+                )) {
               return _ResearchError(onRetry: _retry);
             }
             return _ResearchBody(symbol: symbol, dossier: snapshot.data!);
@@ -160,6 +170,24 @@ class _ResearchBody extends StatelessWidget {
           key: const Key('professional-research-pit-cutoff'),
           style: const TextStyle(color: Colors.white),
         ),
+        const SizedBox(height: 8),
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            'Evidencia adjunta: ${dossier.modules.values.where((module) => module.evidence != null).length} de ${ProfessionalDossier.moduleNames.length} módulos. La presencia de evidencia no acredita validación independiente.',
+            key: const Key('professional-research-evidence-coverage'),
+            style: const TextStyle(color: Color(0xFF9FB2C7)),
+          ),
+        ),
+        if (DateTime.now().toUtc().difference(dossier.asOf) >
+            const Duration(hours: 24)) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'INVESTIGACIÓN HISTÓRICA: corte PIT de más de 24 horas. Actualizar no garantiza datos recientes.',
+            key: Key('professional-research-stale-warning'),
+            style: TextStyle(color: Color(0xFFFFD37A)),
+          ),
+        ],
         const SizedBox(height: 20),
         ...modules.map((name) {
           final module = dossier.modules[name]!;
