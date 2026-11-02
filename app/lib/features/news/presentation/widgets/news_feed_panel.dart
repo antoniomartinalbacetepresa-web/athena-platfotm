@@ -142,21 +142,24 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
               }
 
               final feed = snapshot.data;
-              // A provider timestamp in the future is not reliable evidence.
-              // Allow minor clock skew, but never present impossible provenance
-              // as a current verified feed.
+              // Also guard injected feeds that bypass JSON model factories.
+              // No future PIT timestamp may be presented as observed evidence.
+              final now = DateTime.now().toUtc();
               if (feed != null &&
-                  feed.retrievedAt.isAfter(
-                    DateTime.now().toUtc().add(const Duration(minutes: 5)),
-                  )) {
+                  (feed.retrievedAt.isAfter(now) ||
+                      feed.items.any((item) =>
+                          item.publishedAt.isAfter(now) ||
+                          item.publishedAt.isAfter(item.retrievedAt) ||
+                          item.retrievedAt != feed.retrievedAt ||
+                          item.sourceProvider != feed.sourceProvider))) {
                 return Semantics(
                   liveRegion: true,
                   label: 'Fecha de recuperación de noticias inválida.',
                   child: _NewsState(
                     icon: Icons.warning_amber_outlined,
                     title: 'Fecha de noticias inválida',
-                    detail: 'La fecha del proveedor está adelantada. '
-                        'No se muestran artículos hasta verificar el reloj.',
+                    detail: 'El feed contiene fechas futuras o procedencia contradictoria. '
+                        'No se muestran artículos hasta verificar los datos.',
                     actionLabel: 'Reintentar',
                     onAction: _reload,
                   ),
