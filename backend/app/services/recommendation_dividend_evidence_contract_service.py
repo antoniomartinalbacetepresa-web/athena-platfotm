@@ -75,6 +75,15 @@ class RecommendationDividendEvidenceContractService:
         signal = to_api_dict()
         if not isinstance(signal, dict) or signal.get("productionEligible") is not False:
             raise RuntimeError("La señal de dividendos intentó elevar autoridad de producción.")
+        # A substituted diagnostic must never attach another issuer's dividend
+        # or payout metrics to the requested company, even if its PIT is valid.
+        signal_symbol = signal.get("symbol")
+        if (
+            not isinstance(signal_symbol, str)
+            or not signal_symbol.strip()
+            or signal_symbol.strip().upper() != str(symbol or "").strip().upper()
+        ):
+            raise RuntimeError("La señal de dividendos no corresponde al símbolo solicitado.")
         signal_cutoff = self._parse_aware(signal.get("asOf"), "asOf")
         if signal_cutoff != cutoff:
             raise RuntimeError("La señal de dividendos usó otro corte point-in-time.")
