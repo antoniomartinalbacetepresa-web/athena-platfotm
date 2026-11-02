@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.api.auth import current_account
+from app.api.recommendation_professional_research_cycle import _owner_id
 from pydantic import BaseModel, Field
 
 from app.repositories.recommendation_news_synthesis_repository import (
@@ -176,10 +179,19 @@ def post_news_synthesis(
     cycle_hash: str,
     request: NewsSynthesisRequest,
 ) -> dict[str, Any]:
-    """Validate external News model output against one persisted PIT research cycle."""
+    return _post_news_synthesis(cycle_hash, request)
+
+
+def _post_news_synthesis(
+    cycle_hash: str, request: NewsSynthesisRequest, *, owner_id: int | None = None,
+) -> dict[str, Any]:
+    """Validate external News output against the authorized persisted PIT cycle."""
 
     try:
-        cycle_record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
+        cycle_record = cycle_repository.get_by_hash(
+            cycle_hash=cycle_hash,
+            **({"owner_id": owner_id} if owner_id is not None else {}),
+        )
         radar = _radar_from_cycle_record(cycle_record)
         result = synthesis_service.build(
             radar_result=radar,
@@ -231,10 +243,17 @@ def post_news_synthesis(
 
 @router.get("/research-cycle/{cycle_hash}/news-synthesis")
 def get_news_synthesis(cycle_hash: str) -> dict[str, Any]:
-    """Read one synthesis only after both cycle and synthesis integrity checks pass."""
+    return _get_news_synthesis(cycle_hash)
+
+
+def _get_news_synthesis(cycle_hash: str, *, owner_id: int | None = None) -> dict[str, Any]:
+    """Read only after owner authorization and canonical integrity checks."""
 
     try:
-        cycle_record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
+        cycle_record = cycle_repository.get_by_hash(
+            cycle_hash=cycle_hash,
+            **({"owner_id": owner_id} if owner_id is not None else {}),
+        )
         _radar_from_cycle_record(cycle_record)
         record = synthesis_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
         if record["radar_hash"] != cycle_record["radar_hash"]:
@@ -259,3 +278,32 @@ def get_news_synthesis(cycle_hash: str) -> dict[str, Any]:
             "automaticTrading": False,
         }
     }
+
+
+def _private_owner(cycle_hash: str, account: dict[str, Any]) -> int:
+    """Conceal missing and other-owner cycles before any synthesis side effects."""
+    owner_id = _owner_id(account)
+    try:
+        cycle_repository.get_by_hash(cycle_hash=cycle_hash, owner_id=owner_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail="No existe un Professional Research Cycle con ese cycleHash."
+        ) from exc
+    return owner_id
+
+
+@router.post("/research-cycle/private/{cycle_hash}/news-synthesis")
+def post_private_news_synthesis(
+    cycle_hash: str,
+    request: NewsSynthesisRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, Any]:
+    return _post_news_synthesis(cycle_hash, request, owner_id=_private_owner(cycle_hash, account))
+
+
+@router.get("/research-cycle/private/{cycle_hash}/news-synthesis")
+def get_private_news_synthesis(
+    cycle_hash: str,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, Any]:
+    return _get_news_synthesis(cycle_hash, owner_id=_private_owner(cycle_hash, account))

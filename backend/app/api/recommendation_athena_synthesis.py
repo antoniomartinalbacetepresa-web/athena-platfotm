@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.api.auth import current_account
+from app.api.recommendation_professional_research_cycle import _owner_id
 from pydantic import BaseModel, Field
 
 from app.api.recommendation_investors_synthesis import _provenance as _investors_provenance
@@ -47,8 +50,8 @@ def _cycle_evidence_contract(r):
             if eid in ids: raise ValueError('evidenceId no puede repetirse en el Radar.')
             ids.add(eid); cats.add(cat)
     return {'inputAsOf':asof,'evidenceIds':tuple(sorted(ids)),'coveredCategories':tuple(sorted(cats)),'hasNews':'news' in cats,'hasInvestors':'investors' in cats}
-def _dependencies(ch):
-    c=cycle_repository.get_by_hash(cycle_hash=ch); ct=_cycle_evidence_contract(c); n=i=None
+def _dependencies(ch, *, owner_id=None):
+    c=cycle_repository.get_by_hash(cycle_hash=ch, **({"owner_id": owner_id} if owner_id is not None else {})); ct=_cycle_evidence_contract(c); n=i=None
     if ct['hasNews']:
         n=news_repository.get_by_cycle_hash(cycle_hash=ch)
         if n['radar_hash'] != c['radar_hash']: raise ValueError('La síntesis News no coincide con el radarHash del Research Cycle.')
@@ -75,12 +78,18 @@ def _input_contract(c,n,i,ct):
 def _response_provenance(ic,fp): return {**({'news':ic['newsProvenance']} if 'newsProvenance' in ic else {}),**({'investors':ic['investorsProvenance']} if 'investorsProvenance' in ic else {}),'inputFingerprint':fp}
 @router.get('/research-cycle/{cycle_hash}/athena-synthesis/input-contract')
 def get_athena_synthesis_input_contract(cycle_hash):
-    try: c,n,i,ct=_dependencies(cycle_hash); return {'data':_input_contract(c,n,i,ct)}
+    return _get_athena_synthesis_input_contract(cycle_hash)
+
+def _get_athena_synthesis_input_contract(cycle_hash, *, owner_id=None):
+    try: c,n,i,ct=_dependencies(cycle_hash) if owner_id is None else _dependencies(cycle_hash, owner_id=owner_id); return {'data':_input_contract(c,n,i,ct)}
     except ValueError as exc: raise HTTPException(status_code=404,detail=str(exc)) from exc
 @router.post('/research-cycle/{cycle_hash}/athena-synthesis')
 def post_athena_synthesis(cycle_hash,request:AthenaSynthesisRequest):
+    return _post_athena_synthesis(cycle_hash, request)
+
+def _post_athena_synthesis(cycle_hash,request:AthenaSynthesisRequest, *, owner_id=None):
     try:
-        c,n,i,ct=_dependencies(cycle_hash); ic=_input_contract(c,n,i,ct); supplied=request.inputFingerprint.strip().lower()
+        c,n,i,ct=_dependencies(cycle_hash) if owner_id is None else _dependencies(cycle_hash, owner_id=owner_id); ic=_input_contract(c,n,i,ct); supplied=request.inputFingerprint.strip().lower()
         if supplied != ic['inputFingerprint']: raise ValueError('input_fingerprint/inputFingerprint no coincide con News/Investors/ciclo canónicos.')
         mo=canonical_athena_model_input(canonical_input_fingerprint=supplied,model_provider=request.modelProvider,model_name=request.modelName,model_version=request.modelVersion,generated_at=_aware_datetime(request.generatedAt,'generatedAt'),summary=request.summary,rationale=request.rationale,uncertainties=tuple(request.uncertainties),evidence_ids=tuple(request.evidenceIds))
         result=athena_service.build(cycle_record=c,news_synthesis_record=n,model_output=mo,canonical_input_fingerprint=supplied); payload=result.to_api_dict(); ih=i['synthesis_hash'] if i else None
@@ -91,11 +100,53 @@ def post_athena_synthesis(cycle_hash,request:AthenaSynthesisRequest):
     return {'data':{'artifactBindingVerified':True,'synthesis':payload,'provenance':_response_provenance(ic,supplied),'persistence':{'appendOnly':True,'packageIntegrityVerified':True,'synthesisHash':rec['synthesis_hash'],'cycleHash':rec['cycle_hash'],'radarHash':rec['radar_hash'],'newsSynthesisHash':rec['news_synthesis_hash'],'investorsSynthesisHash':ih,'createdAt':rec['created_at'],'storageClaim':'single_canonical_athena_synthesis_per_cycle_append_only_not_worm_storage'}}}
 @router.get('/research-cycle/{cycle_hash}/athena-synthesis')
 def get_athena_synthesis(cycle_hash):
+    return _get_athena_synthesis(cycle_hash)
+
+def _get_athena_synthesis(cycle_hash, *, owner_id=None):
     try:
-        c,n,i,ct=_dependencies(cycle_hash); rec=athena_repository.get_by_cycle_hash(cycle_hash=cycle_hash); expected_n=n['synthesis_hash'] if n else None; expected_i=i['synthesis_hash'] if i else None; stored=rec['package']['synthesis']
+        c,n,i,ct=_dependencies(cycle_hash) if owner_id is None else _dependencies(cycle_hash, owner_id=owner_id); rec=athena_repository.get_by_cycle_hash(cycle_hash=cycle_hash); expected_n=n['synthesis_hash'] if n else None; expected_i=i['synthesis_hash'] if i else None; stored=rec['package']['synthesis']
         if rec['radar_hash'] != c['radar_hash'] or rec['news_synthesis_hash'] != expected_n: raise ValueError('ATHENA synthesis no coincide con los artefactos canónicos actuales.')
         if stored.get('investorsSynthesisHash') != expected_i and not(expected_i is None and 'investorsSynthesisHash' not in stored): raise ValueError('ATHENA synthesis no coincide con Investors synthesis canónica.')
         ic=_input_contract(c,n,i,ct)
         if stored.get('inputFingerprint') != ic['inputFingerprint']: raise ValueError('ATHENA synthesis persistida no coincide con el input canónico actual.')
     except ValueError as exc: raise HTTPException(status_code=404,detail=str(exc)) from exc
     return {'data':{'artifactBindingVerified':True,'synthesis':stored,'provenance':_response_provenance(ic,ic['inputFingerprint']),'persistence':{'appendOnly':True,'packageIntegrityVerified':True,'synthesisHash':rec['synthesis_hash'],'cycleHash':rec['cycle_hash'],'radarHash':rec['radar_hash'],'newsSynthesisHash':rec['news_synthesis_hash'],'investorsSynthesisHash':expected_i,'createdAt':rec['created_at'],'storageClaim':'single_canonical_athena_synthesis_per_cycle_append_only_not_worm_storage'}}}
+
+
+def _private_owner(cycle_hash: str, account: dict[str, Any]) -> int:
+    """Enforce owner binding before reading or writing a canonical synthesis."""
+    owner_id = _owner_id(account)
+    try:
+        cycle_repository.get_by_hash(cycle_hash=cycle_hash, owner_id=owner_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail="No existe un Professional Research Cycle con ese cycleHash."
+        ) from exc
+    return owner_id
+
+
+@router.get('/research-cycle/private/{cycle_hash}/athena-synthesis/input-contract')
+def get_private_athena_synthesis_input_contract(
+    cycle_hash: str, account: Annotated[dict[str, Any], Depends(current_account)],
+):
+    return _get_athena_synthesis_input_contract(
+        cycle_hash, owner_id=_private_owner(cycle_hash, account)
+    )
+
+
+@router.post('/research-cycle/private/{cycle_hash}/athena-synthesis')
+def post_private_athena_synthesis(
+    cycle_hash: str,
+    request: AthenaSynthesisRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+):
+    return _post_athena_synthesis(
+        cycle_hash, request, owner_id=_private_owner(cycle_hash, account)
+    )
+
+
+@router.get('/research-cycle/private/{cycle_hash}/athena-synthesis')
+def get_private_athena_synthesis(
+    cycle_hash: str, account: Annotated[dict[str, Any], Depends(current_account)],
+):
+    return _get_athena_synthesis(cycle_hash, owner_id=_private_owner(cycle_hash, account))
