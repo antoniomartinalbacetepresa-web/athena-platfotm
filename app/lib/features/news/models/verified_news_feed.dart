@@ -27,6 +27,11 @@ class VerifiedNewsItem {
     final sourceProvider = _requiredString(map['sourceProvider'], 'sourceProvider');
     _rejectRestrictedNewsProvider(sourceProvider);
 
+    // A future retrieval cannot be treated as evidence already available.
+    // This is a PIT boundary, not a provider clock-skew allowance.
+    if (retrievedAt.isAfter(DateTime.now().toUtc())) {
+      throw const FormatException('retrievedAt no puede estar en el futuro.');
+    }
     if (publishedAt.isAfter(retrievedAt)) {
       throw const FormatException(
         'publishedAt no puede ser posterior a retrievedAt.',
@@ -82,6 +87,9 @@ class VerifiedNewsFeed {
     );
     _rejectRestrictedNewsProvider(sourceProvider);
     final retrievedAt = _requiredUtcDateTime(map['retrievedAt'], 'retrievedAt');
+    if (retrievedAt.isAfter(DateTime.now().toUtc())) {
+      throw const FormatException('El feed tiene una fecha de recuperación futura.');
+    }
     final rawItems = map['items'];
     if (rawItems is! List) {
       throw const FormatException('items debe ser una lista.');
