@@ -44,6 +44,10 @@ class RecommendationProfessionalDossierService:
 
     def build(self, *, as_of: datetime, symbol: str | None = None, instrument_id: int | None = None) -> dict[str, Any]:
         cutoff = self._aware(as_of, "as_of")
+        # A future PIT cutoff is not knowledge available to a research user.
+        # Reject before consulting any persistence or dividend provider.
+        if cutoff > datetime.now(timezone.utc):
+            raise ValueError("as_of no puede estar en el futuro.")
         state = self._production_read_service.resolve_latest(as_of=cutoff, symbol=symbol, instrument_id=instrument_id)
         self._assert_safe_state(state)
         recommendation = state.get("recommendation")
