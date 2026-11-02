@@ -27,7 +27,10 @@ def _effective_as_of(as_of: datetime | None) -> datetime:
     value = as_of if as_of is not None else datetime.now(timezone.utc)
     if value.tzinfo is None or value.utcoffset() is None:
         raise HTTPException(status_code=400, detail="as_of debe incluir zona horaria.")
-    return value.astimezone(timezone.utc)
+    cutoff = value.astimezone(timezone.utc)
+    if cutoff > datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="as_of no puede estar en el futuro.")
+    return cutoff
 
 
 @router.get("/latest")
