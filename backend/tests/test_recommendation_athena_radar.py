@@ -352,3 +352,20 @@ def test_radar_api_rejects_timezone_naive_evidence_with_400() -> None:
     )
     assert response.status_code == 400
     assert "zona horaria" in response.json()["detail"]
+
+
+def test_radar_api_rejects_future_pit_cutoff_without_building_research(monkeypatch) -> None:
+    import app.api.recommendation_athena_radar as radar_api
+
+    def must_not_build(**kwargs):
+        raise AssertionError("Future PIT must be rejected before Radar builds")
+
+    monkeypatch.setattr(radar_api.service, "build", must_not_build)
+    payload = request_payload()
+    payload["asOf"] = "2099-01-01T00:00:00+00:00"
+    response = TestClient(app).post(
+        "/api/v1/recommendations/professional-research/athena-radar",
+        json=payload,
+    )
+    assert response.status_code == 400
+    assert "futuro" in response.json()["detail"]
