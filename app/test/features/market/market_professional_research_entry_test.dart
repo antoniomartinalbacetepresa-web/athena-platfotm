@@ -6,6 +6,7 @@ import 'package:app/features/market/models/global_market_context.dart';
 import 'package:app/features/market/presentation/pages/market_page.dart';
 import 'package:app/features/market/di/market_dependencies.dart';
 import 'package:app/features/market/models/market_quote.dart';
+import 'package:app/features/news/models/verified_news_feed.dart';
 import 'package:app/features/market/repositories/market_repository.dart';
 import 'package:app/features/market/services/global_market_data_service.dart';
 import 'package:flutter/material.dart';
@@ -369,5 +370,86 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
     expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
+  });
+
+  testWidgets('validated quote displays independent symbol news and restores global view',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository((symbol) async => _quote(symbol));
+    var newsLoads = 0;
+    Future<VerifiedNewsFeed> loadNews(int limit) async {
+      newsLoads++;
+      expect(limit, 5);
+      final now = DateTime.now().toUtc();
+      return VerifiedNewsFeed(
+        query: '"AAPL" stock earnings',
+        sourceProvider: 'google_news_rss',
+        retrievedAt: now,
+        items: [
+          VerifiedNewsItem(
+            title: 'AAPL results headline',
+            publisher: 'Example News',
+            publisherUrl: null,
+            articleUrl: 'https://example.com/aapl',
+            publishedAt: now.subtract(const Duration(hours: 1)),
+            retrievedAt: now,
+            sourceProvider: 'google_news_rss',
+          ),
+        ],
+      );
+    }
+    await tester.pumpWidget(MaterialApp(home: MarketPage(
+      controller: controller,
+      quoteRepository: repository,
+      newsFeedLoader: loadNews,
+    )));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    expect(find.byKey(const Key('market-context-news-boundary')), findsNothing);
+    expect(newsLoads, 0);
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-context-news-boundary')), findsOneWidget);
+    expect(find.textContaining('no identidad de emisor'), findsOneWidget);
+    expect(find.text('AAPL results headline'), findsOneWidget);
+    expect(newsLoads, 1);
+
+    await tester.tap(find.byKey(const Key('market-context-news-toggle')));
+    await tester.pump();
+    expect(find.text('AAPL results headline'), findsNothing);
+    await tester.tap(find.byKey(const Key('market-context-news-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('AAPL results headline'), findsOneWidget);
+
+    // A different symbol must never inherit the previous issuer's articles.
+    await tester.enterText(find.byType(TextField), 'MSFT');
+    await tester.pump();
+    expect(find.byKey(const Key('market-context-news-boundary')), findsNothing);
+    expect(find.text('AAPL results headline'), findsNothing);
+  });
+
+  testWidgets('failed quote cannot trigger contextual news fetch', (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    var newsLoads = 0;
+    final repository = _QuoteRepository((_) async => _quote('MSFT'));
+    await tester.pumpWidget(MaterialApp(home: MarketPage(
+      controller: controller,
+      quoteRepository: repository,
+      newsFeedLoader: (_) {
+        newsLoads++;
+        return Future<VerifiedNewsFeed>.error(StateError('unexpected'));
+      },
+    )));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-context-news-boundary')), findsNothing);
+    expect(newsLoads, 0);
   });
 }
