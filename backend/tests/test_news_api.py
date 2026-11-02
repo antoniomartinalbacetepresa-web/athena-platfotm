@@ -95,3 +95,104 @@ def test_news_api_rejects_invalid_query_parameters_without_calling_service(monke
 
     assert response.status_code == 422
     assert fake.calls == []
+
+
+def _company_payload() -> dict:
+    payload = _safe_payload()
+    payload["items"][0]["title"] = "Acme announces quarterly results"
+    payload["query"] = '"Acme Corporation" ACME'
+    return payload
+
+
+def test_company_news_api_returns_read_only_radar_evidence_with_provenance(monkeypatch) -> None:
+    fake = FakeNewsService(_company_payload())
+    monkeypatch.setattr(news_api, "_news_service", fake)
+    response = TestClient(app).get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "acme"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "news_evidence_ready"
+    assert data["acceptedCount"] == 1
+    assert data["evidence"][0]["category"] == "news"
+    assert data["evidence"][0]["provider"] == "google_news_rss"
+    assert data["evidence"][0]["publishedAt"] == "2026-09-04T07:00:00+00:00"
+    assert data["evidence"][0]["availableAt"] == "2026-09-04T08:00:00+00:00"
+    assert data["advisoryStatus"] == "no_advice"
+    assert data["readOnly"] is True
+    for key in (
+        "productionEligible", "licenseVerified", "modelExecutionVerified",
+        "persisted", "issuerIdentityIndependentlyVerified",
+        "independentCorroborationClaimed", "recommendationInfluence",
+        "automaticScoring", "automaticTrading",
+    ):
+        assert data[key] is False
+    assert fake.calls == [{"query": '"Acme Corporation" ACME', "limit": 8}]
+
+
+def test_company_news_api_exposes_unavailable_not_fake_evidence(monkeypatch) -> None:
+    payload = _company_payload()
+    payload["items"][0]["title"] = "Unrelated company reports results"
+    monkeypatch.setattr(news_api, "_news_service", FakeNewsService(payload))
+    response = TestClient(app).get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "ACME"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "news_evidence_unavailable"
+    assert data["acceptedCount"] == 0
+    assert data["rejectedCount"] == 1
+    assert data["evidence"] == []
+    assert data["provenanceComplete"] is False
+
+
+def test_company_news_api_does_not_replay_live_news_into_historical_pit(monkeypatch) -> None:
+    fake = FakeNewsService(_company_payload())
+    monkeypatch.setattr(news_api, "_news_service", fake)
+    response = TestClient(app).get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "ACME",
+                "asOf": "2026-09-04T07:59:59+00:00"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["acceptedCount"] == 0
+    assert data["asOf"] == "2026-09-04T07:59:59+00:00"
+    assert data["persisted"] is False
+
+
+def test_company_news_api_rejects_future_cutoff_before_provider_call(monkeypatch) -> None:
+    fake = FakeNewsService(_company_payload())
+    monkeypatch.setattr(news_api, "_news_service", fake)
+    response = TestClient(app).get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "ACME",
+                "asOf": "2099-01-01T00:00:00+00:00"},
+    )
+    assert response.status_code == 400
+    assert fake.calls == []
+
+
+def test_company_news_api_rejects_tampered_provider_policy(monkeypatch) -> None:
+    fake = FakeNewsService(_company_payload())
+    fake.payload["policy"]["automaticTrading"] = True
+    monkeypatch.setattr(news_api, "_news_service", fake)
+    response = TestClient(app).get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "ACME"},
+    )
+    assert response.status_code == 502
+    assert "provenance" in response.json()["detail"]
+
+
+def test_company_news_api_rejects_bad_symbol_before_provider_call(monkeypatch) -> None:
+    fake = FakeNewsService(_company_payload())
+    monkeypatch.setattr(news_api, "_news_service", fake)
+    response = TestClient(app).get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "ACME OR BAD"},
+    )
+    assert response.status_code == 422
+    assert fake.calls == []
