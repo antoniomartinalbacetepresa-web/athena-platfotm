@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,7 @@ from app.services.recommendation_investment_journal_service import (
 from app.services.recommendation_professional_research_cycle_service import (
     RecommendationProfessionalResearchCycleService,
 )
+from app.services.recommendation_news_evidence_service import RecommendationNewsEvidenceService
 
 
 router = APIRouter(
@@ -40,6 +42,7 @@ journal_repository = RecommendationInvestmentJournalRepository()
 devils_advocate_service = RecommendationDevilsAdvocateService()
 cycle_service = RecommendationProfessionalResearchCycleService()
 cycle_repository = RecommendationProfessionalResearchCycleRepository()
+live_news_evidence_service = RecommendationNewsEvidenceService()
 
 
 class CycleRadarEvidenceRequest(BaseModel):
@@ -85,6 +88,21 @@ class ProfessionalResearchCycleRequest(BaseModel):
     journalReferences: list[CycleJournalReferenceRequest] = Field(min_length=1, max_length=200)
     priorSnapshotHash: str | None = None
     contradictoryEvidence: list[CycleContradictoryEvidenceRequest] = Field(min_length=1, max_length=200)
+
+
+class LiveCompanyResearchCycleRequest(BaseModel):
+    """Human-supplied research context; news is retrieved server-side, never client-forged."""
+
+    instrumentId: str = Field(min_length=1)
+    companyName: str = Field(min_length=1, max_length=100)
+    symbol: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.\\-]*$")
+    journalId: str = Field(min_length=1)
+    revisionId: str = Field(min_length=1)
+    thesis: str = Field(min_length=1)
+    journalReferences: list[CycleJournalReferenceRequest] = Field(min_length=1, max_length=200)
+    contradictoryEvidence: list[CycleContradictoryEvidenceRequest] = Field(min_length=1, max_length=200)
+    priorSnapshotHash: str | None = None
+    limit: int = Field(default=8, ge=1, le=25)
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -169,6 +187,9 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
     try:
         as_of = _aware_utc(request.asOf, "asOf")
         recorded_at = _aware_utc(request.recordedAt, "recordedAt")
+        now = datetime.now(timezone.utc)
+        if as_of > now or recorded_at > now:
+            raise HTTPException(status_code=400, detail="asOf y recordedAt no pueden estar en el futuro.")
         radar = radar_service.build(
             as_of=as_of,
             candidates=(
@@ -297,6 +318,100 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
     }
     payload["cyclePersistence"] = _persistence_summary(cycle_record)
     return {"data": payload}
+
+
+
+@router.post("/research-cycle/from-live-company-news")
+def post_research_cycle_from_live_company_news(
+    request: LiveCompanyResearchCycleRequest,
+) -> dict[str, object]:
+    """Fetch current RSS news on the server and atomically persist a human-authored PIT cycle.
+
+    This is NOT historical news replay or issuer/license verification. Human
+    thesis, references and contradictory evidence are mandatory; no fabricated
+    Journal or Devil's Advocate evidence is generated from headlines.
+    """
+    try:
+        news = live_news_evidence_service.build_company_evidence(
+            company_name=request.companyName,
+            symbol=request.symbol,
+            limit=request.limit,
+        )
+    except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo recuperar evidencia empresarial actual con provenance válida.",
+        ) from exc
+
+    evidence = news.get("evidence")
+    if (news.get("status") != "news_evidence_ready"
+            or not isinstance(evidence, tuple) or not evidence):
+        raise HTTPException(
+            status_code=409,
+            detail="No hay noticias empresariales elegibles para persistir; no se fabricará evidencia.",
+        )
+    if (news.get("symbol") != request.symbol.strip().upper()
+            or news.get("sourceProvider") != "google_news_rss"
+            or news.get("productionTruthClaimed") is not False
+            or news.get("issuerIdentityIndependentlyVerified") is not False
+            or news.get("independentCorroborationClaimed") is not False
+            or news.get("automaticTrading") is not False
+            or news.get("recommendationInfluence") is not False):
+        raise HTTPException(status_code=502, detail="El feed perdió sus límites de procedencia o autoridad.")
+
+    # The PIT cutoff is AFTER the real retrieval, not an invented past timestamp.
+    # A caller cannot inject a historical cutoff to relabel live RSS as PIT replay.
+    cutoff = datetime.now(timezone.utc)
+    retrieved_at = _aware_utc(
+        datetime.fromisoformat(str(news["retrievedAt"]).replace("Z", "+00:00")),
+        "retrievedAt",
+    )
+    if retrieved_at > cutoff or any(item.available_at > cutoff for item in evidence):
+        raise HTTPException(status_code=502, detail="El feed contiene evidencia posterior al reloj real.")
+
+    cycle_request = ProfessionalResearchCycleRequest(
+        instrumentId=request.instrumentId,
+        symbol=request.symbol.strip().upper(),
+        asOf=cutoff,
+        radarEvidence=[
+            CycleRadarEvidenceRequest(
+                evidenceId=item.evidence_id,
+                category=item.category,
+                urgency=item.urgency,
+                summary=item.summary,
+                availableAt=item.available_at,
+                source=item.source,
+                sourceRef=item.source_ref,
+                provider=item.provider,
+                publisher=item.publisher,
+                publishedAt=item.published_at,
+            )
+            for item in evidence
+        ],
+        journalId=request.journalId,
+        revisionId=request.revisionId,
+        recordedAt=cutoff,
+        thesis=request.thesis,
+        journalReferences=request.journalReferences,
+        priorSnapshotHash=request.priorSnapshotHash,
+        contradictoryEvidence=request.contradictoryEvidence,
+    )
+    result = post_professional_research_cycle(cycle_request)
+    result["data"]["liveNewsRetrieval"] = {
+        "sourceProvider": "google_news_rss",
+        "retrievedAt": retrieved_at.isoformat(),
+        "acceptedCount": len(evidence),
+        "rejectedCount": news["rejectedCount"],
+        "historicalReplay": False,
+        "issuerIdentityIndependentlyVerified": False,
+        "licenseVerified": False,
+        "modelExecutionVerified": False,
+        "metadataPersistedInCanonicalCycle": False,
+        "evidencePersistedInCanonicalRadar": True,
+        "humanReviewRequired": True,
+        "automaticTrading": False,
+    }
+    return result
 
 
 @router.get("/research-cycle/{cycle_hash}")
