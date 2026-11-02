@@ -45,6 +45,14 @@ devils_advocate_service = RecommendationDevilsAdvocateService()
 cycle_service = RecommendationProfessionalResearchCycleService()
 cycle_repository = RecommendationProfessionalResearchCycleRepository()
 live_news_evidence_service = RecommendationNewsEvidenceService()
+_PRIVATE_JOURNAL_PREFIX = "__athena_private_owner_"
+
+
+def _owner_id(account: dict[str, Any]) -> int:
+    value = account.get("id")
+    if type(value) is not int or value <= 0:
+        raise HTTPException(status_code=401, detail="Credenciales no válidas.")
+    return value
 
 
 class CycleRadarEvidenceRequest(BaseModel):
@@ -184,8 +192,16 @@ def _persistence_summary(record: dict[str, object]) -> dict[str, object]:
 
 @router.post("/research-cycle")
 def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) -> dict[str, object]:
-    """Validate, then persist, one PIT Radar -> Journal -> Devil's Advocate research cycle."""
+    """Legacy public research endpoint; private journal identifiers are forbidden."""
+    if request.journalId.startswith(_PRIVATE_JOURNAL_PREFIX):
+        raise HTTPException(status_code=403, detail="Journal privado: escritura pública prohibida.")
+    return _persist_professional_research_cycle(request)
 
+
+def _persist_professional_research_cycle(
+    request: ProfessionalResearchCycleRequest, *, owner_id: int | None = None,
+) -> dict[str, object]:
+    """Validate and atomically persist one PIT Radar -> Journal -> Devil's Advocate cycle."""
     try:
         as_of = _aware_utc(request.asOf, "asOf")
         recorded_at = _aware_utc(request.recordedAt, "recordedAt")
@@ -305,6 +321,7 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
                 journal_payload=journal_payload,
                 devils_advocate_payload=devils_payload,
                 connection=connection,
+                **({"owner_id": owner_id} if owner_id is not None else {}),
             )
     except HTTPException:
         raise
@@ -336,9 +353,9 @@ def post_research_cycle_from_live_company_news(
     """
     # Authenticate before fetching remote news or mutating persistent research.
     # The shared research repository is NOT owner-isolated; do not claim privacy.
-    owner_id = account.get("id")
-    if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id <= 0:
-        raise HTTPException(status_code=401, detail="Credenciales no válidas.")
+    owner_id = _owner_id(account)
+    if request.journalId.startswith(_PRIVATE_JOURNAL_PREFIX):
+        raise HTTPException(status_code=400, detail="journalId utiliza un prefijo reservado.")
     try:
         news = live_news_evidence_service.build_company_evidence(
             company_name=request.companyName,
@@ -396,7 +413,7 @@ def post_research_cycle_from_live_company_news(
             )
             for item in evidence
         ],
-        journalId=request.journalId,
+        journalId=f"{_PRIVATE_JOURNAL_PREFIX}{owner_id}__:{request.journalId}",
         revisionId=request.revisionId,
         recordedAt=cutoff,
         thesis=request.thesis,
@@ -404,7 +421,7 @@ def post_research_cycle_from_live_company_news(
         priorSnapshotHash=request.priorSnapshotHash,
         contradictoryEvidence=request.contradictoryEvidence,
     )
-    result = post_professional_research_cycle(cycle_request)
+    result = _persist_professional_research_cycle(cycle_request, owner_id=owner_id)
     result["data"]["liveNewsRetrieval"] = {
         "sourceProvider": "google_news_rss",
         "retrievedAt": retrieved_at.isoformat(),
@@ -419,17 +436,32 @@ def post_research_cycle_from_live_company_news(
         "humanReviewRequired": True,
         "authenticatedWrite": True,
         "ownerIsolationVerified": False,
+        "cycleOwnerBindingVerified": True,
+        "privateReadRequiresAuthentication": True,
         "automaticTrading": False,
     }
     return result
 
 
+@router.get("/research-cycle/private/{cycle_hash}")
+def get_private_professional_research_cycle(
+    cycle_hash: str, account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, object]:
+    """Return a private cycle only to its JWT-authenticated owner."""
+    return _read_professional_research_cycle(cycle_hash, owner_id=_owner_id(account))
+
+
 @router.get("/research-cycle/{cycle_hash}")
 def get_professional_research_cycle(cycle_hash: str) -> dict[str, object]:
-    """Return one persisted cycle only after full package-integrity verification."""
+    """Legacy public read; owner-bound cycles fail closed even when the hash is known."""
+    return _read_professional_research_cycle(cycle_hash)
 
+
+def _read_professional_research_cycle(
+    cycle_hash: str, *, owner_id: int | None = None,
+) -> dict[str, object]:
     try:
-        record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
+        record = cycle_repository.get_by_hash(cycle_hash=cycle_hash, **({"owner_id": owner_id} if owner_id is not None else {}))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
