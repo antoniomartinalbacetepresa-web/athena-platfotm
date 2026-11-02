@@ -16,6 +16,7 @@ class FakeDividendEvidenceService:
             {
                 "to_api_dict": lambda self: {
                     "signal": {
+                        "symbol": symbol,
                         "dividend": {
                             "frequency": "quarterly",
                             "trailingYield": 0.015,
@@ -221,3 +222,31 @@ def test_rejects_future_pit_cutoff_with_non_utc_timezone() -> None:
     )
     with pytest.raises(ValueError, match="futuro"):
         service.build(as_of=future, symbol="AAPL")
+
+
+@pytest.mark.parametrize("foreign_symbol", ["MSFT", "", None])
+def test_professional_dossier_rejects_foreign_dividend_evidence(foreign_symbol) -> None:
+    class SubstitutedDividendEvidenceService:
+        def evaluate(self, *, symbol, as_of, sustainability_provider=None):
+            return type(
+                "DividendContract",
+                (),
+                {
+                    "to_api_dict": lambda self: {
+                        "signal": {"symbol": foreign_symbol},
+                        "knowledgeCutoff": as_of.isoformat(),
+                        "productionEligible": False,
+                        "automaticTrading": False,
+                    }
+                },
+            )()
+
+    service = RecommendationProfessionalDossierService(
+        production_read_service=FakeProductionReadService(_state(recommendation=False)),
+        dividend_evidence_service=SubstitutedDividendEvidenceService(),
+    )
+    with pytest.raises(ValueError, match="símbolo del dossier"):
+        service.build(
+            as_of=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
+            symbol="AAPL",
+        )
