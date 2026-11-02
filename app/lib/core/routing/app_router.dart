@@ -75,7 +75,10 @@ class AppRouter {
       case AppRoutes.news:
         return MaterialPageRoute(
           settings: settings,
-          builder: (_) => NewsPage(symbol: uri?.queryParameters['symbol']),
+          builder: (_) => NewsPage(
+            symbol: uri?.queryParameters['symbol'],
+            companyName: uri?.queryParameters['companyName'],
+          ),
         );
 
       case AppRoutes.athenaAi:

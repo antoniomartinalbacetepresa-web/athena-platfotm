@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/athena_colors.dart';
 import '../../models/verified_news_feed.dart';
+import '../../models/company_news_evidence.dart';
 import '../../services/athena_backend_news_synthesis_service.dart';
 import '../news_synthesis_controller.dart';
 import '../widgets/news_feed_panel.dart';
+import '../widgets/company_news_evidence_panel.dart';
 import '../widgets/news_synthesis_panel.dart';
 
 class NewsPage extends StatefulWidget {
@@ -13,6 +15,8 @@ class NewsPage extends StatefulWidget {
   final Future<VerifiedNewsFeed> Function(int limit)? feedLoader;
   /// Optional symbol for a textual news search, not a verified issuer binding.
   final String? symbol;
+  final String? companyName;
+  final Future<CompanyNewsEvidence> Function(String symbol, String companyName)? companyEvidenceLoader;
 
   const NewsPage({
     super.key,
@@ -20,6 +24,8 @@ class NewsPage extends StatefulWidget {
     this.newsFeed,
     this.feedLoader,
     this.symbol,
+    this.companyName,
+    this.companyEvidenceLoader,
   });
 
   @override
@@ -106,6 +112,11 @@ class _NewsPageState extends State<NewsPage> {
     final validSymbol = symbol != null &&
         RegExp(r'^[A-Z0-9][A-Z0-9.^-]{0,19}$').hasMatch(symbol);
     final newsQuery = validSymbol ? '"$symbol" stock earnings' : null;
+    final companyName = widget.companyName?.trim();
+    final validCompanyName = validSymbol && companyName != null &&
+        companyName.isNotEmpty && companyName.length <= 100 &&
+        !companyName.contains('"') &&
+        !companyName.runes.any((code) => code < 32);
     return Scaffold(
       backgroundColor: AthenaColors.background,
       appBar: AppBar(
@@ -150,6 +161,15 @@ class _NewsPageState extends State<NewsPage> {
                   style: const TextStyle(color: AthenaColors.textSecondary),
                 ),
                 const SizedBox(height: 16),
+              ],
+              if (validCompanyName) ...[
+                CompanyNewsEvidencePanel(
+                  key: ValueKey('news-company-evidence-$symbol-$companyName-$_feedRefreshEpoch'),
+                  symbol: symbol,
+                  companyName: companyName,
+                  loadEvidence: widget.companyEvidenceLoader,
+                ),
+                const SizedBox(height: 24),
               ],
               NewsSynthesisPanel(controller: _synthesisController),
               const SizedBox(height: 24),

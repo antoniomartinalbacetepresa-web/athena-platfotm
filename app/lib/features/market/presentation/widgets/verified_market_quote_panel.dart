@@ -13,6 +13,7 @@ class VerifiedMarketQuotePanel extends StatefulWidget {
   final void Function(String symbol, int? instrumentId)? onOpenResearch;
   final void Function(String symbol)? onOpenNews;
   final void Function(String symbol, int? instrumentId)? onQuoteValidated;
+  final void Function(String symbol, String companyName)? onCompanyQuoteValidated;
   final VoidCallback? onQuoteRequestStarted;
 
   const VerifiedMarketQuotePanel({
@@ -22,6 +23,7 @@ class VerifiedMarketQuotePanel extends StatefulWidget {
     this.onOpenResearch,
     this.onOpenNews,
     this.onQuoteValidated,
+    this.onCompanyQuoteValidated,
     this.onQuoteRequestStarted,
   });
 
@@ -83,6 +85,7 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
         _failed = false;
       });
       widget.onQuoteValidated?.call(symbol, quote.instrumentId);
+      widget.onCompanyQuoteValidated?.call(symbol, quote.companyName);
     } catch (_) {
       if (!mounted || generation != _generation) return;
       // Never display provider errors: their text may contain credentials.

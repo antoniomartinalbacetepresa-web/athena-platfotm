@@ -26,6 +26,7 @@ class MarketPage extends StatefulWidget {
 class _MarketPageState extends State<MarketPage> {
   final _symbolController = TextEditingController();
   String? _newsSymbol;
+  String? _newsCompanyName;
   int? _newsInstrumentId;
   bool _showContextNews = true;
   bool _showContextResearch = false;
@@ -34,6 +35,7 @@ class _MarketPageState extends State<MarketPage> {
     if (_newsSymbol == null && _newsInstrumentId == null) return;
     setState(() {
       _newsSymbol = null;
+      _newsCompanyName = null;
       _newsInstrumentId = null;
       _showContextResearch = false;
     });
@@ -43,10 +45,19 @@ class _MarketPageState extends State<MarketPage> {
     if (!mounted || symbol != _symbolController.text.trim().toUpperCase()) return;
     setState(() {
       _newsSymbol = symbol;
+      _newsCompanyName = null;
       _newsInstrumentId = instrumentId;
       _showContextNews = true;
       _showContextResearch = false;
     });
+  }
+
+  void _onCompanyQuoteValidated(String symbol, String companyName) {
+    if (!mounted || symbol != _newsSymbol) return;
+    final name = companyName.trim();
+    if (name.isEmpty || name.length > 100 || name.contains('"') ||
+        name.runes.any((code) => code < 32)) return;
+    setState(() => _newsCompanyName = name);
   }
 
   @override
@@ -70,9 +81,10 @@ class _MarketPageState extends State<MarketPage> {
   void _openNewsForSymbol(String requestedSymbol) {
     final symbol = requestedSymbol.trim().toUpperCase();
     if (symbol.isEmpty || symbol != _symbolController.text.trim().toUpperCase()) return;
-    Navigator.of(context).pushNamed(
-      '${AppRoutes.news}?symbol=${Uri.encodeQueryComponent(symbol)}',
-    );
+    final companyName = _newsCompanyName;
+    final query = 'symbol=${Uri.encodeQueryComponent(symbol)}'
+        '${companyName != null ? '&companyName=${Uri.encodeQueryComponent(companyName)}' : ''}';
+    Navigator.of(context).pushNamed('${AppRoutes.news}?$query');
   }
 
   @override
@@ -153,6 +165,7 @@ class _MarketPageState extends State<MarketPage> {
                           _openResearchForSymbol(symbol, instrumentId: instrumentId),
                       onOpenNews: _openNewsForSymbol,
                       onQuoteValidated: _onQuoteValidated,
+                      onCompanyQuoteValidated: _onCompanyQuoteValidated,
                       onQuoteRequestStarted: _clearQuoteContext,
                     ),
                   ),
