@@ -118,6 +118,20 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final symbol = data['symbol']?.toString().trim().toUpperCase();
     final sourceProvider = _optionalText(data['sourceProvider']);
     final currency = _optionalText(data['currency'])?.toUpperCase();
+    final identityStatus = data['canonicalIdentityStatus'];
+    final instrumentId = data['instrumentId'];
+    if (identityStatus != null &&
+        identityStatus != 'unresolved' &&
+        identityStatus != 'matched_internal_listing') {
+      throw const FormatException('Estado de identidad de mercado desconocido.');
+    }
+    if ((instrumentId != null &&
+            (instrumentId is! int ||
+                instrumentId <= 0 ||
+                identityStatus != 'matched_internal_listing')) ||
+        (identityStatus == 'matched_internal_listing' && instrumentId == null)) {
+      throw const FormatException('Identidad interna de mercado contradictoria.');
+    }
 
     return MarketDataPoint(
       symbol: symbol == null || symbol.isEmpty ? fallbackSymbol : symbol,
@@ -143,6 +157,8 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
           ? data['realTimePriceVerified'] as bool : null,
       historicalPointInTimeEligible: data['historicalPointInTimeEligible'] is bool
           ? data['historicalPointInTimeEligible'] as bool : null,
+      instrumentId: instrumentId as int?,
+      canonicalIdentityStatus: identityStatus as String?,
     );
   }
 

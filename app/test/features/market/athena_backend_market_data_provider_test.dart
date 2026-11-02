@@ -27,6 +27,8 @@ void main() {
               'currency': 'usd',
               'exchange': 'NMS',
               'quoteType': 'EQUITY',
+              'instrumentId': 17,
+              'canonicalIdentityStatus': 'matched_internal_listing',
               'exchangeTimezone': 'America/New_York',
               'open': 230.0,
               'high': 235.0,
@@ -63,6 +65,8 @@ void main() {
       expect(quote.currency, 'USD');
       expect(quote.exchange, 'NMS');
       expect(quote.quoteType, 'EQUITY');
+      expect(quote.instrumentId, 17);
+      expect(quote.canonicalIdentityStatus, 'matched_internal_listing');
       expect(quote.exchangeTimezone, 'America/New_York');
       expect(quote.providerId, 'athena_backend');
       expect(quote.sourceProvider, 'yahoo');

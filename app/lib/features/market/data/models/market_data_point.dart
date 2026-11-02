@@ -41,6 +41,8 @@ class MarketDataPoint {
   final String? priceSessionDate;
   final bool? realTimePriceVerified;
   final bool? historicalPointInTimeEligible;
+  final int? instrumentId;
+  final String? canonicalIdentityStatus;
 
   const MarketDataPoint({
     required this.symbol,
@@ -64,5 +66,7 @@ class MarketDataPoint {
     this.priceSessionDate,
     this.realTimePriceVerified,
     this.historicalPointInTimeEligible,
+    this.instrumentId,
+    this.canonicalIdentityStatus,
   });
 }

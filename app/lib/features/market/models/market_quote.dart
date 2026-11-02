@@ -16,6 +16,8 @@ class MarketQuote {
   final String? priceSessionDate;
   final bool? realTimePriceVerified;
   final bool? historicalPointInTimeEligible;
+  final int? instrumentId;
+  final String? canonicalIdentityStatus;
 
   const MarketQuote({
     required this.symbol,
@@ -35,6 +37,8 @@ class MarketQuote {
     this.priceSessionDate,
     this.realTimePriceVerified,
     this.historicalPointInTimeEligible,
+    this.instrumentId,
+    this.canonicalIdentityStatus,
   });
 
   bool get isPositive => change > 0;
@@ -62,11 +66,25 @@ class MarketQuote {
       'priceSessionDate': priceSessionDate,
       'realTimePriceVerified': realTimePriceVerified,
       'historicalPointInTimeEligible': historicalPointInTimeEligible,
+      'instrumentId': instrumentId,
+      'canonicalIdentityStatus': canonicalIdentityStatus,
     };
   }
 
   factory MarketQuote.fromMap(Map<String, dynamic> map) {
     final retrievedAtRaw = map['retrievedAt'];
+    final status = map['canonicalIdentityStatus'];
+    final id = map['instrumentId'];
+    if (status != null &&
+        status != 'unresolved' &&
+        status != 'matched_internal_listing') {
+      throw const FormatException('Estado de identidad de mercado desconocido.');
+    }
+    if ((id != null &&
+            (id is! int || id <= 0 || status != 'matched_internal_listing')) ||
+        (status == 'matched_internal_listing' && id == null)) {
+      throw const FormatException('Identidad interna de mercado contradictoria.');
+    }
 
     return MarketQuote(
       symbol: map['symbol'] as String,
@@ -87,6 +105,8 @@ class MarketQuote {
           ? map['realTimePriceVerified'] as bool : null,
       historicalPointInTimeEligible: map['historicalPointInTimeEligible'] is bool
           ? map['historicalPointInTimeEligible'] as bool : null,
+      instrumentId: id as int?,
+      canonicalIdentityStatus: status as String?,
       retrievedAt: retrievedAtRaw == null
           ? null
           : DateTime.tryParse(retrievedAtRaw.toString()),
