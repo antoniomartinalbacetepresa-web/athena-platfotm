@@ -18,7 +18,13 @@ def test_baseline_cannot_certify_historical_91_or_85(inventory):
         assert result["scopes"][scope]["percent"] is None
         assert result["scopes"][scope]["certifiable"] is False
         assert result["scopes"][scope]["complete"] is False
-        assert result["scopes"][scope]["reviewed"] == 0
+        # A living audit must allow individual reviewed criteria while
+        # refusing to certify an incomplete scope or mapping.
+        assert result["scopes"][scope]["reviewed"] == sum(
+            r["reviewed"] for r in inventory["criteria"] if scope in r["scopes"]
+        )
+        assert result["scopes"][scope]["reviewed"] < result["scopes"][scope]["criteria"]
+        assert result["scopes"][scope]["mappingReviewed"] is False
 
 
 def test_scope_counts_do_not_duplicate_criteria(inventory):
