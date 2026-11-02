@@ -325,5 +325,39 @@ void main() {
       provider.dispose();
     });
 
+
+    test('rechaza cotización sin símbolo en lugar de inventar identidad', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': {
+            'timestamp': '2026-10-30T20:00:00Z',
+            'sourceProvider': 'yahoo',
+            'close': 250.0,
+          },
+        }), 200)),
+      );
+      await expectLater(provider.getQuote('AAPL'), throwsFormatException);
+      provider.dispose();
+    });
+
+    test('rechaza histórico de otra empresa aunque el endpoint responda 200', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [{
+            'symbol': 'MSFT',
+            'timestamp': '2026-10-30T20:00:00Z',
+            'sourceProvider': 'yahoo',
+            'close': 250.0,
+          }],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
   });
 }

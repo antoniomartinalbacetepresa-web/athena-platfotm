@@ -116,6 +116,13 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final retrievedAt = _parseOptionalTimestamp(data['retrievedAt']);
 
     final symbol = data['symbol']?.toString().trim().toUpperCase();
+    // A missing or different provider symbol must never inherit the requested
+    // ticker: doing so would fabricate the identity of a price observation.
+    if (symbol == null || symbol.isEmpty || symbol != fallbackSymbol) {
+      throw const FormatException(
+        'La observación no coincide con el símbolo solicitado.',
+      );
+    }
     final sourceProvider = _optionalText(data['sourceProvider']);
     final currency = _optionalText(data['currency'])?.toUpperCase();
     final identityStatus = data['canonicalIdentityStatus'];
@@ -134,7 +141,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     }
 
     return MarketDataPoint(
-      symbol: symbol == null || symbol.isEmpty ? fallbackSymbol : symbol,
+      symbol: symbol,
       timestamp: timestamp,
       open: _parseDouble(data['open']),
       high: _parseDouble(data['high']),
