@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -118,3 +118,32 @@ def test_professional_dossier_endpoint_maps_validation_failure_to_400(monkeypatc
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "evidencia productiva inválida"
+
+
+@pytest.mark.parametrize("route", ["dossier", "latest"])
+def test_production_read_routes_reject_future_pit_before_service_call(monkeypatch, route) -> None:
+    class SpyReadService:
+        calls = 0
+
+        def resolve_latest(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("future PIT must not access production state")
+
+    dossier = FakeProfessionalDossierService(payload=_safe_payload())
+    production = SpyReadService()
+    monkeypatch.setattr(recommendation_production, "professional_dossier_service", dossier)
+    monkeypatch.setattr(recommendation_production, "production_read_service", production)
+    future = datetime.now(timezone.utc) + timedelta(minutes=2)
+    with pytest.raises(HTTPException) as exc_info:
+        if route == "dossier":
+            recommendation_production.get_professional_dossier(
+                symbol="AAPL", instrument_id=7, as_of=future
+            )
+        else:
+            recommendation_production.get_latest_production_state(
+                symbol="AAPL", instrument_id=7, as_of=future
+            )
+    assert exc_info.value.status_code == 400
+    assert "futuro" in str(exc_info.value.detail)
+    assert dossier.calls == []
+    assert production.calls == 0
