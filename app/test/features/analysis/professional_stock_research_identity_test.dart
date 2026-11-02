@@ -112,6 +112,32 @@ void main() {
         findsNothing);
   });
 
+  testWidgets('a PIT cutoff two minutes ahead is rejected, without clock tolerance',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(symbol: 'AAPL', dataSource: source),
+    ));
+    await tester.pump();
+    final base = _dossier('AAPL');
+    source.pending['AAPL']!.complete(ProfessionalDossier(
+      asOf: DateTime.now().toUtc().add(const Duration(minutes: 2)),
+      symbol: 'AAPL',
+      advisoryStatus: base.advisoryStatus,
+      productionEligible: false,
+      allocationEligible: false,
+      executionEligible: false,
+      orderRoutingEligible: false,
+      automaticTrading: false,
+      readOnly: true,
+      modules: base.modules,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-error')), findsOneWidget);
+    expect(find.byKey(const Key('professional-research-content')), findsNothing);
+  });
+
   testWidgets('changing a research symbol cannot show the old dossier',
       (tester) async {
     final source = _PendingDossierSource();

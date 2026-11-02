@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../models/verified_news_feed.dart';
 import '../../models/company_news_evidence.dart';
@@ -168,6 +169,22 @@ class _NewsPageState extends State<NewsPage> {
                   symbol: symbol,
                   companyName: companyName,
                   loadEvidence: widget.companyEvidenceLoader,
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: const Key('news-open-company-research'),
+                  onPressed: () => Navigator.of(context).pushNamed(
+                    '${AppRoutes.stockResearch}?symbol=${Uri.encodeQueryComponent(symbol!)}',
+                  ),
+                  icon: const Icon(Icons.analytics_outlined),
+                  label: const Text('Abrir dosier ATHENA por símbolo'),
+                ),
+                const Text(
+                  'El dosier se consulta por símbolo, sin identidad canónica '
+                  'acreditada desde News. Los titulares no se adjuntan ni '
+                  'persisten automáticamente en ATHENA.',
+                  key: Key('news-research-navigation-boundary'),
+                  style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
                 ),
                 const SizedBox(height: 24),
               ],

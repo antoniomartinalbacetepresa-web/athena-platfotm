@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+import 'package:app/core/routing/app_routes.dart';
+import 'package:app/features/news/presentation/news_synthesis_controller.dart';
+import 'package:app/features/news/presentation/pages/news_page.dart';
+import 'package:app/features/news/services/athena_backend_news_synthesis_service.dart';
 import 'package:app/features/news/models/company_news_evidence.dart';
 import 'package:app/features/news/presentation/widgets/company_news_evidence_panel.dart';
 import 'package:app/features/news/services/athena_backend_company_news_evidence_service.dart';
@@ -96,6 +100,42 @@ void main() {
         .first as Map<String, dynamic>;
     item['sourceRef'] = 'http://unsafe.example/article';
     expect(() => parse(mismatched), throwsFormatException);
+  });
+
+  testWidgets('company News opens a symbol-only ATHENA dossier with explicit unbound identity',
+      (tester) async {
+    final synthesisService = AthenaBackendNewsSynthesisService(
+      baseUrl: 'https://athena.example',
+      client: MockClient((_) async => http.Response('{"detail":"missing"}', 404)),
+    );
+    final controller = NewsSynthesisController(service: synthesisService);
+    addTearDown(controller.dispose);
+    addTearDown(synthesisService.dispose);
+    String? openedRoute;
+    await tester.pumpWidget(MaterialApp(
+      home: NewsPage(
+        symbol: 'ACME',
+        companyName: 'Acme Corporation',
+        synthesisController: controller,
+        newsFeed: const SizedBox.shrink(),
+        companyEvidenceLoader: (_, _) async => parse(payload()),
+      ),
+      onGenerateRoute: (settings) {
+        openedRoute = settings.name;
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => const Scaffold(body: Text('Destino de investigación')),
+        );
+      },
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('news-research-navigation-boundary')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('news-open-company-research')));
+    await tester.tap(find.byKey(const Key('news-open-company-research')));
+    await tester.pump();
+    expect(openedRoute, '${AppRoutes.stockResearch}?symbol=ACME');
+    expect(find.text('Destino de investigación'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('company evidence displays source, date, uncertainty and no-advice boundary',

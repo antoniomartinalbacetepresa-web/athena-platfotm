@@ -112,9 +112,7 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
                 snapshot.data!.symbol != symbol ||
                 (widget.instrumentId != null &&
                     snapshot.data!.instrumentId != widget.instrumentId) ||
-                snapshot.data!.asOf.isAfter(
-                  DateTime.now().toUtc().add(const Duration(minutes: 5)),
-                )) {
+                snapshot.data!.asOf.isAfter(DateTime.now().toUtc())) {
               return _ResearchError(onRetry: _retry);
             }
             return _ResearchBody(symbol: symbol, dossier: snapshot.data!,
