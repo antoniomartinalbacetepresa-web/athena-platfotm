@@ -93,6 +93,15 @@ class RecommendationProfessionalDossierService:
                 raise ValueError("La evidencia de dividendos intentó elevar autoridad de producción.")
             if dividend_payload.get("knowledgeCutoff") != cutoff.isoformat():
                 raise ValueError("La evidencia de dividendos no comparte el corte PIT del dossier.")
+            # Recheck identity at the final dossier boundary: an injected or
+            # replaced evidence service cannot attach another issuer's metrics.
+            signal = dividend_payload.get("signal")
+            if (
+                not isinstance(signal, dict)
+                or not isinstance(signal.get("symbol"), str)
+                or signal["symbol"].strip().upper() != resolved_symbol
+            ):
+                raise ValueError("La evidencia de dividendos no corresponde al símbolo del dossier.")
             modules["dividendTotalReturn"] = {
                 "status": "diagnostic_evidence_available",
                 "productionEligible": False,
