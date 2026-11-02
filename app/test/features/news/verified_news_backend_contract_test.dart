@@ -100,6 +100,23 @@ void main() {
     }
   });
 
+  test('feed rejects a future retrieval even within old five-minute tolerance', () {
+    final payload = validPayload();
+    final future = DateTime.now().toUtc().add(const Duration(minutes: 2));
+    payload['retrievedAt'] = future.toIso8601String();
+    ((payload['items'] as List).single as Map<String, dynamic>)[
+        'retrievedAt'] = future.toIso8601String();
+    expect(() => VerifiedNewsFeed.fromMap(payload), throwsFormatException);
+  });
+
+  test('standalone news item rejects a future retrieval timestamp', () {
+    final item = Map<String, dynamic>.from(
+        (validPayload()['items'] as List).single as Map);
+    item['retrievedAt'] = DateTime.now().toUtc()
+        .add(const Duration(hours: 1)).toIso8601String();
+    expect(() => VerifiedNewsItem.fromMap(item), throwsFormatException);
+  });
+
   test('verified feed rejects future publication relative to retrieval', () {
     final payload = validPayload();
     ((payload['items'] as List).single as Map<String, dynamic>)[
