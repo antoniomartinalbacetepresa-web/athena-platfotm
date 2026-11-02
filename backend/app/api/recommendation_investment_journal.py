@@ -22,6 +22,7 @@ router = APIRouter(
 
 investment_journal_service = RecommendationInvestmentJournalService()
 investment_journal_repository = RecommendationInvestmentJournalRepository()
+_PRIVATE_JOURNAL_PREFIX = "__athena_private_owner_"
 
 
 class InvestmentJournalReferenceRequest(BaseModel):
@@ -160,6 +161,8 @@ def post_persisted_investment_journal_snapshot(
     request: InvestmentJournalSnapshotRequest,
 ) -> dict[str, object]:
     """Freeze and append one immutable PIT revision to the durable journal lineage."""
+    if request.journalId.startswith(_PRIVATE_JOURNAL_PREFIX):
+        raise HTTPException(status_code=403, detail="Journal privado: escritura pública prohibida.")
 
     try:
         snapshot = _freeze_request(request)
@@ -188,6 +191,8 @@ def post_persisted_investment_journal_snapshot(
 @router.get("/investment-journal/{journal_id}/lineage")
 def get_investment_journal_lineage(journal_id: str) -> dict[str, object]:
     """Verify the complete persisted hash chain for one research journal."""
+    if journal_id.startswith(_PRIVATE_JOURNAL_PREFIX):
+        raise HTTPException(status_code=404, detail="No existe un journal público con ese identificador.")
 
     try:
         lineage = investment_journal_repository.verify_lineage(journal_id=journal_id)
