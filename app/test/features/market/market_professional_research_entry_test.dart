@@ -52,10 +52,10 @@ class _QuoteRepository implements MarketRepository {
   }
 }
 
-MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bool sessionDate = true, String? source = 'yahoo', int? instrumentId}) {
+MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bool sessionDate = true, String? source = 'yahoo', int? instrumentId, String? companyName}) {
   final now = DateTime.now().toUtc();
   return MarketQuote(
-    symbol: symbol, companyName: symbol, currentPrice: 123.45,
+    symbol: symbol, companyName: companyName ?? symbol, currentPrice: 123.45,
     change: 1, changePercentage: 0.82, currency: 'USD', exchange: 'NMS',
     updatedAt: now.subtract(Duration(hours: stale ? 72 : 1)),
     retrievedAt: now.subtract(const Duration(minutes: 1)),
@@ -259,7 +259,7 @@ void main() {
       (tester) async {
     final controller = _controller();
     addTearDown(controller.dispose);
-    final repository = _QuoteRepository((symbol) async => _quote(symbol));
+    final repository = _QuoteRepository((symbol) async => _quote(symbol, companyName: 'Apple Inc.'));
     String? route;
     await tester.pumpWidget(MaterialApp(
       home: MarketPage(controller: controller, quoteRepository: repository),
@@ -279,7 +279,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('market-quote-open-news')));
     await tester.tap(find.byKey(const Key('market-quote-open-news')));
     await tester.pump();
-    expect(route, '${AppRoutes.news}?symbol=AAPL');
+    expect(route, '${AppRoutes.news}?symbol=AAPL&companyName=Apple%20Inc.');
   });
 
   testWidgets('a rejected quote never offers the verified research entry',

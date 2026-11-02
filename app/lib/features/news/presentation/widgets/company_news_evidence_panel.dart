@@ -134,3 +134,4 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
       ),
     ],
   );
+}
