@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha256
-from urllib.parse import urlparse
+import re
 
 from app.services.google_news_service import GoogleNewsService
 from app.services.recommendation_athena_radar_service import AthenaRadarEvidenceInput
@@ -52,6 +52,13 @@ class RecommendationNewsEvidenceService:
                     expected_provider=provider,
                     urgency=urgency,
                 )
+                # Search-engine results do not prove issuer identity.
+                if not self._headline_mentions_issuer(
+                    evidence.summary,
+                    company_name=normalized_company,
+                    symbol=normalized_symbol,
+                ):
+                    raise ValueError("El titular no menciona al emisor solicitado")
             except (TypeError, ValueError):
                 rejected_count += 1
                 continue
@@ -72,6 +79,8 @@ class RecommendationNewsEvidenceService:
             "provenanceComplete": bool(accepted),
             "productionTruthClaimed": False,
             "independentCorroborationClaimed": False,
+            "issuerIdentityIndependentlyVerified": False,
+            "headlineMentionRequired": True,
             "recommendationInfluence": False,
             "automaticScoring": False,
             "automaticTrading": False,
@@ -98,6 +107,8 @@ class RecommendationNewsEvidenceService:
         retrieved_at = self._parse_aware_datetime(item.get("retrievedAt"), "item.retrievedAt")
         if published_at > retrieved_at:
             raise ValueError("publishedAt no puede ser posterior a retrievedAt")
+        if retrieved_at > datetime.now(timezone.utc):
+            raise ValueError("retrievedAt no puede estar en el futuro")
 
         evidence_digest = sha256(
             f"{provider}\n{article_url}\n{published_at.isoformat()}".encode("utf-8")
@@ -123,13 +134,34 @@ class RecommendationNewsEvidenceService:
         return text
 
     @staticmethod
+    def _headline_mentions_issuer(
+        title: str, *, company_name: str, symbol: str
+    ) -> bool:
+        """Conservative lexical filter; not independent issuer verification."""
+        words = re.findall(r"[^\W_]+", company_name, flags=re.UNICODE)
+        legal_suffixes = {
+            "inc", "corp", "corporation", "ltd", "limited",
+            "plc", "co", "company", "sa", "ag",
+        }
+        while words and words[-1].casefold() in legal_suffixes:
+            words.pop()
+        if words:
+            phrase = r"\s+".join(re.escape(word) for word in words)
+            if re.search(r"(?<!\w)" + phrase + r"(?!\w)", title, re.IGNORECASE):
+                return True
+        if len(symbol) >= 3 and re.search(
+            r"(?<!\w)" + re.escape(symbol) + r"(?!\w)",
+            title,
+            re.IGNORECASE,
+        ):
+            return True
+        return False
+
+    @staticmethod
     def _required_https_url(value: object, field: str) -> str:
         text = str(value or "").strip()
-        try:
-            parsed = urlparse(text)
-        except ValueError as exc:
-            raise ValueError(f"{field} debe ser HTTPS") from exc
-        if parsed.scheme != "https" or not parsed.netloc:
+        # Same strict URL contract as the feed: no credentials or backslashes.
+        if not GoogleNewsService._is_https_url(text):
             raise ValueError(f"{field} debe ser HTTPS")
         return text
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -69,6 +69,8 @@ def test_news_evidence_preserves_structured_provenance_and_pit_availability() ->
     assert result["provenanceComplete"] is True
     assert result["productionTruthClaimed"] is False
     assert result["independentCorroborationClaimed"] is False
+    assert result["issuerIdentityIndependentlyVerified"] is False
+    assert result["headlineMentionRequired"] is True
     assert result["recommendationInfluence"] is False
     assert result["automaticScoring"] is False
     assert result["automaticTrading"] is False
@@ -242,3 +244,52 @@ def test_radar_accepts_structured_news_from_non_google_provider_without_claiming
     assert result["productionEligible"] is False
     assert result["advisoryStatus"] == "no_advice"
     assert result["policy"]["automaticProductionPromotion"] is False
+
+
+@pytest.mark.parametrize(
+    ("headline", "accepted"),
+    [
+        ("Acme announces quarterly results", True),
+        ("ACME raises guidance", True),
+        ("ACMECO announces quarterly results", False),
+        ("Unrelated company announces quarterly results", False),
+    ],
+)
+def test_company_radar_news_requires_standalone_headline_issuer_mention(
+    headline: str, accepted: bool
+) -> None:
+    result = RecommendationNewsEvidenceService(
+        news_service=FakeNewsService([_valid_item(title=headline)])
+    ).build_company_evidence(company_name="Acme Corporation", symbol="ACME")
+    assert result["acceptedCount"] == int(accepted)
+    assert result["rejectedCount"] == int(not accepted)
+    assert result["issuerIdentityIndependentlyVerified"] is False
+    assert result["recommendationInfluence"] is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:password@news.google.com/rss/articles/one",
+        "https://news.google.com:invalid/rss/articles/one",
+        "https://news.google.com\\@evil.example/rss/articles/one",
+        "https://localhost/rss/articles/one",
+    ],
+)
+def test_company_radar_news_rejects_unsafe_article_urls(url: str) -> None:
+    result = RecommendationNewsEvidenceService(
+        news_service=FakeNewsService([_valid_item(articleUrl=url)])
+    ).build_company_evidence(company_name="Acme", symbol="ACME")
+    assert result["acceptedCount"] == 0
+    assert result["rejectedCount"] == 1
+
+
+def test_company_radar_news_rejects_future_retrieval_without_pit_claim() -> None:
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    result = RecommendationNewsEvidenceService(
+        news_service=FakeNewsService([_valid_item(retrievedAt=future)])
+    ).build_company_evidence(company_name="Acme", symbol="ACME")
+    assert result["status"] == "news_evidence_unavailable"
+    assert result["acceptedCount"] == 0
+    assert result["rejectedCount"] == 1
+    assert result["provenanceComplete"] is False
