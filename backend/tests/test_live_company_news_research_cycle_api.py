@@ -81,7 +81,7 @@ def _payload():
     }
 
 
-def _setup(tmp_path, monkeypatch, fake):
+def _setup(tmp_path, monkeypatch, fake, *, authenticated=True, owner_id=17):
     database = AthenaDatabase(tmp_path / "live-news-cycle.db")
     monkeypatch.setattr(cycle_api, "journal_repository", RecommendationInvestmentJournalRepository(database))
     monkeypatch.setattr(cycle_api, "cycle_repository", RecommendationProfessionalResearchCycleRepository(database))
@@ -89,6 +89,12 @@ def _setup(tmp_path, monkeypatch, fake):
         cycle_api, "live_news_evidence_service",
         RecommendationNewsEvidenceService(news_service=fake),
     )
+    if authenticated:
+        monkeypatch.setitem(
+            app.dependency_overrides,
+            cycle_api.current_account,
+            lambda: {"id": owner_id},
+        )
     return TestClient(app)
 
 
@@ -109,6 +115,8 @@ def test_live_news_bridge_persists_server_retrieved_provenance_and_reloads(tmp_p
     assert data["liveNewsRetrieval"]["licenseVerified"] is False
     assert data["liveNewsRetrieval"]["historicalReplay"] is False
     assert data["liveNewsRetrieval"]["modelExecutionVerified"] is False
+    assert data["liveNewsRetrieval"]["authenticatedWrite"] is True
+    assert data["liveNewsRetrieval"]["ownerIsolationVerified"] is False
     assert data["liveNewsRetrieval"]["metadataPersistedInCanonicalCycle"] is False
     assert fake.calls == [{"query": '"Acme Corporation" ACME', "limit": 8}]
     cycle_hash = data["integrity"]["cycleHash"]
@@ -188,5 +196,36 @@ def test_direct_cycle_rejects_future_asof_before_any_storage(tmp_path, monkeypat
     )
     assert response.status_code == 400
     assert "futuro" in response.json()["detail"]
+    with pytest.raises(ValueError, match="No existe un journal"):
+        cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
+
+
+
+def test_live_news_bridge_rejects_anonymous_write_before_fetch_or_storage(tmp_path, monkeypatch):
+    fake = FakeNewsService()
+    client = _setup(tmp_path, monkeypatch, fake, authenticated=False)
+    response = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert response.status_code == 401
+    assert response.headers.get("www-authenticate") == "Bearer"
+    assert fake.calls == []
+    with pytest.raises(ValueError, match="No existe un journal"):
+        cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
+
+
+@pytest.mark.parametrize("owner_id", [0, -1, True, "17", None])
+def test_live_news_bridge_rejects_invalid_account_context_before_fetch(
+    tmp_path, monkeypatch, owner_id,
+):
+    fake = FakeNewsService()
+    client = _setup(tmp_path, monkeypatch, fake, owner_id=owner_id)
+    response = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert response.status_code == 401
+    assert fake.calls == []
     with pytest.raises(ValueError, match="No existe un journal"):
         cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
