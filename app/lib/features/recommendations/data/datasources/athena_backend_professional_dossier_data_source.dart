@@ -125,6 +125,11 @@ class AthenaBackendProfessionalDossierDataSource {
     String? symbol,
     int? instrumentId,
   }) async {
+    // An explicit historical cutoff cannot be in the future: never ask the
+    // backend to manufacture knowledge from a time that has not occurred.
+    if (asOf != null && asOf.isAfter(DateTime.now().toUtc())) {
+      throw const FormatException('El corte PIT solicitado es futuro.');
+    }
     final query = <String, String>{};
     if (asOf != null) query['as_of'] = asOf.toUtc().toIso8601String();
     if (symbol != null && symbol.trim().isNotEmpty) {
@@ -157,6 +162,11 @@ class AthenaBackendProfessionalDossierDataSource {
     final dossier = _mapDossier(
       Map<String, dynamic>.from(decoded['data'] as Map),
     );
+    // A backend response must never exceed the caller's historical cutoff.
+    // This also protects the full research view, not only the Market preview.
+    if (asOf != null && dossier.asOf.isAfter(asOf.toUtc())) {
+      throw const FormatException('El dossier excede el corte PIT solicitado.');
+    }
     final requestedSymbol = symbol?.trim().toUpperCase();
     if (requestedSymbol != null &&
         requestedSymbol.isNotEmpty &&
@@ -175,7 +185,7 @@ class AthenaBackendProfessionalDossierDataSource {
 
   ProfessionalDossier _mapDossier(Map<String, dynamic> json) {
     final cutoff = _utc(json['asOf'], 'asOf');
-    if (cutoff.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 5)))) {
+    if (cutoff.isAfter(DateTime.now().toUtc())) {
       throw const FormatException(
         'El dossier profesional declara un corte PIT futuro no verificable.',
       );
