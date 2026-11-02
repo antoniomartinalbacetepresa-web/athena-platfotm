@@ -14,6 +14,7 @@ from app.services.persisted_market_universe_service import (
     PersistedMarketUniverseService,
 )
 from app.services.yahoo_market_service import YahooMarketService
+from app.services.market_quote_identity_service import MarketQuoteIdentityService
 
 
 router = APIRouter(
@@ -22,6 +23,7 @@ router = APIRouter(
 )
 
 market_service = YahooMarketService()
+quote_identity_service = MarketQuoteIdentityService()
 fx_rate_repository = FxRateRepository()
 fx_quote_service = FxQuoteService(
     market_service=market_service,
@@ -54,6 +56,15 @@ def get_quote(
                 "desde la fuente de mercado."
             ),
         ) from exc
+
+    # Identity enrichment is optional. A repository outage cannot fabricate a
+    # match and must not turn a quote into historical PIT evidence.
+    if isinstance(quote, dict) and quote.get("exchange") and quote.get("currency"):
+        try:
+            identity = quote_identity_service.resolve(quote)
+        except Exception:
+            identity = {"canonicalIdentityStatus": "unresolved"}
+        quote = {**quote, **identity}
 
     return {
         "data": quote,

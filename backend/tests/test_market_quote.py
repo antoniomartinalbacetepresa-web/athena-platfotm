@@ -130,6 +130,38 @@ def test_market_quote_returns_502_for_provider_error(
     }
 
 
+def test_market_quote_enriches_exact_listing(monkeypatch) -> None:
+    quote = {
+        "symbol": "AAPL", "exchange": "NMS", "currency": "USD",
+        "sourceProvider": "yahoo", "quoteType": "EQUITY",
+    }
+    monkeypatch.setattr(market.market_service, "get_quote", lambda _: dict(quote))
+    monkeypatch.setattr(
+        market.quote_identity_service, "resolve",
+        lambda _: {"canonicalIdentityStatus": "matched_internal_listing", "instrumentId": 17},
+    )
+    response = client.get("/api/v1/market/quote", params={"symbol": "AAPL"})
+    assert response.status_code == 200
+    assert response.json()["data"]["instrumentId"] == 17
+
+
+def test_market_quote_identity_outage_never_fabricates_match(monkeypatch) -> None:
+    quote = {
+        "symbol": "AAPL", "exchange": "NMS", "currency": "USD",
+        "sourceProvider": "yahoo", "quoteType": "EQUITY",
+    }
+    monkeypatch.setattr(market.market_service, "get_quote", lambda _: dict(quote))
+
+    def unavailable(_):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(market.quote_identity_service, "resolve", unavailable)
+    response = client.get("/api/v1/market/quote", params={"symbol": "AAPL"})
+    assert response.status_code == 200
+    assert response.json()["data"]["canonicalIdentityStatus"] == "unresolved"
+    assert "instrumentId" not in response.json()["data"]
+
+
 def test_market_quote_requires_symbol() -> None:
     response = client.get(
         "/api/v1/market/quote"
