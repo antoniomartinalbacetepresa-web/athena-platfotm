@@ -132,7 +132,7 @@ void main() {
     expect(find.byKey(const Key('news-research-navigation-boundary')), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('news-open-company-research')));
     await tester.tap(find.byKey(const Key('news-open-company-research')));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(openedRoute, '${AppRoutes.stockResearch}?symbol=ACME');
     expect(find.text('Destino de investigación'), findsOneWidget);
     expect(tester.takeException(), isNull);

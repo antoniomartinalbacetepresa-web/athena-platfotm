@@ -174,7 +174,7 @@ class _NewsPageState extends State<NewsPage> {
                 OutlinedButton.icon(
                   key: const Key('news-open-company-research'),
                   onPressed: () => Navigator.of(context).pushNamed(
-                    '${AppRoutes.stockResearch}?symbol=${Uri.encodeQueryComponent(symbol!)}',
+                    '${AppRoutes.stockResearch}?symbol=${Uri.encodeQueryComponent(symbol)}',
                   ),
                   icon: const Icon(Icons.analytics_outlined),
                   label: const Text('Abrir dosier ATHENA por símbolo'),
