@@ -161,6 +161,11 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             style: const TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
           ),
           const Text(
+            'IDENTIDAD CANÓNICA NO ACREDITADA: esta cotización solo comparte símbolo con el dosier. No hay vínculo de instrumento verificado.',
+            key: Key('market-quote-identity-boundary'),
+            style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
+          ),
+          const Text(
             'La cotización consultada no es evidencia PIT del dosier ATHENA. El análisis recupera sus propias fuentes.',
             key: Key('market-quote-research-boundary'),
             style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11),

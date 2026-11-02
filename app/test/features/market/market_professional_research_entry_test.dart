@@ -221,6 +221,7 @@ void main() {
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-research-boundary')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-identity-boundary')), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('market-quote-open-research')));
     await tester.tap(find.byKey(const Key('market-quote-open-research')));
     await tester.pump();

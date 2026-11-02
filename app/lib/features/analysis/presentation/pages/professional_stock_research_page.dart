@@ -5,8 +5,10 @@ import '../../../recommendations/di/recommendation_dependencies.dart';
 
 class ProfessionalStockResearchPage extends StatefulWidget {
   final String symbol;
+  /// Optional canonical DB row identity supplied by a trusted market flow.
+  final int? instrumentId;
   final AthenaBackendProfessionalDossierDataSource? dataSource;
-  const ProfessionalStockResearchPage({super.key, required this.symbol, this.dataSource});
+  const ProfessionalStockResearchPage({super.key, required this.symbol, this.instrumentId, this.dataSource});
   @override
   State<ProfessionalStockResearchPage> createState() => _ProfessionalStockResearchPageState();
 }
@@ -32,7 +34,8 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
   void didUpdateWidget(covariant ProfessionalStockResearchPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final sourceChanged = !identical(oldWidget.dataSource, widget.dataSource);
-    if (!sourceChanged && oldWidget.symbol == widget.symbol) return;
+    if (!sourceChanged && oldWidget.symbol == widget.symbol &&
+        oldWidget.instrumentId == widget.instrumentId) return;
 
     final oldDependencies = _dependencies;
     if (sourceChanged) {
@@ -53,10 +56,10 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
 
   Future<ProfessionalDossier> _load() {
     final symbol = widget.symbol.trim().toUpperCase();
-    if (symbol.isEmpty) {
+    if (symbol.isEmpty || (widget.instrumentId != null && widget.instrumentId! <= 0)) {
       return Future.error(const FormatException('El símbolo es obligatorio para investigar una acción.'));
     }
-    return _dataSource.getLatest(symbol: symbol);
+    return _dataSource.getLatest(symbol: symbol, instrumentId: widget.instrumentId);
   }
 
   void _retry() {
@@ -105,12 +108,15 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
                 !snapshot.hasData ||
                 !snapshot.data!.isSafe ||
                 snapshot.data!.symbol != symbol ||
+                (widget.instrumentId != null &&
+                    snapshot.data!.instrumentId != widget.instrumentId) ||
                 snapshot.data!.asOf.isAfter(
                   DateTime.now().toUtc().add(const Duration(minutes: 5)),
                 )) {
               return _ResearchError(onRetry: _retry);
             }
-            return _ResearchBody(symbol: symbol, dossier: snapshot.data!);
+            return _ResearchBody(symbol: symbol, dossier: snapshot.data!,
+              requestedInstrumentId: widget.instrumentId);
           },
         ),
       ),
@@ -148,7 +154,9 @@ class _ResearchError extends StatelessWidget {
 class _ResearchBody extends StatelessWidget {
   final String symbol;
   final ProfessionalDossier dossier;
-  const _ResearchBody({required this.symbol, required this.dossier});
+  final int? requestedInstrumentId;
+  const _ResearchBody({required this.symbol, required this.dossier,
+    required this.requestedInstrumentId});
 
   @override
   Widget build(BuildContext context) {
@@ -173,6 +181,14 @@ class _ResearchBody extends StatelessWidget {
           '$symbol · corte PIT ${dossier.asOf.toUtc().toIso8601String()}',
           key: const Key('professional-research-pit-cutoff'),
           style: const TextStyle(color: Colors.white),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          requestedInstrumentId == null
+              ? 'Identidad canónica Market–ATHENA NO acreditada: consulta por símbolo.'
+              : 'Identidad canónica vinculada: instrumento #$requestedInstrumentId.',
+          key: const Key('professional-research-canonical-identity'),
+          style: const TextStyle(color: Color(0xFF9FB2C7)),
         ),
         const SizedBox(height: 8),
         Semantics(

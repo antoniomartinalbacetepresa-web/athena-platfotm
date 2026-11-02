@@ -64,7 +64,12 @@ class AppRouter {
         final symbol = uri?.queryParameters['symbol']?.trim().toUpperCase() ?? '';
         return MaterialPageRoute(
           settings: settings,
-          builder: (_) => ProfessionalStockResearchPage(symbol: symbol),
+          builder: (_) => ProfessionalStockResearchPage(
+            symbol: symbol,
+            instrumentId: uri?.queryParameters.containsKey('instrumentId') == true
+                ? (int.tryParse(uri!.queryParameters['instrumentId']!) ?? -1)
+                : null,
+          ),
         );
 
       case AppRoutes.news:

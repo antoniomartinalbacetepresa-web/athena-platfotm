@@ -10,6 +10,7 @@ class _PendingDossierSource extends AthenaBackendProfessionalDossierDataSource {
 
   final Map<String, Completer<ProfessionalDossier>> pending = {};
   final List<String> requested = [];
+  final List<int?> requestedIds = [];
 
   @override
   Future<ProfessionalDossier> getLatest({
@@ -18,13 +19,15 @@ class _PendingDossierSource extends AthenaBackendProfessionalDossierDataSource {
     int? instrumentId,
   }) {
     requested.add(symbol!);
+    requestedIds.add(instrumentId);
     return pending.putIfAbsent(symbol, Completer<ProfessionalDossier>.new).future;
   }
 }
 
-ProfessionalDossier _dossier(String symbol, {String? evidenceTag}) => ProfessionalDossier(
+ProfessionalDossier _dossier(String symbol, {String? evidenceTag, int? instrumentId}) => ProfessionalDossier(
       asOf: DateTime.utc(2026, 9, 7),
       symbol: symbol,
+      instrumentId: instrumentId,
       advisoryStatus: 'no_advice',
       productionEligible: false,
       allocationEligible: false,
@@ -227,4 +230,48 @@ void main() {
     expect(find.byKey(const Key('professional-research-module-dividendTotalReturn')), findsOneWidget);
   });
 
+  testWidgets('canonical identity mismatch is rejected even with same ticker',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(
+        symbol: 'AAPL', instrumentId: 42, dataSource: source),
+    ));
+    await tester.pump();
+    expect(source.requestedIds, [42]);
+    source.pending['AAPL']!.complete(_dossier('AAPL', instrumentId: 99));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-error')), findsOneWidget);
+    expect(find.byKey(const Key('professional-research-content')), findsNothing);
+  });
+
+  testWidgets('matching canonical identity permits the read-only dossier',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(
+        symbol: 'AAPL', instrumentId: 42, dataSource: source),
+    ));
+    await tester.pump();
+    source.pending['AAPL']!.complete(_dossier('AAPL', instrumentId: 42));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('professional-research-content')), findsOneWidget);
+    expect(find.textContaining('Identidad canónica vinculada: instrumento #42'),
+        findsOneWidget);
+  });
+
+  testWidgets('invalid canonical identity never issues a backend request',
+      (tester) async {
+    final source = _PendingDossierSource();
+    addTearDown(source.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ProfessionalStockResearchPage(
+        symbol: 'AAPL', instrumentId: -1, dataSource: source),
+    ));
+    await tester.pumpAndSettle();
+    expect(source.requested, isEmpty);
+    expect(find.byKey(const Key('professional-research-error')), findsOneWidget);
+  });
 }
