@@ -84,7 +84,7 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
     return dossier.isSafe &&
         dossier.symbol == widget.symbol.trim().toUpperCase() &&
         (widget.instrumentId == null || dossier.instrumentId == widget.instrumentId) &&
-        !dossier.asOf.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 5)));
+        !dossier.asOf.isAfter(DateTime.now().toUtc());
   }
 
   @override
@@ -142,6 +142,12 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
             Text(
               'Corte PIT: ${dossier.asOf.toUtc().toIso8601String()}',
               key: const Key('market-research-pit'),
+              style: const TextStyle(color: AthenaColors.textSecondary),
+            ),
+            Text(
+              'Antigüedad del corte PIT: ${DateTime.now().toUtc().difference(dossier.asOf).inMinutes} minutos. '
+              'No acredita la actualidad de las fuentes.',
+              key: const Key('market-research-age'),
               style: const TextStyle(color: AthenaColors.textSecondary),
             ),
             Text(

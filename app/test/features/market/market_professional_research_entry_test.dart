@@ -678,4 +678,73 @@ void main() {
     expect(find.textContaining('Evidencia adjunta: 1 de 11'), findsOneWidget);
   });
 
+
+
+  testWidgets('Market rejects future PIT research even within clock-skew allowance',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(
+        controller: controller,
+        quoteRepository: _QuoteRepository(
+          (symbol) async => _quote(symbol, instrumentId: 17),
+        ),
+        researchLoader: (symbol, instrumentId) async {
+          final base = _dossier(symbol, instrumentId: instrumentId);
+          return ProfessionalDossier(
+            asOf: DateTime.now().toUtc().add(const Duration(minutes: 2)),
+            symbol: base.symbol,
+            instrumentId: base.instrumentId,
+            advisoryStatus: base.advisoryStatus,
+            productionEligible: base.productionEligible,
+            allocationEligible: base.allocationEligible,
+            executionEligible: base.executionEligible,
+            orderRoutingEligible: base.orderRoutingEligible,
+            automaticTrading: base.automaticTrading,
+            readOnly: base.readOnly,
+            modules: base.modules,
+          );
+        },
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('market-context-research-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-research-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-research-age')), findsNothing);
+    expect(find.byKey(const Key('market-research-dividend-diagnostics')), findsNothing);
+  });
+
+  testWidgets('Market shows explicit PIT age without claiming source freshness',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(
+        controller: controller,
+        quoteRepository: _QuoteRepository(
+          (symbol) async => _quote(symbol, instrumentId: 17),
+        ),
+        researchLoader: (symbol, instrumentId) async =>
+            _dossier(symbol, instrumentId: instrumentId, stale: true),
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('market-context-research-toggle')));
+    await tester.pumpAndSettle();
+    final age = tester.widget<Text>(find.byKey(const Key('market-research-age'))).data!;
+    expect(age, contains('Antigüedad del corte PIT:'));
+    expect(age, contains('No acredita la actualidad de las fuentes.'));
+    expect(find.byKey(const Key('market-research-stale')), findsOneWidget);
+  });
+
 }
