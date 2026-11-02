@@ -50,7 +50,7 @@ class _QuoteRepository implements MarketRepository {
   }
 }
 
-MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bool sessionDate = true, String? source = 'yahoo'}) {
+MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bool sessionDate = true, String? source = 'yahoo', int? instrumentId}) {
   final now = DateTime.now().toUtc();
   return MarketQuote(
     symbol: symbol, companyName: symbol, currentPrice: 123.45,
@@ -62,6 +62,8 @@ MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bo
     priceSessionDate: fallback && sessionDate ? '2026-10-30' : null,
     realTimePriceVerified: false,
     historicalPointInTimeEligible: false,
+    instrumentId: instrumentId,
+    canonicalIdentityStatus: instrumentId == null ? 'unresolved' : 'matched_internal_listing',
   );
 }
 
@@ -287,4 +289,57 @@ void main() {
     expect(find.byKey(const Key('market-quote-price')), findsNothing);
   });
 
+
+  testWidgets('matched internal listing reaches professional dossier route',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository(
+      (symbol) async => _quote(symbol, instrumentId: 17),
+    );
+    String? route;
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+      onGenerateRoute: (settings) {
+        route = settings.name;
+        return MaterialPageRoute<void>(
+          settings: settings, builder: (_) => const SizedBox(),
+        );
+      },
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-identity-match')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-identity-boundary')), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('market-quote-open-research')));
+    await tester.tap(find.byKey(const Key('market-quote-open-research')));
+    await tester.pump();
+    expect(route, '${AppRoutes.stockResearch}?symbol=AAPL&instrumentId=17');
+  });
+
+  testWidgets('contradictory internal identity blocks research navigation',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository((symbol) async => MarketQuote(
+      symbol: symbol, companyName: symbol, currentPrice: 123,
+      change: 0, changePercentage: 0, updatedAt: DateTime.now().toUtc(),
+      retrievedAt: DateTime.now().toUtc(), sourceProvider: 'yahoo',
+      exchange: 'NMS', currency: 'USD',
+      instrumentId: 17, canonicalIdentityStatus: 'unresolved',
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
+  });
 }

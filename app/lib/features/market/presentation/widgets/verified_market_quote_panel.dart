@@ -10,7 +10,7 @@ import '../../repositories/market_repository.dart';
 class VerifiedMarketQuotePanel extends StatefulWidget {
   final String symbol;
   final MarketRepository? repository;
-  final ValueChanged<String>? onOpenResearch;
+  final void Function(String symbol, int? instrumentId)? onOpenResearch;
 
   const VerifiedMarketQuotePanel({
     super.key,
@@ -90,7 +90,15 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
     final now = DateTime.now().toUtc();
     final retrieved = quote.retrievedAt?.toUtc();
     final observed = quote.updatedAt.toUtc();
-    return quote.symbol.trim().toUpperCase() == requested &&
+    final status = quote.canonicalIdentityStatus;
+    final id = quote.instrumentId;
+    final identityConsistent = status == 'matched_internal_listing'
+        ? (id != null && id > 0 &&
+            (quote.exchange?.trim().isNotEmpty ?? false) &&
+            (quote.currency?.trim().isNotEmpty ?? false))
+        : ((status == null || status == 'unresolved') && id == null);
+    return identityConsistent &&
+        quote.symbol.trim().toUpperCase() == requested &&
         quote.currentPrice.isFinite && quote.currentPrice > 0 &&
         quote.sourceProvider != null && quote.sourceProvider!.trim().isNotEmpty &&
         retrieved != null &&
@@ -160,11 +168,18 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             key: const Key('market-quote-mode'),
             style: const TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
           ),
-          const Text(
-            'IDENTIDAD CANÓNICA NO ACREDITADA: esta cotización solo comparte símbolo con el dosier. No hay vínculo de instrumento verificado.',
-            key: Key('market-quote-identity-boundary'),
-            style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
-          ),
+          if (quote.instrumentId == null)
+            const Text(
+              'IDENTIDAD CANÓNICA NO ACREDITADA: esta cotización solo comparte símbolo con el dosier. No hay vínculo de instrumento verificado.',
+              key: Key('market-quote-identity-boundary'),
+              style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
+            )
+          else
+            Text(
+              'Coincidencia exacta con registro interno ATHENA #${quote.instrumentId}. No acredita identidad externa independiente ni evidencia PIT.',
+              key: const Key('market-quote-identity-match'),
+              style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+            ),
           const Text(
             'La cotización consultada no es evidencia PIT del dosier ATHENA. El análisis recupera sus propias fuentes.',
             key: Key('market-quote-research-boundary'),
@@ -175,7 +190,7 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
               key: const Key('market-quote-open-research'),
               onPressed: () {
                 if (widget.symbol.trim().toUpperCase() != quote.symbol.trim().toUpperCase()) return;
-                widget.onOpenResearch!(quote.symbol.trim().toUpperCase());
+                widget.onOpenResearch!(quote.symbol.trim().toUpperCase(), quote.instrumentId);
               },
               child: const Text('ANALIZAR ESTA EMPRESA'),
             ),

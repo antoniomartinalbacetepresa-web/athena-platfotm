@@ -28,11 +28,13 @@ class _MarketPageState extends State<MarketPage> {
 
   void _openResearch() => _openResearchForSymbol(_symbolController.text);
 
-  void _openResearchForSymbol(String requestedSymbol) {
+  void _openResearchForSymbol(String requestedSymbol, {int? instrumentId}) {
     final symbol = requestedSymbol.trim().toUpperCase();
     if (symbol.isEmpty || symbol != _symbolController.text.trim().toUpperCase()) return;
+    final query = 'symbol=${Uri.encodeQueryComponent(symbol)}'
+        '${instrumentId != null ? '&instrumentId=$instrumentId' : ''}';
     Navigator.of(context).pushNamed(
-      '${AppRoutes.stockResearch}?symbol=${Uri.encodeQueryComponent(symbol)}',
+      '${AppRoutes.stockResearch}?$query',
     );
   }
 
@@ -109,7 +111,8 @@ class _MarketPageState extends State<MarketPage> {
                     child: VerifiedMarketQuotePanel(
                       symbol: value.text,
                       repository: widget.quoteRepository,
-                      onOpenResearch: _openResearchForSymbol,
+                      onOpenResearch: (symbol, instrumentId) =>
+                          _openResearchForSymbol(symbol, instrumentId: instrumentId),
                     ),
                   ),
                 ),
