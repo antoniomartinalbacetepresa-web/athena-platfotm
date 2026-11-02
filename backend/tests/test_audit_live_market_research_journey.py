@@ -101,3 +101,11 @@ def test_only_https_or_local_loopback_http_allowed():
         with pytest.raises(AuditBlocked):
             make_fetch(origin)
     assert callable(make_fetch("http://127.0.0.1:8000"))
+
+
+@pytest.mark.parametrize("symbol", ["AAPL\\\\", "AAPL/US", "", "A" * 22])
+def test_invalid_symbol_never_reaches_live_transport(symbol):
+    def fetch(_path, _params):
+        raise AssertionError("invalid symbol must not reach network")
+    with pytest.raises(AuditBlocked, match="Invalid symbol"):
+        audit_journey(fetch, symbol=symbol, now=NOW)
