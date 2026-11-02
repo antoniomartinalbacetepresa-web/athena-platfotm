@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.api.news as news_api
@@ -196,3 +197,79 @@ def test_company_news_api_rejects_bad_symbol_before_provider_call(monkeypatch) -
     )
     assert response.status_code == 422
     assert fake.calls == []
+
+
+def test_company_news_evidence_roundtrips_to_radar_without_losing_provenance(monkeypatch) -> None:
+    """Exercise the actual News HTTP output as Radar HTTP input, without a fake issuer binding."""
+    fake = FakeNewsService(_company_payload())
+    monkeypatch.setattr(news_api, "_news_service", fake)
+    client = TestClient(app)
+    news = client.get(
+        "/api/v1/news/company-evidence",
+        params={"companyName": "Acme Corporation", "symbol": "ACME"},
+    )
+    assert news.status_code == 200
+    evidence = news.json()["data"]
+    assert evidence["acceptedCount"] == 1
+    radar = client.post(
+        "/api/v1/recommendations/professional-research/athena-radar",
+        json={
+            "asOf": evidence["retrievedAt"],
+            "candidates": [{
+                "instrumentId": "fixture:acme:unverified-issuer",
+                "symbol": evidence["symbol"],
+                "evidence": evidence["evidence"],
+            }],
+        },
+    )
+    assert radar.status_code == 200, radar.text
+    data = radar.json()["data"]
+    item = data["candidates"][0]["evidence"][0]
+    assert item["provider"] == "google_news_rss"
+    assert item["publisher"] == "Reuters"
+    assert item["publishedAt"] == "2026-09-04T07:00:00+00:00"
+    assert item["availableAt"] == "2026-09-04T08:00:00+00:00"
+    assert item["sourceRef"] == "https://news.google.com/rss/articles/one"
+    assert data["advisoryStatus"] == "no_advice"
+    assert data["productionEligible"] is False
+    assert data["policy"]["automaticTrading"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider", None),
+        ("publisher", None),
+        ("publishedAt", None),
+        ("publishedAt", "2026-09-04T09:00:00+00:00"),
+        ("sourceRef", "http://news.example.test/unsafe"),
+    ],
+)
+def test_radar_http_rejects_missing_or_invalid_structured_news_provenance(
+    field: str, value: str | None,
+) -> None:
+    item = {
+        "evidenceId": "news:fixture",
+        "category": "news",
+        "urgency": "routine",
+        "summary": "Acme announces quarterly results",
+        "availableAt": "2026-09-04T08:00:00+00:00",
+        "source": "news",
+        "sourceRef": "https://news.google.com/rss/articles/one",
+        "provider": "google_news_rss",
+        "publisher": "Reuters",
+        "publishedAt": "2026-09-04T07:00:00+00:00",
+    }
+    item[field] = value
+    response = TestClient(app).post(
+        "/api/v1/recommendations/professional-research/athena-radar",
+        json={
+            "asOf": "2026-09-04T08:00:00+00:00",
+            "candidates": [{
+                "instrumentId": "fixture:acme:unverified-issuer",
+                "symbol": "ACME",
+                "evidence": [item],
+            }],
+        },
+    )
+    assert response.status_code == 400
