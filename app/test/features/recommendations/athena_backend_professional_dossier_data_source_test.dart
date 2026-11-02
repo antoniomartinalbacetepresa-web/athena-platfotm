@@ -49,6 +49,59 @@ void main() {
     expect(source.getLatest(symbol: 'AAPL'), throwsFormatException);
   });
 
+  test('rechaza un corte PIT solicitado en el futuro antes de hacer HTTP', () async {
+    var calls = 0;
+    final source = AthenaBackendProfessionalDossierDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async {
+        calls++;
+        return http.Response(jsonEncode({'data': _dossier()}), 200);
+      }),
+    );
+    addTearDown(source.dispose);
+
+    await expectLater(
+      source.getLatest(
+        symbol: 'AAPL',
+        asOf: DateTime.now().toUtc().add(const Duration(minutes: 1)),
+      ),
+      throwsFormatException,
+    );
+    expect(calls, 0);
+  });
+
+  test('rechaza respuesta posterior al corte PIT histórico solicitado', () async {
+    final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 2));
+    final data = _dossier()
+      ..['asOf'] = cutoff.add(const Duration(hours: 1)).toIso8601String();
+    final source = AthenaBackendProfessionalDossierDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((request) async {
+        expect(request.url.queryParameters['as_of'], cutoff.toIso8601String());
+        return http.Response(jsonEncode({'data': data}), 200);
+      }),
+    );
+    addTearDown(source.dispose);
+
+    await expectLater(
+      source.getLatest(symbol: 'AAPL', asOf: cutoff),
+      throwsFormatException,
+    );
+  });
+
+  test('rechaza respuesta PIT futura incluso dentro de cinco minutos', () async {
+    final data = _dossier()
+      ..['asOf'] = DateTime.now().toUtc()
+          .add(const Duration(minutes: 2)).toIso8601String();
+    final source = AthenaBackendProfessionalDossierDataSource(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async => http.Response(jsonEncode({'data': data}), 200)),
+    );
+    addTearDown(source.dispose);
+
+    await expectLater(source.getLatest(symbol: 'AAPL'), throwsFormatException);
+  });
+
   test('un proveedor bloqueado termina por timeout y no muestra dossier', () async {
     final pending = Completer<http.Response>();
     final source = AthenaBackendProfessionalDossierDataSource(
