@@ -421,8 +421,13 @@ void main() {
 
   testWidgets('future-dated News retrieval fails closed without exposing articles',
       (tester) async {
-    final futureFeed = _feedAt(
-      DateTime.now().toUtc().add(const Duration(days: 1)),
+    final original = _feed(1);
+    // Deliberately bypass the JSON factory to test the widget boundary.
+    final futureFeed = VerifiedNewsFeed(
+      query: original.query,
+      sourceProvider: original.sourceProvider,
+      retrievedAt: DateTime.now().toUtc().add(const Duration(days: 1)),
+      items: original.items,
     );
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
@@ -442,6 +447,27 @@ void main() {
     expect(find.text('Noticia verificada 1'), findsNothing);
     expect(find.text('https://example.com/article/1'), findsNothing);
     expect(find.byIcon(Icons.copy_outlined), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('near-future News retrieval fails closed even within five minutes',
+      (tester) async {
+    final original = _feed(1);
+    final nearFuture = VerifiedNewsFeed(
+      query: original.query,
+      sourceProvider: original.sourceProvider,
+      retrievedAt: DateTime.now().toUtc().add(const Duration(minutes: 2)),
+      items: original.items,
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SizedBox(
+        width: 400, height: 340,
+        child: NewsFeedPanel(limit: 1, loadFeed: (_) async => nearFuture),
+      )),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Fecha de noticias inválida'), findsOneWidget);
+    expect(find.text('Noticia verificada 1'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
