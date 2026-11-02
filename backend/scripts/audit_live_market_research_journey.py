@@ -134,12 +134,23 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
                 gaps.append(day.isoformat())
             day += timedelta(days=1)
     depth = (ordered[-1] - ordered[0]).days if len(ordered) > 1 else 0
+    latest_age_days = (now.date() - ordered[-1]).days if ordered else None
+    # A year-long span ending months ago is not current 365-day coverage.
+    # Seven calendar days allow weekends/market holidays; this remains only
+    # a candidate, never proof of session continuity or provider licensing.
+    current_depth_candidate = (
+        depth >= 365 and latest_age_days is not None
+        and 0 <= latest_age_days <= 7
+        and ordered[0] <= now.date() - timedelta(days=365)
+    )
     return {
         "requestedLookbackDays": 400, "rows": len(rows),
         "firstObservationUtcDate": ordered[0].isoformat() if ordered else None,
         "lastObservationUtcDate": ordered[-1].isoformat() if ordered else None,
         "observedCalendarDepthDays": depth,
         "has365CalendarDaySpan": depth >= 365,
+        "latestObservationAgeCalendarDays": latest_age_days,
+        "current365DayCoverageCandidate": current_depth_candidate,
         "candidateWeekdayGapCount": len(gaps),
         "candidateWeekdayGapDatesFirst20": gaps[:20],
         "adjustedCloseMissingCount": missing_adjusted,
