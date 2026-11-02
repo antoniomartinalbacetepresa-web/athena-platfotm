@@ -56,7 +56,9 @@ class _MarketPageState extends State<MarketPage> {
     if (!mounted || symbol != _newsSymbol) return;
     final name = companyName.trim();
     if (name.isEmpty || name.length > 100 || name.contains('"') ||
-        name.runes.any((code) => code < 32)) return;
+        name.runes.any((code) => code < 32)) {
+      return;
+    }
     setState(() => _newsCompanyName = name);
   }
 
