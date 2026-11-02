@@ -11,12 +11,14 @@ class VerifiedMarketQuotePanel extends StatefulWidget {
   final String symbol;
   final MarketRepository? repository;
   final void Function(String symbol, int? instrumentId)? onOpenResearch;
+  final void Function(String symbol)? onOpenNews;
 
   const VerifiedMarketQuotePanel({
     super.key,
     required this.symbol,
     this.repository,
     this.onOpenResearch,
+    this.onOpenNews,
   });
 
   @override
@@ -193,6 +195,15 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
                 widget.onOpenResearch!(quote.symbol.trim().toUpperCase(), quote.instrumentId);
               },
               child: const Text('ANALIZAR ESTA EMPRESA'),
+            ),
+          if (widget.onOpenNews != null)
+            OutlinedButton(
+              key: const Key('market-quote-open-news'),
+              onPressed: () {
+                if (widget.symbol.trim().toUpperCase() != quote.symbol.trim().toUpperCase()) return;
+                widget.onOpenNews!(quote.symbol.trim().toUpperCase());
+              },
+              child: const Text('NOTICIAS DE ESTA EMPRESA'),
             ),
           if (historical)
             Semantics(

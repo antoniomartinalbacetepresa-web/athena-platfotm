@@ -11,12 +11,15 @@ class NewsPage extends StatefulWidget {
   final NewsSynthesisController? synthesisController;
   final Widget? newsFeed;
   final Future<VerifiedNewsFeed> Function(int limit)? feedLoader;
+  /// Optional symbol for a textual news search, not a verified issuer binding.
+  final String? symbol;
 
   const NewsPage({
     super.key,
     this.synthesisController,
     this.newsFeed,
     this.feedLoader,
+    this.symbol,
   });
 
   @override
@@ -98,6 +101,11 @@ class _NewsPageState extends State<NewsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final symbol = widget.symbol?.trim().toUpperCase();
+    final contextual = widget.symbol != null;
+    final validSymbol = symbol != null &&
+        RegExp(r'^[A-Z0-9][A-Z0-9.^-]{0,19}$').hasMatch(symbol);
+    final newsQuery = validSymbol ? '"$symbol" stock earnings' : null;
     return Scaffold(
       backgroundColor: AthenaColors.background,
       appBar: AppBar(
@@ -133,12 +141,24 @@ class _NewsPageState extends State<NewsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (contextual) ...[
+                Text(
+                  validSymbol
+                      ? 'BÚSQUEDA DE NOTICIAS: $symbol. Coincidencia textual, no identidad de emisor verificada ni evidencia PIT. El análisis ATHENA siguiente es global, no específico de esta empresa.'
+                      : 'SÍMBOLO INVÁLIDO: no se consultarán noticias para esta entrada.',
+                  key: const Key('news-symbol-search-boundary'),
+                  style: const TextStyle(color: AthenaColors.textSecondary),
+                ),
+                const SizedBox(height: 16),
+              ],
               NewsSynthesisPanel(controller: _synthesisController),
               const SizedBox(height: 24),
-              widget.newsFeed ?? NewsFeedPanel(
-                key: ValueKey('news-page-feed-$_feedRefreshEpoch'),
+              if (!contextual || validSymbol)
+                widget.newsFeed ?? NewsFeedPanel(
+                key: ValueKey('news-page-feed-$_feedRefreshEpoch-$newsQuery'),
                 limit: 20,
                 shrinkWrap: true,
+                query: newsQuery,
                 loadFeed: widget.feedLoader,
               ),
             ],

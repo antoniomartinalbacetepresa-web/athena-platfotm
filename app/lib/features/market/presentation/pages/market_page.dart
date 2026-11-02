@@ -38,6 +38,14 @@ class _MarketPageState extends State<MarketPage> {
     );
   }
 
+  void _openNewsForSymbol(String requestedSymbol) {
+    final symbol = requestedSymbol.trim().toUpperCase();
+    if (symbol.isEmpty || symbol != _symbolController.text.trim().toUpperCase()) return;
+    Navigator.of(context).pushNamed(
+      '${AppRoutes.news}?symbol=${Uri.encodeQueryComponent(symbol)}',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -113,6 +121,7 @@ class _MarketPageState extends State<MarketPage> {
                       repository: widget.quoteRepository,
                       onOpenResearch: (symbol, instrumentId) =>
                           _openResearchForSymbol(symbol, instrumentId: instrumentId),
+                      onOpenNews: _openNewsForSymbol,
                     ),
                   ),
                 ),

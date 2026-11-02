@@ -595,6 +595,51 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('symbol news rejects a successful feed for a different query',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SizedBox(
+        width: 400,
+        height: 350,
+        child: NewsFeedPanel(
+          shrinkWrap: true,
+          query: '"AAPL" stock earnings',
+          loadFeed: (_) async => _feed(1),
+        ),
+      )),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Noticias no disponibles'), findsOneWidget);
+    expect(find.text('Noticia verificada 1'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('symbol news accepts an exact query and shows source',
+      (tester) async {
+    final general = _feed(1);
+    final matching = VerifiedNewsFeed(
+      query: '"AAPL" stock earnings',
+      sourceProvider: general.sourceProvider,
+      retrievedAt: general.retrievedAt,
+      items: general.items,
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SizedBox(
+        width: 400,
+        height: 350,
+        child: NewsFeedPanel(
+          shrinkWrap: true,
+          query: '"AAPL" stock earnings',
+          loadFeed: (_) async => matching,
+        ),
+      )),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Noticia verificada 1'), findsOneWidget);
+    expect(find.textContaining('google_news_rss'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }
 
 VerifiedNewsFeed _feedAt(DateTime retrievedAt) {

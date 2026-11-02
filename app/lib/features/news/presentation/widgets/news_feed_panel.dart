@@ -11,6 +11,7 @@ class NewsFeedPanel extends StatefulWidget {
     this.limit = 8,
     this.shrinkWrap = false,
     this.loadFeed,
+    this.query,
   });
 
   final int limit;
@@ -18,6 +19,8 @@ class NewsFeedPanel extends StatefulWidget {
   /// height-constrained dashboard card.
   final bool shrinkWrap;
   final Future<VerifiedNewsFeed> Function(int limit)? loadFeed;
+  /// Exact backend query expected when browsing a specific symbol.
+  final String? query;
 
   @override
   State<NewsFeedPanel> createState() => _NewsFeedPanelState();
@@ -36,14 +39,21 @@ class _NewsFeedPanelState extends State<NewsFeedPanel> {
     _feedFuture = Future<VerifiedNewsFeed>.sync(_load);
   }
 
-  Future<VerifiedNewsFeed> _load() =>
-      widget.loadFeed?.call(widget.limit) ??
-      _service.getFeed(limit: widget.limit);
+  Future<VerifiedNewsFeed> _load() async {
+    final feed = await (widget.loadFeed?.call(widget.limit) ??
+        _service.getFeed(limit: widget.limit, query: widget.query));
+    // An HTTP 200 with a different query must not be shown as symbol news.
+    if (widget.query != null && feed.query != widget.query) {
+      throw const FormatException('La consulta de noticias no coincide con el símbolo solicitado.');
+    }
+    return feed;
+  }
 
   @override
   void didUpdateWidget(covariant NewsFeedPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.limit != widget.limit ||
+        oldWidget.query != widget.query ||
         !identical(oldWidget.loadFeed, widget.loadFeed)) {
       // A replaced future cannot publish a stale result from an old source.
       // A synchronous failure in the replacement must not retain old articles.

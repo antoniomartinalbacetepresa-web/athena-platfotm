@@ -230,6 +230,33 @@ void main() {
     expect(route, '${AppRoutes.stockResearch}?symbol=AAPL');
   });
 
+  testWidgets('a traceable quote opens symbol-scoped news without issuer claims',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final repository = _QuoteRepository((symbol) async => _quote(symbol));
+    String? route;
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(controller: controller, quoteRepository: repository),
+      onGenerateRoute: (settings) {
+        route = settings.name;
+        return MaterialPageRoute<void>(
+          settings: settings, builder: (_) => const SizedBox(),
+        );
+      },
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), ' aapl ');
+    await tester.pump();
+    expect(find.byKey(const Key('market-quote-open-news')), findsNothing);
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('market-quote-open-news')));
+    await tester.tap(find.byKey(const Key('market-quote-open-news')));
+    await tester.pump();
+    expect(route, '${AppRoutes.news}?symbol=AAPL');
+  });
+
   testWidgets('a rejected quote never offers the verified research entry',
       (tester) async {
     final controller = _controller();
@@ -245,6 +272,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
     expect(find.byKey(const Key('market-quote-open-research')), findsNothing);
+    expect(find.byKey(const Key('market-quote-open-news')), findsNothing);
     expect(find.byKey(const Key('market-quote-research-boundary')), findsNothing);
   });
 
