@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:app/features/news/models/company_news_evidence.dart';
@@ -117,19 +118,22 @@ void main() {
   testWidgets('company evidence error never retains a previous headline',
       (tester) async {
     var calls = 0;
+    final failure = Completer<CompanyNewsEvidence>();
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
       child: CompanyNewsEvidencePanel(
         symbol: 'ACME', companyName: 'Acme Corporation',
         loadEvidence: (_, _) {
           calls++;
           if (calls == 1) return Future.value(parse(payload()));
-          return Future.error(StateError('offline'));
+          return failure.future;
         },
       ),
     ))));
     await tester.pumpAndSettle();
     expect(find.text('Acme announces results'), findsOneWidget);
     await tester.tap(find.text('Actualizar evidencia'));
+    await tester.pump();
+    failure.completeError(StateError('offline'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('company-news-evidence-error')), findsOneWidget);
     expect(find.text('Acme announces results'), findsNothing);
