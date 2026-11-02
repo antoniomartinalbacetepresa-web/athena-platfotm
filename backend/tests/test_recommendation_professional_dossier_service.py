@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -184,3 +184,40 @@ def test_rejects_a_production_decision_without_symbol() -> None:
             as_of=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
             symbol="AAPL",
         )
+
+
+def test_rejects_future_pit_cutoff_before_any_evidence_lookup() -> None:
+    class SpyReadService:
+        calls = 0
+
+        def resolve_latest(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("future PIT must never read persisted evidence")
+
+    class SpyDividendService:
+        calls = 0
+
+        def evaluate(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("future PIT must never read dividend evidence")
+
+    read = SpyReadService()
+    dividend = SpyDividendService()
+    service = RecommendationProfessionalDossierService(
+        production_read_service=read,
+        dividend_evidence_service=dividend,
+    )
+    future = datetime.now(timezone.utc) + timedelta(minutes=2)
+    with pytest.raises(ValueError, match="futuro"):
+        service.build(as_of=future, symbol="AAPL", instrument_id=7)
+    assert read.calls == 0
+    assert dividend.calls == 0
+
+
+def test_rejects_future_pit_cutoff_with_non_utc_timezone() -> None:
+    service = _service(_state(recommendation=False))
+    future = (datetime.now(timezone.utc) + timedelta(minutes=2)).astimezone(
+        timezone(timedelta(hours=-5))
+    )
+    with pytest.raises(ValueError, match="futuro"):
+        service.build(as_of=future, symbol="AAPL")
