@@ -74,6 +74,8 @@ def test_audit_reports_gaps_without_fabricating_evidence():
     assert len(report["dossier"]["modulesWithoutEvidence"]) == 11
     assert seen[-1][1] == {"symbol": "AAPL", "instrumentId": "17"}
     assert report["history"]["has365CalendarDaySpan"] is True
+    assert report["history"]["latestObservationAgeCalendarDays"] == 3
+    assert report["history"]["current365DayCoverageCandidate"] is True
     assert report["history"]["continuityVerified"] is False
     assert report["history"]["candidateWeekdayGapCount"] > 0
     assert report["history"]["dividendEventRows"] == 1
@@ -167,3 +169,35 @@ def test_news_published_after_retrieval_is_rejected():
     responses["/api/v1/news/feed"]["items"][0]["publishedAt"] = (NOW + timedelta(minutes=4)).isoformat()
     with pytest.raises(AuditBlocked, match="temporal provenance"):
         _audit(responses)
+
+
+def test_year_long_but_stale_history_is_not_current_coverage():
+    responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["timestamp"] = (NOW - timedelta(days=395)).isoformat()
+    rows[1]["timestamp"] = (NOW - timedelta(days=20)).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["has365CalendarDaySpan"] is True
+    assert report["history"]["latestObservationAgeCalendarDays"] == 20
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["history"]["continuityVerified"] is False
+
+
+@pytest.mark.parametrize("age,expected", [(7, True), (8, False)])
+def test_current_history_candidate_requires_recent_last_observation(age, expected):
+    responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["timestamp"] = (NOW - timedelta(days=395)).isoformat()
+    rows[1]["timestamp"] = (NOW - timedelta(days=age)).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is expected
+    assert report["history"]["productionCoverageClaimed"] is False
+
+
+def test_recent_history_with_less_than_one_year_is_not_coverage_candidate():
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["timestamp"] = (
+        NOW - timedelta(days=300)
+    ).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is False
