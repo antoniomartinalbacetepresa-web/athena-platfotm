@@ -193,7 +193,7 @@
       "dependencies": [],
       "requiredLevel": "implemented_ci",
       "status": "implemented_ci",
-      "reviewed": false,
+      "reviewed": true,
       "evidence": [
         {
           "kind": "ci",
@@ -202,7 +202,8 @@
           "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
         }
       ],
-      "blockers": []
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: VerifiedMarketQuotePanel comprueba símbolo, precio finito positivo, proveedor, marcas temporales, identidad interna y rechaza respuestas contradictorias; market_professional_research_entry_test.dart cubre identidad, error, carga, cambio de símbolo y cotización antigua. Evidencia de CI previa para este contrato: SHA d5305a23f82308c46f840075043dbf1ef1f2dc48. Esta revisión NO acredita proveedor real, licencia, mercado desplegado, precio en tiempo real ni PIT de dosier; quedan en MARKET-LIVE, DATA-LICENSE y AI-REAL."
     },
     {
       "id": "MARKET-ASSETS",
