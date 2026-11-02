@@ -168,3 +168,52 @@ def test_market_quote_requires_symbol() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_market_quote_rejects_provider_symbol_mismatch(monkeypatch) -> None:
+    """A provider response for a different ticker cannot reach Market."""
+    monkeypatch.setattr(
+        market.market_service, "get_quote",
+        lambda _: {"symbol": "MSFT", "close": 200.0, "sourceProvider": "yahoo"},
+    )
+    response = client.get("/api/v1/market/quote", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert "identidad incompatible" in response.json()["detail"]
+
+
+def test_market_quote_strips_untrusted_identity_if_database_unavailable(monkeypatch) -> None:
+    """An upstream provider must not impersonate the internal identity resolver."""
+    quote = {
+        "symbol": "AAPL", "exchange": "NMS", "currency": "USD",
+        "sourceProvider": "yahoo", "quoteType": "EQUITY",
+        "instrumentId": 999, "canonicalIdentityStatus": "matched_internal_listing",
+    }
+    monkeypatch.setattr(market.market_service, "get_quote", lambda _: dict(quote))
+
+    def unavailable(_):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(market.quote_identity_service, "resolve", unavailable)
+    response = client.get("/api/v1/market/quote", params={"symbol": "AAPL"})
+    assert response.status_code == 200
+    assert response.json()["data"]["canonicalIdentityStatus"] == "unresolved"
+    assert "instrumentId" not in response.json()["data"]
+
+
+def test_market_quote_identity_only_comes_from_internal_resolver(monkeypatch) -> None:
+    quote = {
+        "symbol": "AAPL", "exchange": "NMS", "currency": "USD",
+        "sourceProvider": "yahoo", "quoteType": "EQUITY",
+        "instrumentId": 999, "canonicalIdentityStatus": "matched_internal_listing",
+    }
+    monkeypatch.setattr(market.market_service, "get_quote", lambda _: dict(quote))
+
+    def resolve(provider_quote):
+        assert "instrumentId" not in provider_quote
+        assert "canonicalIdentityStatus" not in provider_quote
+        return {"canonicalIdentityStatus": "matched_internal_listing", "instrumentId": 17}
+
+    monkeypatch.setattr(market.quote_identity_service, "resolve", resolve)
+    response = client.get("/api/v1/market/quote", params={"symbol": "AAPL"})
+    assert response.status_code == 200
+    assert response.json()["data"]["instrumentId"] == 17

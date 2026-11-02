@@ -57,6 +57,24 @@ def get_quote(
             ),
         ) from exc
 
+    # A provider quote must belong to the instrument actually requested.
+    # Never let provider-supplied identity fields bypass our internal resolver.
+    if quote is not None:
+        if (
+            not isinstance(quote, dict)
+            or not isinstance(quote.get("symbol"), str)
+            or quote["symbol"].strip().upper() != symbol.strip().upper()
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail="La fuente devolvió una cotización de identidad incompatible.",
+            )
+        quote = {
+            key: value
+            for key, value in quote.items()
+            if key not in {"instrumentId", "canonicalIdentityStatus"}
+        }
+
     # Identity enrichment is optional. A repository outage cannot fabricate a
     # match and must not turn a quote into historical PIT evidence.
     if isinstance(quote, dict) and quote.get("exchange") and quote.get("currency"):
