@@ -237,7 +237,7 @@ class RecommendationProfessionalResearchCycleRepository:
         """Public reads never reveal owner-bound cycles; private reads require exact owner."""
         self.initialize()
         if owner_id is not None and (type(owner_id) is not int or owner_id <= 0):
-            raise ValueError("No existe un Professional Research Cycle accesible.")
+            raise ValueError("No existe un Professional Research Cycle con ese cycleHash.")
         normalized = self._sha256(cycle_hash, "cycle_hash")
         with self._database.connect() as connection:
             row = connection.execute(
@@ -257,9 +257,9 @@ class RecommendationProfessionalResearchCycleRepository:
         ).fetchone()
         if binding is None:
             if owner_id is not None:
-                raise ValueError("No existe un Professional Research Cycle privado accesible.")
+                raise ValueError("No existe un Professional Research Cycle con ese cycleHash.")
         elif owner_id is None or int(binding["owner_id"]) != owner_id:
-            raise ValueError("No existe un Professional Research Cycle accesible.")
+            raise ValueError("No existe un Professional Research Cycle con ese cycleHash.")
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(record, dict):
