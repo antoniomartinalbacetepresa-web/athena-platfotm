@@ -107,6 +107,9 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
           );
         }
         final count = dossier.modules.values.where((module) => module.evidence != null).length;
+        final missing = ProfessionalDossier.moduleNames
+            .where((name) => dossier.modules[name]!.evidence == null)
+            .toList()..sort();
         final old = DateTime.now().toUtc().difference(dossier.asOf) >
             const Duration(hours: 24);
         return SingleChildScrollView(
@@ -140,6 +143,13 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
               style: const TextStyle(color: AthenaColors.textSecondary),
             ),
             Text(
+              missing.isEmpty
+                  ? 'Sin evidencia adjunta: ninguno de los 11 módulos.'
+                  : 'Módulos sin evidencia adjunta (${missing.length}): ${missing.join(', ')}',
+              key: const Key('market-research-missing-modules'),
+              style: const TextStyle(color: AthenaColors.textSecondary),
+            ),
+            Text(
               'Riesgo factorial: ${dossier.modules['factorRisk']!.status} · '
               'Valoración inversa: ${dossier.modules['reverseValuation']!.status}',
               key: const Key('market-research-module-status'),
@@ -156,6 +166,11 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
               'Solo lectura; sin asesoramiento, órdenes ni trading automático.',
               key: Key('market-research-safety-boundary'),
               style: TextStyle(color: AthenaColors.textSecondary),
+            ),
+            TextButton(
+              key: const Key('market-research-refresh'),
+              onPressed: _retry,
+              child: const Text('ACTUALIZAR INVESTIGACIÓN'),
             ),
             if (widget.onOpenFullResearch != null)
               OutlinedButton(
