@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_professional_research_cycle_repository import (
+    RecommendationProfessionalResearchCycleRepository,
+)
 from app.repositories.recommendation_athena_synthesis_repository import (
     RecommendationAthenaSynthesisRepository,
 )
@@ -22,12 +25,17 @@ class RecommendationLatestAthenaSynthesisRepository:
 
     def get_latest(self) -> dict[str, Any]:
         self._canonical.initialize()
+        RecommendationProfessionalResearchCycleRepository(self._database).initialize()
         with self._database.connect() as connection:
             row = connection.execute(
                 """
-                SELECT cycle_hash
-                FROM athena_research_syntheses
-                ORDER BY id DESC
+                SELECT s.cycle_hash
+                FROM athena_research_syntheses AS s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM athena_professional_research_cycle_owners AS o
+                    WHERE o.cycle_hash = s.cycle_hash
+                )
+                ORDER BY s.id DESC
                 LIMIT 1
                 """
             ).fetchone()

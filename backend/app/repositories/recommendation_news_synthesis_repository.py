@@ -8,6 +8,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_professional_research_cycle_repository import (
+    RecommendationProfessionalResearchCycleRepository,
+)
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -66,10 +69,26 @@ class RecommendationNewsSynthesisRepository:
         return self.validate_record(self._row(row))
 
     def get_latest(self) -> dict[str, Any]:
-        """Return the newest persisted synthesis only after canonical integrity validation."""
+        """Select the newest PUBLIC synthesis, then validate its canonical package.
+
+        Private owner-bound cycles are never eligible for anonymous latest feeds.
+        A corrupt newest public artifact must still fail closed (no fallback).
+        """
         self.initialize()
+        RecommendationProfessionalResearchCycleRepository(self._database).initialize()
         with self._database.connect() as connection:
-            row = connection.execute("SELECT * FROM athena_news_syntheses ORDER BY id DESC LIMIT 1").fetchone()
+            row = connection.execute(
+                """
+                SELECT s.*
+                FROM athena_news_syntheses AS s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM athena_professional_research_cycle_owners AS o
+                    WHERE o.cycle_hash = s.cycle_hash
+                )
+                ORDER BY s.id DESC
+                LIMIT 1
+                """
+            ).fetchone()
         if row is None:
             raise ValueError("No existe ninguna síntesis News persistida.")
         selected = self.validate_record(self._row(row))
