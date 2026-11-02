@@ -165,8 +165,8 @@ class _NewsPageState extends State<NewsPage> {
               if (validCompanyName) ...[
                 CompanyNewsEvidencePanel(
                   key: ValueKey('news-company-evidence-$symbol-$companyName-$_feedRefreshEpoch'),
-                  symbol: symbol,
-                  companyName: companyName,
+                  symbol: symbol!,
+                  companyName: companyName!,
                   loadEvidence: widget.companyEvidenceLoader,
                 ),
                 const SizedBox(height: 24),
