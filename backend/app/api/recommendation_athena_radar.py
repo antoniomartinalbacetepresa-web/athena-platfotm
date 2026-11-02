@@ -158,8 +158,11 @@ def post_athena_radar(request: AthenaRadarRequest) -> dict[str, object]:
     """Prioritize PIT research attention without investment ranking, scoring or advice."""
 
     try:
+        cutoff = _aware_utc(request.asOf, "asOf")
+        if cutoff > datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="asOf no puede estar en el futuro.")
         result = service.build(
-            as_of=_aware_utc(request.asOf, "asOf"),
+            as_of=cutoff,
             candidates=tuple(
                 AthenaRadarCandidateInput(
                     instrument_id=candidate.instrumentId,
