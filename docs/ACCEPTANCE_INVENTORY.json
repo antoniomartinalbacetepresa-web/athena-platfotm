@@ -253,16 +253,23 @@
       "dependencies": [],
       "requiredLevel": "implemented_ci",
       "status": "implemented_ci",
-      "reviewed": false,
+      "reviewed": true,
       "evidence": [
         {
           "kind": "ci",
           "path": "backend/tests/test_news_api.py",
           "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
           "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_google_news_service.py",
+          "sha": "d9890b99e26054090c52ea845e81c044e23a526c",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41450778642"
         }
       ],
-      "blockers": []
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: GoogleNewsService conserva consulta, proveedor, fechas UTC, editor y enlace HTTPS; backend/tests/test_google_news_service.py y app/test/features/news/verified_news_backend_contract_test.dart verifican contratos de lectura y ausencia de autoridad. CI push/PR del SHA d9890b99e26054090c52ea845e81c044e23a526c superadas. Esta revisión acredita exclusivamente implemented_ci; las nuevas barreras contra timestamps futuros de esta sesión necesitan su propia CI. NO acredita licencia de redistribución, identidad real del emisor, cobertura/actualidad en despliegue ni fuente PIT histórica. Mantener NEWS-REAL y deployed_end_to_end bloqueados."
     },
     {
       "id": "NEWS-SYNTH",
@@ -1087,11 +1094,17 @@
     {
       "id": "DIV-ID-PIT",
       "module": "dividend_total_return",
-      "scopes": ["core", "product"],
+      "scopes": [
+        "core",
+        "product"
+      ],
       "weight": 4,
       "weightRationale": "Identidad del emisor y corte PIT son condiciones de seguridad para métricas económicas visibles en Market",
       "acceptance": "La evidencia diagnóstica de dividendos se vincula al símbolo solicitado y al dosier, rechazando sustituciones entre emisores sin elevar autoridad",
-      "dependencies": ["MARKET-QUOTE", "HIST-PIT"],
+      "dependencies": [
+        "MARKET-QUOTE",
+        "HIST-PIT"
+      ],
       "requiredLevel": "implemented_ci",
       "status": "implemented_ci",
       "reviewed": true,
