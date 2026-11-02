@@ -32,7 +32,7 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
   void initState() {
     super.initState();
     _service = AthenaBackendCompanyNewsEvidenceService();
-    _future = Future<CompanyNewsEvidence>.sync(_load);
+    _future = Future<CompanyNewsEvidence>.delayed(Duration.zero, _load);
   }
 
   @override
@@ -41,12 +41,12 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
     if (oldWidget.symbol != widget.symbol ||
         oldWidget.companyName != widget.companyName ||
         !identical(oldWidget.loadEvidence, widget.loadEvidence)) {
-      _future = Future<CompanyNewsEvidence>.sync(_load);
+      _future = Future<CompanyNewsEvidence>.delayed(Duration.zero, _load);
     }
   }
 
   void _refresh() => setState(() {
-    _future = Future<CompanyNewsEvidence>.sync(_load);
+    _future = Future<CompanyNewsEvidence>.delayed(Duration.zero, _load);
   });
 
   @override

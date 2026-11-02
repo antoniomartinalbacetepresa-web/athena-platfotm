@@ -279,7 +279,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('market-quote-open-news')));
     await tester.tap(find.byKey(const Key('market-quote-open-news')));
     await tester.pump();
-    expect(route, '${AppRoutes.news}?symbol=AAPL&companyName=Apple%20Inc.');
+    expect(route, '${AppRoutes.news}?symbol=AAPL&companyName=Apple+Inc.');
   });
 
   testWidgets('a rejected quote never offers the verified research entry',
