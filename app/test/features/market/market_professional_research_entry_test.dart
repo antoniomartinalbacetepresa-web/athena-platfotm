@@ -539,4 +539,74 @@ void main() {
     expect(find.byKey(const Key('market-research-preview')), findsNothing);
   });
 
+
+  testWidgets('Market identifies missing ATHENA modules and refreshes their evidence',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    var loads = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(
+        controller: controller,
+        quoteRepository: _QuoteRepository(
+          (symbol) async => _quote(symbol, instrumentId: 17),
+        ),
+        researchLoader: (symbol, instrumentId) async {
+          loads++;
+          final dossier = _dossier(symbol, instrumentId: instrumentId);
+          if (loads == 1) return dossier;
+          return ProfessionalDossier(
+            asOf: dossier.asOf,
+            symbol: dossier.symbol,
+            instrumentId: dossier.instrumentId,
+            advisoryStatus: dossier.advisoryStatus,
+            productionEligible: dossier.productionEligible,
+            allocationEligible: dossier.allocationEligible,
+            executionEligible: dossier.executionEligible,
+            orderRoutingEligible: dossier.orderRoutingEligible,
+            automaticTrading: dossier.automaticTrading,
+            readOnly: dossier.readOnly,
+            modules: {
+              ...dossier.modules,
+              'factorRisk': const ProfessionalModuleState(
+                status: 'diagnostic_evidence_available',
+                productionEligible: false,
+                reason: 'Test fixture; not operational evidence.',
+                evidence: {'fixture': true},
+              ),
+            },
+          );
+        },
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('market-context-research-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(loads, 1);
+    expect(find.textContaining('Evidencia adjunta: 0 de 11'), findsOneWidget);
+    final missingBefore = tester.widget<Text>(
+      find.byKey(const Key('market-research-missing-modules')),
+    );
+    expect(missingBefore.data, contains('Módulos sin evidencia adjunta (11)'));
+    expect(missingBefore.data, contains('factorRisk'));
+
+    await tester.ensureVisible(find.byKey(const Key('market-research-refresh')));
+    await tester.tap(find.byKey(const Key('market-research-refresh')));
+    await tester.pumpAndSettle();
+
+    expect(loads, 2);
+    expect(find.textContaining('Evidencia adjunta: 1 de 11'), findsOneWidget);
+    final missingAfter = tester.widget<Text>(
+      find.byKey(const Key('market-research-missing-modules')),
+    );
+    expect(missingAfter.data, contains('Módulos sin evidencia adjunta (10)'));
+    expect(missingAfter.data, isNot(contains('factorRisk')));
+    expect(find.byKey(const Key('market-research-safety-boundary')), findsOneWidget);
+  });
+
 }
