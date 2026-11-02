@@ -50,6 +50,12 @@ class RecommendationProfessionalResearchCycleRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_professional_research_cycle_journal
                 ON athena_professional_research_cycles(journal_id, id);
+
+                CREATE TABLE IF NOT EXISTS athena_professional_research_cycle_owners (
+                    cycle_hash TEXT PRIMARY KEY,
+                    owner_id INTEGER NOT NULL CHECK(owner_id > 0),
+                    FOREIGN KEY (cycle_hash) REFERENCES athena_professional_research_cycles(cycle_hash)
+                );
                 """
             )
 
@@ -156,7 +162,10 @@ class RecommendationProfessionalResearchCycleRepository:
         journal_payload: dict[str, Any],
         devils_advocate_payload: dict[str, Any],
         connection: sqlite3.Connection | None = None,
+        owner_id: int | None = None,
     ) -> dict[str, Any]:
+        if owner_id is not None and (type(owner_id) is not int or owner_id <= 0):
+            raise ValueError("owner_id debe ser un entero positivo.")
         if connection is None:
             self.initialize()
         package = self.validate_package(
@@ -189,6 +198,7 @@ class RecommendationProfessionalResearchCycleRepository:
                 record = self._row(existing_revision)
                 if record["cycle_hash"] != cycle_hash:
                     raise ValueError("La revisión ya tiene un Research Cycle distinto; el historial es inmutable.")
+                self._assert_owner_access(connection, cycle_hash, owner_id)
                 return self.validate_record(record)
 
             duplicate = connection.execute(
@@ -212,23 +222,44 @@ class RecommendationProfessionalResearchCycleRepository:
                     serialized, created_at,
                 ),
             )
+            if owner_id is not None:
+                connection.execute(
+                    "INSERT INTO athena_professional_research_cycle_owners (cycle_hash, owner_id) VALUES (?, ?)",
+                    (cycle_hash, owner_id),
+                )
             row = connection.execute(
                 "SELECT * FROM athena_professional_research_cycles WHERE cycle_hash = ?",
                 (cycle_hash,),
             ).fetchone()
         return self.validate_record(self._row(row))
 
-    def get_by_hash(self, *, cycle_hash: str) -> dict[str, Any]:
+    def get_by_hash(self, *, cycle_hash: str, owner_id: int | None = None) -> dict[str, Any]:
+        """Public reads never reveal owner-bound cycles; private reads require exact owner."""
         self.initialize()
+        if owner_id is not None and (type(owner_id) is not int or owner_id <= 0):
+            raise ValueError("No existe un Professional Research Cycle accesible.")
         normalized = self._sha256(cycle_hash, "cycle_hash")
         with self._database.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM athena_professional_research_cycles WHERE cycle_hash = ?",
                 (normalized,),
             ).fetchone()
-        if row is None:
-            raise ValueError("No existe un Professional Research Cycle con ese cycleHash.")
+            if row is None:
+                raise ValueError("No existe un Professional Research Cycle con ese cycleHash.")
+            self._assert_owner_access(connection, normalized, owner_id)
         return self.validate_record(self._row(row))
+
+    @staticmethod
+    def _assert_owner_access(connection: sqlite3.Connection, cycle_hash: str, owner_id: int | None) -> None:
+        binding = connection.execute(
+            "SELECT owner_id FROM athena_professional_research_cycle_owners WHERE cycle_hash = ?",
+            (cycle_hash,),
+        ).fetchone()
+        if binding is None:
+            if owner_id is not None:
+                raise ValueError("No existe un Professional Research Cycle privado accesible.")
+        elif owner_id is None or int(binding["owner_id"]) != owner_id:
+            raise ValueError("No existe un Professional Research Cycle accesible.")
 
     def validate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(record, dict):
