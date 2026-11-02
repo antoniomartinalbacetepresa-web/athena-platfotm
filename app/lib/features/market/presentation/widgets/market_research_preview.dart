@@ -71,6 +71,15 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
     super.dispose();
   }
 
+  // Ratios are diagnostics, not probabilities or investment forecasts.
+  // Null and non-finite values must never be rendered as zero.
+  String _percent(double? ratio) {
+    final percent = ratio == null ? null : ratio * 100;
+    return percent != null && percent.isFinite
+        ? '${percent.toStringAsFixed(2)} %'
+        : 'no disponible';
+  }
+
   bool _valid(ProfessionalDossier dossier) {
     return dossier.isSafe &&
         dossier.symbol == widget.symbol.trim().toUpperCase() &&
@@ -110,6 +119,12 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
         final missing = ProfessionalDossier.moduleNames
             .where((name) => dossier.modules[name]!.evidence == null)
             .toList()..sort();
+        final dividendModule = dossier.modules['dividendTotalReturn']!;
+        final dividendDiagnostic =
+            dividendModule.status == 'diagnostic_evidence_available' &&
+                    dividendModule.evidence != null
+                ? dividendModule.dividendDiagnostics
+                : null;
         final old = DateTime.now().toUtc().difference(dossier.asOf) >
             const Duration(hours: 24);
         return SingleChildScrollView(
@@ -153,6 +168,25 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
               'Riesgo factorial: ${dossier.modules['factorRisk']!.status} · '
               'Valoración inversa: ${dossier.modules['reverseValuation']!.status}',
               key: const Key('market-research-module-status'),
+              style: const TextStyle(color: AthenaColors.textSecondary),
+            ),
+            Text(
+              dividendDiagnostic == null
+                  ? 'Dividendos: sin diagnóstico económico PIT adjunto; '
+                      'no se estiman rentabilidades.'
+                  : dividendDiagnostic.status != 'diagnostic_ready'
+                      ? 'Dividendos: diagnóstico PIT no disponible '
+                          '(${dividendDiagnostic.status}); sin estimaciones.'
+                      : 'Dividendos (diagnóstico PIT): rentabilidad por dividendo '
+                          '${_percent(dividendDiagnostic.trailingYield)} · '
+                          'rentabilidad total 60d '
+                          '${_percent(dividendDiagnostic.totalReturn60d)} · '
+                          'payout beneficios '
+                          '${_percent(dividendDiagnostic.earningsPayoutRatio)} · '
+                          'sostenibilidad '
+                          '${dividendDiagnostic.financialSustainabilityScore == null || !dividendDiagnostic.financialSustainabilityScore!.isFinite ? "no disponible" : "${dividendDiagnostic.financialSustainabilityScore!.toStringAsFixed(2)}/1"}. '
+                          'Datos diagnósticos, no previsiones ni señales de compra.',
+              key: const Key('market-research-dividend-diagnostics'),
               style: const TextStyle(color: AthenaColors.textSecondary),
             ),
             if (old)

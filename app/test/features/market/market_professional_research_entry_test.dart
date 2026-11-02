@@ -509,6 +509,12 @@ void main() {
     expect(requested, ['AAPL:17']);
     expect(find.byKey(const Key('market-research-preview')), findsOneWidget);
     expect(find.textContaining('Evidencia adjunta: 0 de 11'), findsOneWidget);
+    expect(
+      tester.widget<Text>(
+        find.byKey(const Key('market-research-dividend-diagnostics')),
+      ).data,
+      contains('sin diagnóstico económico PIT adjunto'),
+    );
     expect(find.byKey(const Key('market-research-pit')), findsOneWidget);
     expect(find.byKey(const Key('market-research-safety-boundary')), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'MSFT');
@@ -607,6 +613,69 @@ void main() {
     expect(missingAfter.data, contains('Módulos sin evidencia adjunta (10)'));
     expect(missingAfter.data, isNot(contains('factorRisk')));
     expect(find.byKey(const Key('market-research-safety-boundary')), findsOneWidget);
+  });
+
+
+  testWidgets('Market shows PIT dividend diagnostics without inventing missing metrics',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(
+        controller: controller,
+        quoteRepository: _QuoteRepository(
+          (symbol) async => _quote(symbol, instrumentId: 17),
+        ),
+        researchLoader: (symbol, instrumentId) async {
+          final base = _dossier(symbol, instrumentId: instrumentId);
+          return ProfessionalDossier(
+            asOf: base.asOf,
+            symbol: base.symbol,
+            instrumentId: base.instrumentId,
+            advisoryStatus: base.advisoryStatus,
+            productionEligible: base.productionEligible,
+            allocationEligible: base.allocationEligible,
+            executionEligible: base.executionEligible,
+            orderRoutingEligible: base.orderRoutingEligible,
+            automaticTrading: base.automaticTrading,
+            readOnly: base.readOnly,
+            modules: {
+              ...base.modules,
+              'dividendTotalReturn': const ProfessionalModuleState(
+                status: 'diagnostic_evidence_available',
+                productionEligible: false,
+                reason: 'Datos sintéticos exclusivamente para la prueba.',
+                evidence: {'fixture': true},
+                dividendDiagnostics: ProfessionalDividendDiagnostics(
+                  status: 'diagnostic_ready',
+                  trailingYield: 0.024,
+                  totalReturn60d: -0.051,
+                  earningsPayoutRatio: null,
+                  financialSustainabilityScore: 0.8,
+                ),
+              ),
+            },
+          );
+        },
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('market-context-research-toggle')));
+    await tester.pumpAndSettle();
+
+    final text = tester.widget<Text>(
+      find.byKey(const Key('market-research-dividend-diagnostics')),
+    ).data!;
+    expect(text, contains('2.40 %'));
+    expect(text, contains('-5.10 %'));
+    expect(text, contains('payout beneficios no disponible'));
+    expect(text, contains('0.80/1'));
+    expect(text, contains('no previsiones ni señales de compra'));
+    expect(find.textContaining('Evidencia adjunta: 1 de 11'), findsOneWidget);
   });
 
 }
