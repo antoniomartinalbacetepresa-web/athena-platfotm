@@ -28,6 +28,11 @@ class AthenaRadarEvidenceRequest(BaseModel):
     availableAt: datetime
     source: str = Field(min_length=1)
     sourceRef: str = Field(min_length=1)
+    # News/investors evidence requires structured provenance. Never drop these
+    # fields between the company-evidence API and the Radar service.
+    provider: str | None = None
+    publisher: str | None = None
+    publishedAt: datetime | None = None
 
 
 class AthenaRadarCandidateRequest(BaseModel):
@@ -168,6 +173,12 @@ def post_athena_radar(request: AthenaRadarRequest) -> dict[str, object]:
                             available_at=_aware_utc(item.availableAt, "evidence.availableAt"),
                             source=item.source,
                             source_ref=item.sourceRef,
+                            provider=item.provider,
+                            publisher=item.publisher,
+                            published_at=(
+                                _aware_utc(item.publishedAt, "evidence.publishedAt")
+                                if item.publishedAt is not None else None
+                            ),
                         )
                         for item in candidate.evidence
                     ),
