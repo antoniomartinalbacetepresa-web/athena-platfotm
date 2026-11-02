@@ -201,3 +201,23 @@ def test_derived_total_return_requires_dividend_evidence_even_if_status_claims_r
         RecommendationDividendEvidenceContractService(
             signal_service=_Signal(payload)
         ).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+@pytest.mark.parametrize("wrong_symbol", ["MSFT", "DIV.A", "", None, 123])
+def test_contract_rejects_foreign_or_missing_dividend_issuer(wrong_symbol):
+    payload = _payload()
+    payload["symbol"] = wrong_symbol
+    with pytest.raises(RuntimeError, match="símbolo solicitado"):
+        RecommendationDividendEvidenceContractService(
+            signal_service=_Signal(payload)
+        ).evaluate(symbol="DIV", as_of=AS_OF)
+
+
+def test_contract_accepts_same_issuer_with_normalized_case():
+    payload = _payload()
+    payload["symbol"] = " div "
+    result = RecommendationDividendEvidenceContractService(
+        signal_service=_Signal(payload)
+    ).evaluate(symbol="DIV", as_of=AS_OF).to_api_dict()
+    assert result["signal"]["symbol"] == " div "
+    assert result["productionEligible"] is False
