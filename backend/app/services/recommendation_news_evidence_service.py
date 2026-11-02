@@ -28,30 +28,66 @@ class RecommendationNewsEvidenceService:
         symbol: str,
         limit: int = 8,
         urgency: str = "routine",
+        as_of: datetime | None = None,
     ) -> dict:
         normalized_company = self._required_text(company_name, "company_name")
         normalized_symbol = self._required_text(symbol, "symbol").upper()
+        if (len(normalized_company) > 100 or any(
+            ord(char) < 32 or char == '"' for char in normalized_company
+        )):
+            raise ValueError("company_name contiene caracteres no permitidos")
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,19}", normalized_symbol):
+            raise ValueError("symbol debe identificar un símbolo bursátil válido")
+        normalized_limit = GoogleNewsService._normalize_limit(limit)
         if urgency not in {"routine", "material", "critical"}:
             raise ValueError("urgency debe ser routine, material o critical")
+        cutoff = None
+        if as_of is not None:
+            if (not isinstance(as_of, datetime) or as_of.tzinfo is None
+                    or as_of.utcoffset() is None):
+                raise ValueError("as_of debe incluir zona horaria")
+            cutoff = as_of.astimezone(timezone.utc)
+            if cutoff > datetime.now(timezone.utc):
+                raise ValueError("as_of no puede estar en el futuro")
 
-        feed = self._news_service.get_feed(
-            query=f'"{normalized_company}" {normalized_symbol}',
-            limit=limit,
-        )
+        query = f'"{normalized_company}" {normalized_symbol}'
+        feed = self._news_service.get_feed(query=query, limit=normalized_limit)
+        if not isinstance(feed, dict):
+            raise ValueError("El feed de noticias debe ser un objeto estructurado")
         provider = self._required_text(feed.get("sourceProvider"), "sourceProvider")
         if provider != self._EXPECTED_PROVIDER:
             raise ValueError("El proveedor de noticias no coincide con la provenance esperada")
+        policy = feed.get("policy")
+        if (feed.get("status") != "news_feed_ready" or feed.get("query") != query
+                or feed.get("advisoryStatus") != "no_advice"
+                or feed.get("productionEligible") is not False
+                or not isinstance(policy, dict)
+                or any(policy.get(flag) is not False for flag in (
+                    "athenaRecommendationInfluence", "automaticScoring", "automaticTrading"
+                ))):
+            raise ValueError("El feed de noticias perdió su identidad o política research-only")
+        items = feed.get("items")
+        if (not isinstance(items, list) or type(feed.get("count")) is not int
+                or feed["count"] != len(items)):
+            raise ValueError("El feed de noticias tiene un inventario incoherente")
+        feed_retrieved = self._parse_aware_datetime(feed.get("retrievedAt"), "retrievedAt")
+        if feed_retrieved > datetime.now(timezone.utc):
+            raise ValueError("El feed de noticias declara una recuperación futura")
 
         accepted: list[AthenaRadarEvidenceInput] = []
         rejected_count = 0
         seen_urls: set[str] = set()
-        for item in feed.get("items", []):
+        for item in items:
             try:
                 evidence = self._to_evidence(
                     item=item,
                     expected_provider=provider,
                     urgency=urgency,
                 )
+                if evidence.available_at > feed_retrieved:
+                    raise ValueError("La noticia se recuperó después del feed")
+                if cutoff is not None and evidence.available_at > cutoff:
+                    raise ValueError("La noticia no estaba disponible en el corte PIT")
                 # Search-engine results do not prove issuer identity.
                 if not self._headline_mentions_issuer(
                     evidence.summary,
@@ -73,6 +109,8 @@ class RecommendationNewsEvidenceService:
             "status": "news_evidence_ready" if accepted else "news_evidence_unavailable",
             "symbol": normalized_symbol,
             "sourceProvider": provider,
+            "retrievedAt": feed_retrieved.isoformat(),
+            "asOf": cutoff.isoformat() if cutoff is not None else None,
             "acceptedCount": len(accepted),
             "rejectedCount": rejected_count,
             "evidence": tuple(accepted),
