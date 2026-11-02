@@ -1093,10 +1093,24 @@
       "acceptance": "La evidencia diagnóstica de dividendos se vincula al símbolo solicitado y al dosier, rechazando sustituciones entre emisores sin elevar autoridad",
       "dependencies": ["MARKET-QUOTE", "HIST-PIT"],
       "requiredLevel": "implemented_ci",
-      "status": "pending",
-      "reviewed": false,
-      "evidence": [],
-      "blockers": ["Pruebas de identidad entre emisores publicadas; pendiente CI del SHA final y revisión individual."]
+      "status": "implemented_ci",
+      "reviewed": true,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_recommendation_dividend_evidence_contract_service.py",
+          "sha": "bb92c749afc59d17d734e080fea7ea0fde3c4e47",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41449926761"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_recommendation_professional_dossier_service.py",
+          "sha": "bb92c749afc59d17d734e080fea7ea0fde3c4e47",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41449926761"
+        }
+      ],
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: contrato canónico y dosier rechazan dividendos de otro símbolo; casos con emisor distinto, ausente y normalización de mayúsculas. CI push/PR del SHA bb92c749afc59d17d734e080fea7ea0fde3c4e47 completadas correctamente. Solo implemented_ci con fixtures; sin evidencia de licencia, fuentes reales, despliegue o calidad económica de dividendos."
     }
   ]
 }
