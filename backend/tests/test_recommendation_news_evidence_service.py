@@ -306,8 +306,8 @@ def test_company_radar_news_rejects_future_retrieval_without_pit_claim() -> None
 
 
 class TamperedNewsService(FakeNewsService):
-    def __init__(self, items: list[dict], **changes) -> None:
-        super().__init__(items)
+    def __init__(self, base_items: list[dict], **changes) -> None:
+        super().__init__(base_items)
         self.changes = changes
 
     def get_feed(self, **kwargs) -> dict:
