@@ -256,7 +256,12 @@ def test_live_news_private_cycle_rejects_other_owner_and_anonymous_read(tmp_path
     assert client.get(private_path.replace("/private/", "/")).status_code == 404
 
     monkeypatch.setitem(app.dependency_overrides, cycle_api.current_account, lambda: {"id": 18})
-    assert client.get(private_path).status_code == 404
+    denied = client.get(private_path)
+    absent = client.get(
+        "/api/v1/recommendations/professional-research/research-cycle/private/" + "0" * 64
+    )
+    assert denied.status_code == absent.status_code == 404
+    assert denied.json()["detail"] == absent.json()["detail"]
     second = client.post(
         "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
         json=_payload(),
