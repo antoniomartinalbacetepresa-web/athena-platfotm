@@ -7,6 +7,7 @@ import 'package:app/features/market/presentation/pages/market_page.dart';
 import 'package:app/features/market/di/market_dependencies.dart';
 import 'package:app/features/market/models/market_quote.dart';
 import 'package:app/features/news/models/verified_news_feed.dart';
+import 'package:app/features/recommendations/data/datasources/athena_backend_professional_dossier_data_source.dart';
 import 'package:app/features/market/repositories/market_repository.dart';
 import 'package:app/features/market/services/global_market_data_service.dart';
 import 'package:flutter/material.dart';
@@ -65,6 +66,29 @@ MarketQuote _quote(String symbol, {bool stale = false, bool fallback = false, bo
     historicalPointInTimeEligible: false,
     instrumentId: instrumentId,
     canonicalIdentityStatus: instrumentId == null ? 'unresolved' : 'matched_internal_listing',
+  );
+}
+
+
+ProfessionalDossier _dossier(String symbol, {int? instrumentId, bool stale = false}) {
+  return ProfessionalDossier(
+    asOf: DateTime.now().toUtc().subtract(Duration(hours: stale ? 48 : 1)),
+    symbol: symbol,
+    instrumentId: instrumentId,
+    advisoryStatus: 'no_advice',
+    productionEligible: false,
+    allocationEligible: false,
+    executionEligible: false,
+    orderRoutingEligible: false,
+    automaticTrading: false,
+    readOnly: true,
+    modules: {
+      for (final name in ProfessionalDossier.moduleNames)
+        name: const ProfessionalModuleState(
+          status: 'pending', productionEligible: false,
+          reason: 'No hay evidencia PIT adjunta.',
+        ),
+    },
   );
 }
 
@@ -452,4 +476,67 @@ void main() {
     expect(find.byKey(const Key('market-context-news-boundary')), findsNothing);
     expect(newsLoads, 0);
   });
+
+  testWidgets('Market displays independently fetched ATHENA evidence beside quote and news',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final requested = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(
+        controller: controller,
+        quoteRepository: _QuoteRepository((symbol) async => _quote(symbol, instrumentId: 17)),
+        newsFeedLoader: (_) async => VerifiedNewsFeed(
+          query: '"AAPL" stock earnings',
+          sourceProvider: 'google_news_rss',
+          retrievedAt: DateTime.now().toUtc(),
+          items: const [],
+        ),
+        researchLoader: (symbol, instrumentId) async {
+          requested.add('$symbol:$instrumentId');
+          return _dossier(symbol, instrumentId: instrumentId);
+        },
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(requested, isEmpty); // No dossier request until user opens it.
+    await tester.tap(find.byKey(const Key('market-context-research-toggle')));
+    await tester.pumpAndSettle();
+    expect(requested, ['AAPL:17']);
+    expect(find.byKey(const Key('market-research-preview')), findsOneWidget);
+    expect(find.textContaining('Evidencia adjunta: 0 de 11'), findsOneWidget);
+    expect(find.byKey(const Key('market-research-pit')), findsOneWidget);
+    expect(find.byKey(const Key('market-research-safety-boundary')), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'MSFT');
+    await tester.pump();
+    expect(find.byKey(const Key('market-research-preview')), findsNothing);
+    expect(find.textContaining('RESUMEN ATHENA · AAPL'), findsNothing);
+  });
+
+  testWidgets('Market rejects a dossier with a different canonical instrument',
+      (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: MarketPage(
+        controller: controller,
+        quoteRepository: _QuoteRepository((symbol) async => _quote(symbol, instrumentId: 17)),
+        researchLoader: (symbol, _) async => _dossier(symbol, instrumentId: 18),
+      ),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'AAPL');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('market-context-research-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-research-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-research-preview')), findsNothing);
+  });
+
 }
