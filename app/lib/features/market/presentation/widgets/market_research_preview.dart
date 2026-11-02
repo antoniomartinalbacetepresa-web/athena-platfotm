@@ -144,7 +144,7 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
             ),
             Text(
               missing.isEmpty
-                  ? 'Sin evidencia adjunta: ninguno de los 11 módulos.'
+                  ? 'Módulos sin evidencia adjunta: ninguno (11 con evidencia declarada).'
                   : 'Módulos sin evidencia adjunta (${missing.length}): ${missing.join(', ')}',
               key: const Key('market-research-missing-modules'),
               style: const TextStyle(color: AthenaColors.textSecondary),
