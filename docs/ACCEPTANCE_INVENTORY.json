@@ -468,10 +468,16 @@
           "path": "backend/tests/test_live_company_news_research_cycle_api.py",
           "sha": "96fa70aecee79a62210513b113401b477b420501",
           "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41516207568"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_live_company_news_research_cycle_api.py",
+          "sha": "42c9593a64b31b4a2d12f17d3309fef5585b7336",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41524576864"
         }
       ],
       "blockers": [],
-      "reviewNote": "Revisión técnica 2026-11-02: test_recommendation_athena_synthesis_cycle_api.py prueba con TestClient y SQLite temporal el ciclo Radar→News→ATHENA, hashes canónicos, persistencia/relectura, cobertura completa de evidencia, rechazo de huellas falsas, ausencia de promoción automática y modelExecutionVerified=false. Contraste con servicios/repositories de síntesis y CI push/PR previamente verdes para SHA fa2c5a109d18a66792842f37b41f410341da0c2a. Solo acredita implemented_ci con entradas sintéticas; NO acredita proveedor real, ejecución Ollama en producción, fuentes licenciadas, ciclo desplegado ni PIT operacional. Mantener AI-REAL y deployed_end_to_end bloqueados. Incremento 2026-11-02 (SHA 96fa70aecee79a62210513b113401b477b420501): test HTTP+SQLite de noticias empresariales obtenidas en backend -> ciclo persistido/releído, sin fabricar tesis ni evidencia contradictoria. La CI push/PR del SHA superó backend, Flutter y release gate. Sin subida de nivel: el proveedor se simuló en test; NO hay evidencia de licencia, identidad externa, despliegue ni inferencia Ollama real."
+      "reviewNote": "Revisión técnica 2026-11-02: test_recommendation_athena_synthesis_cycle_api.py prueba con TestClient y SQLite temporal el ciclo Radar→News→ATHENA, hashes canónicos, persistencia/relectura, cobertura completa de evidencia, rechazo de huellas falsas, ausencia de promoción automática y modelExecutionVerified=false. Contraste con servicios/repositories de síntesis y CI push/PR previamente verdes para SHA fa2c5a109d18a66792842f37b41f410341da0c2a. Solo acredita implemented_ci con entradas sintéticas; NO acredita proveedor real, ejecución Ollama en producción, fuentes licenciadas, ciclo desplegado ni PIT operacional. Mantener AI-REAL y deployed_end_to_end bloqueados. Incremento 2026-11-02 (SHA 96fa70aecee79a62210513b113401b477b420501): test HTTP+SQLite de noticias empresariales obtenidas en backend -> ciclo persistido/releído, sin fabricar tesis ni evidencia contradictoria. La CI push/PR del SHA superó backend, Flutter y release gate. Sin subida de nivel: el proveedor se simuló en test; NO hay evidencia de licencia, identidad externa, despliegue ni inferencia Ollama real. Incremento 2026-11-02 (SHA 42c9593a64b31b4a2d12f17d3309fef5585b7336): la ruta POST desde noticias vivas exige cuenta JWT autenticada antes de acceder al RSS o escribir; seis casos nuevos rechazan ausencia de bearer y contexto de propietario inválido sin efectos. Backend 4284 pruebas y CI PR verde. La ruta POST directa y la lectura por hash permanecen sin aislamiento por propietario: NO acreditar privacidad multiusuario ni despliegue. Sin ascenso de nivel."
     },
     {
       "id": "AI-OLLAMA",
