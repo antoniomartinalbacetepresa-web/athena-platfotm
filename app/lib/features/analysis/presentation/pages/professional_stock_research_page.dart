@@ -35,7 +35,9 @@ class _ProfessionalStockResearchPageState extends State<ProfessionalStockResearc
     super.didUpdateWidget(oldWidget);
     final sourceChanged = !identical(oldWidget.dataSource, widget.dataSource);
     if (!sourceChanged && oldWidget.symbol == widget.symbol &&
-        oldWidget.instrumentId == widget.instrumentId) return;
+        oldWidget.instrumentId == widget.instrumentId) {
+      return;
+    }
 
     final oldDependencies = _dependencies;
     if (sourceChanged) {
