@@ -170,21 +170,26 @@ class _MarketPageState extends State<MarketPage> {
                     style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
                   ),
                 ),
-                TextButton(
-                  key: const Key('market-context-news-toggle'),
-                  onPressed: () => setState(() {
-                    _showContextResearch = false;
-                    _showContextNews = !_showContextNews;
-                  }),
-                  child: Text(_showContextNews ? 'VER MERCADO GLOBAL' : 'VER NOTICIAS RELACIONADAS'),
-                ),
-                TextButton(
-                  key: const Key('market-context-research-toggle'),
-                  onPressed: () => setState(() {
-                    _showContextResearch = !_showContextResearch;
-                    if (_showContextResearch) _showContextNews = true;
-                  }),
-                  child: Text(_showContextResearch ? 'VOLVER A NOTICIAS' : 'VER RESUMEN ATHENA'),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    TextButton(
+                      key: const Key('market-context-news-toggle'),
+                      onPressed: () => setState(() {
+                        _showContextResearch = false;
+                        _showContextNews = !_showContextNews;
+                      }),
+                      child: Text(_showContextNews ? 'VER MERCADO GLOBAL' : 'VER NOTICIAS RELACIONADAS'),
+                    ),
+                    TextButton(
+                      key: const Key('market-context-research-toggle'),
+                      onPressed: () => setState(() {
+                        _showContextResearch = !_showContextResearch;
+                        if (_showContextResearch) _showContextNews = true;
+                      }),
+                      child: Text(_showContextResearch ? 'VOLVER A NOTICIAS' : 'VER RESUMEN ATHENA'),
+                    ),
+                  ],
                 ),
               ],
               Expanded(

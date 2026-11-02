@@ -91,7 +91,8 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
         final dossier = snapshot.data;
         if (snapshot.hasError || dossier == null || !_valid(dossier)) {
           return Center(
-            child: Column(
+            child: SingleChildScrollView(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
@@ -101,15 +102,18 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
                 ),
                 TextButton(onPressed: _retry, child: const Text('REINTENTAR')),
               ],
+              ),
             ),
           );
         }
         final count = dossier.modules.values.where((module) => module.evidence != null).length;
         final old = DateTime.now().toUtc().difference(dossier.asOf) >
             const Duration(hours: 24);
-        return ListView(
+        return SingleChildScrollView(
           key: const Key('market-research-preview'),
-          children: [
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Semantics(
               header: true,
               child: Text(
@@ -159,7 +163,8 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
                 onPressed: widget.onOpenFullResearch,
                 child: const Text('ABRIR DOSIER COMPLETO'),
               ),
-          ],
+            ],
+          ),
         );
       },
     );
