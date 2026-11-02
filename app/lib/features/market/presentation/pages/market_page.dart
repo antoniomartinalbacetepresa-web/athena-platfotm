@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
 import '../../controllers/global_market_context_controller.dart';
+import '../../../news/models/verified_news_feed.dart';
+import '../../../news/presentation/widgets/news_feed_panel.dart';
 import '../../repositories/market_repository.dart';
 import '../widgets/global_market_panel.dart';
 import '../widgets/verified_market_quote_panel.dart';
@@ -10,8 +12,9 @@ import '../widgets/verified_market_quote_panel.dart';
 class MarketPage extends StatefulWidget {
   final GlobalMarketContextController? controller;
   final MarketRepository? quoteRepository;
+  final Future<VerifiedNewsFeed> Function(int limit)? newsFeedLoader;
 
-  const MarketPage({super.key, this.controller, this.quoteRepository});
+  const MarketPage({super.key, this.controller, this.quoteRepository, this.newsFeedLoader});
 
   @override
   State<MarketPage> createState() => _MarketPageState();
@@ -19,6 +22,20 @@ class MarketPage extends StatefulWidget {
 
 class _MarketPageState extends State<MarketPage> {
   final _symbolController = TextEditingController();
+  String? _newsSymbol;
+  bool _showContextNews = true;
+
+  void _clearQuoteContext() {
+    if (_newsSymbol != null) setState(() => _newsSymbol = null);
+  }
+
+  void _onQuoteValidated(String symbol) {
+    if (!mounted || symbol != _symbolController.text.trim().toUpperCase()) return;
+    setState(() {
+      _newsSymbol = symbol;
+      _showContextNews = true;
+    });
+  }
 
   @override
   void dispose() {
@@ -86,6 +103,7 @@ class _MarketPageState extends State<MarketPage> {
                     Expanded(
                       child: TextField(
                         controller: _symbolController,
+                        onChanged: (_) => _clearQuoteContext(),
                         textCapitalization: TextCapitalization.characters,
                         textInputAction: TextInputAction.search,
                         onSubmitted: (_) => _openResearch(),
@@ -122,12 +140,40 @@ class _MarketPageState extends State<MarketPage> {
                       onOpenResearch: (symbol, instrumentId) =>
                           _openResearchForSymbol(symbol, instrumentId: instrumentId),
                       onOpenNews: _openNewsForSymbol,
+                      onQuoteValidated: _onQuoteValidated,
+                      onQuoteRequestStarted: _clearQuoteContext,
                     ),
                   ),
                 ),
               ),
               const SizedBox(height: 12),
-              Expanded(child: GlobalMarketPanel(controller: widget.controller)),
+              if (_newsSymbol != null) ...[
+                Semantics(
+                  container: true,
+                  child: Text(
+                    'NOTICIAS RELACIONADAS CON $_newsSymbol: búsqueda textual, '
+                    'no identidad de emisor ni evidencia PIT acreditadas. '
+                    'Las cotizaciones y las noticias tienen fuentes y fechas independientes.',
+                    key: const Key('market-context-news-boundary'),
+                    style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+                  ),
+                ),
+                TextButton(
+                  key: const Key('market-context-news-toggle'),
+                  onPressed: () => setState(() => _showContextNews = !_showContextNews),
+                  child: Text(_showContextNews ? 'VER MERCADO GLOBAL' : 'VER NOTICIAS RELACIONADAS'),
+                ),
+              ],
+              Expanded(
+                child: _newsSymbol != null && _showContextNews
+                    ? NewsFeedPanel(
+                        key: ValueKey('market-context-news-$_newsSymbol'),
+                        limit: 5,
+                        query: '"$_newsSymbol" stock earnings',
+                        loadFeed: widget.newsFeedLoader,
+                      )
+                    : GlobalMarketPanel(controller: widget.controller),
+              ),
             ],
           ),
         ),
