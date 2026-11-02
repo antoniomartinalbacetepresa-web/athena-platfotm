@@ -22,8 +22,18 @@ class FakeNewsService:
         self.calls.append(kwargs)
         return {
             "status": "news_feed_ready",
+            "query": kwargs["query"],
             "sourceProvider": self.provider,
+            "retrievedAt": datetime.now(timezone.utc).isoformat(),
+            "count": len(self.items),
             "items": self.items,
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+            "policy": {
+                "athenaRecommendationInfluence": False,
+                "automaticScoring": False,
+                "automaticTrading": False,
+            },
         }
 
 
@@ -293,3 +303,84 @@ def test_company_radar_news_rejects_future_retrieval_without_pit_claim() -> None
     assert result["acceptedCount"] == 0
     assert result["rejectedCount"] == 1
     assert result["provenanceComplete"] is False
+
+
+class TamperedNewsService(FakeNewsService):
+    def __init__(self, items: list[dict], **changes) -> None:
+        super().__init__(items)
+        self.changes = changes
+
+    def get_feed(self, **kwargs) -> dict:
+        payload = super().get_feed(**kwargs)
+        payload.update(self.changes)
+        return payload
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"query": '"Other Company" OTHER'},
+        {"status": "unknown"},
+        {"productionEligible": True},
+        {"advisoryStatus": "investment_advice"},
+        {"policy": {"athenaRecommendationInfluence": True}},
+        {"policy": {"athenaRecommendationInfluence": False, "automaticScoring": False, "automaticTrading": True}},
+        {"count": 99},
+        {"items": "invalid"},
+        {"retrievedAt": "2099-01-01T00:00:00+00:00"},
+    ],
+)
+def test_company_news_fails_closed_on_tampered_feed_contract(changes: dict) -> None:
+    service = RecommendationNewsEvidenceService(
+        news_service=TamperedNewsService([_valid_item()], **changes)
+    )
+    with pytest.raises(ValueError):
+        service.build_company_evidence(company_name="Acme", symbol="ACME")
+
+
+def test_company_news_pit_cutoff_rejects_late_retrieval_without_rewriting_publication() -> None:
+    fake = FakeNewsService([_valid_item()])
+    service = RecommendationNewsEvidenceService(news_service=fake)
+    result = service.build_company_evidence(
+        company_name="Acme", symbol="ACME",
+        as_of=datetime(2026, 9, 12, 10, 4, tzinfo=timezone.utc),
+    )
+    assert result["status"] == "news_evidence_unavailable"
+    assert result["acceptedCount"] == 0
+    assert result["rejectedCount"] == 1
+    assert result["asOf"] == "2026-09-12T10:04:00+00:00"
+    assert result["productionTruthClaimed"] is False
+
+
+def test_company_news_pit_cutoff_includes_observed_evidence_at_exact_cutoff() -> None:
+    result = RecommendationNewsEvidenceService(
+        news_service=FakeNewsService([_valid_item()])
+    ).build_company_evidence(
+        company_name="Acme", symbol="ACME",
+        as_of=datetime(2026, 9, 12, 10, 5, tzinfo=timezone.utc),
+    )
+    assert result["acceptedCount"] == 1
+    assert result["evidence"][0].available_at.isoformat() == result["asOf"]
+
+
+@pytest.mark.parametrize("cutoff", [
+    datetime(2026, 9, 12, 10, 5),
+    datetime(2099, 1, 1, tzinfo=timezone.utc),
+])
+def test_company_news_rejects_invalid_pit_cutoff_before_network(cutoff: datetime) -> None:
+    fake = FakeNewsService([_valid_item()])
+    with pytest.raises(ValueError):
+        RecommendationNewsEvidenceService(news_service=fake).build_company_evidence(
+            company_name="Acme", symbol="ACME", as_of=cutoff,
+        )
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("symbol", ["ACME OR BAD", "A/BC", "A\\nB", "X" * 21])
+def test_company_news_rejects_invalid_symbol_before_network(symbol: str) -> None:
+    fake = FakeNewsService([_valid_item()])
+    with pytest.raises(ValueError):
+        RecommendationNewsEvidenceService(news_service=fake).build_company_evidence(
+            company_name="Acme", symbol=symbol,
+        )
+    assert fake.calls == []
