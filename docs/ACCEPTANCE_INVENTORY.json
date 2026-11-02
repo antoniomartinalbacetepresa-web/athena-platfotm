@@ -1083,6 +1083,20 @@
       "reviewed": false,
       "evidence": [],
       "blockers": []
+    },
+    {
+      "id": "DIV-ID-PIT",
+      "module": "dividend_total_return",
+      "scopes": ["core", "product"],
+      "weight": 4,
+      "weightRationale": "Identidad del emisor y corte PIT son condiciones de seguridad para métricas económicas visibles en Market",
+      "acceptance": "La evidencia diagnóstica de dividendos se vincula al símbolo solicitado y al dosier, rechazando sustituciones entre emisores sin elevar autoridad",
+      "dependencies": ["MARKET-QUOTE", "HIST-PIT"],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": ["Pruebas de identidad entre emisores publicadas; pendiente CI del SHA final y revisión individual."]
     }
   ]
 }
