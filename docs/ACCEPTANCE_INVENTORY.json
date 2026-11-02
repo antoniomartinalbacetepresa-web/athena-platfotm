@@ -448,7 +448,7 @@
       "dependencies": [],
       "requiredLevel": "implemented_ci",
       "status": "implemented_ci",
-      "reviewed": false,
+      "reviewed": true,
       "evidence": [
         {
           "kind": "ci",
@@ -457,7 +457,8 @@
           "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
         }
       ],
-      "blockers": []
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: test_recommendation_athena_synthesis_cycle_api.py prueba con TestClient y SQLite temporal el ciclo Radar→News→ATHENA, hashes canónicos, persistencia/relectura, cobertura completa de evidencia, rechazo de huellas falsas, ausencia de promoción automática y modelExecutionVerified=false. Contraste con servicios/repositories de síntesis y CI push/PR previamente verdes para SHA fa2c5a109d18a66792842f37b41f410341da0c2a. Solo acredita implemented_ci con entradas sintéticas; NO acredita proveedor real, ejecución Ollama en producción, fuentes licenciadas, ciclo desplegado ni PIT operacional. Mantener AI-REAL y deployed_end_to_end bloqueados."
     },
     {
       "id": "AI-OLLAMA",
