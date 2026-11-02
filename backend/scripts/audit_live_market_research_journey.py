@@ -52,7 +52,7 @@ def _text(value: object) -> str:
 def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
     """Audit responses through injected GET(path, params); no fixture fallback."""
     symbol = symbol.strip().upper()
-    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\\-]{0,19}", symbol):
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,19}", symbol):
         raise AuditBlocked("Invalid symbol")
     if now.tzinfo is None or now.utcoffset() is None:
         raise AuditBlocked("Audit clock must be timezone-aware")
