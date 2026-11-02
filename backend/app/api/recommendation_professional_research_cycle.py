@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.auth import current_account
 from app.repositories.recommendation_investment_journal_repository import (
     RecommendationInvestmentJournalRepository,
 )
@@ -324,6 +326,7 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
 @router.post("/research-cycle/from-live-company-news")
 def post_research_cycle_from_live_company_news(
     request: LiveCompanyResearchCycleRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
 ) -> dict[str, object]:
     """Fetch current RSS news on the server and atomically persist a human-authored PIT cycle.
 
@@ -331,6 +334,11 @@ def post_research_cycle_from_live_company_news(
     thesis, references and contradictory evidence are mandatory; no fabricated
     Journal or Devil's Advocate evidence is generated from headlines.
     """
+    # Authenticate before fetching remote news or mutating persistent research.
+    # The shared research repository is NOT owner-isolated; do not claim privacy.
+    owner_id = account.get("id")
+    if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id <= 0:
+        raise HTTPException(status_code=401, detail="Credenciales no válidas.")
     try:
         news = live_news_evidence_service.build_company_evidence(
             company_name=request.companyName,
@@ -409,6 +417,8 @@ def post_research_cycle_from_live_company_news(
         "metadataPersistedInCanonicalCycle": False,
         "evidencePersistedInCanonicalRadar": True,
         "humanReviewRequired": True,
+        "authenticatedWrite": True,
+        "ownerIsolationVerified": False,
         "automaticTrading": False,
     }
     return result
