@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.recommendation_professional_research_cycle as cycle_api
+import app.api.recommendation_investment_journal as journal_api
 from app.database.athena_database import AthenaDatabase
 from app.main import app
 from app.repositories.recommendation_investment_journal_repository import RecommendationInvestmentJournalRepository
@@ -84,6 +85,7 @@ def _payload():
 def _setup(tmp_path, monkeypatch, fake, *, authenticated=True, owner_id=17):
     database = AthenaDatabase(tmp_path / "live-news-cycle.db")
     monkeypatch.setattr(cycle_api, "journal_repository", RecommendationInvestmentJournalRepository(database))
+    monkeypatch.setattr(journal_api, "investment_journal_repository", RecommendationInvestmentJournalRepository(database))
     monkeypatch.setattr(cycle_api, "cycle_repository", RecommendationProfessionalResearchCycleRepository(database))
     monkeypatch.setattr(
         cycle_api, "live_news_evidence_service",
@@ -95,6 +97,8 @@ def _setup(tmp_path, monkeypatch, fake, *, authenticated=True, owner_id=17):
             cycle_api.current_account,
             lambda: {"id": owner_id},
         )
+    else:
+        monkeypatch.delitem(app.dependency_overrides, cycle_api.current_account, raising=False)
     return TestClient(app)
 
 
@@ -117,11 +121,17 @@ def test_live_news_bridge_persists_server_retrieved_provenance_and_reloads(tmp_p
     assert data["liveNewsRetrieval"]["modelExecutionVerified"] is False
     assert data["liveNewsRetrieval"]["authenticatedWrite"] is True
     assert data["liveNewsRetrieval"]["ownerIsolationVerified"] is False
+    assert data["liveNewsRetrieval"]["cycleOwnerBindingVerified"] is True
+    assert data["liveNewsRetrieval"]["privateReadRequiresAuthentication"] is True
     assert data["liveNewsRetrieval"]["metadataPersistedInCanonicalCycle"] is False
     assert fake.calls == [{"query": '"Acme Corporation" ACME', "limit": 8}]
     cycle_hash = data["integrity"]["cycleHash"]
-    persisted = client.get(
+    public = client.get(
         f"/api/v1/recommendations/professional-research/research-cycle/{cycle_hash}"
+    )
+    assert public.status_code == 404
+    persisted = client.get(
+        f"/api/v1/recommendations/professional-research/research-cycle/private/{cycle_hash}"
     )
     assert persisted.status_code == 200, persisted.text
     package = persisted.json()["data"]["package"]
@@ -132,6 +142,7 @@ def test_live_news_bridge_persists_server_retrieved_provenance_and_reloads(tmp_p
     assert item["sourceRef"] == "https://news.google.com/rss/articles/acme"
     assert item["availableAt"] <= package["cycle"]["asOf"]
     assert package["cycle"]["symbol"] == "ACME"
+    assert package["journal"]["journalId"].startswith("__athena_private_owner_17__:")
 
 
 @pytest.mark.parametrize("headline,unsafe", [
@@ -229,3 +240,76 @@ def test_live_news_bridge_rejects_invalid_account_context_before_fetch(
     assert fake.calls == []
     with pytest.raises(ValueError, match="No existe un journal"):
         cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
+
+
+
+def test_live_news_private_cycle_rejects_other_owner_and_anonymous_read(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch, FakeNewsService(), owner_id=17)
+    created = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert created.status_code == 200, created.text
+    cycle_hash = created.json()["data"]["integrity"]["cycleHash"]
+    private_path = f"/api/v1/recommendations/professional-research/research-cycle/private/{cycle_hash}"
+    assert client.get(private_path).status_code == 200
+    assert client.get(private_path.replace("/private/", "/")).status_code == 404
+
+    monkeypatch.setitem(app.dependency_overrides, cycle_api.current_account, lambda: {"id": 18})
+    assert client.get(private_path).status_code == 404
+    second = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert second.status_code == 200, second.text
+    second_hash = second.json()["data"]["integrity"]["cycleHash"]
+    assert second_hash != cycle_hash
+    assert client.get(f"/api/v1/recommendations/professional-research/research-cycle/private/{second_hash}").status_code == 200
+    monkeypatch.setitem(app.dependency_overrides, cycle_api.current_account, lambda: {"id": 17})
+    assert client.get(f"/api/v1/recommendations/professional-research/research-cycle/private/{second_hash}").status_code == 404
+    assert client.get(private_path).status_code == 200
+
+    monkeypatch.delitem(app.dependency_overrides, cycle_api.current_account, raising=False)
+    assert client.get(private_path).status_code == 401
+
+
+def test_private_journal_namespace_cannot_be_read_or_written_through_public_routes(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch, FakeNewsService(), owner_id=17)
+    created = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert created.status_code == 200, created.text
+    private_id = created.json()["data"]["journal"]["journalId"]
+    assert private_id.startswith("__athena_private_owner_17__:")
+    lineage = client.get(
+        f"/api/v1/recommendations/professional-research/investment-journal/{private_id}/lineage"
+    )
+    assert lineage.status_code == 404
+
+    earlier = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+    public_snapshot = {
+        "journalId": private_id, "revisionId": "revision-2", "symbol": "ACME",
+        "recordedAt": earlier, "asOf": earlier, "thesis": "Attempted public mutation",
+        "references": _payload()["journalReferences"],
+    }
+    assert client.post(
+        "/api/v1/recommendations/professional-research/investment-journal/persisted-snapshot",
+        json=public_snapshot,
+    ).status_code == 403
+    direct = _payload()
+    direct.pop("companyName")
+    direct["journalId"] = private_id
+    direct["asOf"] = earlier
+    direct["recordedAt"] = earlier
+    direct["radarEvidence"] = [{
+        "evidenceId": "news:synthetic", "category": "news", "urgency": "routine",
+        "summary": "Acme results", "availableAt": earlier,
+        "source": "news", "sourceRef": "https://news.google.com/rss/articles/acme",
+        "provider": "google_news_rss", "publisher": "Example Publisher",
+        "publishedAt": earlier,
+    }]
+    assert client.post(
+        "/api/v1/recommendations/professional-research/research-cycle",
+        json=direct,
+    ).status_code == 403
