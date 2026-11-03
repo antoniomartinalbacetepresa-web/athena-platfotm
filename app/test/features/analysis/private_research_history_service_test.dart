@@ -1,5 +1,6 @@
 import 'package:app/features/analysis/services/private_research_history_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/auth/models/auth_account.dart';
 import 'package:app/features/auth/services/auth_token_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -44,4 +45,30 @@ void main() {
     service.dispose();
     client.close();
   });
+  test('oversized authenticated history is rejected before JSON parsing', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'test-token',
+      account: AuthAccount(
+        id: 1,
+        email: 'test@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      expect(request.headers['Authorization'], 'Bearer test-token');
+      return http.Response('x' * (PrivateResearchHistoryService.maxResponseBytes + 1), 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    await expectLater(service.load(symbol: 'AAPL'), throwsFormatException);
+    expect(requests, 1);
+    service.dispose();
+    client.close();
+  });
+
 }
