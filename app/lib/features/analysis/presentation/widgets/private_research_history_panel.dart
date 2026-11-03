@@ -161,8 +161,10 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Síntesis $kind persistida (solo lectura)'),
+            Text('Corte de investigación (PIT): ${snapshot.data!.asOf.toUtc().toIso8601String()}'),
+            Text('Antigüedad del corte: ${_pitAge(snapshot.data!.asOf)}. No acredita la actualidad de cotizaciones ni noticias.'),
             Text(snapshot.data!.summary),
-            const Text('Ejecución del modelo no verificada; requiere revisión humana.'),
+            const Text('Fuentes, licencias y ejecución del modelo no verificadas en esta vista; requiere revisión humana.'),
           ],
         );
       },
