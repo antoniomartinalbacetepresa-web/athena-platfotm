@@ -56,6 +56,9 @@ class RecommendationProfessionalResearchCycleRepository:
                     owner_id INTEGER NOT NULL CHECK(owner_id > 0),
                     FOREIGN KEY (cycle_hash) REFERENCES athena_professional_research_cycles(cycle_hash)
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_professional_research_cycle_owner
+                ON athena_professional_research_cycle_owners(owner_id, cycle_hash);
                 """
             )
 
@@ -248,6 +251,49 @@ class RecommendationProfessionalResearchCycleRepository:
                 raise ValueError("No existe un Professional Research Cycle con ese cycleHash.")
             self._assert_owner_access(connection, normalized, owner_id)
         return self.validate_record(self._row(row))
+
+    def list_private(
+        self, *, owner_id: int, symbol: str | None = None,
+        limit: int = 20, before_id: int | None = None,
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        """Owner-scoped keyset listing. Validate every returned canonical package.
+
+        The SQL predicate authorizes before reading any private payload. Never
+        return partial results if one selected record fails integrity checks.
+        """
+        if type(owner_id) is not int or owner_id <= 0:
+            raise ValueError("No existe una cuenta autorizada para consultar ciclos.")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("limit debe estar entre 1 y 50.")
+        if before_id is not None and (type(before_id) is not int or before_id <= 0):
+            raise ValueError("before_id debe ser un entero positivo.")
+        normalized_symbol = None
+        if symbol is not None:
+            normalized_symbol = symbol.strip().upper()
+            if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\\-]{0,19}", normalized_symbol):
+                raise ValueError("symbol no es válido.")
+
+        self.initialize()
+        conditions = ["o.owner_id = ?"]
+        params: list[Any] = [owner_id]
+        if normalized_symbol is not None:
+            conditions.append("c.symbol = ?")
+            params.append(normalized_symbol)
+        if before_id is not None:
+            conditions.append("c.id < ?")
+            params.append(before_id)
+        where = " AND ".join(conditions)
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT c.* FROM athena_professional_research_cycles AS c
+                    INNER JOIN athena_professional_research_cycle_owners AS o
+                        ON o.cycle_hash = c.cycle_hash
+                    WHERE {where} ORDER BY c.id DESC LIMIT ?""",
+                (*params, limit + 1),
+            ).fetchall()
+        records = [self.validate_record(self._row(row)) for row in rows[:limit]]
+        next_before_id = records[-1]["id"] if len(rows) > limit else None
+        return records, next_before_id
 
     @staticmethod
     def _assert_owner_access(connection: sqlite3.Connection, cycle_hash: str, owner_id: int | None) -> None:
