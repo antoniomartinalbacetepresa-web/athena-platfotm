@@ -157,6 +157,11 @@ class PrivateResearchHistoryService {
   /// synthesis is an explicit absence, not a verified model execution.
   Future<PrivateResearchSynthesis?> loadSynthesis(
       PrivateResearchEntry entry, {required bool athena}) async {
+    // A synthesis must never inherit an impossible future PIT timestamp,
+    // even if its canonical cycle hash and owner binding are otherwise valid.
+    if (!entry.asOf.isUtc || entry.asOf.isAfter(DateTime.now().toUtc())) {
+      throw const FormatException('Corte PIT de síntesis privada inválido.');
+    }
     if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(entry.cycleHash)) {
       throw const FormatException('Identificador privado inválido.');
     }
