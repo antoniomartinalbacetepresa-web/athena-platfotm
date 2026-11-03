@@ -93,7 +93,6 @@ class PrivateResearchHistoryService {
   }
 
   /// Owner-authorized detail; never retries through a public endpoint.
-  /// Owner-authorized detail; never retries through a public endpoint.
   Future<PrivateResearchCycleDetail> loadCycle(PrivateResearchEntry entry) async {
     if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(entry.cycleHash)) {
       throw const FormatException('Identificador privado inválido.');
@@ -138,8 +137,12 @@ class PrivateResearchHistoryService {
     }
     final package = data['package'] as Map<String, dynamic>;
     final persistence = data['persistence'] as Map<String, dynamic>;
+    final packageAsOf = package['asOf'];
+    final parsedAsOf = packageAsOf is String ? DateTime.tryParse(packageAsOf) : null;
     if (persistence['cycleHash'] != entry.cycleHash ||
-        package['symbol'] != entry.symbol) {
+        package['symbol'] != entry.symbol ||
+        parsedAsOf == null || !parsedAsOf.isUtc ||
+        !parsedAsOf.isAtSameMomentAs(entry.asOf)) {
       throw const FormatException('Identidad privada incoherente.');
     }
     return PrivateResearchCycleDetail(
