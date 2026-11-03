@@ -318,3 +318,90 @@ def test_private_journal_namespace_cannot_be_read_or_written_through_public_rout
         "/api/v1/recommendations/professional-research/research-cycle",
         json=direct,
     ).status_code == 403
+
+
+def test_private_cycle_discovery_is_owner_scoped_paginated_and_read_only(tmp_path, monkeypatch):
+    fake = FakeNewsService()
+    client = _setup(tmp_path, monkeypatch, fake, owner_id=17)
+    base = "/api/v1/recommendations/professional-research/research-cycle"
+    created = client.post(f"{base}/from-live-company-news", json=_payload())
+    assert created.status_code == 200, created.text
+    first_hash = created.json()["data"]["integrity"]["cycleHash"]
+
+    another = _payload()
+    another["journalId"] = "journal-live-acme-second"
+    created_second = client.post(f"{base}/from-live-company-news", json=another)
+    assert created_second.status_code == 200, created_second.text
+    second_hash = created_second.json()["data"]["integrity"]["cycleHash"]
+    assert first_hash != second_hash
+
+    listed = client.get(f"{base}/private", params={"symbol": "acme", "limit": 1})
+    assert listed.status_code == 200, listed.text
+    page = listed.json()["data"]
+    assert page["returnedCount"] == 1
+    assert page["hasMore"] is True
+    assert type(page["nextBeforeId"]) is int
+    assert page["items"][0]["cycleHash"] == second_hash
+    assert page["items"][0]["packageIntegrityVerified"] is True
+    assert page["readOnly"] is True
+    assert page["metadataOnly"] is True
+    assert page["ownerIsolationVerified"] is False
+    assert page["licenseVerified"] is False
+    assert page["modelExecutionVerified"] is False
+    assert page["automaticTrading"] is False
+    assert "package" not in page["items"][0]
+    assert "thesis" not in page["items"][0]
+
+    next_page = client.get(
+        f"{base}/private",
+        params={"symbol": "ACME", "limit": 1, "before_id": page["nextBeforeId"]},
+    )
+    assert next_page.status_code == 200, next_page.text
+    assert next_page.json()["data"]["items"][0]["cycleHash"] == first_hash
+    assert next_page.json()["data"]["hasMore"] is False
+    assert next_page.json()["data"]["nextBeforeId"] is None
+    assert client.get(f"{base}/private", params={"symbol": "MSFT"}).json()["data"]["items"] == []
+
+    monkeypatch.setitem(app.dependency_overrides, cycle_api.current_account, lambda: {"id": 18})
+    other_owner = client.get(f"{base}/private")
+    assert other_owner.status_code == 200
+    assert other_owner.json()["data"]["items"] == []
+    other_created = client.post(f"{base}/from-live-company-news", json=_payload())
+    assert other_created.status_code == 200, other_created.text
+    other_hash = other_created.json()["data"]["integrity"]["cycleHash"]
+    assert other_hash not in {first_hash, second_hash}
+    assert [item["cycleHash"] for item in client.get(f"{base}/private").json()["data"]["items"]] == [other_hash]
+    assert len(fake.calls) == 3  # Listing never fetches live news.
+
+    monkeypatch.delitem(app.dependency_overrides, cycle_api.current_account, raising=False)
+    assert client.get(f"{base}/private").status_code == 401
+
+
+@pytest.mark.parametrize("params", [
+    {"limit": 0}, {"limit": 51}, {"before_id": 0},
+    {"symbol": "ACME/../other"}, {"symbol": ""},
+])
+def test_private_cycle_discovery_rejects_invalid_query(tmp_path, monkeypatch, params):
+    client = _setup(tmp_path, monkeypatch, FakeNewsService())
+    response = client.get(
+        "/api/v1/recommendations/professional-research/research-cycle/private",
+        params=params,
+    )
+    assert response.status_code == 422
+
+
+def test_private_cycle_discovery_fails_closed_on_tampered_package(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch, FakeNewsService(), owner_id=17)
+    base = "/api/v1/recommendations/professional-research/research-cycle"
+    created = client.post(f"{base}/from-live-company-news", json=_payload())
+    assert created.status_code == 200, created.text
+    cycle_hash = created.json()["data"]["integrity"]["cycleHash"]
+    with cycle_api.cycle_repository._database.connect() as connection:
+        connection.execute(
+            "UPDATE athena_professional_research_cycles SET package_json = ? WHERE cycle_hash = ?",
+            ('{"tampered":true}', cycle_hash),
+        )
+    response = client.get(f"{base}/private")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "No se pudo verificar el índice privado de investigaciones."
+    assert "items" not in response.json()
