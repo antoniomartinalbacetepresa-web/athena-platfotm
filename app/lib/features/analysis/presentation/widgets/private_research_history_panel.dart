@@ -68,7 +68,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
       future: _pending,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Semantics(
+          return Semantics(
             liveRegion: true,
             child: Text('Cargando investigaciones privadas…',
                 key: Key('private-research-loading')),
