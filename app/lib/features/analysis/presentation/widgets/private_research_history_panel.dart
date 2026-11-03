@@ -19,6 +19,8 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   int _generation = 0;
   Future<PrivateResearchCycleDetail>? _selectedDetail;
   PrivateResearchEntry? _selectedEntry;
+  Future<PrivateResearchSynthesis?>? _news;
+  Future<PrivateResearchSynthesis?>? _athena;
   int _sessionVersion = AuthSession.instance.authorityVersion;
 
   PrivateResearchHistoryService get _service =>
@@ -43,6 +45,8 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     final generation = ++_generation;
     _selectedDetail = null;
     _selectedEntry = null;
+    _news = null;
+    _athena = null;
     if (!AuthSession.instance.isAuthenticated) {
       _pending = null;
       return;
@@ -59,6 +63,8 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     setState(() {
       _selectedEntry = null;
       _selectedDetail = null;
+      _news = null;
+      _athena = null;
     });
   }
 
@@ -67,6 +73,8 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     final generation = _generation;
     setState(() {
       _selectedEntry = entry;
+      _news = _service.loadSynthesis(entry, athena: false);
+      _athena = _service.loadSynthesis(entry, athena: true);
       _selectedDetail = _service.loadCycle(entry).then((detail) {
         if (generation != _generation || !AuthSession.instance.isAuthenticated) {
           throw StateError('La consulta privada ha quedado obsoleta.');
@@ -100,6 +108,31 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     AuthSession.instance.removeListener(_onSessionChanged);
     _ownedService?.dispose();
     super.dispose();
+  }
+
+  Widget _synthesisPanel(Future<PrivateResearchSynthesis?> future, String kind) {
+    return FutureBuilder<PrivateResearchSynthesis?>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Text('Consultando síntesis $kind…');
+        }
+        if (snapshot.hasError) {
+          return Text('No se pudo verificar la síntesis $kind.');
+        }
+        if (!snapshot.hasData) {
+          return Text('Síntesis $kind no persistida para este ciclo.');
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Síntesis $kind persistida (solo lectura)'),
+            Text(snapshot.data!.summary),
+            const Text('Ejecución del modelo no verificada; requiere revisión humana.'),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -185,7 +218,8 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
                       Text('Empresa: ${detail.symbol}'),
                       Text('Corte PIT: ${detail.asOf.toUtc().toIso8601String()}'),
                       Text('Ciclo: ${detail.cycleHash}'),
-                      const Text('Las síntesis News y ATHENA requieren comprobación independiente.'),
+                      if (_news != null) _synthesisPanel(_news!, 'News'),
+                      if (_athena != null) _synthesisPanel(_athena!, 'ATHENA'),
                       const Text('Este detalle no verifica cotizaciones, noticias, licencias ni ejecución Ollama.'),
                     ],
                   );
