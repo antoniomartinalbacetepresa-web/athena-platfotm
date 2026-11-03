@@ -156,31 +156,7 @@ class PrivateResearchHistoryService {
   /// synthesis is an explicit absence, not a verified model execution.
   Future<PrivateResearchSynthesis?> loadSynthesis(
       PrivateResearchEntry entry, {required bool athena}) async {
-    if (!RegExp(r'^[a-f0-9]{64}
-    if (_ownsClient) _client.close();
-  }
-}
-
-class PrivateResearchEntry {
-  const PrivateResearchEntry({required this.cycleHash, required this.symbol, required this.asOf});
-  final String cycleHash;
-  final String symbol;
-  final DateTime asOf;
-}
-
-class PrivateResearchPage {
-  const PrivateResearchPage(this.items);
-  final List<PrivateResearchEntry> items;
-}
-
-/// Minimal verified display model; raw private thesis is not exposed in UI.
-class PrivateResearchCycleDetail {
-  const PrivateResearchCycleDetail({required this.symbol, required this.cycleHash, required this.asOf});
-  final String symbol;
-  final String cycleHash;
-  final DateTime asOf;
-}
-).hasMatch(entry.cycleHash)) {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(entry.cycleHash)) {
       throw const FormatException('Identificador privado inválido.');
     }
     final token = _session.accessToken;
