@@ -73,6 +73,43 @@ void main() {
     client.close();
   });
 
+  test('private detail rejects future PIT and invalid symbol without network', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'test-token',
+      account: AuthAccount(
+        id: 1,
+        email: 'test@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      return http.Response('{}', 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    await expectLater(
+      service.loadCycle(PrivateResearchEntry(
+        cycleHash: 'a' * 64, symbol: 'AAPL',
+        asOf: now.add(const Duration(days: 1)),
+      )),
+      throwsFormatException,
+    );
+    await expectLater(
+      service.loadCycle(PrivateResearchEntry(
+        cycleHash: 'a' * 64, symbol: '../other', asOf: now,
+      )),
+      throwsFormatException,
+    );
+    expect(requests, 0);
+    service.dispose();
+    client.close();
+  });
+
   test('owner-scoped detail uses private route and validates cycle binding', () async {
     final session = AuthSession.forTesting(_TokenStore());
     final now = DateTime.now().toUtc();
