@@ -105,7 +105,7 @@ class LiveCompanyResearchCycleRequest(BaseModel):
 
     instrumentId: str = Field(min_length=1)
     companyName: str = Field(min_length=1, max_length=100)
-    symbol: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.\\-]*$")
+    symbol: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
     journalId: str = Field(min_length=1)
     revisionId: str = Field(min_length=1)
     thesis: str = Field(min_length=1)
@@ -446,7 +446,7 @@ def post_research_cycle_from_live_company_news(
 @router.get("/research-cycle/private")
 def list_private_professional_research_cycles(
     account: Annotated[dict[str, Any], Depends(current_account)],
-    symbol: str | None = Query(default=None, min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.\\-]*$"),
+    symbol: str | None = Query(default=None, min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*$"),
     limit: int = Query(default=20, ge=1, le=50),
     before_id: int | None = Query(default=None, ge=1),
 ) -> dict[str, object]:
