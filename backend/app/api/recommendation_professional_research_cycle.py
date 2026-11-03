@@ -460,8 +460,12 @@ def list_private_professional_research_cycles(
         records, next_before_id = cycle_repository.list_private(
             owner_id=owner_id, symbol=symbol, limit=limit, before_id=before_id,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ValueError, TypeError) as exc:
+        # Invalid stored canonical packages are server integrity failures, not
+        # client mistakes. Never echo private payload or database details.
+        raise HTTPException(
+            status_code=500, detail="No se pudo verificar el índice privado de investigaciones."
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail="No se pudo verificar el índice privado de investigaciones."
