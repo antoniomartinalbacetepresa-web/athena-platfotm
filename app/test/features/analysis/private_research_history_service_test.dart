@@ -239,6 +239,7 @@ void main() {
     final entry = PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now);
     final result = await service.loadSynthesis(entry, athena: false);
     expect(result!.summary, 'Research only');
+    expect(result.asOf, now);
     expect(paths, ['/api/v1/recommendations/professional-research/research-cycle/private/$hash/news-synthesis']);
     service.dispose();
     client.close();
@@ -266,6 +267,7 @@ void main() {
     final entry = PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now);
     final result = await service.loadSynthesis(entry, athena: true);
     expect(result!.kind, 'ATHENA');
+    expect(result.asOf, now);
     expect(result.summary, 'Human review only');
     service.dispose();
     client.close();
