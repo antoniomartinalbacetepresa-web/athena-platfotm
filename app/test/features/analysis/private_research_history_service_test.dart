@@ -216,4 +216,33 @@ void main() {
     client.close();
   });
 
+  test('private News synthesis is owner-scoped and rejects unverifiable model status', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-token',
+      account: AuthAccount(id: 1, email: 'owner@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    final hash = 'e' * 64;
+    final paths = <String>[];
+    final client = MockClient((request) async {
+      paths.add(request.url.path);
+      expect(request.headers['Authorization'], 'Bearer owner-token');
+      return http.Response(
+        '{"data":{"cycleBindingVerified":true,"automaticTrading":false,'
+        '"recommendationInfluence":false,"synthesis":{'
+        '"modelExecutionVerified":false,"summary":"Research only"},'
+        '"persistence":{"cycleHash":"$hash"}}}', 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    final entry = PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now);
+    final result = await service.loadSynthesis(entry, athena: false);
+    expect(result!.summary, 'Research only');
+    expect(paths, ['/api/v1/recommendations/professional-research/research-cycle/private/$hash/news-synthesis']);
+    service.dispose();
+    client.close();
+  });
+
+
 }
