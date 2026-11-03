@@ -55,6 +55,13 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     });
   }
 
+  void _closeCycle() {
+    setState(() {
+      _selectedEntry = null;
+      _selectedDetail = null;
+    });
+  }
+
   void _openCycle(PrivateResearchEntry entry) {
     if (!AuthSession.instance.isAuthenticated) return;
     final generation = _generation;
@@ -142,6 +149,12 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
                 child: const Text('Abrir investigación'),
               ),
             )),
+            if (_selectedDetail != null)
+              TextButton(
+                key: const Key('private-research-close-detail'),
+                onPressed: _closeCycle,
+                child: const Text('Cerrar investigación'),
+              ),
             if (_selectedDetail != null)
               FutureBuilder<PrivateResearchCycleDetail>(
                 future: _selectedDetail,
