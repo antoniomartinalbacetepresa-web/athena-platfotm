@@ -305,4 +305,34 @@ void main() {
     client.close();
   });
 
+
+  test('private synthesis 404 is unavailable and never uses public fallback', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-token',
+      account: AuthAccount(id: 1, email: 'owner@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    final hash = 'b' * 64;
+    final paths = <String>[];
+    final client = MockClient((request) async {
+      paths.add(request.url.path);
+      expect(request.headers['Authorization'], 'Bearer owner-token');
+      return http.Response('{"detail":"Not found"}', 404);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    final result = await service.loadSynthesis(
+      PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now),
+      athena: true,
+    );
+    expect(result, isNull);
+    expect(paths, [
+      '/api/v1/recommendations/professional-research/research-cycle/private/$hash/athena-synthesis',
+    ]);
+    service.dispose();
+    client.close();
+  });
+
+
 }
