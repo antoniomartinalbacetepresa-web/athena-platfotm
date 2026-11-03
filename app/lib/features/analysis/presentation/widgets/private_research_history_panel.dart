@@ -110,6 +110,18 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     super.dispose();
   }
 
+  void _retrySynthesis(bool athena) {
+    final entry = _selectedEntry;
+    if (entry == null || !AuthSession.instance.isAuthenticated) return;
+    setState(() {
+      if (athena) {
+        _athena = _service.loadSynthesis(entry, athena: true);
+      } else {
+        _news = _service.loadSynthesis(entry, athena: false);
+      }
+    });
+  }
+
   Widget _synthesisPanel(Future<PrivateResearchSynthesis?> future, String kind) {
     return FutureBuilder<PrivateResearchSynthesis?>(
       future: future,
@@ -118,7 +130,16 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
           return Text('Consultando síntesis $kind…');
         }
         if (snapshot.hasError) {
-          return Text('No se pudo verificar la síntesis $kind.');
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('No se pudo verificar la síntesis $kind.'),
+              TextButton(
+                onPressed: () => _retrySynthesis(kind == 'ATHENA'),
+                child: Text('Reintentar síntesis $kind'),
+              ),
+            ],
+          );
         }
         if (!snapshot.hasData) {
           return Text('Síntesis $kind no persistida para este ciclo.');
