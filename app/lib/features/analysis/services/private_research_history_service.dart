@@ -207,7 +207,7 @@ class PrivateResearchHistoryService {
     }
     return PrivateResearchSynthesis(
       kind: athena ? 'ATHENA' : 'News', summary: summary,
-      cycleHash: entry.cycleHash,
+      cycleHash: entry.cycleHash, asOf: entry.asOf,
     );
   }
 
@@ -238,8 +238,9 @@ class PrivateResearchCycleDetail {
 
 /// Verified canonical binding, not verified execution of the language model.
 class PrivateResearchSynthesis {
-  const PrivateResearchSynthesis({required this.kind, required this.summary, required this.cycleHash});
+  const PrivateResearchSynthesis({required this.kind, required this.summary, required this.cycleHash, required this.asOf});
   final String kind;
   final String summary;
   final String cycleHash;
+  final DateTime asOf;
 }
