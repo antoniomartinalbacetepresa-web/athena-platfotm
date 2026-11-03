@@ -21,6 +21,9 @@ class PrivateResearchHistoryService {
   final bool _ownsClient;
   final AuthSession _session;
 
+  static const Duration requestTimeout = Duration(seconds: 15);
+  static const int maxResponseBytes = 256 * 1024;
+
   Future<PrivateResearchPage> load({required String symbol, int limit = 20}) async {
     final normalized = symbol.trim().toUpperCase();
     if (!RegExp(r'^[A-Z0-9][A-Z0-9.-]{0,19}$').hasMatch(normalized)) {
@@ -36,7 +39,9 @@ class PrivateResearchHistoryService {
     final version = _session.authorityVersion;
     final uri = Uri.parse('$_baseUrl/api/v1/recommendations/professional-research/research-cycle/private')
         .replace(queryParameters: {'symbol': normalized, 'limit': '$limit'});
-    final response = await _client.get(uri, headers: {'Authorization': 'Bearer $token'});
+    final response = await _client
+        .get(uri, headers: {'Authorization': 'Bearer $token'})
+        .timeout(requestTimeout);
     if (_session.authorityVersion != version ||
         !_session.isAuthenticated || _session.accessToken != token) {
       throw StateError('La sesión cambió durante la consulta privada.');
@@ -46,6 +51,9 @@ class PrivateResearchHistoryService {
     }
     if (response.statusCode != 200) {
       throw StateError('No se pudo verificar el historial privado.');
+    }
+    if (response.bodyBytes.length > maxResponseBytes) {
+      throw const FormatException('Respuesta privada demasiado grande.');
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map<String, dynamic> || decoded['data'] is! Map<String, dynamic>) {
