@@ -17,6 +17,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   PrivateResearchHistoryService? _ownedService;
   Future<PrivateResearchPage>? _pending;
   int _generation = 0;
+  int _selectionVersion = 0;
   Future<PrivateResearchCycleDetail>? _selectedDetail;
   PrivateResearchEntry? _selectedEntry;
   Future<PrivateResearchSynthesis?>? _news;
@@ -43,6 +44,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
 
   void _reload() {
     final generation = ++_generation;
+    ++_selectionVersion;
     _selectedDetail = null;
     _selectedEntry = null;
     _news = null;
@@ -60,6 +62,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   }
 
   void _closeCycle() {
+    ++_selectionVersion;
     setState(() {
       _selectedEntry = null;
       _selectedDetail = null;
@@ -71,13 +74,23 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   void _openCycle(PrivateResearchEntry entry) {
     if (!AuthSession.instance.isAuthenticated) return;
     final generation = _generation;
+    final selection = ++_selectionVersion;
     setState(() {
       _selectedEntry = entry;
-      _news = _service.loadSynthesis(entry, athena: false);
-      _athena = _service.loadSynthesis(entry, athena: true);
+      _news = null;
+      _athena = null;
+      // Never fetch or display synthesis before verifying the private cycle.
       _selectedDetail = _service.loadCycle(entry).then((detail) {
-        if (generation != _generation || !AuthSession.instance.isAuthenticated) {
+        if (generation != _generation ||
+            selection != _selectionVersion ||
+            !AuthSession.instance.isAuthenticated) {
           throw StateError('La consulta privada ha quedado obsoleta.');
+        }
+        if (mounted) {
+          setState(() {
+            _news = _service.loadSynthesis(entry, athena: false);
+            _athena = _service.loadSynthesis(entry, athena: true);
+          });
         }
         return detail;
       });
