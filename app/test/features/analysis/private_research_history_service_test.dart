@@ -95,7 +95,7 @@ void main() {
       return http.Response(
         '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
         '"automaticTrading":false,"isWeightingReady":false,'
-        '"package":{"symbol":"AAPL"},"persistence":{"cycleHash":"$hash"}}}',
+        '"package":{"symbol":"AAPL","asOf":"${now.toIso8601String()}"},"persistence":{"cycleHash":"$hash"}}}',
         200,
       );
     });
@@ -106,6 +106,37 @@ void main() {
     expect(detail.cycleHash, hash);
     expect(detail.symbol, 'AAPL');
     expect(requests, 1);
+    service.dispose();
+    client.close();
+  });
+
+  test('private detail rejects a mismatched PIT timestamp', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'test-token',
+      account: AuthAccount(
+        id: 1,
+        email: 'test@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final hash = 'c' * 64;
+    final wrongAsOf = now.subtract(const Duration(days: 1)).toIso8601String();
+    final client = MockClient((request) async => http.Response(
+      '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
+      '"automaticTrading":false,"isWeightingReady":false,'
+      '"package":{"symbol":"AAPL","asOf":"$wrongAsOf"},'
+      '"persistence":{"cycleHash":"$hash"}}}',
+      200,
+    ));
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    await expectLater(
+      service.loadCycle(PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now)),
+      throwsFormatException,
+    );
     service.dispose();
     client.close();
   });
@@ -146,7 +177,7 @@ void main() {
     pendingResponse.complete(http.Response(
       '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
       '"automaticTrading":false,"isWeightingReady":false,'
-      '"package":{"symbol":"AAPL"},"persistence":{"cycleHash":"$hash"}}}',
+      '"package":{"symbol":"AAPL","asOf":"${now.toIso8601String()}"},"persistence":{"cycleHash":"$hash"}}}',
       200,
     ));
     await expectLater(pending, throwsStateError);
