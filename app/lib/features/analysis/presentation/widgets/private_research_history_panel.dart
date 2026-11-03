@@ -18,6 +18,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   Future<PrivateResearchPage>? _pending;
   int _generation = 0;
   Future<PrivateResearchCycleDetail>? _selectedDetail;
+  PrivateResearchEntry? _selectedEntry;
   int _sessionVersion = AuthSession.instance.authorityVersion;
 
   PrivateResearchHistoryService get _service =>
@@ -41,6 +42,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   void _reload() {
     final generation = ++_generation;
     _selectedDetail = null;
+    _selectedEntry = null;
     if (!AuthSession.instance.isAuthenticated) {
       _pending = null;
       return;
@@ -57,6 +59,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     if (!AuthSession.instance.isAuthenticated) return;
     final generation = _generation;
     setState(() {
+      _selectedEntry = entry;
       _selectedDetail = _service.loadCycle(entry).then((detail) {
         if (generation != _generation || !AuthSession.instance.isAuthenticated) {
           throw StateError('La consulta privada ha quedado obsoleta.');
@@ -148,8 +151,17 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
                         key: Key('private-research-detail-loading'));
                   }
                   if (detailSnapshot.hasError || !detailSnapshot.hasData) {
-                    return const Text('No se pudo verificar esta investigación privada.',
-                        key: Key('private-research-detail-error'));
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('No se pudo verificar esta investigación privada.',
+                            key: Key('private-research-detail-error')),
+                        TextButton(
+                          onPressed: _selectedEntry == null ? null : () => _openCycle(_selectedEntry!),
+                          child: const Text('Reintentar investigación privada'),
+                        ),
+                      ],
+                    );
                   }
                   final detail = detailSnapshot.data!;
                   return Column(
@@ -161,6 +173,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
                       Text('Corte PIT: ${detail.asOf.toUtc().toIso8601String()}'),
                       Text('Ciclo: ${detail.cycleHash}'),
                       const Text('Las síntesis News y ATHENA requieren comprobación independiente.'),
+                      const Text('Este detalle no verifica cotizaciones, noticias, licencias ni ejecución Ollama.'),
                     ],
                   );
                 },
