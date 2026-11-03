@@ -76,6 +76,14 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     }
   }
 
+  String _pitAge(DateTime asOf) {
+    final age = DateTime.now().toUtc().difference(asOf.toUtc());
+    if (age.isNegative) return 'fecha futura no verificada';
+    if (age.inDays > 0) return '${age.inDays} días';
+    if (age.inHours > 0) return '${age.inHours} horas';
+    return '${age.inMinutes} minutos';
+  }
+
   @override
   void dispose() {
     ++_generation;
@@ -123,7 +131,9 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
             ...items.map((entry) => ListTile(
               key: Key('private-research-${entry.cycleHash}'),
               title: Text('Corte PIT: ${entry.asOf.toUtc().toIso8601String()}'),
-              subtitle: Text('Hash del ciclo: ${entry.cycleHash}'),
+              subtitle: Text('Hash del ciclo: ${entry.cycleHash}\n'
+                  'Antigüedad del corte PIT: ${_pitAge(entry.asOf)}. '
+                  'La fecha PIT no acredita actualidad de precios ni noticias.'),
               trailing: TextButton(
                 onPressed: () => _openCycle(entry),
                 child: const Text('Abrir investigación'),
