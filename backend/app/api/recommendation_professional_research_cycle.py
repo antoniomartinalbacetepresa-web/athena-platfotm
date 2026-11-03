@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import current_account
@@ -441,6 +441,60 @@ def post_research_cycle_from_live_company_news(
         "automaticTrading": False,
     }
     return result
+
+
+@router.get("/research-cycle/private")
+def list_private_professional_research_cycles(
+    account: Annotated[dict[str, Any], Depends(current_account)],
+    symbol: str | None = Query(default=None, min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.\\-]*$"),
+    limit: int = Query(default=20, ge=1, le=50),
+    before_id: int | None = Query(default=None, ge=1),
+) -> dict[str, object]:
+    """Discover only the authenticated owner's cycles, with no public fallback.
+
+    Metadata is not a license, issuer-verification or model-execution claim.
+    Each returned row is canonically revalidated by the repository.
+    """
+    owner_id = _owner_id(account)
+    try:
+        records, next_before_id = cycle_repository.list_private(
+            owner_id=owner_id, symbol=symbol, limit=limit, before_id=before_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="No se pudo verificar el índice privado de investigaciones."
+        ) from exc
+    return {
+        "data": {
+            "items": [
+                {
+                    "cycleHash": record["cycle_hash"],
+                    "symbol": record["symbol"],
+                    "instrumentId": record["instrument_id"],
+                    "asOf": record["as_of"],
+                    "createdAt": record["created_at"],
+                    "radarHash": record["radar_hash"],
+                    "packageIntegrityVerified": True,
+                }
+                for record in records
+            ],
+            "returnedCount": len(records),
+            "hasMore": next_before_id is not None,
+            "nextBeforeId": next_before_id,
+            "readOnly": True,
+            "metadataOnly": True,
+            "cycleOwnerBindingVerified": True,
+            "ownerIsolationVerified": False,
+            "licenseVerified": False,
+            "issuerIdentityIndependentlyVerified": False,
+            "modelExecutionVerified": False,
+            "advisoryStatus": "no_advice",
+            "productionEligible": False,
+            "automaticTrading": False,
+        }
+    }
 
 
 @router.get("/research-cycle/private/{cycle_hash}")
