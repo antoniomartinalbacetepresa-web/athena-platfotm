@@ -379,7 +379,7 @@ def test_private_cycle_discovery_is_owner_scoped_paginated_and_read_only(tmp_pat
 
 @pytest.mark.parametrize("params", [
     {"limit": 0}, {"limit": 51}, {"before_id": 0},
-    {"symbol": "ACME/../other"}, {"symbol": ""},
+    {"symbol": "ACME/../other"}, {"symbol": ""}, {"symbol": "ACME\\\\OTHER"},
 ])
 def test_private_cycle_discovery_rejects_invalid_query(tmp_path, monkeypatch, params):
     client = _setup(tmp_path, monkeypatch, FakeNewsService())
