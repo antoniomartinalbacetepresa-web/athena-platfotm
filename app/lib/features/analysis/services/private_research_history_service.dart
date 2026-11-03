@@ -142,6 +142,7 @@ class PrivateResearchHistoryService {
     if (persistence['cycleHash'] != entry.cycleHash ||
         package['symbol'] != entry.symbol ||
         parsedAsOf == null || !parsedAsOf.isUtc ||
+        parsedAsOf.isAfter(DateTime.now().toUtc()) ||
         !parsedAsOf.isAtSameMomentAs(entry.asOf)) {
       throw const FormatException('Identidad privada incoherente.');
     }
