@@ -266,6 +266,12 @@
           "path": "backend/tests/test_google_news_service.py",
           "sha": "d9890b99e26054090c52ea845e81c044e23a526c",
           "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41450778642"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_public_latest_private_cycle_isolation.py",
+          "sha": "67f042de3793959ac7c0f254541b5c9eed600f2f",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41549234901"
         }
       ],
       "blockers": [],
@@ -480,6 +486,12 @@
           "path": "backend/tests/test_private_research_synthesis_cycle_api.py",
           "sha": "58dc0379351375cac3aacef1a44e2960b8eaaead",
           "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41541865842"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_public_latest_private_cycle_isolation.py",
+          "sha": "67f042de3793959ac7c0f254541b5c9eed600f2f",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41549234901"
         }
       ],
       "blockers": [],
