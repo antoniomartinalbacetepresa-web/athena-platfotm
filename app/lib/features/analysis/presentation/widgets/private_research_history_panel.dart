@@ -17,6 +17,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   PrivateResearchHistoryService? _ownedService;
   Future<PrivateResearchPage>? _pending;
   int _generation = 0;
+  Future<PrivateResearchCycleDetail>? _selectedDetail;
   int _sessionVersion = AuthSession.instance.authorityVersion;
 
   PrivateResearchHistoryService get _service =>
@@ -39,6 +40,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
 
   void _reload() {
     final generation = ++_generation;
+    _selectedDetail = null;
     if (!AuthSession.instance.isAuthenticated) {
       _pending = null;
       return;
@@ -48,6 +50,19 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
         throw StateError('La consulta privada ha quedado obsoleta.');
       }
       return page;
+    });
+  }
+
+  void _openCycle(PrivateResearchEntry entry) {
+    if (!AuthSession.instance.isAuthenticated) return;
+    final generation = _generation;
+    setState(() {
+      _selectedDetail = _service.loadCycle(entry).then((detail) {
+        if (generation != _generation || !AuthSession.instance.isAuthenticated) {
+          throw StateError('La consulta privada ha quedado obsoleta.');
+        }
+        return detail;
+      });
     });
   }
 
@@ -109,7 +124,37 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
               key: Key('private-research-${entry.cycleHash}'),
               title: Text('Corte PIT: ${entry.asOf.toUtc().toIso8601String()}'),
               subtitle: Text('Hash del ciclo: ${entry.cycleHash}'),
+              trailing: TextButton(
+                onPressed: () => _openCycle(entry),
+                child: const Text('Abrir investigación'),
+              ),
             )),
+            if (_selectedDetail != null)
+              FutureBuilder<PrivateResearchCycleDetail>(
+                future: _selectedDetail,
+                builder: (context, detailSnapshot) {
+                  if (detailSnapshot.connectionState != ConnectionState.done) {
+                    return const Text('Verificando investigación privada…',
+                        key: Key('private-research-detail-loading'));
+                  }
+                  if (detailSnapshot.hasError || !detailSnapshot.hasData) {
+                    return const Text('No se pudo verificar esta investigación privada.',
+                        key: Key('private-research-detail-error'));
+                  }
+                  final detail = detailSnapshot.data!;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Investigación privada verificada (solo lectura)',
+                          key: Key('private-research-detail')),
+                      Text('Empresa: ${detail.symbol}'),
+                      Text('Corte PIT: ${detail.asOf.toUtc().toIso8601String()}'),
+                      Text('Ciclo: ${detail.cycleHash}'),
+                      const Text('Las síntesis News y ATHENA requieren comprobación independiente.'),
+                    ],
+                  );
+                },
+              ),
             const Text('El listado no acredita licencias, ejecución de modelos ni autorización de trading.'),
           ],
         );
