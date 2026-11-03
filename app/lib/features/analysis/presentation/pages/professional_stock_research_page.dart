@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/private_research_history_panel.dart';
+
 import '../../../recommendations/data/datasources/athena_backend_professional_dossier_data_source.dart';
 import '../../../recommendations/di/recommendation_dependencies.dart';
 
@@ -208,6 +210,8 @@ class _ResearchBody extends StatelessWidget {
             style: TextStyle(color: Color(0xFFFFD37A)),
           ),
         ],
+        const SizedBox(height: 20),
+        PrivateResearchHistoryPanel(symbol: symbol),
         const SizedBox(height: 20),
         ...modules.map((name) {
           final module = dossier.modules[name]!;
