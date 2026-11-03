@@ -335,4 +335,38 @@ void main() {
   });
 
 
+
+  test('private synthesis rejects mismatched canonical cycle hash', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-token',
+      account: AuthAccount(id: 1, email: 'owner@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    final requestedHash = 'a' * 64;
+    final unrelatedHash = 'b' * 64;
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      expect(request.url.path,
+          endsWith('/research-cycle/private/$requestedHash/athena-synthesis'));
+      return http.Response(
+        '{"data":{"artifactBindingVerified":true,"provenance":{},'
+        '"synthesis":{"modelExecutionVerified":false,"summary":"Untrusted"},'
+        '"persistence":{"cycleHash":"$unrelatedHash"}}}', 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    await expectLater(
+      service.loadSynthesis(
+        PrivateResearchEntry(cycleHash: requestedHash, symbol: 'AAPL', asOf: now),
+        athena: true,
+      ),
+      throwsFormatException,
+    );
+    expect(requests, 1);
+    service.dispose();
+    client.close();
+  });
+
 }
