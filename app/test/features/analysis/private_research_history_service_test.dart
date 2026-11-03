@@ -245,4 +245,64 @@ void main() {
   });
 
 
+  test('private ATHENA synthesis validates canonical binding and provenance', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-token',
+      account: AuthAccount(id: 1, email: 'owner@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    final hash = 'f' * 64;
+    final client = MockClient((request) async {
+      expect(request.url.path, endsWith('/research-cycle/private/$hash/athena-synthesis'));
+      expect(request.headers['Authorization'], 'Bearer owner-token');
+      return http.Response(
+        '{"data":{"artifactBindingVerified":true,"provenance":{},'
+        '"synthesis":{"modelExecutionVerified":false,"summary":"Human review only"},'
+        '"persistence":{"cycleHash":"$hash"}}}', 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    final entry = PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now);
+    final result = await service.loadSynthesis(entry, athena: true);
+    expect(result!.kind, 'ATHENA');
+    expect(result.summary, 'Human review only');
+    service.dispose();
+    client.close();
+  });
+
+  test('private synthesis rejects a response after account switch', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'first-token',
+      account: AuthAccount(id: 1, email: 'first@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    final pendingResponse = Completer<http.Response>();
+    final client = MockClient((request) async {
+      expect(request.headers['Authorization'], 'Bearer first-token');
+      return pendingResponse.future;
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    final hash = 'a' * 64;
+    final pending = service.loadSynthesis(
+      PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now),
+      athena: false,
+    );
+    session.establish(
+      accessToken: 'second-token',
+      account: AuthAccount(id: 2, email: 'second@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    pendingResponse.complete(http.Response(
+      '{"data":{"cycleBindingVerified":true,"automaticTrading":false,'
+      '"recommendationInfluence":false,"synthesis":{'
+      '"modelExecutionVerified":false,"summary":"Must not leak"},'
+      '"persistence":{"cycleHash":"$hash"}}}', 200));
+    await expectLater(pending, throwsStateError);
+    service.dispose();
+    client.close();
+  });
+
 }
