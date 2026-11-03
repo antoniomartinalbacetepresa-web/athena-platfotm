@@ -270,7 +270,7 @@ class RecommendationProfessionalResearchCycleRepository:
         normalized_symbol = None
         if symbol is not None:
             normalized_symbol = symbol.strip().upper()
-            if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\\-]{0,19}", normalized_symbol):
+            if not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,19}", normalized_symbol):
                 raise ValueError("symbol no es válido.")
 
         self.initialize()
