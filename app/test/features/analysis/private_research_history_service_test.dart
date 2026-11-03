@@ -371,6 +371,35 @@ void main() {
 
 
 
+  test('private synthesis rejects future PIT without contacting backend', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-token',
+      account: AuthAccount(id: 1, email: 'owner@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      return http.Response('{}', 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    await expectLater(
+      service.loadSynthesis(
+        PrivateResearchEntry(
+          cycleHash: 'a' * 64, symbol: 'AAPL',
+          asOf: now.add(const Duration(days: 1)),
+        ),
+        athena: true,
+      ),
+      throwsFormatException,
+    );
+    expect(requests, 0);
+    service.dispose();
+    client.close();
+  });
+
   test('private synthesis rejects mismatched canonical cycle hash', () async {
     final session = AuthSession.forTesting(_TokenStore());
     final now = DateTime.now().toUtc();
