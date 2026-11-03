@@ -93,23 +93,9 @@ class PrivateResearchHistoryService {
   }
 
   /// Owner-authorized detail; never retries through a public endpoint.
+  /// Owner-authorized detail; never retries through a public endpoint.
   Future<PrivateResearchCycleDetail> loadCycle(PrivateResearchEntry entry) async {
-    if (!RegExp(r'^[a-f0-9]{64}    if (_ownsClient) _client.close();
-  }
-}
-
-class PrivateResearchEntry {
-  const PrivateResearchEntry({required this.cycleHash, required this.symbol, required this.asOf});
-  final String cycleHash;
-  final String symbol;
-  final DateTime asOf;
-}
-
-class PrivateResearchPage {
-  const PrivateResearchPage(this.items);
-  final List<PrivateResearchEntry> items;
-}
-).hasMatch(entry.cycleHash)) {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(entry.cycleHash)) {
       throw const FormatException('Identificador privado inválido.');
     }
     final token = _session.accessToken;
