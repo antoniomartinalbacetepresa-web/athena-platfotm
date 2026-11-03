@@ -142,7 +142,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
           );
         }
         if (!snapshot.hasData) {
-          return Text('Síntesis $kind no persistida para este ciclo.');
+          return Text('Síntesis $kind no disponible: puede no estar persistida o no ser accesible para esta cuenta. No se ha verificado su existencia.');
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
