@@ -17,6 +17,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   PrivateResearchHistoryService? _ownedService;
   Future<PrivateResearchPage>? _pending;
   int _generation = 0;
+  int _sessionVersion = AuthSession.instance.authorityVersion;
 
   PrivateResearchHistoryService get _service =>
       widget.service ?? (_ownedService ??= PrivateResearchHistoryService());
@@ -24,12 +25,21 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   @override
   void initState() {
     super.initState();
+    AuthSession.instance.addListener(_onSessionChanged);
     _reload();
+  }
+
+  void _onSessionChanged() {
+    if (!mounted) return;
+    final nextVersion = AuthSession.instance.authorityVersion;
+    if (nextVersion == _sessionVersion) return;
+    _sessionVersion = nextVersion;
+    setState(_reload);
   }
 
   void _reload() {
     final generation = ++_generation;
-    if (!AuthSession.instance.isAuthenticated && widget.service == null) {
+    if (!AuthSession.instance.isAuthenticated) {
       _pending = null;
       return;
     }
@@ -54,6 +64,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   @override
   void dispose() {
     ++_generation;
+    AuthSession.instance.removeListener(_onSessionChanged);
     _ownedService?.dispose();
     super.dispose();
   }
