@@ -71,4 +71,41 @@ void main() {
     client.close();
   });
 
+  test('owner-scoped detail uses private route and validates cycle binding', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'test-token',
+      account: AuthAccount(
+        id: 1,
+        email: 'test@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final hash = 'a' * 64;
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      expect(request.url.path, endsWith('/research-cycle/private/$hash'));
+      expect(request.headers['Authorization'], 'Bearer test-token');
+      return http.Response(
+        '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
+        '"automaticTrading":false,"isWeightingReady":false,'
+        '"package":{"symbol":"AAPL"},"persistence":{"cycleHash":"$hash"}}}',
+        200,
+      );
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    final detail = await service.loadCycle(
+      PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now),
+    );
+    expect(detail.cycleHash, hash);
+    expect(detail.symbol, 'AAPL');
+    expect(requests, 1);
+    service.dispose();
+    client.close();
+  });
+
 }
