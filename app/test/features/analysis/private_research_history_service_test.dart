@@ -185,4 +185,35 @@ void main() {
     client.close();
   });
 
+  test('private detail denial never falls back to public research', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'denied-owner-token',
+      account: AuthAccount(
+        id: 1,
+        email: 'owner@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final hash = 'd' * 64;
+    final paths = <String>[];
+    final client = MockClient((request) async {
+      paths.add(request.url.path);
+      return http.Response('{"detail":"Forbidden"}', 403);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    await expectLater(
+      service.loadCycle(PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now)),
+      throwsStateError,
+    );
+    expect(paths, <String>[
+      '/api/v1/recommendations/professional-research/research-cycle/private/$hash',
+    ]);
+    service.dispose();
+    client.close();
+  });
+
 }
