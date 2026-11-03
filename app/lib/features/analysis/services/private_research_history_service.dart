@@ -92,6 +92,77 @@ class PrivateResearchHistoryService {
     return PrivateResearchPage(List.unmodifiable(items));
   }
 
+  /// Owner-authorized detail; never retries through a public endpoint.
+  Future<PrivateResearchCycleDetail> loadCycle(PrivateResearchEntry entry) async {
+    if (!RegExp(r'^[a-f0-9]{64}    if (_ownsClient) _client.close();
+  }
+}
+
+class PrivateResearchEntry {
+  const PrivateResearchEntry({required this.cycleHash, required this.symbol, required this.asOf});
+  final String cycleHash;
+  final String symbol;
+  final DateTime asOf;
+}
+
+class PrivateResearchPage {
+  const PrivateResearchPage(this.items);
+  final List<PrivateResearchEntry> items;
+}
+).hasMatch(entry.cycleHash)) {
+      throw const FormatException('Identificador privado inválido.');
+    }
+    final token = _session.accessToken;
+    if (!_session.isAuthenticated || token == null || token.trim().isEmpty) {
+      throw StateError('Se requiere autenticación.');
+    }
+    final version = _session.authorityVersion;
+    final uri = Uri.parse(
+        '$_baseUrl/api/v1/recommendations/professional-research/research-cycle/private/${entry.cycleHash}');
+    final response = await _client
+        .get(uri, headers: {'Authorization': 'Bearer $token'})
+        .timeout(requestTimeout);
+    if (_session.authorityVersion != version ||
+        !_session.isAuthenticated || _session.accessToken != token) {
+      throw StateError('La sesión cambió durante la consulta privada.');
+    }
+    if (response.statusCode == 401 || response.statusCode == 403 ||
+        response.statusCode == 404) {
+      throw StateError('Investigación privada no disponible para esta cuenta.');
+    }
+    if (response.statusCode != 200) {
+      throw StateError('No se pudo verificar la investigación privada.');
+    }
+    if (response.bodyBytes.length > maxResponseBytes) {
+      throw const FormatException('Respuesta privada demasiado grande.');
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map<String, dynamic> ||
+        decoded['data'] is! Map<String, dynamic>) {
+      throw const FormatException('Respuesta privada inválida.');
+    }
+    final data = decoded['data'] as Map<String, dynamic>;
+    if (data['advisoryStatus'] != 'no_advice' ||
+        data['productionEligible'] != false ||
+        data['automaticTrading'] != false ||
+        data['isWeightingReady'] != false ||
+        data['package'] is! Map<String, dynamic> ||
+        data['persistence'] is! Map<String, dynamic>) {
+      throw const FormatException('Contrato privado no verificable.');
+    }
+    final package = data['package'] as Map<String, dynamic>;
+    final persistence = data['persistence'] as Map<String, dynamic>;
+    if (persistence['cycleHash'] != entry.cycleHash ||
+        package['symbol'] != entry.symbol) {
+      throw const FormatException('Identidad privada incoherente.');
+    }
+    return PrivateResearchCycleDetail(
+      symbol: entry.symbol,
+      cycleHash: entry.cycleHash,
+      asOf: entry.asOf,
+    );
+  }
+
   void dispose() {
     if (_ownsClient) _client.close();
   }
@@ -107,4 +178,12 @@ class PrivateResearchEntry {
 class PrivateResearchPage {
   const PrivateResearchPage(this.items);
   final List<PrivateResearchEntry> items;
+}
+
+/// Minimal verified display model; raw private thesis is not exposed in UI.
+class PrivateResearchCycleDetail {
+  const PrivateResearchCycleDetail({required this.symbol, required this.cycleHash, required this.asOf});
+  final String symbol;
+  final String cycleHash;
+  final DateTime asOf;
 }
