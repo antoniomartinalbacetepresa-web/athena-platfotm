@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/features/analysis/services/private_research_history_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
 import 'package:app/features/auth/models/auth_account.dart';
@@ -104,6 +106,50 @@ void main() {
     expect(detail.cycleHash, hash);
     expect(detail.symbol, 'AAPL');
     expect(requests, 1);
+    service.dispose();
+    client.close();
+  });
+
+  test('account switch during private detail request rejects stale response', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-one-token',
+      account: AuthAccount(
+        id: 1,
+        email: 'one@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final hash = 'b' * 64;
+    final pendingResponse = Completer<http.Response>();
+    final client = MockClient((request) async {
+      expect(request.headers['Authorization'], 'Bearer owner-one-token');
+      return pendingResponse.future;
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    final pending = service.loadCycle(
+      PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now),
+    );
+    session.establish(
+      accessToken: 'owner-two-token',
+      account: AuthAccount(
+        id: 2,
+        email: 'two@example.invalid',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    pendingResponse.complete(http.Response(
+      '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
+      '"automaticTrading":false,"isWeightingReady":false,'
+      '"package":{"symbol":"AAPL"},"persistence":{"cycleHash":"$hash"}}}',
+      200,
+    ));
+    await expectLater(pending, throwsStateError);
     service.dispose();
     client.close();
   });
