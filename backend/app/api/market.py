@@ -309,6 +309,7 @@ def get_opportunity_pattern_readiness(
 
     normalized = symbol.strip().upper()
     valid_days: set[str] = set()
+    checked_at = datetime.now(timezone.utc)
     provider_names: set[str] = set()
     retrieval_times: set[str] = set()
     invalid_rows = 0
@@ -321,6 +322,7 @@ def get_opportunity_pattern_readiness(
             close = float(row["close"])
             volume = float(row["volume"])
             if (observed.tzinfo is None or observed.utcoffset() is None
+                    or observed > checked_at
                     or not isfinite(close) or close <= 0
                     or not isfinite(volume) or volume < 0):
                 raise ValueError("invalid daily bar")
@@ -337,6 +339,11 @@ def get_opportunity_pattern_readiness(
         if row.get("retrievedAt"):
             retrieval_times.add(str(row["retrievedAt"]))
 
+    first_day = min(valid_days) if valid_days else None
+    last_day = max(valid_days) if valid_days else None
+    calendar_span_days = ((date.fromisoformat(last_day) - date.fromisoformat(first_day)).days + 1) if first_day and last_day else 0
+    latest_age_days = (checked_at.date() - date.fromisoformat(last_day)).days if last_day else None
+
     return {
         "data": {
             "symbol": normalized,
@@ -345,8 +352,13 @@ def get_opportunity_pattern_readiness(
             "validDailySessions": len(valid_days),
             "invalidOrDuplicateRows": invalid_rows,
             "minimum20SessionReferenceAvailable": len(valid_days) >= 21,
-            "firstObservedDate": min(valid_days) if valid_days else None,
-            "lastObservedDate": max(valid_days) if valid_days else None,
+            "firstObservedDate": first_day,
+            "lastObservedDate": last_day,
+            "calendarSpanDays": calendar_span_days,
+            "latestObservationAgeCalendarDays": latest_age_days,
+            "history365CalendarSpanAvailable": calendar_span_days >= 365,
+            "history365SessionCompletenessVerified": False,
+            "checkedAt": checked_at.isoformat(),
             "sourceProviders": sorted(provider_names),
             "retrievedAt": sorted(retrieval_times),
             "licenceVerified": False,
