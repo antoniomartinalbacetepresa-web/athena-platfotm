@@ -36,9 +36,11 @@ void main() {
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: VerifiedMarketQuotePanel(
-          symbol: 'MSFT',
-          repository: _QuoteRepository(_quote(realtime: false, pit: false)),
+        body: SingleChildScrollView(
+          child: VerifiedMarketQuotePanel(
+            symbol: 'MSFT',
+            repository: _QuoteRepository(_quote(realtime: false, pit: false)),
+          ),
         ),
       ),
     ));
@@ -57,9 +59,11 @@ void main() {
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: VerifiedMarketQuotePanel(
-          symbol: 'MSFT',
-          repository: _QuoteRepository(_quote(realtime: true, pit: true)),
+        body: SingleChildScrollView(
+          child: VerifiedMarketQuotePanel(
+            symbol: 'MSFT',
+            repository: _QuoteRepository(_quote(realtime: true, pit: true)),
+          ),
         ),
       ),
     ));
