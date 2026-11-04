@@ -437,6 +437,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-context-news-boundary')), findsOneWidget);
     expect(find.textContaining('no identidad de emisor'), findsOneWidget);
+    // Diagnostics remain available on demand without shrinking the news list.
+    expect(find.byKey(const Key('market-pattern-readiness-open')), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-request')), findsNothing);
     expect(find.text('AAPL results headline'), findsOneWidget);
     expect(newsLoads, 1);
 
