@@ -180,6 +180,19 @@ class _MarketPatternReadinessPanelState
               'Cobertura 365 días y calendario bursátil: NO VERIFICADOS.',
               key: const Key('market-pattern-readiness-source'),
             ),
+            if (report['calendarSpanDays'] is int &&
+                report['largestUnobservedCalendarGapDays'] is int &&
+                report['unobservedCalendarGapIntervals'] is int)
+              Text(
+                'Intervalo natural: ${report['calendarSpanDays']} días; '
+                'mayor tramo sin observaciones: '
+                '${report['largestUnobservedCalendarGapDays']} días; '
+                'intervalos con días intermedios sin observación: '
+                '${report['unobservedCalendarGapIntervals']}. '
+                'Los fines de semana y festivos no son necesariamente sesiones '
+                'ausentes. Calendario de bolsa NO VERIFICADO.',
+                key: const Key('market-pattern-readiness-gaps'),
+              ),
             const Text(
               'BLOQUEADO: licencia, ajustes por splits/dividendos y evidencia PIT '
               'histórica no acreditados. No se calculan patrones ni señales '
