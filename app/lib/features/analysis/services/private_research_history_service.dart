@@ -166,7 +166,178 @@ class PrivateResearchHistoryService {
     if (!entry.asOf.isUtc || entry.asOf.isAfter(DateTime.now().toUtc())) {
       throw const FormatException('Corte PIT de síntesis privada inválido.');
     }
-    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(entry.cycleHash)) {
+    if (!RegExp(r'^[a-f0-9]{64}
+    if (!_session.isAuthenticated || token == null || token.trim().isEmpty) {
+      throw StateError('Se requiere autenticación.');
+    }
+    final version = _session.authorityVersion;
+    final kind = athena ? 'athena-synthesis' : 'news-synthesis';
+    final uri = Uri.parse(
+        '$_baseUrl/api/v1/recommendations/professional-research/research-cycle/private/${entry.cycleHash}/$kind');
+    final response = await _client.get(
+      uri, headers: {'Authorization': 'Bearer $token'},
+    ).timeout(requestTimeout);
+    if (_session.authorityVersion != version ||
+        !_session.isAuthenticated || _session.accessToken != token) {
+      throw StateError('La sesión cambió durante la consulta privada.');
+    }
+    if (response.statusCode == 404) return null;
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw StateError('Acceso privado no autorizado.');
+    }
+    if (response.statusCode != 200) {
+      throw StateError('No se pudo verificar la síntesis privada.');
+    }
+    if (response.bodyBytes.length > maxResponseBytes) {
+      throw const FormatException('Respuesta privada demasiado grande.');
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map<String, dynamic> ||
+        decoded['data'] is! Map<String, dynamic>) {
+      throw const FormatException('Síntesis privada inválida.');
+    }
+    final data = decoded['data'] as Map<String, dynamic>;
+    final synthesis = data['synthesis'];
+    final persistence = data['persistence'];
+    if (synthesis is! Map<String, dynamic> ||
+        persistence is! Map<String, dynamic> ||
+        persistence['cycleHash'] != entry.cycleHash ||
+        (athena ? data['artifactBindingVerified'] : data['cycleBindingVerified']) != true ||
+        synthesis['modelExecutionVerified'] != false ||
+        (athena ? data['provenance'] is! Map<String, dynamic> :
+            data['automaticTrading'] != false || data['recommendationInfluence'] != false)) {
+      throw const FormatException('Vinculación o seguridad de síntesis no verificable.');
+    }
+    final summary = synthesis['summary'];
+    if (summary is! String || summary.trim().isEmpty || summary.length > 12000) {
+      throw const FormatException('Resumen de síntesis inválido.');
+    }
+    return PrivateResearchSynthesis(
+      kind: athena ? 'ATHENA' : 'News', summary: summary,
+      cycleHash: entry.cycleHash, asOf: entry.asOf,
+    );
+  }
+
+  void dispose() {
+    if (_ownsClient) _client.close();
+  }
+}
+
+class PrivateResearchEntry {
+  const PrivateResearchEntry({required this.cycleHash, required this.symbol, required this.asOf});
+  final String cycleHash;
+  final String symbol;
+  final DateTime asOf;
+}
+
+class PrivateResearchPage {
+  const PrivateResearchPage(this.items);
+  final List<PrivateResearchEntry> items;
+}
+
+/// Minimal verified display model; raw private thesis is not exposed in UI.
+class PrivateResearchCycleDetail {
+  const PrivateResearchCycleDetail({required this.symbol, required this.cycleHash, required this.asOf});
+  final String symbol;
+  final String cycleHash;
+  final DateTime asOf;
+}
+
+/// Verified canonical binding, not verified execution of the language model.
+class PrivateResearchSynthesis {
+  const PrivateResearchSynthesis({required this.kind, required this.summary, required this.cycleHash, required this.asOf});
+  final String kind;
+  final String summary;
+  final String cycleHash;
+  final DateTime asOf;
+}
+).hasMatch(entry.cycleHash) ||
+        !RegExp(r'^[A-Z0-9][A-Z0-9.-]{0,19}
+    if (!_session.isAuthenticated || token == null || token.trim().isEmpty) {
+      throw StateError('Se requiere autenticación.');
+    }
+    final version = _session.authorityVersion;
+    final kind = athena ? 'athena-synthesis' : 'news-synthesis';
+    final uri = Uri.parse(
+        '$_baseUrl/api/v1/recommendations/professional-research/research-cycle/private/${entry.cycleHash}/$kind');
+    final response = await _client.get(
+      uri, headers: {'Authorization': 'Bearer $token'},
+    ).timeout(requestTimeout);
+    if (_session.authorityVersion != version ||
+        !_session.isAuthenticated || _session.accessToken != token) {
+      throw StateError('La sesión cambió durante la consulta privada.');
+    }
+    if (response.statusCode == 404) return null;
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw StateError('Acceso privado no autorizado.');
+    }
+    if (response.statusCode != 200) {
+      throw StateError('No se pudo verificar la síntesis privada.');
+    }
+    if (response.bodyBytes.length > maxResponseBytes) {
+      throw const FormatException('Respuesta privada demasiado grande.');
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map<String, dynamic> ||
+        decoded['data'] is! Map<String, dynamic>) {
+      throw const FormatException('Síntesis privada inválida.');
+    }
+    final data = decoded['data'] as Map<String, dynamic>;
+    final synthesis = data['synthesis'];
+    final persistence = data['persistence'];
+    if (synthesis is! Map<String, dynamic> ||
+        persistence is! Map<String, dynamic> ||
+        persistence['cycleHash'] != entry.cycleHash ||
+        (athena ? data['artifactBindingVerified'] : data['cycleBindingVerified']) != true ||
+        synthesis['modelExecutionVerified'] != false ||
+        (athena ? data['provenance'] is! Map<String, dynamic> :
+            data['automaticTrading'] != false || data['recommendationInfluence'] != false)) {
+      throw const FormatException('Vinculación o seguridad de síntesis no verificable.');
+    }
+    final summary = synthesis['summary'];
+    if (summary is! String || summary.trim().isEmpty || summary.length > 12000) {
+      throw const FormatException('Resumen de síntesis inválido.');
+    }
+    return PrivateResearchSynthesis(
+      kind: athena ? 'ATHENA' : 'News', summary: summary,
+      cycleHash: entry.cycleHash, asOf: entry.asOf,
+    );
+  }
+
+  void dispose() {
+    if (_ownsClient) _client.close();
+  }
+}
+
+class PrivateResearchEntry {
+  const PrivateResearchEntry({required this.cycleHash, required this.symbol, required this.asOf});
+  final String cycleHash;
+  final String symbol;
+  final DateTime asOf;
+}
+
+class PrivateResearchPage {
+  const PrivateResearchPage(this.items);
+  final List<PrivateResearchEntry> items;
+}
+
+/// Minimal verified display model; raw private thesis is not exposed in UI.
+class PrivateResearchCycleDetail {
+  const PrivateResearchCycleDetail({required this.symbol, required this.cycleHash, required this.asOf});
+  final String symbol;
+  final String cycleHash;
+  final DateTime asOf;
+}
+
+/// Verified canonical binding, not verified execution of the language model.
+class PrivateResearchSynthesis {
+  const PrivateResearchSynthesis({required this.kind, required this.summary, required this.cycleHash, required this.asOf});
+  final String kind;
+  final String summary;
+  final String cycleHash;
+  final DateTime asOf;
+}
+).hasMatch(entry.symbol)) {
       throw const FormatException('Identificador privado inválido.');
     }
     final token = _session.accessToken;
