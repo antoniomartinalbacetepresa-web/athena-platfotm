@@ -174,17 +174,38 @@ class _MarketPageState extends State<MarketPage> {
                   ),
                 ),
               ),
-              if (_newsSymbol != null) ...[
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 135),
-                  child: SingleChildScrollView(
-                    child: MarketPatternReadinessPanel(
-                      key: ValueKey('market-pattern-readiness-$_newsSymbol'),
-                      symbol: _newsSymbol!,
-                    ),
+              if (_newsSymbol != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('market-pattern-readiness-open'),
+                    onPressed: () {
+                      final symbol = _newsSymbol!;
+                      showDialog<void>(
+                        context: context,
+                        builder: (dialogContext) => AlertDialog(
+                          title: const Text('Histórico para patrones'),
+                          content: SizedBox(
+                            width: 520,
+                            child: SingleChildScrollView(
+                              child: MarketPatternReadinessPanel(
+                                key: ValueKey('market-pattern-readiness-$symbol'),
+                                symbol: symbol,
+                              ),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(dialogContext).pop(),
+                              child: const Text('CERRAR'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    child: const Text('COMPROBAR HISTÓRICO PARA PATRONES'),
                   ),
                 ),
-              ],
               const SizedBox(height: 12),
               if (_newsSymbol != null) ...[
                 Semantics(
