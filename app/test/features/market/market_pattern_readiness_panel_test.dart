@@ -71,4 +71,40 @@ void main() {
     expect(find.textContaining('Histórico de MSFT'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('malformed provider coverage fails closed without build exceptions',
+      (tester) async {
+    final malformed = _report('MSFT')
+      ..['sourceProviders'] = <dynamic>['provider', 42]
+      ..['validDailySessions'] = '21';
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: MarketPatternReadinessPanel(
+        symbol: 'MSFT',
+        load: (_) async => malformed,
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('negative ages and invalid timestamps never render as evidence',
+      (tester) async {
+    final malformed = _report('MSFT')
+      ..['latestObservationAgeCalendarDays'] = -1
+      ..['checkedAt'] = 'not-a-date';
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: MarketPatternReadinessPanel(
+        symbol: 'MSFT',
+        load: (_) async => malformed,
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-time')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
 }
