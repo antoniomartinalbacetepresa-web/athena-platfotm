@@ -27,6 +27,11 @@ def test_history_readiness_does_not_fabricate_licence_or_pit(monkeypatch):
     result = market.get_opportunity_pattern_readiness("MSFT")["data"]
     assert result["validDailySessions"] == 21
     assert result["minimum20SessionReferenceAvailable"] is True
+    assert result["calendarSpanDays"] == 21
+    assert result["history365CalendarSpanAvailable"] is False
+    assert result["history365SessionCompletenessVerified"] is False
+    assert result["latestObservationAgeCalendarDays"] >= 0
+    assert result["checkedAt"].endswith("+00:00")
     assert result["sourceProviders"] == ["yahoo"]
     assert result["status"] == "blocked_unverified_market_evidence"
     assert result["licenceVerified"] is False
@@ -56,3 +61,14 @@ def test_provider_failure_is_explicit(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         market.get_opportunity_pattern_readiness("MSFT")
     assert exc.value.status_code == 502
+
+
+def test_future_provider_observations_do_not_count_toward_readiness(monkeypatch):
+    future = datetime.now(timezone.utc) + timedelta(days=5)
+    rows = _rows(20) + [{**_rows(1)[0], "timestamp": future.isoformat()}]
+    monkeypatch.setattr(market.market_service, "get_history", lambda **kwargs: rows)
+    result = market.get_opportunity_pattern_readiness("MSFT")["data"]
+    assert result["validDailySessions"] == 20
+    assert result["invalidOrDuplicateRows"] == 1
+    assert result["minimum20SessionReferenceAvailable"] is False
+    assert result["history365SessionCompletenessVerified"] is False
