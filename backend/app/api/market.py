@@ -343,6 +343,16 @@ def get_opportunity_pattern_readiness(
     last_day = max(valid_days) if valid_days else None
     calendar_span_days = ((date.fromisoformat(last_day) - date.fromisoformat(first_day)).days + 1) if first_day and last_day else 0
     latest_age_days = (checked_at.date() - date.fromisoformat(last_day)).days if last_day else None
+    # Calendar gaps are diagnostic only: weekends/holidays are not missing
+    # exchange sessions, and exchange-specific calendars are not certified.
+    ordered_days = sorted(date.fromisoformat(day) for day in valid_days)
+    largest_gap_days = max(
+        ((right - left).days - 1 for left, right in zip(ordered_days, ordered_days[1:])),
+        default=0,
+    )
+    gap_intervals = sum(
+        (right - left).days > 1 for left, right in zip(ordered_days, ordered_days[1:])
+    )
 
     return {
         "data": {
@@ -356,6 +366,9 @@ def get_opportunity_pattern_readiness(
             "lastObservedDate": last_day,
             "calendarSpanDays": calendar_span_days,
             "latestObservationAgeCalendarDays": latest_age_days,
+            "largestUnobservedCalendarGapDays": largest_gap_days,
+            "unobservedCalendarGapIntervals": gap_intervals,
+            "exchangeSessionCalendarVerified": False,
             "history365CalendarSpanAvailable": calendar_span_days >= 365,
             "history365SessionCompletenessVerified": False,
             "checkedAt": checked_at.isoformat(),
