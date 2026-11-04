@@ -97,7 +97,8 @@ class PrivateResearchHistoryService {
     // Reject impossible or malformed research selections before network access.
     // The index is not a substitute for validating an independently supplied entry.
     if (!entry.asOf.isUtc || entry.asOf.isAfter(DateTime.now().toUtc()) ||
-        !RegExp(r'^[A-Z0-9][A-Z0-9.-]{0,19}
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(entry.cycleHash) ||
+        !RegExp(r'^[A-Z0-9][A-Z0-9.-]{0,19}$').hasMatch(entry.symbol)) {
       throw const FormatException('Identificador privado inválido.');
     }
     final token = _session.accessToken;
