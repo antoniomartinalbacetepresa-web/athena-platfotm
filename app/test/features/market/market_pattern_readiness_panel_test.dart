@@ -18,6 +18,9 @@ Map<String, dynamic> _report(String symbol) => {
   'latestObservationAgeCalendarDays': 10,
   'checkedAt': '2026-02-10T12:00:00+00:00',
   'sourceProviders': ['provider'],
+  'calendarSpanDays': 31,
+  'largestUnobservedCalendarGapDays': 3,
+  'unobservedCalendarGapIntervals': 4,
 };
 
 void main() {
@@ -33,6 +36,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsOneWidget);
     expect(find.textContaining('NO VERIFICADOS'), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-gaps')), findsOneWidget);
+    expect(find.textContaining('mayor tramo sin observaciones: 3 días'), findsOneWidget);
     expect(find.byKey(const Key('market-pattern-readiness-blocked')), findsOneWidget);
     expect(find.textContaining('No se calculan patrones'), findsOneWidget);
   });
