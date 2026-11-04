@@ -75,3 +75,38 @@ def test_rejects_nonfinite_prices_and_short_series():
             invalid, as_of=bars[-1].available_at,
             licensed=True, corporate_actions_verified=True,
         )
+
+
+def test_reference_uses_exactly_twenty_prior_sessions_not_nineteen():
+    bars = sample_bars()
+    # One low observation at the beginning of the 20-session reference
+    # distinguishes a correct 20-prior-session mean from a 19-session mean.
+    bars[0] = DailyBar(
+        observed_at=bars[0].observed_at,
+        available_at=bars[0].available_at,
+        close=50.0,
+        volume=1000.0,
+    )
+    result = observe_pattern(
+        bars, as_of=bars[-1].available_at,
+        licensed=True, corporate_actions_verified=True,
+    )
+    assert result.close_vs_20d_mean_pct == pytest.approx(12.8205, abs=0.0001)
+    assert result.trend == "above_20d_reference"
+
+
+def test_current_session_volume_is_not_in_its_own_reference():
+    bars = sample_bars()
+    # 20 prior sessions at 1000, current session at 1500: strictly
+    # above 1.5x is required, not equal to the threshold.
+    bars[-1] = DailyBar(
+        observed_at=bars[-1].observed_at,
+        available_at=bars[-1].available_at,
+        close=bars[-1].close,
+        volume=1500.0,
+    )
+    result = observe_pattern(
+        bars, as_of=bars[-1].available_at,
+        licensed=True, corporate_actions_verified=True,
+    )
+    assert result.volume_confirmation == "not_confirmed"
