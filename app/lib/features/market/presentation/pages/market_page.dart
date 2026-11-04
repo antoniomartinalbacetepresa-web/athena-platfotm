@@ -159,7 +159,7 @@ class _MarketPageState extends State<MarketPage> {
               ValueListenableBuilder<TextEditingValue>(
                 valueListenable: _symbolController,
                 builder: (context, value, _) => ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 160),
+                  constraints: const BoxConstraints(maxHeight: 136),
                   child: SingleChildScrollView(
                     child: VerifiedMarketQuotePanel(
                       symbol: value.text,
@@ -211,9 +211,9 @@ class _MarketPageState extends State<MarketPage> {
                 Semantics(
                   container: true,
                   child: Text(
-                    'NOTICIAS RELACIONADAS CON $_newsSymbol: búsqueda textual, '
-                    'no identidad de emisor ni evidencia PIT acreditadas. '
-                    'Las cotizaciones y las noticias tienen fuentes y fechas independientes.',
+                    'Noticias de $_newsSymbol: búsqueda textual, no identidad de emisor. '
+                    'Sin evidencia PIT acreditada; precios y noticias tienen '
+                    'fuentes y fechas independientes.',
                     key: const Key('market-context-news-boundary'),
                     style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
                   ),
