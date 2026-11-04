@@ -280,3 +280,85 @@ def get_active_regional_weights() -> dict[str, object]:
         ) from exc
 
     return {"data": payload}
+
+
+@router.get("/opportunity-pattern-readiness")
+def get_opportunity_pattern_readiness(
+    symbol: str = Query(..., min_length=1),
+) -> dict[str, object]:
+    """Inspect live-provider history for pattern readiness; never certify its licence.
+
+    Provider retrieval now connects Market to the Opportunity & Exit Radar's
+    evidence requirements. Yahoo history is current-retrieved, not PIT replay;
+    this endpoint must not promote it to licensed, split-verified research.
+    """
+    try:
+        history = market_service.get_history(symbol=symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo consultar la cobertura del proveedor de mercado.",
+        ) from exc
+
+    # Only count records with a matching instrument identity and valid daily
+    # close/volume; malformed or mismatched provider records fail closed.
+    from datetime import timezone
+    from math import isfinite
+
+    normalized = symbol.strip().upper()
+    valid_days: set[str] = set()
+    provider_names: set[str] = set()
+    retrieval_times: set[str] = set()
+    invalid_rows = 0
+    for row in history:
+        if not isinstance(row, dict) or str(row.get("symbol", "")).upper() != normalized:
+            invalid_rows += 1
+            continue
+        try:
+            observed = datetime.fromisoformat(str(row["timestamp"]))
+            close = float(row["close"])
+            volume = float(row["volume"])
+            if (observed.tzinfo is None or observed.utcoffset() is None
+                    or not isfinite(close) or close <= 0
+                    or not isfinite(volume) or volume < 0):
+                raise ValueError("invalid daily bar")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            invalid_rows += 1
+            continue
+        day = observed.astimezone(timezone.utc).date().isoformat()
+        if day in valid_days:
+            invalid_rows += 1
+            continue
+        valid_days.add(day)
+        if row.get("sourceProvider"):
+            provider_names.add(str(row["sourceProvider"]))
+        if row.get("retrievedAt"):
+            retrieval_times.add(str(row["retrievedAt"]))
+
+    return {
+        "data": {
+            "symbol": normalized,
+            "status": "blocked_unverified_market_evidence",
+            "mode": "read_only_research",
+            "validDailySessions": len(valid_days),
+            "invalidOrDuplicateRows": invalid_rows,
+            "minimum20SessionReferenceAvailable": len(valid_days) >= 21,
+            "firstObservedDate": min(valid_days) if valid_days else None,
+            "lastObservedDate": max(valid_days) if valid_days else None,
+            "sourceProviders": sorted(provider_names),
+            "retrievedAt": sorted(retrieval_times),
+            "licenceVerified": False,
+            "corporateActionsIndependentlyVerified": False,
+            "historicalPointInTimeEligible": False,
+            "patternComputed": False,
+            "advisoryStatus": "no_advice",
+            "automaticTrading": False,
+            "blockers": [
+                "Provider licence and redistribution rights not independently verified.",
+                "Split/dividend adjustments lack independent reconciliation.",
+                "Current-retrieved history cannot be replayed as historical PIT evidence.",
+            ],
+        }
+    }
