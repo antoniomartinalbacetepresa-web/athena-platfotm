@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any, Callable
+
+from app.database.athena_database import AthenaDatabase
+from app.repositories.instrument_repository import InstrumentRepository
+from app.repositories.instrument_source_membership_repository import (
+    InstrumentSourceMembershipRepository,
+)
+from app.repositories.universe_import_run_repository import (
+    UniverseImportRunRepository,
+)
+from app.services.global_universe_import_service import GlobalUniverseImportService
+from app.services.persisted_market_universe_service import (
+    PersistedMarketUniverseService,
+)
+from app.services.source_aware_universe_import_service import (
+    SourceAwareUniverseImportService,
+)
+from app.services.yahoo_regional_universe_source import (
+    ProgressCallback,
+    YahooRegionalUniverseSource,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Descubre equities por región mediante Yahoo y los importa en la "
+            "base local de ATHENA TYCHE."
+        )
+    )
+    parser.add_argument("--database", type=Path, default=None)
+    parser.add_argument(
+        "--regions",
+        default=",".join(YahooRegionalUniverseSource.DEFAULT_REGIONS),
+        help="Códigos Yahoo separados por comas, por ejemplo de,fr,jp,hk.",
+    )
+    parser.add_argument(
+        "--page-size",
+        type=int,
+        default=100,
+        help="Resultados por página (1-250).",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=1,
+        help="Máximo de páginas por región cuando no se usa --exhaustive.",
+    )
+    parser.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help=(
+            "Recorre todas las páginas disponibles de cada mercado hasta "
+            "alcanzar el total informado por Yahoo."
+        ),
+    )
+    return parser
+
+
+def _console_progress(event: dict[str, Any]) -> None:
+    region = str(event.get("region") or "?").upper()
+    country = str(event.get("country") or region)
+    page = event.get("page")
+    received = event.get("received")
+    total = event.get("total")
+    accumulated = event.get("accumulated")
+    new_symbols = event.get("newSymbols")
+    status = str(event.get("status") or "")
+
+    total_label = "?" if total is None else str(total)
+    new_symbols_label = "?" if new_symbols is None else str(new_symbols)
+    status_label = {
+        "page_completed": "OK",
+        "completed": "FIN",
+        "repeated_page": "PAGINA REPETIDA; SE DETIENE",
+        "no_new_symbols": "SIN SIMBOLOS NUEVOS; SE DETIENE",
+        "safety_limit": "LIMITE DE SEGURIDAD; SE DETIENE",
+    }.get(status, status.upper())
+
+    print(
+        f"[Yahoo {region}] {country} | página {page} | "
+        f"recibidos {received} | nuevos {new_symbols_label} | "
+        f"total {total_label} | acumulados {accumulated} | {status_label}",
+        flush=True,
+    )
+
+
+def run_import(
+    *,
+    database_path: Path | None,
+    regions: tuple[str, ...],
+    page_size: int,
+    max_pages: int | None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, object]:
+    database = AthenaDatabase(database_path)
+    database.initialize()
+
+    instruments = InstrumentRepository(database=database)
+    memberships = InstrumentSourceMembershipRepository(database=database)
+    runs = UniverseImportRunRepository(database=database)
+
+    base_import = GlobalUniverseImportService(
+        repository=instruments,
+        run_repository=runs,
+    )
+    importer = SourceAwareUniverseImportService(
+        import_service=base_import,
+        instrument_repository=instruments,
+        membership_repository=memberships,
+    )
+    source = YahooRegionalUniverseSource(
+        regions=regions,
+        page_size=page_size,
+        max_pages_per_region=max_pages,
+        progress_callback=progress_callback,
+    )
+
+    report = importer.import_source(source)
+    quality = (
+        PersistedMarketUniverseService(database=database)
+        .get_quality_report()
+        .to_api_dict()
+    )
+
+    return {
+        "source": report.source_id,
+        "regions": list(regions),
+        "pageSize": page_size,
+        "maxPagesPerRegion": max_pages,
+        "exhaustive": max_pages is None,
+        "received": report.received,
+        "accepted": report.accepted,
+        "rejected": report.rejected,
+        "inserted": report.inserted,
+        "updated": report.updated,
+        "unchanged": report.unchanged,
+        "deactivated": report.deactivated,
+        "reconciliationApplied": report.reconciliation_applied,
+        "activeSourceMemberships": memberships.count_active_for_source(
+            report.source_id
+        ),
+        "catalogQuality": quality,
+    }
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    regions = tuple(
+        part.strip().lower()
+        for part in args.regions.split(",")
+        if part.strip()
+    )
+    if not regions:
+        raise SystemExit("Debe indicarse al menos una región.")
+
+    print(
+        "Iniciando captura Yahoo "
+        + ("exhaustiva" if args.exhaustive else "acotada")
+        + f" para {len(regions)} mercados...",
+        flush=True,
+    )
+
+    result = run_import(
+        database_path=args.database,
+        regions=regions,
+        page_size=250 if args.exhaustive else args.page_size,
+        max_pages=None if args.exhaustive else args.max_pages,
+        progress_callback=_console_progress,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

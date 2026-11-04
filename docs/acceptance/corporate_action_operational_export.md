@@ -1,0 +1,299 @@
+# Corporate-action reconciliation: complete operational export
+
+This runbook produces a **complete PIT worklist** of unresolved dividends and splits (missing independent provider evidence, incomplete units, unclassified provenance, or conflicting economic values). It does **not** establish 365-day price-history coverage, canonical agreement, production readiness, or permission to trade.
+
+## Authorized execution
+
+Run from the backend environment with read access to an **authorized operational SQLite database or previously captured consistent snapshot** and write access to a private output directory:
+
+```text
+python -m scripts.export_corporate_action_reconciliation --database <AUTHORIZED_DB_OR_SNAPSHOT> --output <NEW_PRIVATE_OUTPUT.jsonl> --as-of 2026-10-28T12:00:00+00:00
+```
+
+The command opens the source SQLite database in **read-only** mode, uses SQLite's online backup API to obtain a transactionally consistent local copy (including committed WAL changes), checks its integrity, and runs the existing PIT reconciliation service only on that copy. The source is not initialized, migrated, or written to. The local copy is removed when the export finishes.
+
+The output is newline-delimited JSON: one metadata record followed by **every** unresolved economic event. Metadata contains the fixed UTC cutoff, snapshot SHA-256, incomplete/conflict totals, and explicit no-production/no-canonicalization flags. The command checks that the number of exported events equals the diagnostic totals and that economic event identities are unique. The output is created with restricted permissions and published exclusively: an existing report is never overwritten. A successful command prints an output SHA-256 for custody/audit. Preserve the authorized source snapshot and report in a protected evidence store if independent reproduction is required.
+
+**Do not** run this with a fixture and label the result operational. Do not commit operational databases, reports, instrument-level sensitive holdings, secrets, or environment credentials. Run on a secured host with appropriate disk space. The exporter processes fixed-size pages from the same consistent snapshot, validates the total and ordering of every page, and writes JSONL incrementally without retaining the entire unresolved-event list. The service still scans the eligible universe on each page, so very large exports can be CPU/IO intensive; benchmark and schedule them off-peak rather than treating paging as a throughput guarantee. A future PIT cutoff is rejected. Failed or inconsistent exports are not published.
+
+## Acceptance boundary
+
+The operator must separately establish the source's operational origin, eligibility-universe definition, acquisition time, access authorization, and custody. The exporter verifies SQLite snapshot consistency, **not** that the database is a genuine production source or that provider families are contractually independent. Conflicting events require independent review; the tool neither chooses a winning source nor performs backfill. Only an operator-verified full-universe historical diagnostic, independent reconciliation, and separately approved release gates can close production criteria.
+
+
+## Bounded secondary-provider sweep (authorized writes)
+
+After reviewing the complete worklist, an authorized operator may request a bounded
+Alpha Vantage secondary backfill (requires provider configuration and approval):
+
+```text
+python -m scripts.backfill_verified_secondary_corporate_actions --sweep --limit 10 --max-batches 20 --as-of 2026-10-30T00:00:00+00:00
+```
+
+Unlike repeated calls with an increasing `--offset` against a shrinking live
+queue, `--sweep` freezes actionable unresolved events suggested for Alpha Vantage from one consistent
+SQLite backup, groups them by instrument, and processes each selected instrument
+at most once. It retains the frozen listing identity (including exchange, type,
+issuer, financial identifier and currency) and refuses a changed identity before
+fetching the next batch. It reports actionable events not attempted because of
+the explicit batch cap; a partial sweep is not success for the full universe.
+
+The operator must separately verify the database's operational origin, provider
+license, rate limits and actual economic agreement. A second configured provider
+does not by itself prove independence; conflicts remain unresolved and are never
+canonicalized automatically. No fixture, successful command, or green CI
+constitutes production evidence. Do not automatically loop on increasing offsets.
+
+The sweep command exits with status **3** if the bounded selection leaves actionable
+events unattempted or an instrument fails; an incomplete run cannot be treated
+as successful by an unattended scheduler. Conflicting economic evidence remains
+a review item even after a secondary observation is collected.
+
+## PIT-bounded secondary retrieval
+
+The secondary corporate-action backfill accepts only strict `YYYY-MM-DD`
+`--from-date` and `--to-date` values. An explicit `--to-date` later
+than the UTC `--as-of` date is rejected before provider retrieval; a
+`--from-date` without `--to-date` is automatically capped at the UTC
+`--as-of` date rather than allowing an unbounded provider request. A
+reversed or malformed date window fails closed for both single-batch and
+`--sweep` execution.
+
+The Alpha Vantage adapter filters its own date range, but the secondary
+backfill now **independently validates every returned observation** against
+the requested UTC date window before ingestion. An invalid timestamp or
+out-of-window row rejects that instrument's entire response, including
+otherwise valid actions in the same response; no partial write is made
+from that response. The operator must investigate provider discrepancies
+rather than silently trimming them. These safeguards do not establish
+operational provider independence, successful economic reconciliation, or
+historical price-coverage readiness.
+
+
+
+## General corporate-action ingestion and CLI exit contract
+
+The shared `CorporateActionIngestionService` now validates **every** returned
+observation, including rows without dividends or splits, before writing any
+batch. It checks strict `YYYY-MM-DD` request bounds, UTC-normalized economic
+dates, timezone-aware effective/retrieval instants, chronological consistency,
+and rejects future effective or retrieval timestamps. If a lower bound is
+specified without an upper bound, the request is capped to the current UTC
+date. Any invalid or out-of-window observation rejects that instrument's
+whole response without partial persistence. A UTC-day boundary may differ
+from an exchange-local trading day; operators must investigate those cases,
+not silently discard the discrepancy.
+
+The basic `backfill_secondary_corporate_actions` command exits **3** when any
+selected instrument fails (and **0** only when its selected batch has no
+reported failures). The verified single-batch command exits **3** when a
+selected event remains incomplete or conflicting, or when an instrument fails.
+The verified sweep retains its bounded-selection contract: it exits **3** for
+unattempted actionable events or failed instruments. A zero exit status from
+any bounded command is **not** evidence of complete eligible-universe
+coverage, independent operational provider agreement, or production readiness.
+
+Provider-supplied historical `retrievedAt` is **never** treated as proof
+of ATHENA's own acquisition time during shared-history ingestion. New actions
+are stored with the locally observed UTC response receipt time, after complete
+response validation. The new `capture_verified=1` marker distinguishes those
+rows from pre-existing rows (`capture_verified=0` after additive migration).
+A replay with the same provider, economic identity and source timestamp is
+idempotent across separate local captures **only** when a previously captured
+row has that marker. A different dividend amount, split ratio, currency or
+source timestamp remains a distinct immutable observation; no automatic
+canonicalization or investment authority follows.
+
+**Legacy PIT warning:** this additive migration does not rewrite or erase
+older provider-declared `retrieved_at` values. Legacy rows are marked
+unverified but existing readers can still see them. Consequently, historical
+PIT/OOS/total-return evidence derived from legacy corporate actions remains
+unfit for operational acceptance until a separately approved, audited
+quarantine/backfill or explicit verified-capture filter is applied across
+every downstream reader. A green CI cannot repair historical provenance.
+Only separately audited acquisition logs and independent source custody can
+close that provenance criterion.
+
+
+## Immutable PIT event identity and provenance replay
+
+Schema v6+ deliberately permits **multiple distinct economic events** from the
+same provider at the same effective and retrieval instants. The immutable
+identity includes the economic payload (`event_identity`: type, cash amount,
+split ratio and currency), not just the date and provider. A replay is
+idempotent when that entire identity and its source timestamp match. A replay
+of the **same economic event** with a different `source_timestamp` fails
+closed, rather than silently discarding the contradictory provenance. The
+repository rolls back the entire `save_many` transaction on such a conflict;
+SQLite CHECK/foreign-key violations are not masked by blanket
+`INSERT OR IGNORE`.
+
+Different economic amounts at the same effective instant are **not**
+automatically labelled corruption or merged: they may represent separate
+legitimate distributions, and the reconciliation layer must evaluate their
+meaning independently. A later retrieval instant can also preserve a revised
+observation without rewriting older PIT evidence.
+
+The shared ingestion path now groups a validated response by provider and
+uses one local receipt timestamp for all its actions. Each provider batch is
+transactional; **different provider batches are not one transaction**.
+A prior committed provider batch may remain if a later provider batch fails.
+The operator must inspect and reconcile the persisted observations rather
+than certify the entire instrument as accepted. Regression evidence here
+uses fixtures, not an operational provider, and does not close independent
+reconciliation or production gates.
+
+
+## Quarantine gate for historical capture provenance
+
+The aggregate corporate-action coverage report now exposes
+`unverifiedCaptureCount`. Every legacy row (`capture_verified=0`) visible
+at the PIT cutoff is counted, including rows whose amounts happen to agree
+between independent provider families. A missing, malformed, or noncanonical
+capture marker also fails closed. `crossProviderReconciliationReady` **must
+remain false** while this count is nonzero. Existing rows remain queryable for
+non-authoritative audit and reconciliation diagnostics; no destructive
+migration, timestamp rewriting, or automatic provider selection is performed.
+
+`agreedEventCount` is a **diagnostic economic comparison only**. It must not
+be interpreted as verified historical PIT evidence when
+`unverifiedCaptureCount > 0`. The marker identifies a locally observed
+capture path, not an independent third-party timestamp attestation or proof
+of a production provider agreement. Other legacy readers, total-return and
+OOS consumers still require a reviewed end-to-end quarantine/verified-only
+policy before their outputs can be accepted as operational evidence.
+
+
+
+## Strict dividend/recommendation capture quarantine
+
+The repository now exposes a non-destructive PIT capture-verification query.
+It normalizes legacy retrieval timestamps to UTC before deciding whether a
+legacy or malformed row was already known at the requested cutoff; a
+noncanonical timezone offset cannot bypass the check. Invalid retrieval
+timestamps fail closed rather than being silently ignored.
+
+The default recommendation-dividend service uses strict capture verification.
+If any known dividend **or split** for that instrument lacks verified local
+capture provenance, the signal returns
+`corporate_action_capture_unverified`, without dividend metrics, payout
+ratios, dividend total return, or production authority. A separate strict
+mode in the dividend analysis service rejects such data even when invoked
+outside the recommendation layer. Legacy rows are preserved for audit, and
+an observation first retrieved *after* the cutoff does not invalidate
+otherwise verified earlier evidence.
+
+This closes the recommendation-dividend consumption boundary, **not** all
+historical consumers. Direct diagnostic readers, OOS pipelines, independent
+total-return bindings and reconciliation worklists still need audited
+capture-aware treatment. The marker does not establish independent
+third-party attestation or operational source authorization.
+
+
+
+## Per-instrument reconciliation capture quarantine
+
+The individual cross-provider reconciliation report now includes
+`unverifiedCaptureCount` and never returns `reconciled=true` if any
+queried PIT-visible snapshot lacks `capture_verified=1`, including an
+older superseded snapshot or a missing marker. `agreedEventCount` remains
+a diagnostic comparison of economic values; it does **not** override the
+capture gate. The service preserves all rows and never selects a provider,
+changes historical timestamps or creates investment authority. Aggregate
+coverage and per-instrument reconciliation now both refuse to certify
+unverified historical capture provenance. The complete worklist, OOS and
+other direct readers still require separate review.
+
+
+## Complete worklist quarantine for unverified capture evidence
+
+The PIT reconciliation worklist now keeps economically agreed events in its
+unresolved export when **any** PIT-visible snapshot of that event lacks a
+canonical local `capture_verified=1` marker, including superseded revisions.
+Those events are classified as `incomplete` (unless already `conflict`),
+not as accepted. Each worklist item exposes `unverifiedCaptureCount`, and
+the complete-universe result exposes `totalUnverifiedCaptureCount` across
+all pages. The unresolved count and pagination include these items so an
+apparently complete economic match cannot silently disappear from the
+operational remediation queue. A legacy capture first retrieved after the
+PIT cutoff does not contaminate the earlier worklist.
+
+Where two provider families already agree, `missingIndependentFamilyCount`
+remains zero and `suggestedProvider` may remain null: this requires independent
+capture attestation or reviewed remediation, **not** blind repeated fetching.
+No provider is selected automatically and historical observations remain
+immutable. These counters measure local marker status, not genuine third-party
+custody, legal source independence, or 365-day production coverage. Operational
+closure still requires an authorized consistent database snapshot, complete
+export, independent reconciliation and audited PIT provenance.
+
+
+## Canonical recommendation quarantine boundary
+
+The recommendation dividend evidence contract independently enforces the
+`corporate_action_capture_unverified` and `market_evidence_not_ready` states:
+neither state may carry dividend observations, dividend-derived total return,
+payout ratios, or financial-period sustainability. An unrecognized status
+fails closed, and a purportedly ready signal cannot publish derived return or
+payout metrics without a dividend evidence object. Independent market-only
+price evidence remains available for diagnosis. This prevents a substituted
+upstream producer from bypassing the capture quarantine; it does **not**
+verify operational provenance or extend the quarantine to every OOS/portfolio
+reader. Historical rows remain available for audit, not production authority.
+
+
+## UTC-normalized repository PIT reads (legacy offset hardening)
+
+The corporate-action repository's paid-history and known-forward PIT views
+now compare **actual UTC instants**, not SQLite ISO-8601 TEXT ordering.
+Legacy rows with different offsets can otherwise appear known before they
+were retrieved, or disappear despite being known. Both views normalize
+retrieval and effective instants, partition paid versus future-effective
+events at the same UTC cutoff, and apply effective-date bounds in UTC.
+Malformed or timezone-naive stored instants fail closed rather than silently
+passing a PIT filter. The unbounded historical audit view is retained.
+
+This fixes a timestamp-selection boundary only. It does not authenticate
+legacy captures, grant production authority, or establish operational
+coverage, independent reconciliation, OOS skill or total-return correctness.
+PIT reads scan each instrument's history to avoid unsafe lexical prefilters;
+operational performance should be benchmarked against the authorized
+database snapshot before claiming large-universe readiness.
+
+
+## Research split-factor reconciliation boundary
+
+`CorporateActionService.cumulative_split_factor` no longer multiplies the
+same UTC-day split once per reporting provider. Matching independent-provider
+ratios count as one economic action; conflicting ratios and repeated
+same-provider observations on the same day fail closed because an economic
+event identifier is unavailable. Distinct UTC-day splits still compound.
+Non-finite or non-positive ratios are rejected before multiplication.
+
+This is a **research diagnostic**, not an attestation of historical capture.
+The extractor accepts provider-declared `retrievedAt` timestamps, which alone
+cannot prove when ATHENA actually knew an event. Operational PIT/OOS/total-return
+acceptance still requires verified local capture, independent reconciliation,
+the authorized production snapshot and explicit release gates.
+
+
+## Direct dividend and standalone total-return PIT claims
+
+A direct `DividendAnalysisService` call in its legacy-compatible diagnostic mode
+(`require_verified_capture=False`) may display historical observations for
+non-authoritative audit, but its API now reports `pitSafe=false` and
+`captureGatePassed=false`. Only an explicitly strict reader that rejects all
+PIT-visible unverified captures may report `captureGatePassed=true` and
+structural `pitSafe=true`. This gate does not attest provider independence,
+license, custody, complete history, or production readiness;
+`productionEligible=false` remains mandatory.
+
+The standalone `DividendTotalReturnService` accepts caller-supplied component
+observation times and may establish `componentTimestampsWithinCutoff=true`,
+but these timestamps alone do **not** independently prove when ATHENA acquired
+corporate-action evidence. It therefore always reports `pitSafe=false` and
+`productionEligible=false`; its numeric decomposition remains a research
+calculation, never an operational OOS or investment-authority attestation.
+No legacy rows are deleted or silently reclassified. Production/OOS acceptance
+still requires independently audited capture evidence and an authorized
+consistent operational database snapshot.

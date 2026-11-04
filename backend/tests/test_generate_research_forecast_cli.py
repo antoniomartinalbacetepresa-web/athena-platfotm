@@ -1,0 +1,129 @@
+"""Synthetic CLI tests; no production forecasts or model-quality evidence."""
+import hashlib
+import json
+
+import pytest
+
+from scripts import generate_research_forecast as cli
+
+
+def arguments(tmp_path, template=b'{}', model=b'{"test":"data"}'):
+    model_path, template_path = tmp_path / "model.json", tmp_path / "template.json"
+    model_path.write_bytes(model)
+    template_path.write_bytes(template)
+    return cli.build_parser().parse_args([
+        "--model", str(model_path), "--template", str(template_path),
+        "--artifact-sha256", hashlib.sha256(model).hexdigest(), "--plan-id", "test-only"])
+
+
+class Store:
+    def generate_and_persist(self, **kwargs):
+        return kwargs
+
+
+def test_recovery_forwards_only_original_persisted_artifact(tmp_path):
+    args = arguments(tmp_path)
+    args.recover_specification_hash = "b" * 64
+    args.template = None
+    class Recovery(Store):
+        def generate_and_persist(self, **kwargs):
+            pytest.fail("Recovery must not generate a forecast")
+        def recover_persisted(self, **kwargs):
+            return kwargs
+
+    assert cli.run(args, store=Recovery())["specification_hash"] == "b" * 64
+
+
+def test_recovery_missing_specification_does_not_generate(tmp_path):
+    args = arguments(tmp_path)
+    args.recover_specification_hash = "b" * 64
+
+    class Recovery(Store):
+        def recover_persisted(self, **kwargs):
+            raise ValueError("Missing evidence")
+        def generate_and_persist(self, **kwargs):
+            pytest.fail("Missing evidence must not trigger generation")
+
+    with pytest.raises(ValueError, match="Missing evidence"):
+        cli.run(args, store=Recovery())
+
+
+def test_template_and_recovery_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--template", "template", "--recover-specification-hash", "a" * 64,
+                                      "--model", "model", "--artifact-sha256", "b" * 64])
+
+
+def test_forwards_exact_bytes_template_and_pin(tmp_path):
+    args = arguments(tmp_path, template=b'{"specificationId":"test-only"}')
+    result = cli.run(args, store=Store(), plan_service=Plan(args))
+    assert result["model_bytes"] == args.model.read_bytes()
+    assert result["pinned_artifact_hash"] == args.artifact_sha256
+    assert result["specification_template"] == {"specificationId": "test-only"}
+
+
+@pytest.mark.parametrize("pin", ["invalid", "a" * 64])
+def test_wrong_pin_fails_before_generation(tmp_path, pin):
+    args = arguments(tmp_path)
+    args.artifact_sha256 = pin
+    with pytest.raises(ValueError):
+        cli.run(args, store=Store())
+
+
+def test_duplicate_template_keys_rejected(tmp_path):
+    args = arguments(tmp_path, template=b'{"x":1,"x":2}')
+    with pytest.raises(ValueError):
+        cli.run(args, store=Store())
+
+
+@pytest.mark.parametrize("content", [b"", b"abcd"])
+def test_bounded_read_rejects_empty_and_oversized_file(tmp_path, content):
+    path = tmp_path / "data"
+    path.write_bytes(content)
+    with pytest.raises(ValueError):
+        cli._read_limited(path, 3)
+
+
+def test_main_failure_has_no_partial_json_or_internal_details(monkeypatch, capsys):
+    def unavailable(args):
+        raise RuntimeError("private-internal-detail")
+    monkeypatch.setattr(cli, "run", unavailable)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--model", "model", "--template", "template", "--artifact-sha256", "a" * 64])
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "private-internal-detail" not in captured.err
+
+
+class Plan:
+    def __init__(self, args):
+        self.args = args
+    def get(self, **kwargs):
+        return {"sealedAt": "2020-01-01T00:00:00+00:00",
+                "modelArtifactHash": self.args.artifact_sha256,
+                "templates": [json.loads(self.args.template.read_bytes())]}
+
+
+@pytest.mark.parametrize("failure", ["missing_id", "model", "template", "future_seal"])
+def test_generation_requires_available_exact_precommitted_selection(tmp_path, failure):
+    args = arguments(tmp_path)
+    plan = Plan(args).get()
+    if failure == "missing_id":
+        args.plan_id = None
+    elif failure == "model":
+        plan["modelArtifactHash"] = "b" * 64
+    elif failure == "template":
+        plan["templates"] = [{"different": True}]
+    else:
+        plan["sealedAt"] = "2999-01-01T00:00:00+00:00"
+
+    class Plans:
+        def get(self, **kwargs):
+            return plan
+    class Forbidden(Store):
+        def generate_and_persist(self, **kwargs):
+            pytest.fail("Invalid plan must not invoke inference")
+
+    with pytest.raises(ValueError):
+        cli.run(args, store=Forbidden(), plan_service=Plans())

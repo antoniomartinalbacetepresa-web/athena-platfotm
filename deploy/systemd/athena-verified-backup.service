@@ -1,0 +1,23 @@
+[Unit]
+Description=ATHENA verified SQLite backup, secondary copy and isolated restore
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=athena-backup
+Group=athena-backup
+WorkingDirectory=/opt/athena/backend
+EnvironmentFile=/etc/athena/backup.env
+ExecStart=/opt/athena/backend/.venv/bin/python -m scripts.scheduled_verified_backup
+RuntimeDirectory=athena-backup
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+RestrictSUIDSGID=true
+TimeoutStartSec=45min
+StandardOutput=journal
+StandardError=journal

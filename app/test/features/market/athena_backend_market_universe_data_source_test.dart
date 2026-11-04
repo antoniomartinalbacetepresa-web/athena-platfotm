@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -60,6 +61,58 @@ void main() {
       expect(asset.isPrimaryListing, isTrue);
       expect(asset.sector, 'Technology');
       expect(asset.industry, 'Consumer Electronics');
+    });
+
+    test('obtiene y normaliza el estado del universo', () async {
+      final client = MockClient((request) async {
+        expect(request.url.path, '/api/v1/market/universe/status');
+
+        return http.Response(
+          jsonEncode({
+            'data': {
+              'activeCount': 16192,
+              'globallyUsableCount': 2999,
+              'usableCoverage': 0.1852149209486166,
+              'regionCounts': {
+                'america': 581,
+                'europe': 1427,
+                'asia': 991,
+              },
+              'isGlobalReady': true,
+              'usingFallback': false,
+            },
+          }),
+          200,
+        );
+      });
+
+      final dataSource = AthenaBackendMarketUniverseDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+
+      final status = await dataSource.getStatus();
+
+      expect(status.activeCount, 16192);
+      expect(status.globallyUsableCount, 2999);
+      expect(status.americaCount, 581);
+      expect(status.europeCount, 1427);
+      expect(status.asiaCount, 991);
+      expect(status.isGlobalReady, isTrue);
+      expect(status.usingFallback, isFalse);
+    });
+
+    test('rechaza un estado del universo con estructura inválida', () async {
+      final client = MockClient((request) async {
+        return http.Response(jsonEncode({'data': []}), 200);
+      });
+
+      final dataSource = AthenaBackendMarketUniverseDataSource(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+
+      expect(dataSource.getStatus, throwsFormatException);
     });
 
     test('elimina duplicados del mismo listado', () async {
@@ -261,5 +314,47 @@ void main() {
 
       expect(dataSource.getUniverse, throwsException);
     });
+    test('universe and status time out and retry without stale evidence', () async {
+      final staleUniverse = Completer<http.Response>();
+      final staleStatus = Completer<http.Response>();
+      var universeCalls = 0;
+      var statusCalls = 0;
+      final source = AthenaBackendMarketUniverseDataSource(
+        baseUrl: 'https://api.athena.test',
+        requestTimeout: const Duration(milliseconds: 20),
+        client: MockClient((request) {
+          if (request.url.path.endsWith('/status')) {
+            statusCalls++;
+            if (statusCalls == 1) return staleStatus.future;
+            return Future.value(http.Response(jsonEncode({
+              'data': {
+                'activeCount': 1,
+                'globallyUsableCount': 0,
+                'isWeightingReady': false,
+              },
+            }), 200));
+          }
+          universeCalls++;
+          if (universeCalls == 1) return staleUniverse.future;
+          return Future.value(http.Response(jsonEncode({
+            'data': [
+              {'symbol': 'AAA', 'companyName': 'Verified listing'},
+            ],
+          }), 200));
+        }),
+      );
+      await expectLater(source.getUniverse(), throwsA(isA<TimeoutException>()));
+      await expectLater(source.getStatus(), throwsA(isA<TimeoutException>()));
+      final recoveredUniverse = await source.getUniverse();
+      final recoveredStatus = await source.getStatus();
+      expect(universeCalls, 2);
+      expect(statusCalls, 2);
+      expect(recoveredUniverse.single.symbol, 'AAA');
+      expect(recoveredStatus.isWeightingReady, isFalse);
+      staleUniverse.complete(http.Response('{"data":[]}', 200));
+      staleStatus.complete(http.Response('{"data":null}', 200));
+      source.dispose();
+    });
+
   });
 }

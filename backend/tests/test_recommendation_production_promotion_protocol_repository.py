@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import copy
+from datetime import datetime, timezone
+
+import pytest
+
+from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_production_promotion_protocol_repository import (
+    RecommendationProductionPromotionProtocolRepository,
+)
+
+
+def _draft(*, protocol_id: str = "prod-promotion-v1") -> dict:
+    return {
+        "artifactVersion": "athena-production-promotion-protocol-v1",
+        "protocolId": protocol_id,
+        "researchGateFingerprint": "a" * 64,
+        "requiredHorizons": [7, 30, 90, 180, 365],
+        "criteriaByHorizon": {
+            str(horizon): {
+                "minimumConfirmationRowCount": 20,
+                "minimumNonOverlappingConfirmationWindowCount": 5,
+                "minimumResolvedIssuerCoverageRatio": 0.90,
+                "maximumResolvedIssuerConcentrationRatio": 0.25,
+                "minimumSignAccuracy": 0.0,
+                "minimumRelativeMseImprovement": 0.01,
+                "requireBeatZeroExcessMseBaseline": True,
+            }
+            for horizon in (7, 30, 90, 180, 365)
+        },
+    }
+
+
+def test_registration_timestamp_is_repository_generated_and_persisted(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    before = datetime.now(timezone.utc)
+    record = repo.register(protocol_draft=_draft())
+    after = datetime.now(timezone.utc)
+
+    registered_at = datetime.fromisoformat(record["registered_at"])
+    assert before <= registered_at <= after
+    assert record["protocol"]["registeredAt"] == record["registered_at"]
+    assert record["protocol"]["protocolFingerprint"] == record["protocol_fingerprint"]
+    criterion = record["protocol"]["criteriaByHorizon"]["7"]
+    assert criterion["minimumConfirmationRowCount"] == 20
+    assert criterion["minimumNonOverlappingConfirmationWindowCount"] == 5
+    assert criterion["minimumResolvedIssuerCoverageRatio"] == 0.90
+    assert criterion["maximumResolvedIssuerConcentrationRatio"] == 0.25
+    assert criterion["minimumRelativeMseImprovement"] == 0.01
+    assert criterion["requireBeatZeroExcessMseBaseline"] is True
+    assert repo.get(protocol_id="prod-promotion-v1") == record
+
+
+def test_callers_cannot_backdate_registration_or_supply_fingerprint(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    draft = _draft()
+    draft["registeredAt"] = "2000-01-01T00:00:00+00:00"
+
+    with pytest.raises(ValueError, match="los genera el registro"):
+        repo.register(protocol_draft=draft)
+
+    draft = _draft()
+    draft["protocolFingerprint"] = "b" * 64
+    with pytest.raises(ValueError, match="los genera el registro"):
+        repo.register(protocol_draft=draft)
+
+
+def test_protocol_id_cannot_be_reused_to_replace_precommitted_criteria(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    repo.register(protocol_draft=_draft())
+    changed = _draft()
+    changed["criteriaByHorizon"]["365"]["minimumSignAccuracy"] = 1.0
+
+    with pytest.raises(ValueError, match="inmutables"):
+        repo.register(protocol_draft=changed)
+
+
+def test_non_finite_or_incomplete_criteria_are_rejected_before_persistence(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    non_finite = _draft(protocol_id="non-finite")
+    non_finite["criteriaByHorizon"]["90"]["minimumRelativeMseImprovement"] = float("nan")
+    with pytest.raises(ValueError, match="finito"):
+        repo.register(protocol_draft=non_finite)
+
+    missing = _draft(protocol_id="missing")
+    del missing["criteriaByHorizon"]["180"]
+    with pytest.raises(ValueError, match="Faltan criterios"):
+        repo.register(protocol_draft=missing)
+
+
+def test_production_protocol_cannot_accept_non_improving_baseline_evidence(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    zero = _draft(protocol_id="zero-improvement")
+    zero["criteriaByHorizon"]["30"]["minimumRelativeMseImprovement"] = 0.0
+    with pytest.raises(ValueError, match="estrictamente positivo"):
+        repo.register(protocol_draft=zero)
+
+    negative = _draft(protocol_id="negative-improvement")
+    negative["criteriaByHorizon"]["30"]["minimumRelativeMseImprovement"] = -0.01
+    with pytest.raises(ValueError, match="estrictamente positivo"):
+        repo.register(protocol_draft=negative)
+
+    baseline_optional = _draft(protocol_id="optional-baseline")
+    baseline_optional["criteriaByHorizon"]["30"][
+        "requireBeatZeroExcessMseBaseline"
+    ] = False
+    with pytest.raises(ValueError, match="debe ser true"):
+        repo.register(protocol_draft=baseline_optional)
+
+
+def test_confirmation_sample_size_is_required_and_must_be_positive(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    missing = _draft(protocol_id="missing-sample")
+    del missing["criteriaByHorizon"]["30"]["minimumConfirmationRowCount"]
+    with pytest.raises(ValueError, match="minimumConfirmationRowCount"):
+        repo.register(protocol_draft=missing)
+
+    zero = _draft(protocol_id="zero-sample")
+    zero["criteriaByHorizon"]["30"]["minimumConfirmationRowCount"] = 0
+    with pytest.raises(ValueError, match="entero positivo"):
+        repo.register(protocol_draft=zero)
+
+
+def test_temporal_breadth_is_required_and_must_be_positive(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    missing = _draft(protocol_id="missing-temporal-breadth")
+    del missing["criteriaByHorizon"]["30"][
+        "minimumNonOverlappingConfirmationWindowCount"
+    ]
+    with pytest.raises(
+        ValueError,
+        match="minimumNonOverlappingConfirmationWindowCount",
+    ):
+        repo.register(protocol_draft=missing)
+
+    zero = _draft(protocol_id="zero-temporal-breadth")
+    zero["criteriaByHorizon"]["30"][
+        "minimumNonOverlappingConfirmationWindowCount"
+    ] = 0
+    with pytest.raises(ValueError, match="entero positivo"):
+        repo.register(protocol_draft=zero)
+
+
+def test_issuer_criteria_are_required_bounded_and_finite(tmp_path):
+    repo = RecommendationProductionPromotionProtocolRepository(
+        AthenaDatabase(tmp_path / "athena.db")
+    )
+    missing_coverage = _draft(protocol_id="missing-issuer-coverage")
+    del missing_coverage["criteriaByHorizon"]["30"]["minimumResolvedIssuerCoverageRatio"]
+    with pytest.raises(ValueError, match="minimumResolvedIssuerCoverageRatio"):
+        repo.register(protocol_draft=missing_coverage)
+
+    invalid_concentration = _draft(protocol_id="bad-issuer-concentration")
+    invalid_concentration["criteriaByHorizon"]["30"][
+        "maximumResolvedIssuerConcentrationRatio"
+    ] = 1.01
+    with pytest.raises(ValueError, match="maximumResolvedIssuerConcentrationRatio"):
+        repo.register(protocol_draft=invalid_concentration)
+
+    non_finite_coverage = _draft(protocol_id="nan-issuer-coverage")
+    non_finite_coverage["criteriaByHorizon"]["30"][
+        "minimumResolvedIssuerCoverageRatio"
+    ] = float("nan")
+    with pytest.raises(ValueError, match="finito"):
+        repo.register(protocol_draft=non_finite_coverage)
+
+
+def test_tampered_persisted_protocol_fails_closed_on_read(tmp_path):
+    database = AthenaDatabase(tmp_path / "athena.db")
+    repo = RecommendationProductionPromotionProtocolRepository(database)
+    record = repo.register(protocol_draft=_draft())
+    changed = copy.deepcopy(record["protocol"])
+    changed["criteriaByHorizon"]["30"]["minimumResolvedIssuerCoverageRatio"] = 1.0
+
+    import json
+
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE athena_recommendation_production_promotion_protocols
+            SET protocol_json = ?
+            WHERE protocol_id = ?
+            """,
+            (
+                json.dumps(changed, sort_keys=True, separators=(",", ":")),
+                record["protocol_id"],
+            ),
+        )
+
+    with pytest.raises(ValueError, match="modificado"):
+        repo.get(protocol_id=record["protocol_id"])

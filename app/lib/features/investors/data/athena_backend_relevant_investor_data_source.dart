@@ -1,0 +1,58 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
+import '../models/relevant_investor_activity.dart';
+import '../models/sec_cik_identity.dart';
+
+class AthenaBackendRelevantInvestorDataSource {
+  final String baseUrl;
+  final http.Client client;
+  final Duration requestTimeout;
+
+  AthenaBackendRelevantInvestorDataSource({
+    required this.baseUrl,
+    http.Client? client,
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : assert(requestTimeout > Duration.zero),
+       client = client ?? http.Client();
+
+  Future<RelevantInvestorActivity> getLatestInstitutionalHoldings({
+    required String cik,
+  }) async {
+    late final String normalizedCik;
+    try {
+      normalizedCik = normalizeSecCik(cik);
+    } on FormatException {
+      throw ArgumentError.value(cik, 'cik', 'Debe ser un CIK SEC positivo de hasta 10 dígitos.');
+    }
+
+    final uri = Uri.parse('$baseUrl/api/v1/sec/institutional-holdings/latest')
+        .replace(queryParameters: {'cik': normalizedCik});
+    // A stalled SEC/backend request must fail closed and allow the user to retry.
+    // Never present an incomplete 13F cohort as verified evidence.
+    final response = await client.get(uri).timeout(requestTimeout);
+    if (response.statusCode == 404) {
+      throw StateError('No hay filings 13F recientes para este CIK.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'El backend de ATHENA TYCHE respondió con código HTTP '
+        '${response.statusCode} al consultar SEC 13F.',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('La respuesta SEC 13F no es un objeto JSON.');
+    }
+    return RelevantInvestorActivity.fromApi(
+      cik: normalizedCik,
+      envelope: decoded,
+    );
+  }
+
+  void dispose() {
+    client.close();
+  }
+}

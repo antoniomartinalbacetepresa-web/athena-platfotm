@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from app.database.athena_database import AthenaDatabase
+
+
+@dataclass(frozen=True)
+class MarketHistoryGap:
+    instrument_id: int
+    symbol: str
+    reason: str
+    source_count: int
+    best_source_provider: str | None
+    best_history_span_days: float | None
+    best_maximum_gap_days: float | None
+
+    def to_api_dict(self) -> dict[str, Any]:
+        return {
+            "instrumentId": self.instrument_id,
+            "symbol": self.symbol,
+            "reason": self.reason,
+            "sourceCount": self.source_count,
+            "bestSourceProvider": self.best_source_provider,
+            "bestHistorySpanDays": self.best_history_span_days,
+            "bestMaximumGapDays": self.best_maximum_gap_days,
+        }
+
+
+@dataclass(frozen=True)
+class MarketHistoryGapReport:
+    total_blocking_count: int
+    no_observations_count: int
+    insufficient_span_count: int
+    discontinuous_source_count: int
+    minimum_history_days: int
+    maximum_source_gap_days: int
+    limit: int
+    offset: int
+    items: tuple[MarketHistoryGap, ...]
+    as_of: str | None = None
+    stale_source_count: int = 0
+
+    def to_api_dict(self) -> dict[str, Any]:
+        return {
+            "status": "diagnostic_only",
+            "totalBlockingCount": self.total_blocking_count,
+            "blockingByReason": {
+                "no_observations": self.no_observations_count,
+                "insufficient_span": self.insufficient_span_count,
+                "discontinuous_source": self.discontinuous_source_count,
+                "stale_source": self.stale_source_count,
+            },
+            "minimumHistoryDays": self.minimum_history_days,
+            "maximumSourceGapDays": self.maximum_source_gap_days,
+            "limit": self.limit,
+            "offset": self.offset,
+            "asOf": self.as_of,
+            "pointInTimeCutoffApplied": self.as_of is not None,
+            "positiveFiniteCloseRequired": True,
+            "items": [item.to_api_dict() for item in self.items],
+            "productionEvidenceClaimed": False,
+            "warning": (
+                "Este informe prioriza huecos del histórico persistido; no ejecuta "
+                "backfill, no mezcla proveedores y no convierte fixtures o cobertura "
+                "parcial en evidencia de producción. La vigencia del tramo profundo "
+                "hasta el corte PIT se comprueba aquí y se contrasta con "
+                "MarketObservationCoverageService. "
+                "Solo se consideran observaciones ocurridas y recuperadas hasta asOf; "
+                "el universo elegible sigue siendo el catálogo activo actual, no una "
+                "reconstrucción histórica de altas y bajas."
+            ),
+        }
+
+
+class MarketHistoryGapService:
+    DEFAULT_MINIMUM_HISTORY_DAYS = 365
+    DEFAULT_MAXIMUM_SOURCE_GAP_DAYS = 7
+    DEFAULT_LIMIT = 100
+    MAX_LIMIT = 1000
+
+    def __init__(
+        self,
+        database: AthenaDatabase | None = None,
+        *,
+        minimum_history_days: int = DEFAULT_MINIMUM_HISTORY_DAYS,
+        maximum_source_gap_days: int = DEFAULT_MAXIMUM_SOURCE_GAP_DAYS,
+    ) -> None:
+        if minimum_history_days < self.DEFAULT_MINIMUM_HISTORY_DAYS:
+            raise ValueError(
+                "minimum_history_days no puede ser inferior a "
+                f"{self.DEFAULT_MINIMUM_HISTORY_DAYS}."
+            )
+        if (
+            isinstance(maximum_source_gap_days, bool)
+            or not isinstance(maximum_source_gap_days, int)
+            or not 0 < maximum_source_gap_days <= self.DEFAULT_MAXIMUM_SOURCE_GAP_DAYS
+        ):
+            raise ValueError("maximum_source_gap_days debe estar entre 1 y 7.")
+        self._database = database if database is not None else AthenaDatabase()
+        self._minimum_history_days = int(minimum_history_days)
+        self._maximum_source_gap_days = int(maximum_source_gap_days)
+
+    def get_report(
+        self,
+        *,
+        limit: int = DEFAULT_LIMIT,
+        offset: int = 0,
+        as_of: datetime | None = None,
+    ) -> MarketHistoryGapReport:
+        if limit <= 0 or limit > self.MAX_LIMIT:
+            raise ValueError(f"limit debe estar entre 1 y {self.MAX_LIMIT}.")
+        if offset < 0:
+            raise ValueError("offset no puede ser negativo.")
+
+        cutoff = as_of if as_of is not None else datetime.now(timezone.utc)
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("as_of debe incluir zona horaria.")
+        cutoff_utc = cutoff.astimezone(timezone.utc)
+        # Match the coverage service: reject unobserved future cutoffs before
+        # opening SQLite, so both sides of the readiness equation agree.
+        if cutoff_utc > datetime.now(timezone.utc):
+            raise ValueError("as_of no puede ser una fecha futura.")
+        cutoff_iso = cutoff_utc.isoformat()
+
+        self._database.initialize()
+        params = (
+            cutoff_iso,
+            cutoff_iso,
+            self._maximum_source_gap_days,
+            self._minimum_history_days,
+            self._minimum_history_days,
+            cutoff_iso,
+            self._maximum_source_gap_days,
+            self._minimum_history_days,
+            self._minimum_history_days,
+        )
+        ctes = """
+            WITH eligible AS (
+                SELECT id AS instrument_id, UPPER(TRIM(symbol)) AS symbol
+                FROM instruments
+                WHERE is_active = 1
+                  AND LOWER(TRIM(COALESCE(instrument_type, 'unknown'))) NOT IN ('etf', 'fund')
+            ),
+            normalized_history AS (
+                SELECT mo.instrument_id,
+                       CASE WHEN LOWER(TRIM(mo.source_provider)) IN ('yahoo', 'yahoo_finance') THEN 'yahoo'
+                            ELSE TRIM(mo.source_provider) END AS source_provider,
+                       mo.observed_at
+                FROM market_observations mo JOIN eligible e ON e.instrument_id = mo.instrument_id
+                WHERE julianday(mo.observed_at) <= julianday(?)
+                  AND julianday(mo.retrieved_at) <= julianday(?)
+                  AND typeof(mo.close) IN ('integer', 'real')
+                  AND mo.close > 0
+                  AND mo.close < 1.0e308
+                  AND julianday(mo.retrieved_at) >= julianday(mo.observed_at)
+                  AND (mo.source_timestamp IS NULL OR julianday(mo.source_timestamp) <= julianday(mo.retrieved_at))
+                  AND TRIM(COALESCE(mo.source_provider, '')) <> ''
+                  AND INSTR(mo.source_provider, '%') = 0
+                  AND INSTR(mo.source_provider, '&') = 0
+                  AND INSTR(mo.source_provider, CHAR(0)) = 0
+                  AND mo.source_provider NOT GLOB '*[^ -~]*'
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%fmp%'
+                  AND LOWER(REPLACE(REPLACE(REPLACE(mo.source_provider, '_', ''), '-', ''), ' ', '')) NOT LIKE '%financialmodelingprep%'
+            ),
+            ordered_history AS (
+                SELECT instrument_id, source_provider, observed_at,
+                       LAG(observed_at) OVER (PARTITION BY instrument_id, source_provider ORDER BY julianday(observed_at), observed_at) AS previous_observed_at
+                FROM normalized_history
+            ),
+            marked_history AS (
+                SELECT instrument_id, source_provider, observed_at, previous_observed_at,
+                       CASE WHEN previous_observed_at IS NULL THEN 1
+                            WHEN julianday(observed_at) - julianday(previous_observed_at) > ? THEN 1 ELSE 0 END AS starts_new_segment
+                FROM ordered_history
+            ),
+            segmented_history AS (
+                SELECT instrument_id, source_provider, observed_at, previous_observed_at, starts_new_segment,
+                       SUM(starts_new_segment) OVER (PARTITION BY instrument_id, source_provider ORDER BY julianday(observed_at), observed_at ROWS UNBOUNDED PRECEDING) AS segment_id
+                FROM marked_history
+            ),
+            source_segments AS (
+                SELECT instrument_id, source_provider, segment_id,
+                       MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS continuous_span_days,
+                       MAX(julianday(observed_at)) AS segment_end_jd
+                FROM segmented_history GROUP BY instrument_id, source_provider, segment_id
+            ),
+            source_stats AS (
+                SELECT instrument_id, source_provider,
+                       MAX(julianday(observed_at)) - MIN(julianday(observed_at)) AS history_span_days,
+                       MAX(CASE WHEN previous_observed_at IS NULL THEN 0.0 ELSE julianday(observed_at) - julianday(previous_observed_at) END) AS maximum_gap_days
+                FROM ordered_history GROUP BY instrument_id, source_provider
+            ),
+            source_quality AS (
+                SELECT ss.instrument_id, ss.source_provider, ss.history_span_days, ss.maximum_gap_days,
+                       COALESCE(MAX(seg.continuous_span_days), 0.0) AS best_continuous_span_days,
+                       MAX(CASE WHEN seg.continuous_span_days >= ? THEN 1 ELSE 0 END) AS has_deep_segment,
+                       MAX(CASE WHEN seg.continuous_span_days >= ?
+                                 AND julianday(?) - seg.segment_end_jd BETWEEN 0 AND ?
+                                THEN 1 ELSE 0 END) AS has_current_deep_segment
+                FROM source_stats ss LEFT JOIN source_segments seg
+                  ON seg.instrument_id = ss.instrument_id AND seg.source_provider = ss.source_provider
+                GROUP BY ss.instrument_id, ss.source_provider, ss.history_span_days, ss.maximum_gap_days
+            ),
+            summary AS (
+                SELECT instrument_id, COUNT(*) AS source_count, MAX(has_deep_segment) AS has_deep_source,
+                       MAX(has_current_deep_segment) AS has_current_deep_source,
+                       MAX(CASE WHEN history_span_days >= ? THEN 1 ELSE 0 END) AS has_long_source
+                FROM source_quality GROUP BY instrument_id
+            ),
+            ranked AS (
+                SELECT instrument_id, source_provider, history_span_days, maximum_gap_days,
+                       ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY has_current_deep_segment DESC,
+                         has_deep_segment DESC,
+                         CASE WHEN history_span_days >= ? THEN 0 ELSE 1 END, best_continuous_span_days DESC,
+                         history_span_days DESC, source_provider ASC) AS source_rank
+                FROM source_quality
+            ),
+            blockers AS (
+                SELECT e.instrument_id, e.symbol,
+                       CASE WHEN s.instrument_id IS NULL THEN 'no_observations'
+                            WHEN s.has_current_deep_source = 1 THEN NULL
+                            WHEN s.has_deep_source = 1 THEN 'stale_source'
+                            WHEN s.has_long_source = 0 THEN 'insufficient_span'
+                            ELSE 'discontinuous_source' END AS reason,
+                       COALESCE(s.source_count, 0) AS source_count,
+                       r.source_provider AS best_source_provider, r.history_span_days AS best_history_span_days,
+                       r.maximum_gap_days AS best_maximum_gap_days
+                FROM eligible e LEFT JOIN summary s ON s.instrument_id = e.instrument_id
+                LEFT JOIN ranked r ON r.instrument_id = e.instrument_id AND r.source_rank = 1
+            )
+        """
+        with self._database.connect() as connection:
+            # Two SELECTs must observe the same WAL generation: otherwise a
+            # concurrent backfill/catalogue update can mix blocker totals
+            # from one universe with rows from another.
+            connection.execute("BEGIN")
+            counts = connection.execute(ctes + """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN reason = 'no_observations' THEN 1 ELSE 0 END) AS no_observations,
+                       SUM(CASE WHEN reason = 'insufficient_span' THEN 1 ELSE 0 END) AS insufficient_span,
+                       SUM(CASE WHEN reason = 'discontinuous_source' THEN 1 ELSE 0 END) AS discontinuous_source,
+                       SUM(CASE WHEN reason = 'stale_source' THEN 1 ELSE 0 END) AS stale_source
+                FROM blockers WHERE reason IS NOT NULL
+            """, params).fetchone()
+            rows = connection.execute(ctes + """
+                SELECT instrument_id, symbol, reason, source_count, best_source_provider,
+                       best_history_span_days, best_maximum_gap_days
+                FROM blockers WHERE reason IS NOT NULL
+                ORDER BY CASE reason WHEN 'no_observations' THEN 0 WHEN 'insufficient_span' THEN 1
+                         WHEN 'discontinuous_source' THEN 2 ELSE 3 END,
+                         symbol ASC, instrument_id ASC LIMIT ? OFFSET ?
+            """, (*params, limit, offset)).fetchall()
+
+        items = tuple(MarketHistoryGap(
+            instrument_id=int(row["instrument_id"]), symbol=str(row["symbol"]), reason=str(row["reason"]),
+            source_count=int(row["source_count"]),
+            best_source_provider=str(row["best_source_provider"]) if row["best_source_provider"] is not None else None,
+            best_history_span_days=float(row["best_history_span_days"]) if row["best_history_span_days"] is not None else None,
+            best_maximum_gap_days=float(row["best_maximum_gap_days"]) if row["best_maximum_gap_days"] is not None else None,
+        ) for row in rows)
+        return MarketHistoryGapReport(
+            total_blocking_count=int(counts["total"] if counts else 0),
+            no_observations_count=int(counts["no_observations"] or 0) if counts else 0,
+            insufficient_span_count=int(counts["insufficient_span"] or 0) if counts else 0,
+            discontinuous_source_count=int(counts["discontinuous_source"] or 0) if counts else 0,
+            stale_source_count=int(counts["stale_source"] or 0) if counts else 0,
+            minimum_history_days=self._minimum_history_days,
+            maximum_source_gap_days=self._maximum_source_gap_days,
+            limit=limit, offset=offset, items=items, as_of=cutoff_iso,
+        )

@@ -1,0 +1,577 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/dashboard/presentation/widgets/authenticated_my_space_panel.dart';
+import 'package:app/features/dashboard/presentation/widgets/my_space_panel.dart';
+import 'package:app/features/market/models/market_quote.dart';
+import 'package:app/features/market/models/fx_quote.dart';
+import 'package:app/features/market/repositories/market_repository.dart';
+import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_capital_controller.dart';
+import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_controller.dart';
+import 'package:app/features/portfolio/presentation/controllers/authenticated_portfolio_fx_valuation_controller.dart';
+import 'package:app/features/portfolio/services/authenticated_portfolio_fx_valuation_service.dart';
+import 'package:app/features/portfolio/services/authenticated_portfolio_service.dart';
+import 'package:app/features/portfolio/services/authenticated_portfolio_correlation_service.dart';
+import 'package:app/features/portfolio/models/portfolio_instrument_identity.dart';
+import 'package:app/features/portfolio/models/portfolio_pair_correlation.dart';
+import 'package:app/features/profile/services/user_preferences_service.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+class _Market implements MarketRepository {
+  _Market(this.currency);
+  final String currency;
+
+  @override
+  Future<MarketQuote> getQuote(String symbol) async => MarketQuote(
+        symbol: symbol,
+        companyName: symbol,
+        currentPrice: 200,
+        change: 0,
+        changePercentage: 0,
+        currency: currency,
+        exchange: 'NASDAQ',
+        updatedAt: DateTime.utc(2026, 10, 25, 12),
+        sourceProvider: 'yahoo_finance',
+        retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+      );
+}
+
+/// Two authenticated listings with different quote currencies.
+class _MixedMarket implements MarketRepository {
+  @override
+  Future<MarketQuote> getQuote(String symbol) async => MarketQuote(
+        symbol: symbol,
+        companyName: symbol,
+        currentPrice: 200,
+        change: 0,
+        changePercentage: 0,
+        currency: symbol == 'AAPL' ? 'USD' : 'EUR',
+        exchange: 'NASDAQ',
+        updatedAt: DateTime.utc(2026, 10, 25, 12),
+        sourceProvider: 'yahoo_finance',
+        retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+      );
+}
+
+AuthAccount _account(int id) => AuthAccount(
+      id: id,
+      email: 'owner-$id@example.invalid',
+      isActive: true,
+      createdAt: DateTime.utc(2026, 10, 25),
+      updatedAt: DateTime.utc(2026, 10, 25),
+    );
+
+http.Response _holdings({bool empty = false, bool twoListings = false}) => http.Response(
+      jsonEncode({
+        'data': {
+          'positions': empty
+              ? <Object>[]
+              : [
+                  {
+                    'id': 1,
+                    'symbol': 'AAPL',
+                    'exchange': 'NASDAQ',
+                    'quantity': 2,
+                    'averagePurchasePrice': 160,
+                    'createdAt': '2026-10-25T10:00:00Z',
+                    'updatedAt': '2026-10-25T10:00:00Z',
+                  },
+                  if (twoListings)
+                    {
+                      'id': 2,
+                      'symbol': 'MSFT',
+                      'exchange': 'NASDAQ',
+                      'quantity': 1,
+                      'averagePurchasePrice': 150,
+                      'createdAt': '2026-10-25T10:00:00Z',
+                      'updatedAt': '2026-10-25T10:00:00Z',
+                    },
+                ],
+        }
+      }),
+      200,
+    );
+
+http.Response _profile(String currency, {double capital = 1500}) =>
+    http.Response(
+      jsonEncode({
+        'status': 'configured',
+        'data': {
+          'preferences': {
+            'riskTolerance': 'balanced',
+            'investmentHorizonYears': 10,
+            'objective': 'balanced_growth',
+            'baseCurrency': currency,
+            'availableCapital': capital,
+          },
+        },
+      }),
+      200,
+    );
+
+void main() {
+  final session = AuthSession.instance;
+
+  setUp(() {
+    FlutterSecureStorage.setMockInitialValues({});
+    session.clear();
+    session.establish(accessToken: 'owner-a', account: _account(1));
+  });
+  tearDown(() => session.clear());
+
+  testWidgets('Dashboard uses server owner holdings, never sums USD as EUR',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings()),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('USD'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+        ),
+      ),
+    ));
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('1500.00 EUR'), findsOneWidget);
+    expect(find.text('400.00 EUR'), findsNothing);
+    expect(find.text('80.00 EUR'), findsNothing);
+    expect(find.text('No disponible'), findsNWidgets(4));
+    expect(find.text('HHI 1.000'), findsNothing);
+    expect(find.textContaining('no ejecuta órdenes'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('Dashboard calculates verified listing concentration, not issuer risk',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings(twoListings: true)),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('EUR'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+        ),
+      ),
+    ));
+    expect(find.text('600.00 EUR'), findsOneWidget);
+    expect(find.text('HHI 0.556'), findsOneWidget);
+    expect(find.textContaining('AAPL (NASDAQ) 66.7 %'), findsOneWidget);
+    expect(find.textContaining('No equivale a concentración por emisor'),
+        findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+
+  testWidgets('Dashboard uses verified current FX but never invents historical P/L',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings()),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('USD'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    final fx = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({
+          required String baseCurrency,
+          required String quoteCurrency,
+        }) async => FxQuote(
+          baseCurrency: baseCurrency,
+          quoteCurrency: quoteCurrency,
+          rate: 0.9,
+          status: 'fx_current_ready',
+          sourceProvider: 'verified-fx',
+          sourceSymbol: 'USDEUR=X',
+          observedAt: DateTime.utc(2026, 10, 25, 12),
+          retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+          historicalPointInTimeEligible: false,
+        ),
+      ),
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          fxValuationController: fx,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('360.00 EUR'), findsOneWidget);
+    expect(find.textContaining('USD/EUR · verified-fx'), findsOneWidget);
+    expect(find.text('80.00 EUR'), findsNothing);
+    expect(find.text('HHI 1.000'), findsOneWidget);
+    expect(find.textContaining('FX actual verificado; no es PIT histórica'),
+        findsOneWidget);
+    expect(find.textContaining('no se utiliza FX actual'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fx.dispose();
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('mixed-currency authenticated concentration uses verified per-position FX',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings(twoListings: true)),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _MixedMarket(),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    final fx = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({
+          required String baseCurrency,
+          required String quoteCurrency,
+        }) async => FxQuote(
+          baseCurrency: baseCurrency,
+          quoteCurrency: quoteCurrency,
+          rate: 0.9,
+          status: 'fx_current_ready',
+          sourceProvider: 'verified-fx',
+          sourceSymbol: 'USDEUR=X',
+          observedAt: DateTime.utc(2026, 10, 25, 12),
+          retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+          historicalPointInTimeEligible: false,
+        ),
+      ),
+    );
+    await holdings.load();
+    await capital.load();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          fxValuationController: fx,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    // AAPL 400 USD -> 360 EUR; MSFT 200 EUR. HHI = (360/560)^2 + (200/560)^2.
+    expect(find.text('560.00 EUR'), findsOneWidget);
+    expect(find.text('HHI 0.541'), findsOneWidget);
+    expect(find.textContaining('AAPL (NASDAQ) 64.3 %'), findsOneWidget);
+    expect(find.textContaining('FX actual verificado; no es PIT histórica'),
+        findsOneWidget);
+    expect(find.text('80.00 EUR'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fx.dispose();
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('Dashboard fails closed when authenticated FX evidence is rejected',
+      (tester) async {
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings()),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('USD'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    final fx = AuthenticatedPortfolioFxValuationController(
+      valuationService: AuthenticatedPortfolioFxValuationService(
+        loadCurrentFxRate: ({
+          required String baseCurrency,
+          required String quoteCurrency,
+        }) async => throw StateError('FX not verified'),
+      ),
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          fxValuationController: fx,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('360.00 EUR'), findsNothing);
+    expect(find.text('400.00 EUR'), findsNothing);
+    expect(find.text('HHI 1.000'), findsNothing);
+    expect(find.text('No disponible'), findsNWidgets(4));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fx.dispose();
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('same-token owner replacement clears old Dashboard values immediately',
+      (tester) async {
+    final replacementHoldings = Completer<http.Response>();
+    final replacementProfile = Completer<http.Response>();
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((request) {
+        if (session.account?.id == 2) return replacementHoldings.future;
+        return Future.value(_holdings());
+      }),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((request) {
+        if (session.account?.id == 2) return replacementProfile.future;
+        return Future.value(_profile('EUR'));
+      }),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('EUR'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+        ),
+      ),
+    ));
+    expect(find.text('400.00 EUR'), findsOneWidget);
+    expect(find.text('1500.00 EUR'), findsOneWidget);
+
+    session.establish(accessToken: 'owner-a', account: _account(2));
+    await tester.pump();
+    expect(find.text('400.00 EUR'), findsNothing);
+    expect(find.text('1500.00 EUR'), findsNothing);
+    expect(find.byKey(const Key('dashboard-owner-loading')), findsOneWidget);
+
+    replacementHoldings.complete(_holdings(empty: true));
+    replacementProfile.complete(_profile('EUR', capital: 250));
+    await tester.pumpAndSettle();
+    expect(find.text('0'), findsOneWidget);
+    expect(find.text('250.00 EUR'), findsOneWidget);
+    expect(find.text('400.00 EUR'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('late PIT correlation cannot cross same-token owner authority',
+      (tester) async {
+    final oldPair = Completer<PortfolioPairCorrelation>();
+    DateTime? oldCutoff;
+    var pairRequests = 0;
+    PortfolioPairCorrelation pair(double value, DateTime cutoff) =>
+        PortfolioPairCorrelation(
+          leftInstrumentId: 1,
+          rightInstrumentId: 2,
+          sourceProvider: 'yahoo_finance',
+          knowledgeCutoff: cutoff,
+          sampleCount: 35,
+          correlation: value,
+          firstReturnDate: DateTime.utc(2026, 8, 1),
+          lastReturnDate: DateTime.utc(2026, 10, 24),
+          latestRetrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+          priceField: 'adjusted_close',
+          alignmentPolicy: 'utc_calendar_date_intersection',
+          returnPolicy: 'simple_return_consecutive_observations_per_instrument',
+          recommendationPolicy: 'no_advice',
+          productionEligible: false,
+          allocationInfluence: false,
+          automaticTrading: false,
+        );
+    final correlation = AuthenticatedPortfolioCorrelationService(
+      resolveIdentity: ({required symbol, exchange}) async =>
+          PortfolioInstrumentIdentity(
+            databaseInstrumentId: symbol == 'AAPL' ? 1 : 2,
+            canonicalInstrumentId: '$symbol@NASDAQ',
+            issuerId: 'issuer:$symbol',
+            symbol: symbol,
+            exchange: 'NASDAQ',
+            exchangeShortName: 'NASDAQ',
+            currency: 'EUR',
+            sourceProvider: 'verified_catalog',
+            retrievedAt: DateTime.utc(2026, 10, 25, 12, 1),
+            resolutionMethod: 'symbol_and_exchange_exact',
+            exchangeVerified: true,
+            isRiskReady: true,
+            isWeightingReady: false,
+            recommendationPolicy: 'no_advice',
+            productionEligible: false,
+            automaticTrading: false,
+          ),
+      loadPair: ({
+        required leftInstrumentId,
+        required rightInstrumentId,
+        required sourceProvider,
+        required knowledgeCutoff,
+        observedFrom,
+        observedTo,
+      }) {
+        pairRequests++;
+        if (pairRequests == 1) {
+          oldCutoff = knowledgeCutoff;
+          return oldPair.future;
+        }
+        return Future.value(pair(0.1, knowledgeCutoff));
+      },
+    );
+    final service = AuthenticatedPortfolioService(
+      session: session,
+      client: MockClient((_) async => _holdings(twoListings: true)),
+    );
+    final preferences = UserPreferencesService(
+      session: session,
+      client: MockClient((_) async => _profile('EUR')),
+    );
+    final holdings = AuthenticatedPortfolioController(
+      portfolioService: service,
+      marketRepository: _Market('EUR'),
+    );
+    final capital = AuthenticatedPortfolioCapitalController(
+      preferencesService: preferences,
+    );
+    await holdings.load();
+    await capital.load();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AuthenticatedMySpacePanel(
+          portfolioController: holdings,
+          capitalController: capital,
+          correlationService: correlation,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(pairRequests, 1);
+    expect(find.text('0.100'), findsNothing);
+
+    session.establish(accessToken: 'owner-a', account: _account(2));
+    await tester.pumpAndSettle();
+    expect(pairRequests, 2);
+    expect(find.text('0.100'), findsOneWidget);
+
+    oldPair.complete(pair(0.8, oldCutoff!));
+    await tester.pumpAndSettle();
+    expect(find.text('0.100'), findsOneWidget);
+    expect(find.text('0.800'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    holdings.dispose();
+    capital.dispose();
+    service.dispose();
+    preferences.dispose();
+  });
+
+  testWidgets('Dashboard switches between guest and protected My Space',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: SizedBox(height: 430, child: MySpacePanel()),
+      ),
+    ));
+    await tester.pump();
+    expect(find.byType(AuthenticatedMySpacePanel), findsOneWidget);
+
+    session.clear();
+    await tester.pump();
+    expect(find.byType(AuthenticatedMySpacePanel), findsNothing);
+
+    session.establish(accessToken: 'owner-b', account: _account(2));
+    await tester.pump();
+    expect(find.byType(AuthenticatedMySpacePanel), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+}

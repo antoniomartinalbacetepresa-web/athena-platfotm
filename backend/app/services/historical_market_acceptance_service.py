@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import math
+from typing import Any, Iterable
+
+from app.services.corporate_action_reconciliation_service import (
+    CorporateActionReconciliationReport,
+)
+from app.services.market_observation_coverage_service import (
+    MarketObservationCoverageReport,
+)
+
+
+@dataclass(frozen=True)
+class HistoricalMarketAcceptanceReport:
+    coverage: MarketObservationCoverageReport
+    reconciliation_reports: tuple[CorporateActionReconciliationReport, ...]
+    required_history_days: int
+    required_deep_history_coverage: float
+    independent_secondary_source_verified: bool
+
+    @staticmethod
+    def _parse_pit_cutoff(value: str | None) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            cutoff = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            return None
+        return cutoff
+
+    @property
+    def depth_gate_passed(self) -> bool:
+        return (
+            self.coverage.history_eligible_instrument_count > 0
+            and self.coverage.history_eligible_instrument_count <= self.coverage.active_instrument_count
+            and self.coverage.covered_instrument_count >= self.coverage.history_eligible_instrument_count
+            and self.coverage.deep_history_instrument_count >= self.coverage.history_eligible_instrument_count
+            and self.coverage.current_deep_history_instrument_count >= self.coverage.history_eligible_instrument_count
+            and self.coverage.observation_count > 0
+            and self.coverage.minimum_history_days >= self.required_history_days
+            and 0 < self.coverage.maximum_source_gap_days <= 7
+            and self.coverage.deep_history_coverage
+            >= self.required_deep_history_coverage
+            and self.coverage.current_deep_history_coverage
+            >= self.required_deep_history_coverage
+            and self.coverage.current_history_depth_ready
+            and self._parse_pit_cutoff(self.coverage.as_of) is not None
+        )
+
+    @property
+    def agreed_event_count(self) -> int:
+        return sum(report.agreed_event_count for report in self.reconciliation_reports)
+
+    @staticmethod
+    def _agreed_values_consistent(event: Any) -> bool:
+        """Independently verify the values behind an 'agreed' label.
+
+        The reconciliation report is a data object and may be constructed
+        without invoking the reconciler. Recheck its canonical public value
+        shape and the reconciler's 1e-9 numeric agreement tolerance here.
+        """
+        numeric_field = "splitRatio" if event.action_type == "split" else "cashAmount"
+        required_fields = (
+            {"splitRatio"} if event.action_type == "split" else {"cashAmount", "currency"}
+        )
+        reference_amount: float | None = None
+        reference_currency: str | None = None
+        for value in event.values_by_provider.values():
+            if not isinstance(value, dict) or set(value) != required_fields:
+                return False
+            amount = value[numeric_field]
+            if (
+                isinstance(amount, bool)
+                or not isinstance(amount, (int, float))
+                or not math.isfinite(amount)
+                or amount <= 0
+            ):
+                return False
+            currency = value.get("currency")
+            if event.action_type == "dividend" and (
+                not isinstance(currency, str)
+                or len(currency) != 3
+                or not currency.isascii()
+                or not currency.isalpha()
+                or not currency.isupper()
+            ):
+                return False
+            if reference_amount is not None:
+                if not math.isclose(
+                    float(amount), reference_amount, rel_tol=1e-9, abs_tol=1e-9
+                ):
+                    return False
+                if event.action_type == "dividend" and currency != reference_currency:
+                    return False
+            else:
+                reference_amount = float(amount)
+                reference_currency = currency
+        return reference_amount is not None
+
+    @property
+    def corporate_action_gate_passed(self) -> bool:
+        if self.independent_secondary_source_verified is not True:
+            return False
+        if not self.reconciliation_reports or self.agreed_event_count <= 0:
+            return False
+        # Corporate-action reconciliation must cover the exact PIT instant
+        # evaluated for market history. A later cutoff leaks future knowledge;
+        # an earlier cutoff can silently omit subsequent corporate actions.
+        cutoff = self._parse_pit_cutoff(self.coverage.as_of)
+        if cutoff is None:
+            return False
+        seen_instrument_ids: set[int] = set()
+        for report in self.reconciliation_reports:
+            if report.instrument_id <= 0 or report.instrument_id in seen_instrument_ids:
+                return False
+            seen_instrument_ids.add(report.instrument_id)
+            if any(not isinstance(provider, str) for provider in report.source_providers):
+                return False
+            providers = tuple(provider.strip().casefold() for provider in report.source_providers)
+            families = tuple(
+                "yahoo" if provider in ("yahoo", "yahoo_finance") else provider
+                for provider in providers
+            )
+            if len(families) < 2 or any(not provider for provider in families):
+                return False
+            if len(set(families)) != len(families):
+                return False
+            if report.knowledge_cutoff.tzinfo is None or report.knowledge_cutoff.utcoffset() is None:
+                return False
+            if report.knowledge_cutoff.astimezone(timezone.utc) != cutoff.astimezone(timezone.utc):
+                return False
+            if report.conflict_event_count > 0 or report.incomplete_event_count > 0:
+                return False
+            if report.events and not report.reconciled:
+                return False
+            # Do not trust a caller-supplied "agreed" label if the event's
+            # provider membership, economic instant or values contradict it.
+            # This gate is independently callable outside the reconciler.
+            expected_providers = set(report.source_providers)
+            for event in report.events:
+                if event.status != "agreed" or event.action_type not in ("dividend", "split"):
+                    return False
+                if (
+                    len(event.providers_present) != len(expected_providers)
+                    or set(event.providers_present) != expected_providers
+                    or event.providers_missing
+                    or set(event.values_by_provider) != expected_providers
+                ):
+                    return False
+                if not self._agreed_values_consistent(event):
+                    return False
+                effective_at = self._parse_pit_cutoff(event.effective_at)
+                if (
+                    effective_at is None
+                    or effective_at.astimezone(timezone.utc)
+                    > cutoff.astimezone(timezone.utc)
+                ):
+                    return False
+        return True
+
+    @property
+    def history_acceptance_passed(self) -> bool:
+        return self.depth_gate_passed and self.corporate_action_gate_passed
+
+    def to_api_dict(self) -> dict[str, Any]:
+        return {
+            "status": "diagnostic_only",
+            "historyAcceptancePassed": self.history_acceptance_passed,
+            "depthGatePassed": self.depth_gate_passed,
+            "corporateActionGatePassed": self.corporate_action_gate_passed,
+            "requiredHistoryDays": self.required_history_days,
+            "requiredDeepHistoryCoverage": self.required_deep_history_coverage,
+            "measuredDeepHistoryCoverage": self.coverage.deep_history_coverage,
+            "measuredCurrentDeepHistoryCoverage": self.coverage.current_deep_history_coverage,
+            "pointInTimeCutoffApplied": self._parse_pit_cutoff(self.coverage.as_of) is not None,
+            "asOf": self.coverage.as_of,
+            "independentSecondarySourceVerified": self.independent_secondary_source_verified,
+            "reconciliationReportCount": len(self.reconciliation_reports),
+            "agreedCorporateActionEventCount": self.agreed_event_count,
+            "automaticCanonicalization": False,
+            "automaticPriceAdjustment": False,
+            "productionAuthorization": False,
+            "warning": (
+                "Este gate exige profundidad histórica medida sobre el universo elegible, "
+                "continuidad de la fuente hasta el corte PIT y evidencia explícita de una "
+                "fuente secundaria independiente. Pasarlo no autoriza producción, "
+                "canonicalización automática ni ajustes automáticos."
+            ),
+        }
+
+
+class HistoricalMarketAcceptanceService:
+    DEFAULT_REQUIRED_HISTORY_DAYS = 365
+    DEFAULT_REQUIRED_DEEP_HISTORY_COVERAGE = 1.0
+
+    def __init__(
+        self,
+        *,
+        required_history_days: int = DEFAULT_REQUIRED_HISTORY_DAYS,
+        required_deep_history_coverage: float = DEFAULT_REQUIRED_DEEP_HISTORY_COVERAGE,
+    ) -> None:
+        if required_history_days < self.DEFAULT_REQUIRED_HISTORY_DAYS:
+            raise ValueError("required_history_days no puede ser inferior a 365.")
+        if not 0 < required_deep_history_coverage <= 1:
+            raise ValueError("required_deep_history_coverage debe estar entre 0 y 1.")
+        self._required_history_days = int(required_history_days)
+        self._required_deep_history_coverage = float(required_deep_history_coverage)
+
+    def evaluate(
+        self,
+        *,
+        coverage: MarketObservationCoverageReport,
+        reconciliation_reports: Iterable[CorporateActionReconciliationReport],
+        independent_secondary_source_verified: bool,
+    ) -> HistoricalMarketAcceptanceReport:
+        reports = tuple(reconciliation_reports)
+        return HistoricalMarketAcceptanceReport(
+            coverage=coverage,
+            reconciliation_reports=reports,
+            required_history_days=self._required_history_days,
+            required_deep_history_coverage=self._required_deep_history_coverage,
+            independent_secondary_source_verified=(
+                independent_secondary_source_verified is True
+            ),
+        )

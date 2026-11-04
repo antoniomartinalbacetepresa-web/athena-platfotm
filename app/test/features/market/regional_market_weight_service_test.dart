@@ -45,6 +45,67 @@ void main() {
     );
 
     test(
+      'no asigna confianza total a una muestra pequeña aunque esté completa',
+      () {
+        const assets = [
+          MarketUniverseAsset(
+            symbol: 'USA',
+            companyName: 'USA Company',
+            marketCap: 600,
+            country: 'United States',
+          ),
+          MarketUniverseAsset(
+            symbol: 'ESP',
+            companyName: 'Spain Company',
+            marketCap: 200,
+            country: 'Spain',
+          ),
+          MarketUniverseAsset(
+            symbol: 'JPN',
+            companyName: 'Japan Company',
+            marketCap: 200,
+            country: 'Japan',
+          ),
+        ];
+
+        final weights = service.calculate(assets);
+
+        expect(weights.confidence, greaterThan(0));
+        expect(weights.confidence, lessThan(0.8));
+      },
+    );
+
+    test(
+      'penaliza cobertura incompleta del universo',
+      () {
+        const assets = [
+          MarketUniverseAsset(
+            symbol: 'USA',
+            companyName: 'USA Company',
+            marketCap: 600,
+            country: 'United States',
+          ),
+          MarketUniverseAsset(
+            symbol: 'ESP',
+            companyName: 'Spain Company',
+            marketCap: null,
+            country: 'Spain',
+          ),
+          MarketUniverseAsset(
+            symbol: 'JPN',
+            companyName: 'Japan Company',
+            marketCap: null,
+            country: 'Japan',
+          ),
+        ];
+
+        final weights = service.calculate(assets);
+
+        expect(weights.confidence, lessThan(0.4));
+      },
+    );
+
+    test(
       'ignora activos con marketCap nula o no positiva',
       () {
         const assets = [
