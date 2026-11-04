@@ -72,3 +72,27 @@ def test_future_provider_observations_do_not_count_toward_readiness(monkeypatch)
     assert result["invalidOrDuplicateRows"] == 1
     assert result["minimum20SessionReferenceAvailable"] is False
     assert result["history365SessionCompletenessVerified"] is False
+
+
+def test_calendar_gaps_are_reported_without_certifying_exchange_sessions(monkeypatch):
+    rows = [_rows(1)[0], _rows(1)[0].copy(), _rows(1)[0].copy()]
+    rows[1]["timestamp"] = (datetime(2026, 1, 5, tzinfo=timezone.utc)).isoformat()
+    rows[2]["timestamp"] = (datetime(2026, 1, 8, tzinfo=timezone.utc)).isoformat()
+    monkeypatch.setattr(market.market_service, "get_history", lambda **kwargs: rows)
+    result = market.get_opportunity_pattern_readiness("MSFT")["data"]
+    assert result["validDailySessions"] == 3
+    assert result["calendarSpanDays"] == 8
+    assert result["largestUnobservedCalendarGapDays"] == 3
+    assert result["unobservedCalendarGapIntervals"] == 2
+    assert result["exchangeSessionCalendarVerified"] is False
+    assert result["history365SessionCompletenessVerified"] is False
+
+
+def test_empty_history_does_not_invent_gap_or_coverage(monkeypatch):
+    monkeypatch.setattr(market.market_service, "get_history", lambda **kwargs: [])
+    result = market.get_opportunity_pattern_readiness("MSFT")["data"]
+    assert result["validDailySessions"] == 0
+    assert result["largestUnobservedCalendarGapDays"] == 0
+    assert result["unobservedCalendarGapIntervals"] == 0
+    assert result["latestObservationAgeCalendarDays"] is None
+    assert result["history365SessionCompletenessVerified"] is False
