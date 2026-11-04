@@ -343,6 +343,36 @@ void main() {
     client.close();
   });
 
+  test('private synthesis rejects malformed company identity before network', () async {
+    final session = AuthSession.forTesting(_TokenStore());
+    final now = DateTime.now().toUtc();
+    session.establish(
+      accessToken: 'owner-token',
+      account: AuthAccount(id: 1, email: 'owner@example.invalid',
+          isActive: true, createdAt: now, updatedAt: now),
+    );
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      return http.Response('{}', 200);
+    });
+    final service = PrivateResearchHistoryService(client: client, session: session);
+    for (final athena in [false, true]) {
+      await expectLater(
+        service.loadSynthesis(
+          PrivateResearchEntry(
+            cycleHash: 'a' * 64, symbol: '../other', asOf: now,
+          ),
+          athena: athena,
+        ),
+        throwsFormatException,
+      );
+    }
+    expect(requests, 0);
+    service.dispose();
+    client.close();
+  });
+
   test('private synthesis rejects a response after account switch', () async {
     final session = AuthSession.forTesting(_TokenStore());
     final now = DateTime.now().toUtc();
