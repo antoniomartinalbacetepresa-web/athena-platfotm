@@ -86,6 +86,26 @@ class _MarketPatternReadinessPanelState
           report['automaticTrading'] != false) {
         throw const FormatException('Unexpected evidence contract');
       }
+      // A malformed provider payload must not crash Flutter's build phase or
+      // display fabricated coverage. Keep this diagnostic fail-closed.
+      final sessions = report['validDailySessions'];
+      final discarded = report['invalidOrDuplicateRows'];
+      final age = report['latestObservationAgeCalendarDays'];
+      final providers = report['sourceProviders'];
+      final checkedAt = report['checkedAt'];
+      if (sessions is! int || sessions < 0 ||
+          discarded is! int || discarded < 0 ||
+          (age != null && (age is! int || age < 0)) ||
+          providers is! List ||
+          providers.any((value) => value is! String || value.trim().isEmpty) ||
+          checkedAt is! String ||
+          DateTime.tryParse(checkedAt) == null ||
+          (report['firstObservedDate'] != null &&
+              report['firstObservedDate'] is! String) ||
+          (report['lastObservedDate'] != null &&
+              report['lastObservedDate'] is! String)) {
+        throw const FormatException('Malformed historical coverage');
+      }
       setState(() {
         _report = report;
         _loading = false;
