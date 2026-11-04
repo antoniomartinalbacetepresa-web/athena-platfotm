@@ -60,12 +60,15 @@ def observe_pattern(
         if not isfinite(bar.close) or bar.close <= 0 or not isfinite(bar.volume) or bar.volume < 0:
             raise ValueError("Non-finite, negative or zero price/volume")
         previous = bar.observed_at
-    recent = bars[-20:]
-    baseline = mean(bar.close for bar in recent[:-1])
-    change_pct = (recent[-1].close / baseline - 1.0) * 100.0
-    avg_volume = mean(bar.volume for bar in recent[:-1])
+    previous_20 = bars[-21:-1]
+    latest = bars[-1]
+    # The reference must contain exactly 20 *prior* observations; the
+    # current session must not influence its own breakout baseline.
+    baseline = mean(bar.close for bar in previous_20)
+    change_pct = (latest.close / baseline - 1.0) * 100.0
+    avg_volume = mean(bar.volume for bar in previous_20)
     confirmation = (
-        "above_recent_average" if avg_volume > 0 and recent[-1].volume > avg_volume * 1.5
+        "above_recent_average" if avg_volume > 0 and latest.volume > avg_volume * 1.5
         else "not_confirmed"
     )
     return PatternObservation(
