@@ -106,6 +106,89 @@ class _MarketPatternReadinessPanelState
               report['lastObservedDate'] is! String)) {
         throw const FormatException('Malformed historical coverage');
       }
+      // Validate calendar dates and ordering before presenting a coverage span.
+      // A string that merely looks like a date is not evidence of a session.
+      DateTime? parseDay(dynamic value) {
+        if (value == null) return null;
+        if (value is! String ||
+            !RegExp(r'^\\d{4}-\\d{2}-\\d{2}
+    } catch (_) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _error = true;
+        _loading = false;
+        _report = null;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = _report;
+    return Semantics(
+      container: true,
+      label: 'Diagnóstico informativo del histórico bursátil. No es una señal de inversión.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          OutlinedButton(
+            key: const Key('market-pattern-readiness-request'),
+            onPressed: _loading ? null : _refresh,
+            child: const Text('COMPROBAR HISTÓRICO PARA PATRONES'),
+          ),
+          if (_loading) const LinearProgressIndicator(),
+          if (_error)
+            const Text(
+              'No se pudo comprobar el histórico. Reintentar más tarde.',
+              key: Key('market-pattern-readiness-error'),
+            ),
+          if (report != null) ...[
+            Text(
+              'Histórico de ${report['symbol']}: ${report['validDailySessions']} '
+              'observaciones diarias; ${report['invalidOrDuplicateRows']} '
+              'registros descartados.',
+              key: const Key('market-pattern-readiness-coverage'),
+            ),
+            Text(
+              'Primera observación: ${report['firstObservedDate'] ?? 'sin datos'}; '
+              'última: ${report['lastObservedDate'] ?? 'sin datos'}. '
+              'Antigüedad: ${report['latestObservationAgeCalendarDays'] ?? 'desconocida'} '
+              'días naturales. Comprobado: ${report['checkedAt']}.',
+              key: const Key('market-pattern-readiness-time'),
+            ),
+            Text(
+              'Proveedor declarado: ${(report['sourceProviders'] as List?)?.join(', ') ?? 'desconocido'}. '
+              'Cobertura 365 días y calendario bursátil: NO VERIFICADOS.',
+              key: const Key('market-pattern-readiness-source'),
+            ),
+            const Text(
+              'BLOQUEADO: licencia, ajustes por splits/dividendos y evidencia PIT '
+              'histórica no acreditados. No se calculan patrones ni señales '
+              'de compra o venta. Investigación de solo lectura.',
+              key: Key('market-pattern-readiness-blocked'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+).hasMatch(value)) {
+          throw const FormatException('Invalid observation date');
+        }
+        final day = DateTime.tryParse(value);
+        if (day == null || day.toIso8601String().substring(0, 10) != value) {
+          throw const FormatException('Invalid observation date');
+        }
+        return day;
+      }
+      final first = parseDay(report['firstObservedDate']);
+      final last = parseDay(report['lastObservedDate']);
+      if ((sessions == 0 && (first != null || last != null || age != null)) ||
+          (sessions > 0 && (first == null || last == null || age == null)) ||
+          (first != null && last != null && first.isAfter(last))) {
+        throw const FormatException('Inconsistent historical coverage');
+      }
       setState(() {
         _report = report;
         _loading = false;
