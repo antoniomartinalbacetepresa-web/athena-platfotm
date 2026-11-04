@@ -10,6 +10,7 @@ import '../../repositories/market_repository.dart';
 import '../widgets/global_market_panel.dart';
 import '../widgets/market_research_preview.dart';
 import '../widgets/verified_market_quote_panel.dart';
+import '../widgets/market_pattern_readiness_panel.dart';
 
 class MarketPage extends StatefulWidget {
   final GlobalMarketContextController? controller;
@@ -173,6 +174,17 @@ class _MarketPageState extends State<MarketPage> {
                   ),
                 ),
               ),
+              if (_newsSymbol != null) ...[
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 135),
+                  child: SingleChildScrollView(
+                    child: MarketPatternReadinessPanel(
+                      key: ValueKey('market-pattern-readiness-$_newsSymbol'),
+                      symbol: _newsSymbol!,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               if (_newsSymbol != null) ...[
                 Semantics(
