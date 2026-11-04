@@ -179,6 +179,41 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             key: const Key('market-quote-mode'),
             style: const TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
           ),
+          Text(
+            quote.realTimePriceVerified == true && !dailyCloseFallback
+                ? 'Tiempo real: verificación declarada por el proveedor; '
+                    'no acreditada independientemente.'
+                : 'Tiempo real: NO VERIFICADO. No asumir ejecución '
+                    'al precio mostrado.',
+            key: const Key('market-quote-realtime-verification'),
+            style: const TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 11,
+            ),
+          ),
+          Text(
+            quote.historicalPointInTimeEligible == true
+                ? 'Elegibilidad PIT declarada para la cotización; '
+                    'NO acredita licencia, ajustes corporativos ni '
+                    'histórico independiente.'
+                : 'Elegibilidad PIT histórica: NO ACREDITADA. '
+                    'La cotización no puede alimentar por sí sola '
+                    'el análisis retrospectivo.',
+            key: const Key('market-quote-pit-verification'),
+            style: const TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 11,
+            ),
+          ),
+          const Text(
+            'Derechos de uso y redistribución: NO VERIFICADOS '
+            'en este contrato de cotización.',
+            key: Key('market-quote-license-boundary'),
+            style: TextStyle(
+              color: AthenaColors.textSecondary,
+              fontSize: 11,
+            ),
+          ),
           if (quote.instrumentId == null)
             const Text(
               'IDENTIDAD CANÓNICA NO ACREDITADA: esta cotización solo comparte símbolo con el dosier. No hay vínculo de instrumento verificado.',
