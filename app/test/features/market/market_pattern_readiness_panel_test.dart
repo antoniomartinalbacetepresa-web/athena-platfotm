@@ -107,4 +107,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('rejects impossible and reversed observation dates', (tester) async {
+    for (final dates in [
+      ['2026-02-30', '2026-03-01'],
+      ['2026-03-01', '2026-02-01'],
+      ['2026-01-01', '2026-13-01'],
+    ]) {
+      final invalid = _report('MSFT')
+        ..['firstObservedDate'] = dates[0]
+        ..['lastObservedDate'] = dates[1];
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: MarketPatternReadinessPanel(
+          key: ValueKey(dates.join()),
+          symbol: 'MSFT',
+          load: (_) async => invalid,
+        )),
+      ));
+      await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+      expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('empty coverage cannot claim observation dates or age', (tester) async {
+    final invalid = _report('MSFT')
+      ..['validDailySessions'] = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: MarketPatternReadinessPanel(
+        symbol: 'MSFT',
+        load: (_) async => invalid,
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsNothing);
+  });
+
 }
