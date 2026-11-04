@@ -110,3 +110,47 @@ def test_current_session_volume_is_not_in_its_own_reference():
         licensed=True, corporate_actions_verified=True,
     )
     assert result.volume_confirmation == "not_confirmed"
+
+
+def test_prior_high_breakout_is_distinct_from_mean_trend():
+    bars = sample_bars()
+    # A 20-day series with one high close: latest can be above the mean
+    # without exceeding the prior maximum.
+    bars[10] = DailyBar(
+        observed_at=bars[10].observed_at,
+        available_at=bars[10].available_at,
+        close=120.0,
+        volume=1000.0,
+    )
+    result = observe_pattern(
+        bars, as_of=bars[-1].available_at,
+        licensed=True, corporate_actions_verified=True,
+    )
+    assert result.trend == "above_20d_reference"
+    assert result.breakout_vs_prior_20d_high is False
+    assert result.drawdown_from_prior_20d_high_pct == pytest.approx(-8.3333, abs=0.0001)
+
+
+def test_breakout_and_drawdown_are_mutually_consistent():
+    bars = sample_bars()
+    result = observe_pattern(
+        bars, as_of=bars[-1].available_at,
+        licensed=True, corporate_actions_verified=True,
+    )
+    assert result.breakout_vs_prior_20d_high is True
+    assert result.drawdown_from_prior_20d_high_pct == 0.0
+
+
+def test_rejects_multiple_observations_on_one_utc_day():
+    bars = sample_bars()
+    bars[1] = DailyBar(
+        observed_at=bars[0].observed_at + timedelta(hours=2),
+        available_at=bars[0].observed_at + timedelta(hours=3),
+        close=100.0,
+        volume=1000.0,
+    )
+    with pytest.raises(ValueError, match="multiple bars"):
+        observe_pattern(
+            bars, as_of=bars[-1].available_at,
+            licensed=True, corporate_actions_verified=True,
+        )
