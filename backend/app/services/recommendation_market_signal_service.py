@@ -161,13 +161,16 @@ class RecommendationMarketSignalService:
         from math import isfinite
 
         window = recent[-21:]
-        volumes = [item.get("volume") for item in window]
-        if any(
-            value is None or not isfinite(float(value)) or float(value) <= 0
-            for value in volumes
-        ):
-            return None, "insufficient_verified_volume"
-        baseline = sum(float(value) for value in volumes[:-1]) / 20.0
+        volumes: list[float] = []
+        for item in window:
+            try:
+                value = float(item.get("volume"))
+            except (TypeError, ValueError, OverflowError):
+                return None, "insufficient_verified_volume"
+            if not isfinite(value) or value <= 0:
+                return None, "insufficient_verified_volume"
+            volumes.append(value)
+        baseline = sum(volumes[:-1]) / 20.0
         if baseline <= 0 or not isfinite(baseline):
             return None, "insufficient_verified_volume"
         ratio = float(volumes[-1]) / baseline
