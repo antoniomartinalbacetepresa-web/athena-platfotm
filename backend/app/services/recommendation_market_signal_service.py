@@ -29,6 +29,8 @@ class RecommendationMarketSignal:
     risk_score: float | None
     production_eligible: bool
     reason: str
+    relative_volume_20d: float | None = None
+    volume_status: str = "unavailable"
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -50,11 +52,14 @@ class RecommendationMarketSignal:
             "riskScore": self.risk_score,
             "productionEligible": self.production_eligible,
             "reason": self.reason,
+            "relativeVolume20d": self.relative_volume_20d,
+            "volumeStatus": self.volume_status,
             "policy": {
                 "temporal": "observed_at_and_retrieved_at_not_after_as_of",
                 "price": "raw_close_first_adjusted_close_fallback",
                 "duplicateObservation": "latest_retrieved_at_before_as_of",
                 "provenance": "source_provider_exposed_for_selected_pit_observations",
+                "volume": "latest_closed_observation_vs_previous_20_positive_finite_sessions;_missing_is_unavailable",
                 "calibration": "diagnostic_only_until_out_of_sample_validated",
             },
         }
@@ -116,6 +121,7 @@ class RecommendationMarketSignalService:
         max_drawdown = self._max_drawdown(prices)
         technical_score = self._clip(50.0 + (return_20d * 100.0) + (return_60d * 50.0), 0.0, 100.0)
         risk_score = self._clip((annualized_volatility * 100.0) + (abs(max_drawdown) * 100.0), 0.0, 100.0)
+        relative_volume, volume_status = self._relative_volume(recent)
 
         return RecommendationMarketSignal(
             status="diagnostic_ready", symbol=normalized_symbol, instrument_id=instrument_id,
@@ -124,7 +130,7 @@ class RecommendationMarketSignalService:
             latest_price=latest_price, price_60d_start=price_60d_start, source_providers=source_providers,
             return_20d=return_20d, return_60d=return_60d, annualized_volatility=annualized_volatility,
             max_drawdown_60d=max_drawdown, technical_score=technical_score, risk_score=risk_score,
-            production_eligible=False,
+            production_eligible=False, relative_volume_20d=relative_volume, volume_status=volume_status,
             reason="Las señales técnicas y de riesgo están calculadas con datos point-in-time y procedencia explícita, pero aún deben calibrarse fuera de muestra junto con fundamentales, valoración y calidad.",
         )
 
@@ -139,16 +145,35 @@ class RecommendationMarketSignalService:
             rows = connection.execute(
                 """
                 WITH eligible AS (
-                    SELECT observed_at, COALESCE(close, adjusted_close) AS price, source_provider, retrieved_at, id,
+                    SELECT observed_at, COALESCE(close, adjusted_close) AS price, volume, source_provider, retrieved_at, id,
                         ROW_NUMBER() OVER (PARTITION BY observed_at ORDER BY retrieved_at DESC, id DESC) AS row_rank
                     FROM market_observations
                     WHERE instrument_id = ? AND observed_at <= ? AND retrieved_at <= ?
                       AND COALESCE(close, adjusted_close) IS NOT NULL AND COALESCE(close, adjusted_close) > 0
                 )
-                SELECT observed_at, price, source_provider, retrieved_at FROM eligible
+                SELECT observed_at, price, volume, source_provider, retrieved_at FROM eligible
                 WHERE row_rank = 1 ORDER BY observed_at ASC
                 """, (instrument_id, cutoff, cutoff)).fetchall()
         return [dict(row) for row in rows]
+
+    def _relative_volume(self, recent: list[dict[str, Any]]) -> tuple[float | None, str]:
+        """Diagnostic only: never replace missing/invalid volume with zero."""
+        from math import isfinite
+
+        window = recent[-21:]
+        volumes = [item.get("volume") for item in window]
+        if any(
+            value is None or not isfinite(float(value)) or float(value) <= 0
+            for value in volumes
+        ):
+            return None, "insufficient_verified_volume"
+        baseline = sum(float(value) for value in volumes[:-1]) / 20.0
+        if baseline <= 0 or not isfinite(baseline):
+            return None, "insufficient_verified_volume"
+        ratio = float(volumes[-1]) / baseline
+        if not isfinite(ratio):
+            return None, "insufficient_verified_volume"
+        return ratio, "diagnostic_only"
 
     def _max_drawdown(self, prices: list[float]) -> float:
         peak = prices[0]; worst = 0.0
