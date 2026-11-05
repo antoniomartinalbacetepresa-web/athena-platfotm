@@ -179,4 +179,27 @@ void main() {
   });
 
 
+  testWidgets('rejects unqualified check time and future observations',
+      (tester) async {
+    for (final override in <Map<String, dynamic>>[
+      {'checkedAt': '2026-02-10'},
+      {'checkedAt': '2026-02-10T12:00:00'},
+      {'checkedAt': '2026-01-01T12:00:00Z'},
+    ]) {
+      final invalid = _report('MSFT')..addAll(override);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: MarketPatternReadinessPanel(
+          key: ValueKey(override.toString()),
+          symbol: 'MSFT',
+          load: (_) async => invalid,
+        )),
+      ));
+      await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+      expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
 }
