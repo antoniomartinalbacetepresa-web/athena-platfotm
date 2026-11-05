@@ -182,3 +182,17 @@ def test_google_news_rejects_invalid_locale_codes() -> None:
         service.get_feed(language="eng")
     with pytest.raises(ValueError, match="country"):
         service.get_feed(country="USA")
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        '<!DOCTYPE rss [<!ENTITY headline "Injected">]><rss><channel/></rss>',
+        '<!doctype rss SYSTEM "https://example.com/external.dtd"><rss/>',
+    ],
+)
+def test_google_news_rejects_untrusted_dtd_and_entities(xml: str) -> None:
+    with pytest.raises(RuntimeError, match="entidades no permitidas"):
+        GoogleNewsService._parse_items(
+            xml, retrieved_at=datetime.now(timezone.utc), limit=8
+        )
