@@ -32,7 +32,7 @@ def test_json_cli_does_not_require_network_or_broker(tmp_path, capsys):
 
 
 def test_vps_cgroup_cap_is_used_instead_of_host_ram(tmp_path):
-    with patch("scripts.runtime_resource_preflight.sys.platform", "linux"), \\
+    with patch("scripts.runtime_resource_preflight.sys.platform", "linux"), \
          patch("scripts.runtime_resource_preflight._linux_cgroup_memory_limit", return_value=2 * 1024 ** 3):
         report = collect_resources(storage_path=tmp_path, memory_bytes=32 * 1024 ** 3, cpu_count=8)
     assert report["physicalMemoryBytes"] == 32 * 1024 ** 3
@@ -44,7 +44,7 @@ def test_vps_cgroup_cap_is_used_instead_of_host_ram(tmp_path):
 
 
 def test_unlimited_cgroup_does_not_reduce_memory(tmp_path):
-    with patch("scripts.runtime_resource_preflight.sys.platform", "linux"), \\
+    with patch("scripts.runtime_resource_preflight.sys.platform", "linux"), \
          patch("scripts.runtime_resource_preflight._linux_cgroup_memory_limit", return_value=None):
         report = collect_resources(storage_path=tmp_path, memory_bytes=16 * 1024 ** 3)
     assert report["effectiveMemoryBytes"] == 16 * 1024 ** 3
