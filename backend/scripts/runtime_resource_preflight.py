@@ -20,14 +20,18 @@ def collect_resources(*, storage_path: str | Path = ".", memory_bytes: int | Non
     disk = shutil.disk_usage(path)
     cpu = cpu_count if cpu_count is not None else os.cpu_count()
     memory = memory_bytes if memory_bytes is not None else _physical_memory_bytes()
+    limit = _linux_cgroup_memory_limit() if sys.platform.startswith("linux") else None
+    effective_memory = min(memory, limit) if memory is not None and limit is not None else (limit if memory is None else memory)
     warnings = []
+    if limit is not None and (memory is None or limit < memory):
+        warnings.append("container_memory_limited")
     if cpu is None:
         warnings.append("cpu_capacity_unknown")
     elif cpu < 2:
         warnings.append("limited_cpu_capacity")
-    if memory is None:
+    if effective_memory is None:
         warnings.append("memory_capacity_unknown")
-    elif memory < 4 * 1024 ** 3:
+    elif effective_memory < 4 * 1024 ** 3:
         warnings.append("limited_memory_capacity")
     if disk.free < 10 * 1024 ** 3:
         warnings.append("limited_free_disk")
@@ -35,6 +39,8 @@ def collect_resources(*, storage_path: str | Path = ".", memory_bytes: int | Non
         "platform": sys.platform,
         "logicalCpuCount": cpu,
         "physicalMemoryBytes": memory,
+        "effectiveMemoryBytes": effective_memory,
+        "containerMemoryLimitBytes": limit,
         "diskFreeBytes": disk.free,
         "diskTotalBytes": disk.total,
         "storagePath": str(path),
@@ -68,6 +74,23 @@ def _physical_memory_bytes() -> int | None:
                     return int(line.split()[1]) * 1024
         except (OSError, ValueError, IndexError):
             return None
+    return None
+
+
+
+def _linux_cgroup_memory_limit() -> int | None:
+    """Read common Linux cgroup limits; 'max' and huge v1 sentinels mean unlimited."""
+    for filename in ("/sys/fs/cgroup/memory.max",
+                     "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            value = Path(filename).read_text(encoding="ascii").strip()
+            if value == "max":
+                continue
+            limit = int(value)
+            if 0 < limit < 1 << 60:
+                return limit
+        except (OSError, ValueError):
+            continue
     return None
 
 
