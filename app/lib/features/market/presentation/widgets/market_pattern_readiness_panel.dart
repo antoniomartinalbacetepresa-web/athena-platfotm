@@ -127,6 +127,21 @@ class _MarketPatternReadinessPanelState
           (first != null && last != null && first.isAfter(last))) {
         throw const FormatException('Inconsistent historical coverage');
       }
+      // Coverage gaps are diagnostic calendar spans, not verified exchange
+      // sessions. Reject impossible counts rather than displaying them.
+      final span = report['calendarSpanDays'];
+      final largestGap = report['largestUnobservedCalendarGapDays'];
+      final gapIntervals = report['unobservedCalendarGapIntervals'];
+      if (span is! int || span < 0 ||
+          largestGap is! int || largestGap < 0 ||
+          gapIntervals is! int || gapIntervals < 0 ||
+          (sessions == 0 && (span != 0 || largestGap != 0 || gapIntervals != 0)) ||
+          (sessions > 0 && (span == 0 ||
+              span != last!.difference(first!).inDays + 1 ||
+              sessions > span || largestGap > span - sessions ||
+              gapIntervals > span - sessions))) {
+        throw const FormatException('Inconsistent calendar gap diagnostics');
+      }
       setState(() {
         _report = report;
         _loading = false;
