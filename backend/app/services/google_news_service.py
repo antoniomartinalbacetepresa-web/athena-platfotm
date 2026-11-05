@@ -83,6 +83,10 @@ class GoogleNewsService:
         retrieved_at: datetime,
         limit: int,
     ) -> list[dict]:
+        # RSS is untrusted network input. Refuse DTD/entity declarations before
+        # parsing so external feeds cannot inject entity-expansion payloads.
+        if re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", xml_text, re.IGNORECASE):
+            raise RuntimeError("Google News devolvió RSS con entidades no permitidas")
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
