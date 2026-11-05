@@ -46,6 +46,8 @@ def get_news_feed(
         raise HTTPException(status_code=500, detail="Contrato de noticias inseguro.")
     if policy.get("athenaRecommendationInfluence") is not False:
         raise HTTPException(status_code=500, detail="Contrato de noticias inseguro.")
+    if policy.get("automaticScoring") is not False:
+        raise HTTPException(status_code=500, detail="Contrato de noticias inseguro.")
     if policy.get("automaticTrading") is not False:
         raise HTTPException(status_code=500, detail="Contrato de noticias inseguro.")
 
