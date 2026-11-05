@@ -120,9 +120,19 @@ class _MarketPatternReadinessPanelState
         }
         return day;
       }
-      // The check must be an unambiguous instant, not a date-only or
-      // timezone-free string that can make stale observations look current.
-      if (!RegExp(r'(Z|[+-]\\d{2}:\\d{2})
+      // Require an unambiguous UTC or offset-qualified check instant.
+      if (!RegExp(r'(Z|[+-][0-9]{2}:[0-9]{2})$').hasMatch(checkedAt) ||
+          !checkedAt.contains('T')) {
+        throw const FormatException('Unqualified coverage check timestamp');
+      }
+      final first = parseDay(report['firstObservedDate']);
+      final last = parseDay(report['lastObservedDate']);
+      final checkedInstant = DateTime.parse(checkedAt).toUtc();
+      final checkedUtcDate = DateTime.utc(
+          checkedInstant.year, checkedInstant.month, checkedInstant.day);
+      if (last != null && last.isAfter(checkedUtcDate)) {
+        throw const FormatException('Observation after coverage check');
+      }
       if ((sessions == 0 && (first != null || last != null || age != null)) ||
           (sessions > 0 && (first == null || last == null || age == null)) ||
           (first != null && last != null && first.isAfter(last))) {
