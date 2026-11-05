@@ -90,6 +90,8 @@ def test_google_news_feed_preserves_source_publication_and_retrieval_provenance(
     assert first["publishedAt"] == "2026-09-03T13:00:00+00:00"
     assert first["sourceProvider"] == "google_news_rss"
     assert first["availableAt"] == first["publishedAt"]
+    assert first["availableAtVerified"] is False
+    assert first["availableAtBasis"] == "publisher_pubDate_unverified"
     assert first["contentRights"] == "unverified"
     assert first["researchUseAuthorized"] is False
     assert first["retrievedAt"] == result["retrievedAt"]
