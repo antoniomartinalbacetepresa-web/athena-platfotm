@@ -63,6 +63,8 @@ class GoogleNewsService:
             "count": len(items),
             "sourceProvider": "google_news_rss",
             "retrievedAt": retrieved_at.isoformat(),
+            "contentRights": "unverified",
+            "researchUseAuthorized": False,
             "items": items,
             "policy": {
                 "athenaRecommendationInfluence": False,
@@ -120,7 +122,10 @@ class GoogleNewsService:
                     ),
                     "articleUrl": article_url,
                     "publishedAt": published_at.isoformat(),
+                    "availableAt": published_at.isoformat(),
                     "retrievedAt": retrieved_at.isoformat(),
+                    "contentRights": "unverified",
+                    "researchUseAuthorized": False,
                     "sourceProvider": "google_news_rss",
                 }
             )
