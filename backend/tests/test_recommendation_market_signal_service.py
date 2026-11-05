@@ -299,3 +299,27 @@ def test_relative_volume_50d_rejects_missing_baseline_without_hiding_20d(tmp_pat
     assert result.to_api_dict()["relativeVolume50d"] is None
     assert result.to_api_dict()["volumeStatus50d"] == "insufficient_verified_volume"
     assert result.production_eligible is False
+
+
+def test_relative_volume_rejects_mixed_provider_baseline(tmp_path) -> None:
+    database = _build_database(tmp_path)
+    instrument_id = _insert_instrument(database)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for day in range(61):
+        observed = start + timedelta(days=day)
+        _insert_observation(
+            database, instrument_id=instrument_id, observed_at=observed,
+            retrieved_at=observed + timedelta(hours=1), price=100.0 + day,
+            volume=200.0 if day == 60 else 100.0,
+            provider="provider_b" if day == 35 else "provider_a",
+        )
+    result = RecommendationMarketSignalService(database=database).evaluate(
+        symbol="TEST", as_of=start + timedelta(days=60, hours=2),
+    )
+    # The 20-session window is internally consistent, but 50 sessions are not.
+    assert result.relative_volume_20d == pytest.approx(2.0)
+    assert result.volume_status == "diagnostic_only"
+    assert result.relative_volume_50d is None
+    assert result.volume_status_50d == "inconsistent_volume_provenance"
+    assert result.to_api_dict()["volumeStatus50d"] == "inconsistent_volume_provenance"
+    assert result.production_eligible is False
