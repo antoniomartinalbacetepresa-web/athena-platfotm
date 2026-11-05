@@ -154,4 +154,29 @@ void main() {
     expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsNothing);
   });
 
+  testWidgets('rejects contradictory calendar gaps instead of showing coverage',
+      (tester) async {
+    for (final override in <Map<String, dynamic>>[
+      {'calendarSpanDays': 30},
+      {'largestUnobservedCalendarGapDays': 11},
+      {'unobservedCalendarGapIntervals': -1},
+      {'calendarSpanDays': '31'},
+    ]) {
+      final invalid = _report('MSFT')..addAll(override);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: MarketPatternReadinessPanel(
+          key: ValueKey(override.toString()),
+          symbol: 'MSFT',
+          load: (_) async => invalid,
+        )),
+      ));
+      await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+      expect(find.byKey(const Key('market-pattern-readiness-gaps')), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+
 }
