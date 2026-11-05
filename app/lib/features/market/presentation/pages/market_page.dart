@@ -255,7 +255,9 @@ class _MarketPageState extends State<MarketPage> {
                     ? NewsFeedPanel(
                         key: ValueKey('market-context-news-$_newsSymbol'),
                         limit: 5,
-                        query: '"$_newsSymbol" stock earnings',
+                        query: _newsCompanyName == null
+                            ? '"$_newsSymbol" stock earnings'
+                            : '"${_newsCompanyName!}" "$_newsSymbol" earnings',
                         loadFeed: widget.newsFeedLoader,
                       )
                     : GlobalMarketPanel(controller: widget.controller),
