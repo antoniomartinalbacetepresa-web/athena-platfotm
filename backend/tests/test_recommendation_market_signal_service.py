@@ -224,6 +224,8 @@ def test_relative_volume_uses_only_pit_selected_observations(tmp_path) -> None:
     assert result.status == "diagnostic_ready"
     assert result.relative_volume_20d == pytest.approx(3.0)
     assert result.relative_volume_50d == pytest.approx(3.0)
+    assert result.volume_status_50d == "diagnostic_only"
+    assert result.to_api_dict()["volumeStatus50d"] == "diagnostic_only"
     assert result.to_api_dict()["relativeVolume50d"] == pytest.approx(3.0)
     assert result.volume_status == "diagnostic_only"
     assert result.to_api_dict()["relativeVolume20d"] == pytest.approx(3.0)
@@ -293,5 +295,7 @@ def test_relative_volume_50d_rejects_missing_baseline_without_hiding_20d(tmp_pat
     assert result.relative_volume_20d == pytest.approx(2.0)
     assert result.volume_status == "diagnostic_only"
     assert result.relative_volume_50d is None
+    assert result.volume_status_50d == "insufficient_verified_volume"
     assert result.to_api_dict()["relativeVolume50d"] is None
+    assert result.to_api_dict()["volumeStatus50d"] == "insufficient_verified_volume"
     assert result.production_eligible is False
