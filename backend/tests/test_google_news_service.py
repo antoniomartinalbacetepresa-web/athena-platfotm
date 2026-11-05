@@ -74,6 +74,8 @@ def test_google_news_feed_preserves_source_publication_and_retrieval_provenance(
     assert result["count"] == 2
     assert result["advisoryStatus"] == "no_advice"
     assert result["productionEligible"] is False
+    assert result["contentRights"] == "unverified"
+    assert result["researchUseAuthorized"] is False
     assert result["policy"] == {
         "athenaRecommendationInfluence": False,
         "automaticScoring": False,
@@ -87,6 +89,9 @@ def test_google_news_feed_preserves_source_publication_and_retrieval_provenance(
     assert first["articleUrl"] == "https://news.google.com/rss/articles/two"
     assert first["publishedAt"] == "2026-09-03T13:00:00+00:00"
     assert first["sourceProvider"] == "google_news_rss"
+    assert first["availableAt"] == first["publishedAt"]
+    assert first["contentRights"] == "unverified"
+    assert first["researchUseAuthorized"] is False
     assert first["retrievedAt"] == result["retrievedAt"]
 
     assert second["publisher"] == "Reuters"
