@@ -168,6 +168,11 @@ class RecommendationMarketSignalService:
         window = recent[-(lookback + 1):]
         if len(window) != lookback + 1:
             return None, "insufficient_verified_volume"
+        # A mixed-provider window can contain incompatible volume conventions.
+        # Do not present its ratio as a comparable market diagnostic.
+        providers = {str(item.get("source_provider") or "").strip() for item in window}
+        if len(providers) != 1 or "" in providers:
+            return None, "inconsistent_volume_provenance"
         volumes: list[float] = []
         for item in window:
             try:
