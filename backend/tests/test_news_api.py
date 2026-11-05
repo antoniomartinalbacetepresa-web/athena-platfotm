@@ -88,6 +88,17 @@ def test_news_api_fails_closed_if_news_becomes_productive_or_trading(monkeypatch
     assert TestClient(app).get("/api/v1/news/feed").status_code == 500
 
 
+def test_news_api_rejects_automatic_scoring_policy(monkeypatch) -> None:
+    payload = _safe_payload()
+    payload["policy"]["automaticScoring"] = True
+    monkeypatch.setattr(news_api, "_news_service", FakeNewsService(payload))
+
+    response = TestClient(app).get("/api/v1/news/feed")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Contrato de noticias inseguro."
+
+
 def test_news_api_rejects_invalid_query_parameters_without_calling_service(monkeypatch) -> None:
     fake = FakeNewsService(_safe_payload())
     monkeypatch.setattr(news_api, "_news_service", fake)
