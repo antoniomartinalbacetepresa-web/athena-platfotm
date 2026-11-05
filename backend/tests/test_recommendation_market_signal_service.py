@@ -223,6 +223,8 @@ def test_relative_volume_uses_only_pit_selected_observations(tmp_path) -> None:
     )
     assert result.status == "diagnostic_ready"
     assert result.relative_volume_20d == pytest.approx(3.0)
+    assert result.relative_volume_50d == pytest.approx(3.0)
+    assert result.to_api_dict()["relativeVolume50d"] == pytest.approx(3.0)
     assert result.volume_status == "diagnostic_only"
     assert result.to_api_dict()["relativeVolume20d"] == pytest.approx(3.0)
     assert result.production_eligible is False
@@ -270,4 +272,26 @@ def test_relative_volume_fails_closed_on_malformed_persisted_value(tmp_path) -> 
     assert result.status == "diagnostic_ready"
     assert result.relative_volume_20d is None
     assert result.volume_status == "insufficient_verified_volume"
+    assert result.production_eligible is False
+
+
+def test_relative_volume_50d_rejects_missing_baseline_without_hiding_20d(tmp_path) -> None:
+    database = _build_database(tmp_path)
+    instrument_id = _insert_instrument(database)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for day in range(61):
+        observed = start + timedelta(days=day)
+        _insert_observation(
+            database, instrument_id=instrument_id, observed_at=observed,
+            retrieved_at=observed + timedelta(hours=1), price=100.0 + day,
+            volume=None if day == 15 else (200.0 if day == 60 else 100.0),
+        )
+    result = RecommendationMarketSignalService(database=database).evaluate(
+        symbol="TEST", as_of=start + timedelta(days=60, hours=2),
+    )
+    assert result.status == "diagnostic_ready"
+    assert result.relative_volume_20d == pytest.approx(2.0)
+    assert result.volume_status == "diagnostic_only"
+    assert result.relative_volume_50d is None
+    assert result.to_api_dict()["relativeVolume50d"] is None
     assert result.production_eligible is False
