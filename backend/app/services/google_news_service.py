@@ -123,6 +123,8 @@ class GoogleNewsService:
                     "articleUrl": article_url,
                     "publishedAt": published_at.isoformat(),
                     "availableAt": published_at.isoformat(),
+                    "availableAtVerified": False,
+                    "availableAtBasis": "publisher_pubDate_unverified",
                     "retrievedAt": retrieved_at.isoformat(),
                     "contentRights": "unverified",
                     "researchUseAuthorized": False,
