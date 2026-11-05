@@ -32,6 +32,7 @@ class RecommendationMarketSignal:
     relative_volume_20d: float | None = None
     volume_status: str = "unavailable"
     relative_volume_50d: float | None = None
+    volume_status_50d: str = "unavailable"
 
     def to_api_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +56,7 @@ class RecommendationMarketSignal:
             "reason": self.reason,
             "relativeVolume20d": self.relative_volume_20d,
             "relativeVolume50d": self.relative_volume_50d,
+            "volumeStatus50d": self.volume_status_50d,
             "volumeStatus": self.volume_status,
             "policy": {
                 "temporal": "observed_at_and_retrieved_at_not_after_as_of",
@@ -124,7 +126,7 @@ class RecommendationMarketSignalService:
         technical_score = self._clip(50.0 + (return_20d * 100.0) + (return_60d * 50.0), 0.0, 100.0)
         risk_score = self._clip((annualized_volatility * 100.0) + (abs(max_drawdown) * 100.0), 0.0, 100.0)
         relative_volume, volume_status = self._relative_volume(recent, lookback=20)
-        relative_volume_50d, _ = self._relative_volume(recent, lookback=50)
+        relative_volume_50d, volume_status_50d = self._relative_volume(recent, lookback=50)
 
         return RecommendationMarketSignal(
             status="diagnostic_ready", symbol=normalized_symbol, instrument_id=instrument_id,
@@ -133,7 +135,7 @@ class RecommendationMarketSignalService:
             latest_price=latest_price, price_60d_start=price_60d_start, source_providers=source_providers,
             return_20d=return_20d, return_60d=return_60d, annualized_volatility=annualized_volatility,
             max_drawdown_60d=max_drawdown, technical_score=technical_score, risk_score=risk_score,
-            production_eligible=False, relative_volume_20d=relative_volume, relative_volume_50d=relative_volume_50d, volume_status=volume_status,
+            production_eligible=False, relative_volume_20d=relative_volume, relative_volume_50d=relative_volume_50d, volume_status=volume_status, volume_status_50d=volume_status_50d,
             reason="Las señales técnicas y de riesgo están calculadas con datos point-in-time y procedencia explícita, pero aún deben calibrarse fuera de muestra junto con fundamentales, valoración y calidad.",
         )
 
