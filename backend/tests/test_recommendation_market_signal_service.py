@@ -40,6 +40,7 @@ def _insert_observation(
     retrieved_at: datetime,
     price: float,
     provider: str = "test",
+    volume: float | None = None,
 ) -> None:
     with database.connect() as connection:
         connection.execute(
@@ -49,8 +50,9 @@ def _insert_observation(
                 observed_at,
                 close,
                 source_provider,
-                retrieved_at
-            ) VALUES (?, ?, ?, ?, ?)
+                retrieved_at,
+                volume
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 instrument_id,
@@ -58,6 +60,7 @@ def _insert_observation(
                 price,
                 provider,
                 retrieved_at.isoformat(),
+                volume,
             ),
         )
 
@@ -195,3 +198,51 @@ def test_signal_requires_timezone_aware_as_of(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="zona horaria"):
         service.evaluate(symbol="TEST", as_of=datetime(2026, 3, 1))
+
+
+def test_relative_volume_uses_only_pit_selected_observations(tmp_path) -> None:
+    database = _build_database(tmp_path)
+    instrument_id = _insert_instrument(database)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    as_of = start + timedelta(days=60, hours=12)
+    for day in range(61):
+        observed = start + timedelta(days=day)
+        _insert_observation(
+            database, instrument_id=instrument_id, observed_at=observed,
+            retrieved_at=observed + timedelta(hours=1), price=100.0 + day,
+            volume=300.0 if day == 60 else 100.0,
+        )
+    _insert_observation(
+        database, instrument_id=instrument_id,
+        observed_at=start + timedelta(days=60),
+        retrieved_at=as_of + timedelta(days=1),
+        price=9999.0, volume=999999.0, provider="future",
+    )
+    result = RecommendationMarketSignalService(database=database).evaluate(
+        symbol="TEST", as_of=as_of,
+    )
+    assert result.status == "diagnostic_ready"
+    assert result.relative_volume_20d == pytest.approx(3.0)
+    assert result.volume_status == "diagnostic_only"
+    assert result.to_api_dict()["relativeVolume20d"] == pytest.approx(3.0)
+    assert result.production_eligible is False
+
+
+def test_relative_volume_is_unavailable_without_complete_positive_history(tmp_path) -> None:
+    database = _build_database(tmp_path)
+    instrument_id = _insert_instrument(database)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for day in range(61):
+        observed = start + timedelta(days=day)
+        _insert_observation(
+            database, instrument_id=instrument_id, observed_at=observed,
+            retrieved_at=observed + timedelta(hours=1), price=100.0 + day,
+            volume=None if day == 55 else 100.0,
+        )
+    result = RecommendationMarketSignalService(database=database).evaluate(
+        symbol="TEST", as_of=start + timedelta(days=60, hours=2),
+    )
+    assert result.status == "diagnostic_ready"
+    assert result.relative_volume_20d is None
+    assert result.volume_status == "insufficient_verified_volume"
+    assert result.to_api_dict()["relativeVolume20d"] is None
