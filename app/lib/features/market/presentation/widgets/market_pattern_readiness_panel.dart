@@ -194,6 +194,14 @@ class _MarketPatternReadinessPanelState
                 key: const Key('market-pattern-readiness-gaps'),
               ),
             const Text(
+              'Volumen relativo RVOL20/RVOL50: NO VERIFICABLE en este histórico. '
+              'Los cálculos diagnósticos del núcleo no acreditan por sí solos '
+              'licencia, continuidad de proveedor, ajustes corporativos ni '
+              'disponibilidad PIT de los volúmenes. No se presenta un valor '
+              'numérico ni un momento de entrada o salida.',
+              key: Key('market-pattern-readiness-volume'),
+            ),
+            const Text(
               'BLOQUEADO: licencia, ajustes por splits/dividendos y evidencia PIT '
               'histórica no acreditados. No se calculan patrones ni señales '
               'de compra o venta. Investigación de solo lectura.',
