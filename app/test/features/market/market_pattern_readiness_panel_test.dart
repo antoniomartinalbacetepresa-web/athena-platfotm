@@ -38,6 +38,9 @@ void main() {
     expect(find.textContaining('NO VERIFICADOS'), findsOneWidget);
     expect(find.byKey(const Key('market-pattern-readiness-gaps')), findsOneWidget);
     expect(find.textContaining('mayor tramo sin observaciones: 3 días'), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-volume')), findsOneWidget);
+    expect(find.textContaining('RVOL20/RVOL50: NO VERIFICABLE'), findsOneWidget);
+    expect(find.textContaining('No se presenta un valor'), findsOneWidget);
     expect(find.byKey(const Key('market-pattern-readiness-blocked')), findsOneWidget);
     expect(find.textContaining('No se calculan patrones'), findsOneWidget);
   });
