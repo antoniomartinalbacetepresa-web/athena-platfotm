@@ -23,7 +23,7 @@ def _utc(value: Any) -> datetime | None:
 
 
 def assess_market_evidence(
-    evidence: Mapping[str, Any], *, now: datetime, max_age: timedelta = timedelta(days=2)
+    evidence: Mapping[str, Any], *, now: datetime, max_age: timedelta = timedelta(days=2), trusted_verification: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
     """Return explicit reasons; never infer a licence or market-data freshness."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -51,14 +51,14 @@ def assess_market_evidence(
     currency = evidence.get("currency")
     if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha() or currency != currency.upper():
         reasons.append("invalid_currency")
-    if evidence.get("licenseVerified") is not True:
+    # Provider payload claims are not independent authorization.\n    verification = trusted_verification or {}\n    if verification.get("licenseVerified") is not True:
         reasons.append("license_unverified")
-    if evidence.get("sourceAttributionVerified") is not True:
+    if verification.get("sourceAttributionVerified") is not True:
         reasons.append("source_unverified")
-    if evidence.get("corporateActionsStatus") != "verified":
+    if verification.get("corporateActionsStatus") != "verified":
         reasons.append("corporate_actions_unverified")
-    if evidence.get("coverageStatus") != "verified":
+    if verification.get("coverageStatus") != "verified":
         reasons.append("coverage_unverified")
-    if evidence.get("independentReconciliation") is not True:
+    if verification.get("independentReconciliation") is not True:
         reasons.append("reconciliation_unverified")
     return {"accepted": not reasons, "reasons": reasons, "mode": "research_only", "orderExecutionAllowed": False}
