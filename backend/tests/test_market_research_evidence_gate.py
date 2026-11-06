@@ -62,3 +62,29 @@ def test_no_inferred_reconciliation_or_coverage():
     result = assess_market_evidence(evidence, now=NOW)
     assert "reconciliation_unverified" in result["reasons"]
     assert "coverage_unverified" in result["reasons"]
+
+
+def test_stale_observation_rejected_even_if_recently_retrieved():
+    evidence = valid_evidence()
+    evidence["observationAt"] = "2026-10-01T21:00:00Z"
+    result = assess_market_evidence(evidence, now=NOW)
+    assert not result["accepted"]
+    assert "stale_observation" in result["reasons"]
+
+
+def test_future_observation_rejected_even_when_retrieval_is_future():
+    evidence = valid_evidence()
+    evidence["observationAt"] = "2026-11-07T19:00:00Z"
+    evidence["availableAt"] = "2026-11-07T19:01:00Z"
+    evidence["retrievedAt"] = "2026-11-07T19:02:00Z"
+    result = assess_market_evidence(evidence, now=NOW)
+    assert "future_market_evidence" in result["reasons"]
+    assert "future_retrieval" in result["reasons"]
+
+
+def test_noncanonical_currency_rejected():
+    evidence = valid_evidence()
+    evidence["currency"] = "usd"
+    result = assess_market_evidence(evidence, now=NOW)
+    assert not result["accepted"]
+    assert "invalid_currency" in result["reasons"]
