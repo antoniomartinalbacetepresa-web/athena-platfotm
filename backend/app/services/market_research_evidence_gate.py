@@ -51,7 +51,9 @@ def assess_market_evidence(
     currency = evidence.get("currency")
     if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha() or currency != currency.upper():
         reasons.append("invalid_currency")
-    # Provider payload claims are not independent authorization.\n    verification = trusted_verification or {}\n    if verification.get("licenseVerified") is not True:
+    # Provider payload claims are not independent authorization.
+    verification = trusted_verification if trusted_verification is not None else {}
+    if verification.get("licenseVerified") is not True:
         reasons.append("license_unverified")
     if verification.get("sourceAttributionVerified") is not True:
         reasons.append("source_unverified")
