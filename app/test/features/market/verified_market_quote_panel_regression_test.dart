@@ -16,7 +16,7 @@ class _QueuedQuotes implements MarketRepository {
   Future<MarketQuote> getQuote(String symbol) => responses[calls++];
 }
 
-MarketQuote _quote(String symbol, {String companyName = 'Example Company'}) {
+MarketQuote _quote(String symbol, {String companyName = 'Example Company', String? quoteMode}) {
   final now = DateTime.now().toUtc();
   return MarketQuote(
     symbol: symbol,
@@ -29,6 +29,7 @@ MarketQuote _quote(String symbol, {String companyName = 'Example Company'}) {
     updatedAt: now.subtract(const Duration(minutes: 2)),
     retrievedAt: now,
     sourceProvider: 'declared-test-provider',
+    quoteMode: quoteMode,
     instrumentId: 123,
     canonicalIdentityStatus: 'matched_internal_listing',
   );
@@ -107,6 +108,26 @@ void main() {
     expect(find.textContaining('antigüedad de recuperación: 0 minutos'), findsOneWidget);
     expect(repository.calls, 2);
   });
+  testWidgets('Declared provider_fast_info remains readable but not real-time verified',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VerifiedMarketQuotePanel(
+          symbol: 'MSFT',
+          repository: _QueuedQuotes([
+            Future.value(_quote('MSFT', quoteMode: 'provider_fast_info')),
+          ]),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsNothing);
+    expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
+    expect(find.textContaining('Tiempo real: NO VERIFICADO'), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-license-boundary')), findsOneWidget);
+  });
+
   testWidgets('Unknown quote mode cannot masquerade as a provider price',
       (tester) async {
     final now = DateTime.now().toUtc();
