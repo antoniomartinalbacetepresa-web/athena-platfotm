@@ -3,7 +3,7 @@
 This boundary does not grant a data licence or prove independent reconciliation.
 Consumers must check the returned status before using evidence in analysis.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 
@@ -22,10 +22,14 @@ def _utc(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def assess_market_evidence(evidence: Mapping[str, Any], *, now: datetime) -> dict[str, Any]:
+def assess_market_evidence(
+    evidence: Mapping[str, Any], *, now: datetime, max_age: timedelta = timedelta(days=2)
+) -> dict[str, Any]:
     """Return explicit reasons; never infer a licence or market-data freshness."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
+    if max_age <= timedelta(0):
+        raise ValueError("max_age must be positive")
     reasons: list[str] = []
     for key in REQUIRED:
         if not isinstance(evidence.get(key), str) or not evidence[key].strip():
@@ -37,8 +41,16 @@ def assess_market_evidence(evidence: Mapping[str, Any], *, now: datetime) -> dic
         observed, available, retrieved = (timestamps[k] for k in ("observationAt", "availableAt", "retrievedAt"))
         if observed > available or available > retrieved:
             reasons.append("invalid_pit_order")
-        if retrieved > now.astimezone(timezone.utc):
+        current = now.astimezone(timezone.utc)
+        if observed > current or available > current:
+            reasons.append("future_market_evidence")
+        if retrieved > current:
             reasons.append("future_retrieval")
+        if current - observed > max_age:
+            reasons.append("stale_observation")
+    currency = evidence.get("currency")
+    if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha() or currency != currency.upper():
+        reasons.append("invalid_currency")
     if evidence.get("licenseVerified") is not True:
         reasons.append("license_unverified")
     if evidence.get("sourceAttributionVerified") is not True:
