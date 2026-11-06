@@ -103,6 +103,8 @@ void main() {
     expect(find.byKey(const Key('market-quote-license-boundary')), findsOneWidget);
     expect(find.byKey(const Key('market-quote-age')), findsOneWidget);
     expect(find.textContaining('Antigüedad de observación:'), findsOneWidget);
+    expect(find.textContaining('Antigüedad de observación: 2 minutos'), findsOneWidget);
+    expect(find.textContaining('antigüedad de recuperación: 0 minutos'), findsOneWidget);
     expect(repository.calls, 2);
   });
   testWidgets('Historical fallback rejects malformed and future session dates',
@@ -145,6 +147,7 @@ void main() {
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
+    expect(find.textContaining('Antigüedad de observación: 2 días'), findsOneWidget);
     expect(repository.calls, 3);
   });
 
