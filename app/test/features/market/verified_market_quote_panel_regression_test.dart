@@ -103,4 +103,47 @@ void main() {
     expect(find.byKey(const Key('market-quote-license-boundary')), findsOneWidget);
     expect(repository.calls, 2);
   });
+  testWidgets('Historical fallback rejects malformed and future session dates',
+      (tester) async {
+    final now = DateTime.now().toUtc();
+    MarketQuote fallback(String session) => MarketQuote(
+          symbol: 'MSFT',
+          companyName: 'Example Company',
+          currentPrice: 100,
+          change: 0,
+          changePercentage: 0,
+          currency: 'USD',
+          exchange: 'NASDAQ',
+          updatedAt: now.subtract(const Duration(days: 2)),
+          retrievedAt: now,
+          sourceProvider: 'declared-test-provider',
+          quoteMode: 'historical_daily_close_fallback',
+          priceSessionDate: session,
+          instrumentId: 123,
+          canonicalIdentityStatus: 'matched_internal_listing',
+        );
+    final repository = _QueuedQuotes([
+      Future.value(fallback('2026-02-30')),
+      Future.value(fallback(now.add(const Duration(days: 1))
+          .toIso8601String().substring(0, 10))),
+      Future.value(fallback(now.subtract(const Duration(days: 3))
+          .toIso8601String().substring(0, 10))),
+    ]);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VerifiedMarketQuotePanel(symbol: 'MSFT', repository: repository),
+      ),
+    ));
+    for (var attempt = 0; attempt < 2; attempt++) {
+      await tester.tap(find.byKey(const Key('market-quote-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+      expect(find.byKey(const Key('market-quote-price')), findsNothing);
+    }
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
+    expect(repository.calls, 3);
+  });
+
 }
