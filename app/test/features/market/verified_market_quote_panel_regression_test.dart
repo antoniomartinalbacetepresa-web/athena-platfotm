@@ -107,6 +107,38 @@ void main() {
     expect(find.textContaining('antigüedad de recuperación: 0 minutos'), findsOneWidget);
     expect(repository.calls, 2);
   });
+  testWidgets('Unknown quote mode cannot masquerade as a provider price',
+      (tester) async {
+    final now = DateTime.now().toUtc();
+    final quote = MarketQuote(
+      symbol: 'MSFT',
+      companyName: 'Example Company',
+      currentPrice: 100,
+      change: 0,
+      changePercentage: 0,
+      currency: 'USD',
+      exchange: 'NASDAQ',
+      updatedAt: now.subtract(const Duration(minutes: 2)),
+      retrievedAt: now,
+      sourceProvider: 'declared-test-provider',
+      quoteMode: 'unrecognized_provider_mode',
+      instrumentId: 123,
+      canonicalIdentityStatus: 'matched_internal_listing',
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VerifiedMarketQuotePanel(
+          symbol: 'MSFT',
+          repository: _QueuedQuotes([Future.value(quote)]),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-price')), findsNothing);
+  });
+
   testWidgets('Historical fallback rejects malformed and future session dates',
       (tester) async {
     final now = DateTime.now().toUtc();
