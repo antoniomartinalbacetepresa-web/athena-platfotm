@@ -136,10 +136,21 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
         !observed.isAfter(retrieved.add(const Duration(minutes: 5)));
   }
 
+  // A recently observed quote must not misleadingly read as "0 hours old".
+  // The display is informative only; it never upgrades provenance or PIT.
+  String _ageLabel(DateTime timestamp, DateTime now) {
+    final minutes = now.difference(timestamp.toUtc()).inMinutes;
+    if (minutes < 0) return 'reloj por verificar';
+    if (minutes < 60) return '$minutes minutos';
+    if (minutes < 1440) return '${minutes ~/ 60} horas';
+    return '${minutes ~/ 1440} días';
+  }
+
   @override
   Widget build(BuildContext context) {
     final symbol = widget.symbol.trim().toUpperCase();
     final quote = _quote;
+    final displayNow = DateTime.now().toUtc();
     final dailyCloseFallback = quote?.quoteMode == 'historical_daily_close_fallback';
     final historical = quote != null &&
         (dailyCloseFallback ||
@@ -189,8 +200,8 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 10),
           ),
           Text(
-            'Antigüedad de observación: ${DateTime.now().toUtc().difference(quote.updatedAt.toUtc()).inHours < 0 ? 0 : DateTime.now().toUtc().difference(quote.updatedAt.toUtc()).inHours} horas · '
-            'antigüedad de recuperación: ${DateTime.now().toUtc().difference(quote.retrievedAt!.toUtc()).inHours < 0 ? 0 : DateTime.now().toUtc().difference(quote.retrievedAt!.toUtc()).inHours} horas.',
+            'Antigüedad de observación: ${_ageLabel(quote.updatedAt, displayNow)} · '
+            'antigüedad de recuperación: ${_ageLabel(quote.retrievedAt!, displayNow)}.',
             key: const Key('market-quote-age'),
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
           ),
