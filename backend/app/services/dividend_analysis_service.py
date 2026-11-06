@@ -156,7 +156,15 @@ class DividendAnalysisService:
         if instrument_id <= 0: raise ValueError("instrument_id debe ser positivo.")
         if knowledge_cutoff.tzinfo is None or knowledge_cutoff.utcoffset() is None: raise ValueError("knowledge_cutoff debe incluir zona horaria.")
         if lookback_days < 365: raise ValueError("lookback_days debe ser al menos 365 para inferir frecuencia.")
-        if pit_price is not None and (not isfinite(pit_price) or pit_price <= 0): raise ValueError("pit_price debe ser finito y positivo cuando se proporciona.")
+        if pit_price is not None:
+            if isinstance(pit_price, (bool, str, bytes)):
+                raise ValueError("pit_price debe ser numérico, finito y positivo.")
+            try:
+                pit_price = float(pit_price)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("pit_price debe ser numérico, finito y positivo.") from exc
+            if not isfinite(pit_price) or pit_price <= 0:
+                raise ValueError("pit_price debe ser numérico, finito y positivo.")
         cutoff = knowledge_cutoff.astimezone(timezone.utc)
         if self._require_verified_capture and self._repository.has_unverified_pit_actions(
             instrument_id, knowledge_cutoff=cutoff
