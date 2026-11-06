@@ -109,7 +109,14 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
     // A fallback is a completed daily session, never an undated or future bar.
     final session = quote.priceSessionDate;
     final parsedSession = session == null ||
-            !RegExp(r'^\\d{4}-\\d{2}-\\d{2}
+            !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(session)
+        ? null
+        : DateTime.tryParse(session);
+    final validFallbackSession = parsedSession != null &&
+        parsedSession.toIso8601String().substring(0, 10) == session &&
+        !parsedSession.isAfter(now) &&
+        !parsedSession.isAfter(observed);
+    final status = quote.canonicalIdentityStatus;
     final id = quote.instrumentId;
     final identityConsistent = status == 'matched_internal_listing'
         ? (id != null && id > 0 &&
@@ -271,173 +278,5 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
       ],
     );
   }
-}).hasMatch(session)
-        ? null
-        : DateTime.tryParse(session);
-    final validFallbackSession = parsedSession != null &&
-        parsedSession.toIso8601String().substring(0, 10) == session &&
-        !parsedSession.isAfter(now) &&
-        !parsedSession.isAfter(observed);
-    final status = quote.canonicalIdentityStatus;
-    final id = quote.instrumentId;
-    final identityConsistent = status == 'matched_internal_listing'
-        ? (id != null && id > 0 &&
-            (quote.exchange?.trim().isNotEmpty ?? false) &&
-            (quote.currency?.trim().isNotEmpty ?? false))
-        : ((status == null || status == 'unresolved') && id == null);
-    return identityConsistent &&
-        quote.symbol.trim().toUpperCase() == requested &&
-        quote.currentPrice.isFinite && quote.currentPrice > 0 &&
-        hasDeclaredQuoteCurrency(quote.currency) &&
-        quote.sourceProvider != null && quote.sourceProvider!.trim().isNotEmpty &&
-        retrieved != null &&
-        (quote.quoteMode != 'historical_daily_close_fallback' ||
-            (quote.priceSessionDate?.trim().isNotEmpty ?? false)) &&
-        !retrieved.isAfter(now.add(const Duration(minutes: 5))) &&
-        !observed.isAfter(now.add(const Duration(minutes: 5))) &&
-        !observed.isAfter(retrieved.add(const Duration(minutes: 5)));
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    final symbol = widget.symbol.trim().toUpperCase();
-    final quote = _quote;
-    final dailyCloseFallback = quote?.quoteMode == 'historical_daily_close_fallback';
-    final historical = quote != null &&
-        (dailyCloseFallback ||
-         DateTime.now().toUtc().difference(quote.updatedAt.toUtc()) > const Duration(hours: 24) ||
-         DateTime.now().toUtc().difference(quote.retrievedAt!.toUtc()) > const Duration(hours: 24));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton(
-            key: const Key('market-quote-request'),
-            onPressed: symbol.isEmpty ? null : _request,
-            child: const Text('CONSULTAR COTIZACIÓN'),
-          ),
-        ),
-        if (_loading)
-          Semantics(
-            liveRegion: true,
-            label: 'Consultando cotización y procedencia.',
-            child: const LinearProgressIndicator(),
-          ),
-        if (_failed)
-          Semantics(
-            liveRegion: true,
-            child: const Text(
-              'COTIZACIÓN NO VERIFICABLE. Reintentar o consultar otra empresa.',
-              key: Key('market-quote-error'),
-              style: TextStyle(color: AthenaColors.danger),
-            ),
-          ),
-        if (quote != null) ...[
-          Text(
-            '${quote.symbol} · ${quote.currentPrice.toStringAsFixed(2)} ${quote.currency ?? "(moneda no declarada)"}',
-            key: const Key('market-quote-price'),
-            style: const TextStyle(color: AthenaColors.text),
-          ),
-          Text(
-            'Fuente declarada: ${quote.sourceProvider} · ${quote.exchange ?? "mercado no declarado"}',
-            key: const Key('market-quote-source'),
-            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
-          ),
-          Text(
-            'Marca temporal del backend: ${quote.updatedAt.toUtc().toIso8601String()} · '
-            'recuperada: ${quote.retrievedAt!.toUtc().toIso8601String()}',
-            key: const Key('market-quote-timestamps'),
-            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 10),
-          ),
-          Text(
-            dailyCloseFallback
-                ? 'ÚLTIMO CIERRE DIARIO DISPONIBLE · sesión ${quote.priceSessionDate}. No es un precio en tiempo real.'
-                : 'Precio de proveedor: tiempo real no acreditado. Puede existir retraso.',
-            key: const Key('market-quote-mode'),
-            style: const TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
-          ),
-          Text(
-            quote.realTimePriceVerified == true && !dailyCloseFallback
-                ? 'Tiempo real: verificación declarada por el proveedor; '
-                    'no acreditada independientemente.'
-                : 'Tiempo real: NO VERIFICADO. No asumir ejecución '
-                    'al precio mostrado.',
-            key: const Key('market-quote-realtime-verification'),
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 11,
-            ),
-          ),
-          Text(
-            quote.historicalPointInTimeEligible == true
-                ? 'Elegibilidad PIT declarada para la cotización; '
-                    'NO acredita licencia, ajustes corporativos ni '
-                    'histórico independiente.'
-                : 'Elegibilidad PIT histórica: NO ACREDITADA. '
-                    'La cotización no puede alimentar por sí sola '
-                    'el análisis retrospectivo.',
-            key: const Key('market-quote-pit-verification'),
-            style: const TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 11,
-            ),
-          ),
-          const Text(
-            'Derechos de uso y redistribución: NO VERIFICADOS '
-            'en este contrato de cotización.',
-            key: Key('market-quote-license-boundary'),
-            style: TextStyle(
-              color: AthenaColors.textSecondary,
-              fontSize: 11,
-            ),
-          ),
-          if (quote.instrumentId == null)
-            const Text(
-              'IDENTIDAD CANÓNICA NO ACREDITADA: esta cotización solo comparte símbolo con el dosier. No hay vínculo de instrumento verificado.',
-              key: Key('market-quote-identity-boundary'),
-              style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
-            )
-          else
-            Text(
-              'Coincidencia exacta con registro interno ATHENA #${quote.instrumentId}. No acredita identidad externa independiente ni evidencia PIT.',
-              key: const Key('market-quote-identity-match'),
-              style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
-            ),
-          const Text(
-            'La cotización consultada no es evidencia PIT del dosier ATHENA. El análisis recupera sus propias fuentes.',
-            key: Key('market-quote-research-boundary'),
-            style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
-          ),
-          if (widget.onOpenResearch != null)
-            OutlinedButton(
-              key: const Key('market-quote-open-research'),
-              onPressed: () {
-                if (widget.symbol.trim().toUpperCase() != quote.symbol.trim().toUpperCase()) return;
-                widget.onOpenResearch!(quote.symbol.trim().toUpperCase(), quote.instrumentId);
-              },
-              child: const Text('ANALIZAR ESTA EMPRESA'),
-            ),
-          if (widget.onOpenNews != null)
-            OutlinedButton(
-              key: const Key('market-quote-open-news'),
-              onPressed: () {
-                if (widget.symbol.trim().toUpperCase() != quote.symbol.trim().toUpperCase()) return;
-                widget.onOpenNews!(quote.symbol.trim().toUpperCase());
-              },
-              child: const Text('NOTICIAS DE ESTA EMPRESA'),
-            ),
-          if (historical)
-            Semantics(
-              liveRegion: true,
-              child: const Text(
-                'COTIZACIÓN HISTÓRICA: último cierre diario o marca temporal de más de 24 horas; no es un precio en tiempo real.',
-                key: Key('market-quote-stale'),
-                style: TextStyle(color: Color(0xFFFFD37A), fontSize: 11),
-              ),
-            ),
-        ],
-      ],
-    );
-  }
 }
