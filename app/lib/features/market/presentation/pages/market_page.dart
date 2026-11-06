@@ -56,7 +56,11 @@ class _MarketPageState extends State<MarketPage> {
   void _onCompanyQuoteValidated(String symbol, String companyName) {
     if (!mounted || symbol != _newsSymbol) return;
     final name = companyName.trim();
-    if (name.isEmpty || name.length > 100 || name.contains('"') ||
+    // A provider may return the ticker itself as a placeholder company name.
+    // Do not repeat it in the news query: the feed contract requires an exact
+    // query match and a duplicated ticker adds no issuer disambiguation.
+    if (name.isEmpty || name.toUpperCase() == symbol.toUpperCase() ||
+        name.length > 100 || name.contains('"') ||
         name.runes.any((code) => code < 32)) {
       return;
     }
