@@ -76,8 +76,9 @@ void main() {
 
   testWidgets('Unverifiable quote fails closed and retry recovers without provider error',
       (tester) async {
+    final failing = Completer<MarketQuote>();
     final repository = _QueuedQuotes([
-      Future.error(const FormatException('provider token=private')),
+      failing.future,
       Future.value(_quote('MSFT')),
     ]);
     await tester.pumpWidget(
@@ -88,6 +89,8 @@ void main() {
       ),
     );
     await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pump();
+    failing.completeError(const FormatException('provider token=private'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
     expect(find.textContaining('token=private'), findsNothing);
