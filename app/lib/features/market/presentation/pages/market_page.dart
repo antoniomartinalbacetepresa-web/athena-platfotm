@@ -215,7 +215,7 @@ class _MarketPageState extends State<MarketPage> {
                 Semantics(
                   container: true,
                   child: Text(
-                    'Noticias de $_newsSymbol: búsqueda textual, no identidad de emisor. '
+                    'Noticias de ${_newsCompanyName == null ? _newsSymbol : '${_newsCompanyName!} ($_newsSymbol)'}: búsqueda textual, no identidad de emisor. '
                     'Sin evidencia PIT acreditada; precios y noticias tienen '
                     'fuentes y fechas independientes.',
                     key: const Key('market-context-news-boundary'),
