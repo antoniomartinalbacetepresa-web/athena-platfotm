@@ -127,6 +127,7 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
     // Null remains supported for the legacy quote contract.
     final supportedMode = quote.quoteMode == null ||
         quote.quoteMode == 'provider_quote' ||
+        quote.quoteMode == 'provider_fast_info' ||
         quote.quoteMode == 'historical_daily_close_fallback';
     return supportedMode && identityConsistent &&
         quote.symbol.trim().toUpperCase() == requested &&
