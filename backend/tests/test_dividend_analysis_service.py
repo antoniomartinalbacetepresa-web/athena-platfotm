@@ -387,7 +387,11 @@ def test_direct_dividend_diagnostic_strict_capture_gate_is_explicit(tmp_path: Pa
     assert payload["productionEligible"] is False
 
 
-@pytest.mark.parametrize("invalid_price", [True, False, "20", b"20", object(), complex(20, 1), 10**10000])
+@pytest.mark.parametrize(
+    "invalid_price",
+    [True, False, "20", b"20", object(), complex(20, 1), 10**10000],
+    ids=["true", "false", "string", "bytes", "object", "complex", "huge-integer"],
+)
 def test_pit_price_rejects_ambiguous_types_without_leaking_type_errors(tmp_path: Path, invalid_price: object) -> None:
     database = _database(tmp_path)
     instrument_id = _instrument(database)
