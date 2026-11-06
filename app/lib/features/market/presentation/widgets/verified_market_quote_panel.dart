@@ -123,7 +123,12 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             (quote.exchange?.trim().isNotEmpty ?? false) &&
             (quote.currency?.trim().isNotEmpty ?? false))
         : ((status == null || status == 'unresolved') && id == null);
-    return identityConsistent &&
+    // An unknown quote mode must not silently be presented as a provider price.
+    // Null remains supported for the legacy quote contract.
+    final supportedMode = quote.quoteMode == null ||
+        quote.quoteMode == 'provider_quote' ||
+        quote.quoteMode == 'historical_daily_close_fallback';
+    return supportedMode && identityConsistent &&
         quote.symbol.trim().toUpperCase() == requested &&
         quote.currentPrice.isFinite && quote.currentPrice > 0 &&
         hasDeclaredQuoteCurrency(quote.currency) &&
