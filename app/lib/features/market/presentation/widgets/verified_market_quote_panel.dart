@@ -189,6 +189,12 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 10),
           ),
           Text(
+            'Antigüedad de observación: ${DateTime.now().toUtc().difference(quote.updatedAt.toUtc()).inHours < 0 ? 0 : DateTime.now().toUtc().difference(quote.updatedAt.toUtc()).inHours} horas · '
+            'antigüedad de recuperación: ${DateTime.now().toUtc().difference(quote.retrievedAt!.toUtc()).inHours < 0 ? 0 : DateTime.now().toUtc().difference(quote.retrievedAt!.toUtc()).inHours} horas.',
+            key: const Key('market-quote-age'),
+            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+          ),
+          Text(
             dailyCloseFallback
                 ? 'ÚLTIMO CIERRE DIARIO DISPONIBLE · sesión ${quote.priceSessionDate}. No es un precio en tiempo real.'
                 : 'Precio de proveedor: tiempo real no acreditado. Puede existir retraso.',
