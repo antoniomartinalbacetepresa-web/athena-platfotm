@@ -385,3 +385,16 @@ def test_direct_dividend_diagnostic_strict_capture_gate_is_explicit(tmp_path: Pa
     assert payload["captureGatePassed"] is True
     assert payload["pitSafe"] is True
     assert payload["productionEligible"] is False
+
+
+@pytest.mark.parametrize("invalid_price", [True, False, "20", b"20", object(), complex(20, 1), 10**10000])
+def test_pit_price_rejects_ambiguous_types_without_leaking_type_errors(tmp_path: Path, invalid_price: object) -> None:
+    database = _database(tmp_path)
+    instrument_id = _instrument(database)
+    service = DividendAnalysisService(database=database)
+    with pytest.raises(ValueError, match="pit_price"):
+        service.analyze(
+            instrument_id=instrument_id,
+            knowledge_cutoff=datetime(2026, 8, 2, tzinfo=timezone.utc),
+            pit_price=invalid_price,
+        )
