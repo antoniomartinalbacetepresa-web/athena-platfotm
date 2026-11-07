@@ -109,12 +109,12 @@ def test_staleness_status_is_explicit_at_freshness_boundary():
     assert stale["priceStatus"] == "unavailable_unverified"
 
 
-def test_invalid_observation_has_unknown_staleness_not_fresh():
+def test_invalid_observation_has_invalid_staleness_not_fresh():
     payload = _payload()
     verified = _verification(payload)
     payload["observationAt"] = "invalid"
     view = market_evidence_view(payload, now=NOW, trusted_verification=verified)
-    assert view["stalenessStatus"] == "unknown"
+    assert view["stalenessStatus"] == "invalid"
     assert view["ageSeconds"] is None
     assert view["price"] is None
 
