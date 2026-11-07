@@ -519,6 +519,13 @@ void main() {
       contains('sin diagnóstico económico PIT adjunto'),
     );
     expect(find.byKey(const Key('market-research-pit')), findsOneWidget);
+    expect(find.byKey(const Key('market-research-license-boundary')), findsOneWidget);
+    expect(
+      tester.widget<Text>(
+        find.byKey(const Key('market-research-license-boundary')),
+      ).data,
+      contains('NO ACREDITADAS'),
+    );
     expect(find.byKey(const Key('market-research-safety-boundary')), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'MSFT');
     await tester.pump();
