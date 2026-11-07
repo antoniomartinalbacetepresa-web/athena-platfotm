@@ -45,7 +45,12 @@ def market_evidence_view(
         "ageSeconds": age_seconds,
         # UI must not infer freshness from a missing age or a verified header.
         "stalenessStatus": (
-            "unknown" if age_seconds is None
+            # Recent observation cannot legitimize impossible PIT chronology.
+            "invalid" if any(reason in admission["reasons"] for reason in (
+                "invalid_timestamps", "invalid_pit_order",
+                "future_market_evidence", "future_retrieval",
+            ))
+            else "unknown" if age_seconds is None
             else "stale" if age_seconds > max_age.total_seconds()
             else "fresh"
         ),
