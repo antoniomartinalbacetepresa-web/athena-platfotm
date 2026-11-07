@@ -66,3 +66,20 @@ def test_missing_price_binding_cannot_claim_verified_research():
     assert view["price"] is None
     assert view["status"] == "unavailable_unverified"
     assert "price_unverified" in view["reasons"]
+
+
+def test_future_observation_has_no_misleading_zero_age():
+    future = dict(EVIDENCE, observationAt="2026-11-07T21:00:00Z")
+    view = market_evidence_view(future, now=NOW, trusted_verification=APPROVAL)
+    assert view["price"] is None
+    assert view["ageSeconds"] is None
+    assert view["status"] == "unavailable_unverified"
+    assert "future_market_evidence" in view["reasons"]
+
+
+def test_invalid_observation_does_not_claim_freshness():
+    invalid = dict(EVIDENCE, observationAt="not-a-timestamp")
+    view = market_evidence_view(invalid, now=NOW, trusted_verification=APPROVAL)
+    assert view["ageSeconds"] is None
+    assert view["price"] is None
+    assert "invalid_timestamps" in view["reasons"]
