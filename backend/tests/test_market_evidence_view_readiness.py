@@ -94,3 +94,26 @@ def test_price_status_explicit_for_verified_and_mismatched_quotes():
     assert market_evidence_view(payload, now=NOW, trusted_verification=verified)["priceStatus"] == "verified"
     payload["price"] = 101.0
     assert market_evidence_view(payload, now=NOW, trusted_verification=verified)["priceStatus"] == "unavailable_unverified"
+
+
+def test_staleness_status_is_explicit_at_freshness_boundary():
+    payload = _payload()
+    verified = _verification(payload)
+    observed = datetime.fromisoformat(payload["observationAt"].replace("Z", "+00:00"))
+    fresh = market_evidence_view(payload, now=observed + timedelta(days=2), trusted_verification=verified)
+    stale = market_evidence_view(payload, now=observed + timedelta(days=2, seconds=1), trusted_verification=verified)
+    assert fresh["stalenessStatus"] == "fresh"
+    assert fresh["priceStatus"] == "verified"
+    assert stale["stalenessStatus"] == "stale"
+    assert stale["price"] is None
+    assert stale["priceStatus"] == "unavailable_unverified"
+
+
+def test_invalid_observation_has_unknown_staleness_not_fresh():
+    payload = _payload()
+    verified = _verification(payload)
+    payload["observationAt"] = "invalid"
+    view = market_evidence_view(payload, now=NOW, trusted_verification=verified)
+    assert view["stalenessStatus"] == "unknown"
+    assert view["ageSeconds"] is None
+    assert view["price"] is None
