@@ -176,6 +176,27 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
               key: const Key('market-research-module-status'),
               style: const TextStyle(color: AthenaColors.textSecondary),
             ),
+            // Make all analytical modules inspectable without implying that
+            // their declared status or evidence is independently validated.
+            ExpansionTile(
+              key: const Key('market-research-module-details'),
+              title: const Text('ESTADO DE LOS 11 MÓDULOS'),
+              children: [
+                for (final name in (ProfessionalDossier.moduleNames.toList()..sort()))
+                  ListTile(
+                    dense: true,
+                    title: Text(name),
+                    subtitle: Text(
+                      dossier.modules[name]!.status,
+                      key: Key('market-research-module-$name'),
+                    ),
+                  ),
+                const ListTile(
+                  dense: true,
+                  title: Text('Estados declarados por el backend; no acreditan licencia, calidad ni persistencia de los datos.'),
+                ),
+              ],
+            ),
             Text(
               dividendDiagnostic == null
                   ? 'Dividendos: sin diagnóstico económico PIT adjunto; '
