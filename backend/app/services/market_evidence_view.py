@@ -42,6 +42,11 @@ def market_evidence_view(
         "retrievedAt": evidence.get("retrievedAt"),
         "currency": evidence.get("currency"),
         "ageSeconds": age_seconds,
+        # Display only independent verification, never provider self-attestation.
+        "licenseVerified": admission["accepted"],
+        "coverageStatus": "verified" if admission["accepted"] else "unverified",
+        "corporateActionsStatus": "verified" if admission["accepted"] else "unverified",
+        "independentReconciliation": admission["accepted"],
         "status": "verified_research" if admission["accepted"] else "unavailable_unverified",
         "reasons": admission["reasons"],
         "orderExecutionAllowed": False,
@@ -64,5 +69,9 @@ def market_evidence_view(
             result["price"] = price
         else:
             result["status"] = "unavailable_unverified"
+            result["licenseVerified"] = False
+            result["coverageStatus"] = "unverified"
+            result["corporateActionsStatus"] = "unverified"
+            result["independentReconciliation"] = False
             result["reasons"] = [*result["reasons"], "price_unverified"]
     return result
