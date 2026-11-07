@@ -202,6 +202,13 @@ class _MarketResearchPreviewState extends State<MarketResearchPreview> {
                 style: TextStyle(color: Color(0xFFFFD37A)),
               ),
             const Text(
+              'Licencia de fuentes, identidad externa y continuidad histórica: '
+              'NO ACREDITADAS por este resumen. La evidencia adjunta '
+              'no prueba permisos de uso, actualidad ni persistencia canónica.',
+              key: Key('market-research-license-boundary'),
+              style: TextStyle(color: Color(0xFFFFD37A)),
+            ),
+            const Text(
               'Investigación independiente de la cotización y las noticias. '
               'Solo lectura; sin asesoramiento, órdenes ni trading automático.',
               key: Key('market-research-safety-boundary'),
