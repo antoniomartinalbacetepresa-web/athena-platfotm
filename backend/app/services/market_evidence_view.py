@@ -45,10 +45,21 @@ def market_evidence_view(
         "price": None,
     }
     if admission["accepted"]:
-        # Only expose a supplied price; never fabricate one.
+        # The gate binds metadata, not the price. Never let a verified header
+        # authorize a substituted or invalid numeric quote.
         price = evidence.get("price")
-        if isinstance(price, (int, float)) and not isinstance(price, bool):
-            from math import isfinite
-            if isfinite(price) and price > 0:
-                result["price"] = price
+        verified_price = (trusted_verification or {}).get("price")
+        from math import isfinite
+        valid = (
+            isinstance(price, (int, float)) and not isinstance(price, bool)
+            and isfinite(price) and price > 0
+            and isinstance(verified_price, (int, float))
+            and not isinstance(verified_price, bool)
+            and isfinite(verified_price) and verified_price == price
+        )
+        if valid:
+            result["price"] = price
+        else:
+            result["status"] = "unavailable_unverified"
+            result["reasons"] = [*result["reasons"], "price_unverified"]
     return result
