@@ -91,4 +91,6 @@ def market_evidence_view(
             result["corporateActionsStatus"] = "unverified"
             result["independentReconciliation"] = False
             result["reasons"] = [*result["reasons"], "price_unverified"]
+            if result["stalenessStatus"] == "fresh":
+                result["stalenessStatus"] = "unverified"
     return result
