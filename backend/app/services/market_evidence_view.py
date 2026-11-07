@@ -43,6 +43,12 @@ def market_evidence_view(
         "retrievedAt": evidence.get("retrievedAt"),
         "currency": evidence.get("currency"),
         "ageSeconds": age_seconds,
+        # UI must not infer freshness from a missing age or a verified header.
+        "stalenessStatus": (
+            "unknown" if age_seconds is None
+            else "stale" if age_seconds > max_age.total_seconds()
+            else "fresh"
+        ),
         # Display only independent verification, never provider self-attestation.
         "licenseVerified": admission["accepted"],
         "coverageStatus": "verified" if admission["accepted"] else "unverified",
