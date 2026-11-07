@@ -204,4 +204,48 @@ void main() {
     expect(repository.calls, 3);
   });
 
+  testWidgets('Future or PIT-inverted quote timestamps never expose a price',
+      (tester) async {
+    final now = DateTime.now().toUtc();
+    MarketQuote quote(DateTime observed, DateTime retrieved) => MarketQuote(
+          symbol: 'MSFT',
+          companyName: 'Example Company',
+          currentPrice: 100,
+          change: 0,
+          changePercentage: 0,
+          currency: 'USD',
+          exchange: 'NASDAQ',
+          updatedAt: observed,
+          retrievedAt: retrieved,
+          sourceProvider: 'declared-test-provider',
+          quoteMode: 'provider_quote',
+          instrumentId: 123,
+          canonicalIdentityStatus: 'matched_internal_listing',
+        );
+    final repository = _QueuedQuotes([
+      Future.value(quote(now.add(const Duration(minutes: 2)), now)),
+      Future.value(quote(now.subtract(const Duration(minutes: 1)),
+          now.add(const Duration(minutes: 2)))),
+      Future.value(quote(now.subtract(const Duration(minutes: 1)),
+          now.subtract(const Duration(minutes: 2)))),
+      Future.value(quote(now.subtract(const Duration(minutes: 2)), now)),
+    ]);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VerifiedMarketQuotePanel(symbol: 'MSFT', repository: repository),
+      ),
+    ));
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await tester.tap(find.byKey(const Key('market-quote-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+      expect(find.byKey(const Key('market-quote-price')), findsNothing);
+    }
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-quote-error')), findsNothing);
+    expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
+    expect(repository.calls, 4);
+  });
+
 }
