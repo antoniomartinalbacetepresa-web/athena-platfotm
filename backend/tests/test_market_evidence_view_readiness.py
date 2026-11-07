@@ -131,3 +131,21 @@ def test_fractional_second_past_freshness_limit_is_stale():
     assert view["ageSeconds"] > timedelta(days=2).total_seconds()
     assert view["price"] is None
     assert "stale_observation" in view["reasons"]
+
+
+def test_recent_quote_with_future_retrieval_is_invalid_not_fresh():
+    payload = _payload()
+    payload["retrievedAt"] = (NOW + timedelta(minutes=1)).isoformat()
+    view = market_evidence_view(payload, now=NOW, trusted_verification=_verification(payload))
+    assert view["stalenessStatus"] == "invalid"
+    assert view["price"] is None
+    assert "future_retrieval" in view["reasons"]
+
+
+def test_recent_quote_with_impossible_pit_order_is_invalid():
+    payload = _payload()
+    payload["availableAt"] = "2026-11-06T20:00:00Z"
+    view = market_evidence_view(payload, now=NOW, trusted_verification=_verification(payload))
+    assert view["stalenessStatus"] == "invalid"
+    assert view["priceStatus"] == "unavailable_unverified"
+    assert "invalid_pit_order" in view["reasons"]
