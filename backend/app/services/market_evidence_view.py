@@ -52,7 +52,7 @@ def market_evidence_view(
             ))
             else "unknown" if age_seconds is None
             else "stale" if age_seconds > max_age.total_seconds()
-            else "fresh"
+            else "fresh" if admission["accepted"] else "unverified"
         ),
         # Display only independent verification, never provider self-attestation.
         "licenseVerified": admission["accepted"],
