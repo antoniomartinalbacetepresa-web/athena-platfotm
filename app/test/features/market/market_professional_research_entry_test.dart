@@ -4,6 +4,7 @@ import 'package:app/core/routing/app_routes.dart';
 import 'package:app/features/market/controllers/global_market_context_controller.dart';
 import 'package:app/features/market/models/global_market_context.dart';
 import 'package:app/features/market/presentation/pages/market_page.dart';
+import 'package:app/features/market/presentation/widgets/market_research_preview.dart';
 import 'package:app/features/market/di/market_dependencies.dart';
 import 'package:app/features/market/models/market_quote.dart';
 import 'package:app/features/news/models/verified_news_feed.dart';
@@ -93,6 +94,24 @@ ProfessionalDossier _dossier(String symbol, {int? instrumentId, bool stale = fal
 }
 
 void main() {
+  testWidgets('Market research reveals all module states without asserting verification',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MarketResearchPreview(
+      symbol: 'MSFT',
+      loadDossier: (symbol, instrumentId) async => _dossier(symbol),
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-research-module-details')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('market-research-module-details')));
+    await tester.tap(find.byKey(const Key('market-research-module-details')));
+    await tester.pumpAndSettle();
+    for (final name in ProfessionalDossier.moduleNames) {
+      expect(find.byKey(Key('market-research-module-$name')), findsOneWidget);
+    }
+    expect(find.textContaining('no acreditan licencia'), findsOneWidget);
+    expect(find.byKey(const Key('market-research-license-boundary')), findsOneWidget);
+  });
+
   testWidgets('Market keeps professional research closed until a symbol exists',
       (tester) async {
     final controller = _controller();
