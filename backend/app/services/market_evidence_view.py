@@ -3,6 +3,7 @@
 No network call, licence grant, price inference or order execution occurs here.
 """
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 from typing import Any, Mapping
 
 from app.services.market_research_evidence_gate import assess_market_evidence
@@ -51,22 +52,27 @@ def market_evidence_view(
         "reasons": admission["reasons"],
         "orderExecutionAllowed": False,
         "price": None,
+        "priceStatus": "unavailable_unverified",
     }
     if admission["accepted"]:
         # The gate binds metadata, not the price. Never let a verified header
         # authorize a substituted or invalid numeric quote.
         price = evidence.get("price")
         verified_price = (trusted_verification or {}).get("price")
-        from math import isfinite
-        valid = (
-            isinstance(price, (int, float)) and not isinstance(price, bool)
-            and isfinite(price) and price > 0
-            and isinstance(verified_price, (int, float))
-            and not isinstance(verified_price, bool)
-            and isfinite(verified_price) and verified_price == price
-        )
+        # Huge Python integers overflow when converted by math.isfinite.
+        # Fail closed instead of returning HTTP 500 to the Market consumer.
+        def finite_positive(value: Any) -> bool:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            try:
+                return isfinite(value) and value > 0
+            except (OverflowError, ValueError, TypeError):
+                return False
+
+        valid = finite_positive(price) and finite_positive(verified_price) and verified_price == price
         if valid:
             result["price"] = price
+            result["priceStatus"] = "verified"
         else:
             result["status"] = "unavailable_unverified"
             result["licenseVerified"] = False
