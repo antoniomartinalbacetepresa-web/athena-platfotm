@@ -53,6 +53,11 @@ def assess_market_evidence(
         reasons.append("invalid_currency")
     # Provider payload claims are not independent authorization.
     verification = trusted_verification if trusted_verification is not None else {}
+    # Approval must be scoped to the exact instrument, provider and licence.
+    # A positive approval for another feed cannot authorize this payload.
+    for field in ("instrumentId", "source", "license"):
+        if verification.get(field) != evidence.get(field) or not isinstance(verification.get(field), str):
+            reasons.append(f"verification_{field}_mismatch")
     if verification.get("licenseVerified") is not True:
         reasons.append("license_unverified")
     if verification.get("sourceAttributionVerified") is not True:
