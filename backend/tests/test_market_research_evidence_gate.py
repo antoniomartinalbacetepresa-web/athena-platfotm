@@ -14,6 +14,10 @@ def verified(evidence):
         "instrumentId": "MSFT:XNAS",
         "source": "example-provider",
         "license": "explicitly-approved-research-use",
+        "observationAt": evidence["observationAt"],
+        "availableAt": evidence["availableAt"],
+        "retrievedAt": evidence["retrievedAt"],
+        "currency": evidence["currency"],
         "licenseVerified": True,
         "sourceAttributionVerified": True,
         "corporateActionsStatus": "verified",
@@ -159,3 +163,32 @@ def test_trusted_approval_requires_identity_binding_even_with_all_positive_flags
     assert "verification_instrumentId_mismatch" in result["reasons"]
     assert "verification_source_mismatch" in result["reasons"]
     assert "verification_license_mismatch" in result["reasons"]
+
+
+def test_trusted_approval_cannot_authorize_changed_snapshot_or_currency():
+    evidence = valid_evidence()
+    approval = {
+        "instrumentId": evidence["instrumentId"],
+        "source": evidence["source"],
+        "license": evidence["license"],
+        "observationAt": evidence["observationAt"],
+        "availableAt": evidence["availableAt"],
+        "retrievedAt": evidence["retrievedAt"],
+        "currency": evidence["currency"],
+        "licenseVerified": True,
+        "sourceAttributionVerified": True,
+        "corporateActionsStatus": "verified",
+        "coverageStatus": "verified",
+        "independentReconciliation": True,
+    }
+    for field, altered_value in (
+        ("observationAt", "2026-11-05T20:00:00Z"),
+        ("availableAt", "2026-11-05T21:01:30Z"),
+        ("retrievedAt", "2026-11-05T21:03:00Z"),
+        ("currency", "EUR"),
+    ):
+        altered = dict(evidence, **{field: altered_value})
+        result = assess_market_evidence(altered, now=NOW, trusted_verification=approval)
+        assert not result["accepted"]
+        assert f"verification_{field}_mismatch" in result["reasons"]
+        assert result["orderExecutionAllowed"] is False
