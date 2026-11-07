@@ -75,3 +75,22 @@ def test_stale_price_does_not_appear_as_verified():
     assert "stale_observation" in view["reasons"]
     assert view["price"] is None
     assert view["licenseVerified"] is False
+
+
+def test_extremely_large_integer_price_fails_closed_without_server_error():
+    payload = _payload()
+    verified = _verification(payload)
+    payload["price"] = 10 ** 1000
+    verified["price"] = 10 ** 1000
+    view = market_evidence_view(payload, now=NOW, trusted_verification=verified)
+    assert view["price"] is None
+    assert view["priceStatus"] == "unavailable_unverified"
+    assert "price_unverified" in view["reasons"]
+
+
+def test_price_status_explicit_for_verified_and_mismatched_quotes():
+    payload = _payload()
+    verified = _verification(payload)
+    assert market_evidence_view(payload, now=NOW, trusted_verification=verified)["priceStatus"] == "verified"
+    payload["price"] = 101.0
+    assert market_evidence_view(payload, now=NOW, trusted_verification=verified)["priceStatus"] == "unavailable_unverified"
