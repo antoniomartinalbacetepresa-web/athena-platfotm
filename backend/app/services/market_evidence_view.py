@@ -31,7 +31,7 @@ def market_evidence_view(
                 delta = now.astimezone(timezone.utc) - timestamp.astimezone(timezone.utc)
                 # A future observation is invalid, not a zero-second-old quote.
                 if delta >= timedelta(0):
-                    age_seconds = int(delta.total_seconds())
+                    age_seconds = delta.total_seconds()
         except ValueError:
             pass
     result = {
