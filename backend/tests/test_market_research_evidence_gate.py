@@ -11,6 +11,9 @@ def verified(evidence):
     # Simulated independent approval record, deliberately NOT derived from
     # untrusted provider payload. Synthetic tests do not grant real licences.
     return assess_market_evidence(evidence, now=NOW, trusted_verification={
+        "instrumentId": "MSFT:XNAS",
+        "source": "example-provider",
+        "license": "explicitly-approved-research-use",
         "licenseVerified": True,
         "sourceAttributionVerified": True,
         "corporateActionsStatus": "verified",
@@ -128,3 +131,31 @@ def test_trusted_approval_is_not_taken_from_provider_payload():
     assert not result["accepted"]
     assert "license_unverified" in result["reasons"]
     assert "reconciliation_unverified" in result["reasons"]
+
+
+def test_trusted_approval_cannot_be_replayed_for_another_instrument_or_provider():
+    evidence = valid_evidence()
+    for field, other in (
+        ("instrumentId", "OTHER:XNAS"),
+        ("source", "other-provider"),
+        ("license", "other-licence"),
+    ):
+        altered = dict(evidence, **{field: other})
+        result = verified(altered)
+        assert not result["accepted"]
+        assert f"verification_{field}_mismatch" in result["reasons"]
+        assert result["orderExecutionAllowed"] is False
+
+
+def test_trusted_approval_requires_identity_binding_even_with_all_positive_flags():
+    result = assess_market_evidence(valid_evidence(), now=NOW, trusted_verification={
+        "licenseVerified": True,
+        "sourceAttributionVerified": True,
+        "corporateActionsStatus": "verified",
+        "coverageStatus": "verified",
+        "independentReconciliation": True,
+    })
+    assert not result["accepted"]
+    assert "verification_instrumentId_mismatch" in result["reasons"]
+    assert "verification_source_mismatch" in result["reasons"]
+    assert "verification_license_mismatch" in result["reasons"]
