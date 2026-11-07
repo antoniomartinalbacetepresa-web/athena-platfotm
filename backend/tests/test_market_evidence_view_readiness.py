@@ -117,3 +117,17 @@ def test_invalid_observation_has_unknown_staleness_not_fresh():
     assert view["stalenessStatus"] == "unknown"
     assert view["ageSeconds"] is None
     assert view["price"] is None
+
+
+def test_fractional_second_past_freshness_limit_is_stale():
+    payload = _payload()
+    observed = datetime.fromisoformat(payload["observationAt"].replace("Z", "+00:00"))
+    view = market_evidence_view(
+        payload,
+        now=observed + timedelta(days=2, microseconds=1),
+        trusted_verification=_verification(payload),
+    )
+    assert view["stalenessStatus"] == "stale"
+    assert view["ageSeconds"] > timedelta(days=2).total_seconds()
+    assert view["price"] is None
+    assert "stale_observation" in view["reasons"]
