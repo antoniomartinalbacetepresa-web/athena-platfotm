@@ -27,7 +27,10 @@ def market_evidence_view(
         try:
             timestamp = datetime.fromisoformat(observed.replace("Z", "+00:00"))
             if timestamp.tzinfo is not None and timestamp.utcoffset() is not None:
-                age_seconds = max(0, int((now.astimezone(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()))
+                delta = now.astimezone(timezone.utc) - timestamp.astimezone(timezone.utc)
+                # A future observation is invalid, not a zero-second-old quote.
+                if delta >= timedelta(0):
+                    age_seconds = int(delta.total_seconds())
         except ValueError:
             pass
     result = {
