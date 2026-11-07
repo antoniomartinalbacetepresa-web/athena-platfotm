@@ -137,9 +137,11 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
         retrieved != null &&
         (quote.quoteMode != 'historical_daily_close_fallback' ||
             validFallbackSession) &&
-        !retrieved.isAfter(now.add(const Duration(minutes: 5))) &&
-        !observed.isAfter(now.add(const Duration(minutes: 5))) &&
-        !observed.isAfter(retrieved.add(const Duration(minutes: 5)));
+        // Future timestamps cannot be called fresh or validated as PIT evidence.
+        // Reject rather than masking a clock disagreement with a grace window.
+        !retrieved.isAfter(now) &&
+        !observed.isAfter(now) &&
+        !observed.isAfter(retrieved);
   }
 
   // A recently observed quote must not misleadingly read as "0 hours old".
