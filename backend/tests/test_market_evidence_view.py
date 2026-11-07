@@ -18,7 +18,7 @@ APPROVAL = {
     )},
     "licenseVerified": True, "sourceAttributionVerified": True,
     "corporateActionsStatus": "verified", "coverageStatus": "verified",
-    "independentReconciliation": True,
+    "independentReconciliation": True, "price": EVIDENCE["price"],
 }
 
 
@@ -49,3 +49,20 @@ def test_nonfinite_and_boolean_prices_never_display():
     for price in (float("nan"), float("inf"), -1, True, 0):
         view = market_evidence_view(dict(EVIDENCE, price=price), now=NOW, trusted_verification=APPROVAL)
         assert view["price"] is None
+
+
+def test_verified_metadata_cannot_authorize_substituted_price():
+    altered = dict(EVIDENCE, price=999.0)
+    view = market_evidence_view(altered, now=NOW, trusted_verification=APPROVAL)
+    assert view["price"] is None
+    assert view["status"] == "unavailable_unverified"
+    assert "price_unverified" in view["reasons"]
+
+
+def test_missing_price_binding_cannot_claim_verified_research():
+    approval = dict(APPROVAL)
+    approval.pop("price")
+    view = market_evidence_view(EVIDENCE, now=NOW, trusted_verification=approval)
+    assert view["price"] is None
+    assert view["status"] == "unavailable_unverified"
+    assert "price_unverified" in view["reasons"]
