@@ -149,3 +149,20 @@ def test_recent_quote_with_impossible_pit_order_is_invalid():
     assert view["stalenessStatus"] == "invalid"
     assert view["priceStatus"] == "unavailable_unverified"
     assert "invalid_pit_order" in view["reasons"]
+
+def test_recent_unverified_quote_is_not_described_as_fresh():
+    payload = _payload()
+    view = market_evidence_view(payload, now=NOW)
+    assert view["stalenessStatus"] == "unverified"
+    assert view["status"] == "unavailable_unverified"
+    assert view["price"] is None
+    assert view["licenseVerified"] is False
+
+
+def test_recent_quote_with_mismatched_independent_price_is_not_fresh():
+    payload = _payload()
+    verification = _verification(payload)
+    verification["price"] = 99.0
+    view = market_evidence_view(payload, now=NOW, trusted_verification=verification)
+    assert view["stalenessStatus"] == "unverified"
+    assert view["priceStatus"] == "unavailable_unverified"
