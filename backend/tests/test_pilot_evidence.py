@@ -71,3 +71,20 @@ def test_freshness_age_reports_observation_age_not_ingestion_age():
     result = validate_pilot_observation(record, now=NOW)
     expected = int((NOW - datetime.fromisoformat("2026-11-06T21:00:00+00:00")).total_seconds())
     assert result["ageSeconds"] == expected
+
+
+@pytest.mark.parametrize("bad_bar", [
+    {"close": float("nan")}, {"close": float("inf")}, {"close": 0},
+    {"close": -1}, {"close": True}, {"volume": -1},
+    {"volume": 1.5}, {"volume": True},
+    {"open": 10, "high": 9, "low": 8, "close": 11},
+])
+def test_rejects_nonfinite_or_inconsistent_market_bars(bad_bar):
+    with pytest.raises(EvidenceRejected):
+        validate_pilot_observation({**BASE, **bad_bar}, now=NOW)
+
+
+def test_accepts_consistent_closed_ohlcv_bar():
+    record = {**BASE, "open": 10.0, "high": 11.0, "low": 9.0,
+              "close": 10.5, "volume": 1000}
+    assert validate_pilot_observation(record, now=NOW)["isFinalBar"] is True
