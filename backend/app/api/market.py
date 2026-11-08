@@ -1,6 +1,6 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from app.repositories.fx_rate_repository import FxRateRepository
 from app.services.canonical_weighting_governance_service import (
@@ -14,6 +14,7 @@ from app.services.persisted_market_universe_service import (
     PersistedMarketUniverseService,
 )
 from app.services.yahoo_market_service import YahooMarketService
+from app.services.pilot_evidence import EvidenceRejected, validate_pilot_history
 from app.services.market_quote_identity_service import MarketQuoteIdentityService
 
 
@@ -204,6 +205,37 @@ def get_history(
             "productionCoverageClaimed": False,
             "sourceProviders": providers,
             "retrievedAt": retrieval_times[0] if len(retrieval_times) == 1 else None,
+        },
+    }
+
+
+@router.post("/history/pilot-validation")
+def validate_pilot_history_api(payload: dict = Body(...)) -> dict[str, object]:
+    """Validate supplied historical bars for a read-only research preview.
+
+    This endpoint does not retrieve data, verify provider contracts, or persist
+    research. Client-supplied usageAuthorized is never independent proof.
+    Limit input size to avoid expensive untrusted historical submissions.
+    """
+    observations = payload.get("observations")
+    sessions = payload.get("expectedSessions")
+    if (not isinstance(observations, list) or not isinstance(sessions, list)
+            or len(observations) > 400 or len(sessions) > 400):
+        raise HTTPException(status_code=422, detail="Invalid or oversized pilot history")
+    try:
+        report = validate_pilot_history(
+            observations, expected_sessions=sessions, now=datetime.now(timezone.utc),
+        )
+    except (EvidenceRejected, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "data": report,
+        "provenance": {
+            "status": "unverified_client_supplied",
+            "providerRightsIndependentlyVerified": False,
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "orderExecutionAllowed": False,
         },
     }
 
