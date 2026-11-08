@@ -143,6 +143,11 @@ def test_history_exposes_missing_sessions_without_fabricating_prices():
         [bar("2026-11-04", 10), bar("2026-11-06", 12)],
         expected_sessions=["2026-11-04", "2026-11-05", "2026-11-06"], now=NOW)
     assert result["missingSessions"] == ["2026-11-05"]
+    assert result["missingSessionCount"] == 1
+    assert result["expectedFirstSession"] == "2026-11-04"
+    assert result["expectedLastSession"] == "2026-11-06"
+    assert result["latestObservationAt"] == "2026-11-06T20:00:00+00:00"
+    assert result["latestAgeSeconds"] == int((NOW - datetime(2026, 11, 6, 20, tzinfo=timezone.utc)).total_seconds())
     assert result["observedSessionCount"] == 2
     assert result["coverageComplete"] is False
     assert result["operationallyVerified"] is False
