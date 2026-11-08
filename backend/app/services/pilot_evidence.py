@@ -10,7 +10,7 @@ class EvidenceRejected(ValueError):
     """Observation cannot be treated as verified research evidence."""
 
 
-def validate_pilot_observation(record: Mapping[str, object], *, now: datetime) -> dict:
+def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, max_age_seconds: int | None = None) -> dict:
     """Return normalized provenance only for an authorized, PIT-safe observation."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise EvidenceRejected("now must be timezone-aware")
@@ -30,9 +30,15 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime) -
         timestamps[key] = stamp.astimezone(timezone.utc)
     if not (timestamps["observationAt"] <= timestamps["availableAt"] <= timestamps["retrievedAt"] <= now):
         raise EvidenceRejected("observation, availability, retrieval and clock violate PIT ordering")
+    age_seconds = int((now - timestamps["availableAt"]).total_seconds())
+    if max_age_seconds is not None:
+        if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, int) or max_age_seconds < 0:
+            raise EvidenceRejected("invalid maximum observation age")
+        if age_seconds > max_age_seconds:
+            raise EvidenceRejected("observation exceeds permitted age")
     if record.get("isFinalBar") is not True:
         raise EvidenceRejected("incomplete or unconfirmed bar")
     return {**{k: record[k] for k in required if k not in timestamps},
             **{k: v.isoformat() for k, v in timestamps.items()},
             "usageAuthorized": True, "isFinalBar": True,
-            "ageSeconds": int((now - timestamps["availableAt"]).total_seconds())}
+            "ageSeconds": age_seconds}
