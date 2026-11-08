@@ -158,5 +158,5 @@ def test_history_rejects_duplicate_and_mixed_instrument():
     with pytest.raises(EvidenceRejected, match="mixed instrument"):
         validate_pilot_history(
             [bar, {**bar, "instrumentId": "OTHER", "observationAt": "2026-11-07T20:00:00Z",
-                   "availableAt": "2026-11-07T20:01:00Z"}],
+                   "availableAt": "2026-11-07T20:01:00Z", "retrievedAt": "2026-11-07T21:00:00Z"}],
             expected_sessions=["2026-11-06", "2026-11-07"], now=NOW)
