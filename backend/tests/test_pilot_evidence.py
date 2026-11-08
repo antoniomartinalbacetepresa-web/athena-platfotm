@@ -104,7 +104,8 @@ def test_validated_bar_values_survive_normalization_for_downstream_consumers():
     {"open": 10.0, "high": 11.0, "low": 9.0},
     {"volume": 1000},
     {"open": 10.0, "high": 11.0, "low": 9.0, "volume": 1000},
+    {"open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5},
 ])
 def test_rejects_partial_bars_before_research_persistence(partial):
-    with pytest.raises(EvidenceRejected, match="partial OHLC bar|volume without OHLC bar"):
+    with pytest.raises(EvidenceRejected, match="partial OHLC bar|volume without OHLC bar|OHLC bar missing volume"):
         validate_pilot_observation({**BASE, **partial}, now=NOW)
