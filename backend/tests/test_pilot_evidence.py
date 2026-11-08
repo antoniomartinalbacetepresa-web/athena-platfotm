@@ -55,3 +55,19 @@ def test_subsecond_staleness_cannot_bypass_zero_age_limit():
               "retrievedAt": (observed_now - timedelta(milliseconds=250)).isoformat()}
     with pytest.raises(EvidenceRejected, match="exceeds permitted age"):
         validate_pilot_observation(record, now=observed_now, max_age_seconds=0)
+
+
+def test_old_market_observation_cannot_be_refreshed_by_late_publication():
+    record = {**BASE,
+              "observationAt": "2026-10-01T20:00:00Z",
+              "availableAt": "2026-11-07T23:58:00Z",
+              "retrievedAt": "2026-11-07T23:59:00Z"}
+    with pytest.raises(EvidenceRejected, match="exceeds permitted age"):
+        validate_pilot_observation(record, now=NOW, max_age_seconds=3600)
+
+
+def test_freshness_age_reports_observation_age_not_ingestion_age():
+    record = {**BASE, "retrievedAt": "2026-11-07T23:59:00Z"}
+    result = validate_pilot_observation(record, now=NOW)
+    expected = int((NOW - datetime.fromisoformat("2026-11-06T21:00:00+00:00")).total_seconds())
+    assert result["ageSeconds"] == expected
