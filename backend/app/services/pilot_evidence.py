@@ -76,3 +76,51 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
             **{k: v.isoformat() for k, v in timestamps.items()},
             "usageAuthorized": True, "isFinalBar": True,
             "ageSeconds": age_seconds}
+
+
+def validate_pilot_history(
+    observations: list[Mapping[str, object]],
+    *,
+    expected_sessions: list[str],
+    now: datetime,
+) -> dict:
+    """Validate complete final daily bars and expose missing expected trading sessions.
+
+    The caller supplies an independently verified exchange calendar. No missing
+    session is interpolated and no licensing rights are inferred from metadata.
+    """
+    if not expected_sessions or len(set(expected_sessions)) != len(expected_sessions):
+        raise EvidenceRejected("expected sessions must be unique and nonempty")
+    try:
+        sessions = [datetime.fromisoformat(day).date().isoformat() for day in expected_sessions]
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise EvidenceRejected("invalid expected session") from exc
+    if sessions != expected_sessions or sessions != sorted(sessions):
+        raise EvidenceRejected("expected sessions must be sorted ISO dates")
+    if not observations:
+        raise EvidenceRejected("no verified market observations")
+    accepted = []
+    seen = set()
+    for record in observations:
+        bar = validate_pilot_observation(record, now=now, require_bar=True)
+        session = datetime.fromisoformat(bar["observationAt"]).date().isoformat()
+        if session not in sessions or session in seen:
+            raise EvidenceRejected("unexpected or duplicate trading session")
+        if accepted and session <= accepted[-1]["session"]:
+            raise EvidenceRejected("market observations must be ordered by session")
+        if accepted and (bar["instrumentId"], bar["currency"], bar["source"], bar["licenseRef"]) != (
+            accepted[0]["instrumentId"], accepted[0]["currency"], accepted[0]["source"], accepted[0]["licenseRef"]
+        ):
+            raise EvidenceRejected("mixed instrument, currency or provider rights")
+        seen.add(session)
+        accepted.append({**bar, "session": session})
+    return {
+        "instrumentId": accepted[0]["instrumentId"],
+        "currency": accepted[0]["currency"],
+        "bars": accepted,
+        "expectedSessionCount": len(sessions),
+        "observedSessionCount": len(accepted),
+        "missingSessions": [day for day in sessions if day not in seen],
+        "coverageComplete": len(accepted) == len(sessions),
+        "operationallyVerified": False,
+    }
