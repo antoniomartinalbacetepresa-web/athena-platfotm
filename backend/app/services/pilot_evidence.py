@@ -125,6 +125,11 @@ def validate_pilot_history(
         "expectedSessionCount": len(sessions),
         "observedSessionCount": len(accepted),
         "missingSessions": [day for day in sessions if day not in seen],
+        "missingSessionCount": len(sessions) - len(accepted),
+        "expectedFirstSession": sessions[0],
+        "expectedLastSession": sessions[-1],
+        "latestObservationAt": accepted[-1]["observationAt"],
+        "latestAgeSeconds": accepted[-1]["ageSeconds"],
         "coverageComplete": len(accepted) == len(sessions),
         "operationallyVerified": False,
     }
