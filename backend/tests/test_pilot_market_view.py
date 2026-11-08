@@ -23,7 +23,7 @@ def test_absent_observation_does_not_fabricate_price():
 
 
 def test_validated_bar_preserves_provenance_and_never_enables_orders():
-    view = build_pilot_market_view(BAR, now=NOW)
+    view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True)
     assert view["status"] == "verified_metadata"
     assert view["observation"]["close"] == 10.5
     assert view["observation"]["licenseRef"] == "test-only-not-a-license"
@@ -38,12 +38,22 @@ def test_metadata_only_and_unlicensed_bars_are_unavailable():
         {**BAR, "availableAt": "2026-11-09T00:00:00Z"},
         {**BAR, "close": float("nan")},
     ):
-        view = build_pilot_market_view(record, now=NOW)
+        view = build_pilot_market_view(record, now=NOW, rights_reviewed=True)
         assert view["status"] == "unavailable"
         assert view["observation"] is None
 
 
 def test_expired_bar_is_not_exposed_as_current():
-    view = build_pilot_market_view(BAR, now=NOW, max_age_seconds=60)
+    view = build_pilot_market_view(BAR, now=NOW, max_age_seconds=60, rights_reviewed=True)
     assert view["status"] == "unavailable"
     assert view["observation"] is None
+
+
+def test_provider_self_attestation_cannot_bypass_independent_rights_review():
+    view = build_pilot_market_view(BAR, now=NOW)
+    assert view == {
+        "status": "unavailable",
+        "reason": "independent_rights_review_required",
+        "observation": None,
+    }
+    assert build_pilot_market_view(BAR, now=NOW, rights_reviewed=1)["observation"] is None
