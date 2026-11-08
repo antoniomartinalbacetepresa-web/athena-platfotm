@@ -14,8 +14,13 @@ def build_pilot_market_view(
     *,
     now: datetime,
     max_age_seconds: int = 86400 * 4,
+    rights_reviewed: bool = False,
 ) -> dict:
     """Produce a UI-safe state without presenting rejected evidence as a quote."""
+    # A feed must not authorize itself by setting usageAuthorized=True.
+    # The caller must independently attest rights after a separate review.
+    if rights_reviewed is not True:
+        return {"status": "unavailable", "reason": "independent_rights_review_required", "observation": None}
     if observation is None:
         return {"status": "unavailable", "reason": "no_authorized_observation", "observation": None}
     try:
