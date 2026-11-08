@@ -88,3 +88,23 @@ def test_accepts_consistent_closed_ohlcv_bar():
     record = {**BASE, "open": 10.0, "high": 11.0, "low": 9.0,
               "close": 10.5, "volume": 1000}
     assert validate_pilot_observation(record, now=NOW)["isFinalBar"] is True
+
+
+def test_validated_bar_values_survive_normalization_for_downstream_consumers():
+    record = {**BASE, "open": 10.0, "high": 11.0, "low": 9.0,
+              "close": 10.5, "volume": 1000}
+    result = validate_pilot_observation(record, now=NOW)
+    assert {key: result[key] for key in ("open", "high", "low", "close", "volume")} == {
+        key: record[key] for key in ("open", "high", "low", "close", "volume")
+    }
+
+
+@pytest.mark.parametrize("partial", [
+    {"close": 10.5},
+    {"open": 10.0, "high": 11.0, "low": 9.0},
+    {"volume": 1000},
+    {"open": 10.0, "high": 11.0, "low": 9.0, "volume": 1000},
+])
+def test_rejects_partial_bars_before_research_persistence(partial):
+    with pytest.raises(EvidenceRejected, match="partial OHLC bar|volume without OHLC bar"):
+        validate_pilot_observation({**BASE, **partial}, now=NOW)
