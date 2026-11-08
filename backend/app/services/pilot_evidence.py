@@ -30,11 +30,12 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
         timestamps[key] = stamp.astimezone(timezone.utc)
     if not (timestamps["observationAt"] <= timestamps["availableAt"] <= timestamps["retrievedAt"] <= now):
         raise EvidenceRejected("observation, availability, retrieval and clock violate PIT ordering")
-    age_seconds = int((now - timestamps["availableAt"]).total_seconds())
+    exact_age_seconds = (now - timestamps["availableAt"]).total_seconds()
+    age_seconds = int(exact_age_seconds)
     if max_age_seconds is not None:
         if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, int) or max_age_seconds < 0:
             raise EvidenceRejected("invalid maximum observation age")
-        if age_seconds > max_age_seconds:
+        if exact_age_seconds > max_age_seconds:
             raise EvidenceRejected("observation exceeds permitted age")
     if record.get("isFinalBar") is not True:
         raise EvidenceRejected("incomplete or unconfirmed bar")
