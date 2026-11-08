@@ -3,6 +3,7 @@
 This gate never licenses a feed: caller must verify provider rights independently.
 """
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Mapping
 
 
@@ -40,6 +41,21 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
             raise EvidenceRejected("invalid maximum observation age")
         if exact_age_seconds > max_age_seconds:
             raise EvidenceRejected("observation exceeds permitted age")
+    # A supplied market bar must never cross the research boundary with
+    # NaN/Infinity, nonpositive prices, or negative fractional share volume.
+    # Metadata-only callers remain supported until the shared bar contract lands.
+    for field in ("open", "high", "low", "close"):
+        if field in record:
+            value = record[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0:
+                raise EvidenceRejected(f"invalid {field} price")
+    if "volume" in record:
+        value = record["volume"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise EvidenceRejected("invalid volume")
+    if all(field in record for field in ("open", "high", "low", "close")):
+        if record["low"] > min(record["open"], record["close"]) or record["high"] < max(record["open"], record["close"]) or record["low"] > record["high"]:
+            raise EvidenceRejected("inconsistent OHLC bar")
     if record.get("isFinalBar") is not True:
         raise EvidenceRejected("incomplete or unconfirmed bar")
     return {**{k: record[k] for k in required if k not in timestamps},
