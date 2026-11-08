@@ -109,3 +109,21 @@ def test_validated_bar_values_survive_normalization_for_downstream_consumers():
 def test_rejects_partial_bars_before_research_persistence(partial):
     with pytest.raises(EvidenceRejected, match="partial OHLC bar|volume without OHLC bar|OHLC bar missing volume"):
         validate_pilot_observation({**BASE, **partial}, now=NOW)
+
+
+def test_strict_research_consumer_rejects_metadata_only_observation():
+    with pytest.raises(EvidenceRejected, match="research requires complete OHLCV bar"):
+        validate_pilot_observation(BASE, now=NOW, require_bar=True)
+
+
+def test_strict_research_consumer_preserves_validated_ohlcv():
+    bar = {**BASE, "open": 10.0, "high": 11.0, "low": 9.0,
+           "close": 10.5, "volume": 1000}
+    result = validate_pilot_observation(bar, now=NOW, require_bar=True)
+    assert result["close"] == 10.5
+    assert result["volume"] == 1000
+
+
+def test_strict_research_flag_must_be_boolean():
+    with pytest.raises(EvidenceRejected, match="invalid require_bar flag"):
+        validate_pilot_observation(BASE, now=NOW, require_bar="yes")
