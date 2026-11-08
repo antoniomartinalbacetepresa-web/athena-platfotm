@@ -43,3 +43,15 @@ def test_freshness_threshold_is_inclusive_and_rejects_stale_data():
 def test_invalid_freshness_threshold_fails_closed(threshold):
     with pytest.raises(EvidenceRejected, match="invalid maximum observation age"):
         validate_pilot_observation(BASE, now=NOW, max_age_seconds=threshold)
+
+
+def test_subsecond_staleness_cannot_bypass_zero_age_limit():
+    from datetime import timedelta
+
+    observed_now = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    record = {**BASE,
+              "observationAt": (observed_now - timedelta(milliseconds=500)).isoformat(),
+              "availableAt": (observed_now - timedelta(milliseconds=500)).isoformat(),
+              "retrievedAt": (observed_now - timedelta(milliseconds=250)).isoformat()}
+    with pytest.raises(EvidenceRejected, match="exceeds permitted age"):
+        validate_pilot_observation(record, now=observed_now, max_age_seconds=0)
