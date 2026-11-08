@@ -49,6 +49,11 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
             value = record[field]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0:
                 raise EvidenceRejected(f"invalid {field} price")
+    present_prices = {field for field in ("open", "high", "low", "close") if field in record}
+    if present_prices and present_prices != {"open", "high", "low", "close"}:
+        raise EvidenceRejected("partial OHLC bar")
+    if "volume" in record and not present_prices:
+        raise EvidenceRejected("volume without OHLC bar")
     if "volume" in record:
         value = record["volume"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -58,7 +63,10 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
             raise EvidenceRejected("inconsistent OHLC bar")
     if record.get("isFinalBar") is not True:
         raise EvidenceRejected("incomplete or unconfirmed bar")
+    # Preserve the validated bar for downstream API/persistence consumers.
+    # Dropping these values would make the gate unusable as a data contract.
     return {**{k: record[k] for k in required if k not in timestamps},
+            **{k: record[k] for k in ("open", "high", "low", "close", "volume") if k in record},
             **{k: v.isoformat() for k, v in timestamps.items()},
             "usageAuthorized": True, "isFinalBar": True,
             "ageSeconds": age_seconds}
