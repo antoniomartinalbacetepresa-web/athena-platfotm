@@ -160,3 +160,19 @@ def test_history_rejects_duplicate_and_mixed_instrument():
             [bar, {**bar, "instrumentId": "OTHER", "observationAt": "2026-11-07T20:00:00Z",
                    "availableAt": "2026-11-07T20:01:00Z", "retrievedAt": "2026-11-07T21:00:00Z"}],
             expected_sessions=["2026-11-06", "2026-11-07"], now=NOW)
+
+
+def test_history_exposes_provider_rights_and_observed_bounds_for_ui():
+    from app.services.pilot_evidence import validate_pilot_history
+
+    bar = {**BASE, "open": 10.0, "high": 11.0, "low": 9.0,
+           "close": 10.5, "volume": 1000}
+    result = validate_pilot_history(
+        [bar], expected_sessions=["2026-11-05", "2026-11-06"], now=NOW
+    )
+    assert result["source"] == "pilot"
+    assert result["licenseRef"] == "contract-reviewed"
+    assert result["firstObservedSession"] == "2026-11-06"
+    assert result["lastObservedSession"] == "2026-11-06"
+    assert result["missingSessions"] == ["2026-11-05"]
+    assert result["operationallyVerified"] is False
