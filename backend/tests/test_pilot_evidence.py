@@ -30,3 +30,16 @@ def test_accepts_pit_order_and_returns_age():
 def test_rejects_untrusted_observations(change):
     with pytest.raises(EvidenceRejected):
         validate_pilot_observation({**BASE, **change}, now=NOW)
+
+
+def test_freshness_threshold_is_inclusive_and_rejects_stale_data():
+    age = validate_pilot_observation(BASE, now=NOW)["ageSeconds"]
+    assert validate_pilot_observation(BASE, now=NOW, max_age_seconds=age)["ageSeconds"] == age
+    with pytest.raises(EvidenceRejected, match="exceeds permitted age"):
+        validate_pilot_observation(BASE, now=NOW, max_age_seconds=age - 1)
+
+
+@pytest.mark.parametrize("threshold", [-1, True, 1.5, "3600"])
+def test_invalid_freshness_threshold_fails_closed(threshold):
+    with pytest.raises(EvidenceRejected, match="invalid maximum observation age"):
+        validate_pilot_observation(BASE, now=NOW, max_age_seconds=threshold)
