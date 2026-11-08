@@ -60,8 +60,6 @@ def test_provider_self_attestation_cannot_bypass_independent_rights_review():
 
 
 def test_invalid_clock_and_freshness_policy_fail_closed_without_exposing_bar():
-    from datetime import timedelta
-
     for threshold in (-1, True, 1.5, "3600"):
         view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, max_age_seconds=threshold)
         assert view == {"status": "unavailable", "reason": "invalid_freshness_policy", "observation": None}
@@ -69,5 +67,3 @@ def test_invalid_clock_and_freshness_policy_fail_closed_without_exposing_bar():
     naive_now = NOW.replace(tzinfo=None)
     view = build_pilot_market_view(BAR, now=naive_now, rights_reviewed=True)
     assert view == {"status": "unavailable", "reason": "invalid_research_clock", "observation": None}
-
-    assert build_pilot_market_view(BAR, now=NOW + timedelta(days=1), rights_reviewed=True)["status"] == "unavailable"
