@@ -117,6 +117,10 @@ def validate_pilot_history(
     return {
         "instrumentId": accepted[0]["instrumentId"],
         "currency": accepted[0]["currency"],
+        "source": accepted[0]["source"],
+        "licenseRef": accepted[0]["licenseRef"],
+        "firstObservedSession": accepted[0]["session"],
+        "lastObservedSession": accepted[-1]["session"],
         "bars": accepted,
         "expectedSessionCount": len(sessions),
         "observedSessionCount": len(accepted),
