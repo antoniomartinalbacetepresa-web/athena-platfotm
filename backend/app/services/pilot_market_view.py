@@ -21,13 +21,17 @@ def build_pilot_market_view(
     # The caller must independently attest rights after a separate review.
     if rights_reviewed is not True:
         return {"status": "unavailable", "reason": "independent_rights_review_required", "observation": None}
+    if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
+        return {"status": "unavailable", "reason": "invalid_freshness_policy", "observation": None}
+    if now.tzinfo is None or now.utcoffset() is None:
+        return {"status": "unavailable", "reason": "invalid_research_clock", "observation": None}
     if observation is None:
         return {"status": "unavailable", "reason": "no_authorized_observation", "observation": None}
     try:
         verified = validate_pilot_observation(
             observation, now=now, max_age_seconds=max_age_seconds, require_bar=True
         )
-    except (EvidenceRejected, TypeError, AttributeError):
+    except (EvidenceRejected, TypeError, AttributeError, ValueError, OverflowError):
         return {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
     return {
         "status": "verified_metadata",
