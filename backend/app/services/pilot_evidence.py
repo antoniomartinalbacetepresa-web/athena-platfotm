@@ -54,6 +54,8 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
         raise EvidenceRejected("partial OHLC bar")
     if "volume" in record and not present_prices:
         raise EvidenceRejected("volume without OHLC bar")
+    if present_prices and "volume" not in record:
+        raise EvidenceRejected("OHLC bar missing volume")
     if "volume" in record:
         value = record["volume"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
