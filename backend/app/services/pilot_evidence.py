@@ -11,11 +11,13 @@ class EvidenceRejected(ValueError):
     """Observation cannot be treated as verified research evidence."""
 
 
-def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, max_age_seconds: int | None = None) -> dict:
+def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, max_age_seconds: int | None = None, require_bar: bool = False) -> dict:
     """Return normalized provenance only for an authorized, PIT-safe observation.
 
     Freshness is measured from market observation, not later ingestion/availability.
     """
+    if not isinstance(require_bar, bool):
+        raise EvidenceRejected("invalid require_bar flag")
     if now.tzinfo is None or now.utcoffset() is None:
         raise EvidenceRejected("now must be timezone-aware")
     required = ("instrumentId", "source", "licenseRef", "observationAt", "availableAt", "retrievedAt", "currency")
@@ -50,6 +52,8 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0:
                 raise EvidenceRejected(f"invalid {field} price")
     present_prices = {field for field in ("open", "high", "low", "close") if field in record}
+    if require_bar and present_prices != {"open", "high", "low", "close"}:
+        raise EvidenceRejected("research requires complete OHLCV bar")
     if present_prices and present_prices != {"open", "high", "low", "close"}:
         raise EvidenceRejected("partial OHLC bar")
     if "volume" in record and not present_prices:
