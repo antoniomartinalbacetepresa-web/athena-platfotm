@@ -127,3 +127,36 @@ def test_strict_research_consumer_preserves_validated_ohlcv():
 def test_strict_research_flag_must_be_boolean():
     with pytest.raises(EvidenceRejected, match="invalid require_bar flag"):
         validate_pilot_observation(BASE, now=NOW, require_bar="yes")
+
+
+def test_history_exposes_missing_sessions_without_fabricating_prices():
+    from app.services.pilot_evidence import validate_pilot_history
+
+    def bar(day, close):
+        return {**BASE, "observationAt": f"{day}T20:00:00Z",
+                "availableAt": f"{day}T20:01:00Z",
+                "retrievedAt": "2026-11-07T08:00:00Z",
+                "open": close, "high": close + 1, "low": close - 1,
+                "close": close, "volume": 1000}
+
+    result = validate_pilot_history(
+        [bar("2026-11-04", 10), bar("2026-11-06", 12)],
+        expected_sessions=["2026-11-04", "2026-11-05", "2026-11-06"], now=NOW)
+    assert result["missingSessions"] == ["2026-11-05"]
+    assert result["observedSessionCount"] == 2
+    assert result["coverageComplete"] is False
+    assert result["operationallyVerified"] is False
+    assert len(result["bars"]) == 2
+
+
+def test_history_rejects_duplicate_and_mixed_instrument():
+    from app.services.pilot_evidence import validate_pilot_history
+    bar = {**BASE, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}
+    sessions = ["2026-11-06"]
+    with pytest.raises(EvidenceRejected, match="duplicate"):
+        validate_pilot_history([bar, bar], expected_sessions=sessions, now=NOW)
+    with pytest.raises(EvidenceRejected, match="mixed instrument"):
+        validate_pilot_history(
+            [bar, {**bar, "instrumentId": "OTHER", "observationAt": "2026-11-07T20:00:00Z",
+                   "availableAt": "2026-11-07T20:01:00Z"}],
+            expected_sessions=["2026-11-06", "2026-11-07"], now=NOW)
