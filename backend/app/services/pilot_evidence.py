@@ -11,7 +11,10 @@ class EvidenceRejected(ValueError):
 
 
 def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, max_age_seconds: int | None = None) -> dict:
-    """Return normalized provenance only for an authorized, PIT-safe observation."""
+    """Return normalized provenance only for an authorized, PIT-safe observation.
+
+    Freshness is measured from market observation, not later ingestion/availability.
+    """
     if now.tzinfo is None or now.utcoffset() is None:
         raise EvidenceRejected("now must be timezone-aware")
     required = ("instrumentId", "source", "licenseRef", "observationAt", "availableAt", "retrievedAt", "currency")
@@ -30,7 +33,7 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
         timestamps[key] = stamp.astimezone(timezone.utc)
     if not (timestamps["observationAt"] <= timestamps["availableAt"] <= timestamps["retrievedAt"] <= now):
         raise EvidenceRejected("observation, availability, retrieval and clock violate PIT ordering")
-    exact_age_seconds = (now - timestamps["availableAt"]).total_seconds()
+    exact_age_seconds = (now - timestamps["observationAt"]).total_seconds()
     age_seconds = int(exact_age_seconds)
     if max_age_seconds is not None:
         if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, int) or max_age_seconds < 0:
