@@ -309,6 +309,7 @@ def get_opportunity_pattern_readiness(
 
     normalized = symbol.strip().upper()
     valid_days: set[str] = set()
+    eligible_lows: dict[str, float] = {}
     checked_at = datetime.now(timezone.utc)
     provider_names: set[str] = set()
     retrieval_times: set[str] = set()
@@ -334,6 +335,12 @@ def get_opportunity_pattern_readiness(
             invalid_rows += 1
             continue
         valid_days.add(day)
+        # Diagnostic only: require an actual low, never substitute the close.
+        # A later observation must not enter its own 25-session reference.
+        low_value = row.get("low")
+        if (isinstance(low_value, (int, float)) and not isinstance(low_value, bool)
+                and isfinite(low_value) and 0 < low_value <= close):
+            eligible_lows[day] = float(low_value)
         if row.get("sourceProvider"):
             provider_names.add(str(row["sourceProvider"]))
         if row.get("retrievedAt"):
@@ -354,9 +361,25 @@ def get_opportunity_pattern_readiness(
         (right - left).days > 1 for left, right in zip(ordered_days, ordered_days[1:])
     )
 
+    # Use the preceding 25 distinct daily sessions; never include the
+    # evaluation session in the reference minimum (look-ahead prevention).
+    last_26 = sorted(valid_days)[-26:]
+    reference_complete = (
+        len(last_26) == 26 and all(day in eligible_lows for day in last_26)
+    )
+    previous_25_low = (
+        min(eligible_lows[day] for day in last_26[:-1])
+        if reference_complete else None
+    )
+
     return {
         "data": {
             "symbol": normalized,
+            "previous25SessionLowDiagnostic": previous_25_low,
+            "previous25SessionReferenceComplete": reference_complete,
+            "previous25SessionEvaluationDate": last_26[-1] if reference_complete else None,
+            "previous25SessionReferenceEndsOn": last_26[-2] if reference_complete else None,
+            "previous25SessionSignalEligible": False,
             "status": "blocked_unverified_market_evidence",
             "mode": "read_only_research",
             "validDailySessions": len(valid_days),
