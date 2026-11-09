@@ -369,6 +369,69 @@ void main() {
       provider.dispose();
     });
 
+    for (final invalidBar in <Map<String, Object>>[
+      {'open': 100.0, 'high': 99.0, 'low': 95.0, 'close': 98.0},
+      {'open': 96.0, 'high': 101.0, 'low': 97.0, 'close': 100.0},
+      {'open': 98.0, 'high': 101.0, 'low': 95.0, 'close': 102.0},
+      {'open': 98.0, 'high': 94.0, 'low': 95.0, 'close': 96.0},
+    ]) {
+      test('rechaza cotización OHLC contradictoria: $invalidBar', () async {
+        final provider = AthenaBackendMarketDataProvider(
+          baseUrl: 'https://api.athena.test',
+          client: MockClient((_) async => http.Response(jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-11-09T16:00:00Z',
+              ...invalidBar,
+            },
+          }), 200)),
+        );
+        await expectLater(provider.getQuote('AAPL'), throwsFormatException);
+        provider.dispose();
+      });
+    }
+
+    test('rechaza vela OHLC contradictoria en histórico', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [{
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-09T16:00:00Z',
+            'open': 100.0,
+            'high': 105.0,
+            'low': 101.0,
+            'close': 103.0,
+          }],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
+
+    test('permite cierre ajustado fuera del rango bruto por corporate actions', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': {
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-09T16:00:00Z',
+            'open': 100.0,
+            'high': 105.0,
+            'low': 95.0,
+            'close': 103.0,
+            'adjustedClose': 80.0,
+          },
+        }), 200)),
+      );
+      final quote = await provider.getQuote('AAPL');
+      expect(quote?.adjustedClose, 80.0);
+      provider.dispose();
+    });
+
     test('rechaza cotización sin símbolo en lugar de inventar identidad', () async {
       final provider = AthenaBackendMarketDataProvider(
         baseUrl: 'https://api.athena.test',
