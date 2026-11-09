@@ -25,6 +25,7 @@ def test_absent_observation_does_not_fabricate_price():
 def test_validated_bar_preserves_provenance_and_never_enables_orders():
     view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True)
     assert view["status"] == "verified_metadata"
+    assert view["reason"] == "rights_attested_metadata_only_not_operationally_verified"
     assert view["observation"]["close"] == 10.5
     assert view["observation"]["licenseRef"] == "test-only-not-a-license"
     assert view["researchOnly"] is True
