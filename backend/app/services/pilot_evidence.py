@@ -101,7 +101,8 @@ def validate_pilot_history(
     # calendar is caller-supplied, but it must not extend beyond research time.
     if now.tzinfo is None or now.utcoffset() is None:
         raise EvidenceRejected("now must be timezone-aware")
-    if sessions[-1] > now.date().isoformat():
+    # Session keys use UTC observation dates, so the clock cutoff must also use UTC.
+    if sessions[-1] > now.astimezone(timezone.utc).date().isoformat():
         raise EvidenceRejected("expected sessions include future dates")
     if not observations:
         raise EvidenceRejected("no verified market observations")
