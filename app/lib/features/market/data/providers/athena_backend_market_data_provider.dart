@@ -140,6 +140,24 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       throw const FormatException('Identidad interna de mercado contradictoria.');
     }
 
+    // Financial observations must never pass malformed prices or volume into
+    // Market, Radar or ATHENA as if they were valid market evidence.
+    for (final field in const ['open', 'high', 'low', 'close', 'adjustedClose']) {
+      final value = _parseDouble(data[field]);
+      if (data[field] != null &&
+          (value == null || !value.isFinite || value <= 0)) {
+        throw FormatException('Precio de mercado inválido: $field.');
+      }
+    }
+    for (final field in const ['volume', 'change', 'changePercentage']) {
+      final value = _parseDouble(data[field]);
+      if (data[field] != null &&
+          (value == null || !value.isFinite ||
+              (field == 'volume' && value < 0))) {
+        throw FormatException('Dato de mercado inválido: $field.');
+      }
+    }
+
     return MarketDataPoint(
       symbol: symbol,
       timestamp: timestamp,
