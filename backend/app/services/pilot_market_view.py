@@ -42,6 +42,12 @@ def build_pilot_market_view(
         "status": "verified_metadata",
         "reason": "rights_attested_metadata_only_not_operationally_verified",
         "observation": verified,
+        "freshness": {
+            "observationAt": verified["observationAt"],
+            "ageSeconds": verified["ageSeconds"],
+            "maxAgeSeconds": max_age_seconds,
+            "basis": "market_observation_not_retrieval",
+        },
         "researchOnly": True,
         "ordersEnabled": False,
     }
