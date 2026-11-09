@@ -97,6 +97,12 @@ def validate_pilot_history(
         raise EvidenceRejected("invalid expected session") from exc
     if sessions != expected_sessions or sessions != sorted(sessions):
         raise EvidenceRejected("expected sessions must be sorted ISO dates")
+    # A future calendar session is not a historical coverage gap. The exchange
+    # calendar is caller-supplied, but it must not extend beyond research time.
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise EvidenceRejected("now must be timezone-aware")
+    if sessions[-1] > now.date().isoformat():
+        raise EvidenceRejected("expected sessions include future dates")
     if not observations:
         raise EvidenceRejected("no verified market observations")
     accepted = []
