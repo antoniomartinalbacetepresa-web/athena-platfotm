@@ -201,3 +201,19 @@ def test_history_rejects_naive_research_clock_before_calendar_coverage():
         validate_pilot_history(
             [bar], expected_sessions=["2026-11-06"], now=NOW.replace(tzinfo=None)
         )
+
+
+def test_history_session_cutoff_uses_utc_not_local_calendar_date():
+    """An offset-aware clock can be on the prior local day but already UTC today."""
+    from datetime import timedelta
+    from app.services.pilot_evidence import validate_pilot_history
+
+    bar = {**BASE, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}
+    local_clock = datetime(2026, 11, 7, 23, 30, tzinfo=timezone(timedelta(hours=-2)))
+    result = validate_pilot_history(
+        [bar],
+        expected_sessions=["2026-11-06", "2026-11-08"],
+        now=local_clock,
+    )
+    assert result["missingSessions"] == ["2026-11-08"]
+    assert result["operationallyVerified"] is False
