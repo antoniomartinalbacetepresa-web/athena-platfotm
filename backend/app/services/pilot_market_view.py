@@ -35,7 +35,7 @@ def build_pilot_market_view(
         return {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
     return {
         "status": "verified_metadata",
-        "reason": "provider_rights_require_independent_review",
+        "reason": "rights_attested_metadata_only_not_operationally_verified",
         "observation": verified,
         "researchOnly": True,
         "ordersEnabled": False,
