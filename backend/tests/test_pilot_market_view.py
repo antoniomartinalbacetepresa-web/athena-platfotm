@@ -47,6 +47,7 @@ def test_metadata_only_and_unlicensed_bars_are_unavailable():
 def test_expired_bar_is_not_exposed_as_current():
     view = build_pilot_market_view(BAR, now=NOW, max_age_seconds=60, rights_reviewed=True)
     assert view["status"] == "unavailable"
+    assert view["reason"] == "stale_observation"
     assert view["observation"] is None
 
 
@@ -78,3 +79,10 @@ def test_malformed_research_clock_types_fail_closed():
             "reason": "invalid_research_clock",
             "observation": None,
         }
+
+
+def test_stale_observation_never_leaks_price_or_appears_as_invalid_license():
+    view = build_pilot_market_view(BAR, now=NOW, max_age_seconds=0, rights_reviewed=True)
+    assert view == {"status": "unavailable", "reason": "stale_observation", "observation": None}
+    invalid = build_pilot_market_view({**BAR, "close": -1}, now=NOW, rights_reviewed=True)
+    assert invalid == {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
