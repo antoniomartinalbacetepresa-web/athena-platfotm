@@ -89,7 +89,11 @@ def validate_pilot_history(
     The caller supplies an independently verified exchange calendar. No missing
     session is interpolated and no licensing rights are inferred from metadata.
     """
-    if not expected_sessions or len(set(expected_sessions)) != len(expected_sessions):
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise EvidenceRejected("now must be timezone-aware")
+    if not isinstance(expected_sessions, list) or not expected_sessions or any(not isinstance(day, str) for day in expected_sessions):
+        raise EvidenceRejected("expected sessions must be a nonempty list of ISO dates")
+    if len(set(expected_sessions)) != len(expected_sessions):
         raise EvidenceRejected("expected sessions must be unique and nonempty")
     try:
         sessions = [datetime.fromisoformat(day).date().isoformat() for day in expected_sessions]
@@ -99,16 +103,16 @@ def validate_pilot_history(
         raise EvidenceRejected("expected sessions must be sorted ISO dates")
     # A future calendar session is not a historical coverage gap. The exchange
     # calendar is caller-supplied, but it must not extend beyond research time.
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise EvidenceRejected("now must be timezone-aware")
     # Session keys use UTC observation dates, so the clock cutoff must also use UTC.
     if sessions[-1] > now.astimezone(timezone.utc).date().isoformat():
         raise EvidenceRejected("expected sessions include future dates")
-    if not observations:
+    if not isinstance(observations, list) or not observations:
         raise EvidenceRejected("no verified market observations")
     accepted = []
     seen = set()
     for record in observations:
+        if not isinstance(record, Mapping):
+            raise EvidenceRejected("market observation must be a mapping")
         bar = validate_pilot_observation(record, now=now, require_bar=True)
         session = datetime.fromisoformat(bar["observationAt"]).date().isoformat()
         if session not in sessions or session in seen:
