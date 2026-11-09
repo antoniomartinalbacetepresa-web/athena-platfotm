@@ -67,3 +67,13 @@ def test_invalid_clock_and_freshness_policy_fail_closed_without_exposing_bar():
     naive_now = NOW.replace(tzinfo=None)
     view = build_pilot_market_view(BAR, now=naive_now, rights_reviewed=True)
     assert view == {"status": "unavailable", "reason": "invalid_research_clock", "observation": None}
+
+
+def test_malformed_research_clock_types_fail_closed():
+    for invalid_now in (None, "2026-11-08T00:00:00Z", 0, object()):
+        view = build_pilot_market_view(BAR, now=invalid_now, rights_reviewed=True)
+        assert view == {
+            "status": "unavailable",
+            "reason": "invalid_research_clock",
+            "observation": None,
+        }
