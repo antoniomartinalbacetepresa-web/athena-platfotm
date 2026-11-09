@@ -181,3 +181,23 @@ def test_history_exposes_provider_rights_and_observed_bounds_for_ui():
     assert result["lastObservedSession"] == "2026-11-06"
     assert result["missingSessions"] == ["2026-11-05"]
     assert result["operationallyVerified"] is False
+
+
+def test_history_rejects_future_expected_session_instead_of_reporting_fake_gap():
+    from app.services.pilot_evidence import validate_pilot_history
+
+    bar = {**BASE, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}
+    with pytest.raises(EvidenceRejected, match="future dates"):
+        validate_pilot_history(
+            [bar], expected_sessions=["2026-11-06", "2026-11-09"], now=NOW
+        )
+
+
+def test_history_rejects_naive_research_clock_before_calendar_coverage():
+    from app.services.pilot_evidence import validate_pilot_history
+
+    bar = {**BASE, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}
+    with pytest.raises(EvidenceRejected, match="timezone-aware"):
+        validate_pilot_history(
+            [bar], expected_sessions=["2026-11-06"], now=NOW.replace(tzinfo=None)
+        )
