@@ -32,7 +32,7 @@ def test_validated_bar_preserves_provenance_and_never_enables_orders():
     assert view["ordersEnabled"] is False
     assert view["freshness"] == {
         "observationAt": "2026-11-06T21:00:00+00:00",
-        "ageSeconds": 183600,
+        "ageSeconds": 97200,
         "maxAgeSeconds": 345600,
         "basis": "market_observation_not_retrieval",
     }
