@@ -31,7 +31,12 @@ def build_pilot_market_view(
         verified = validate_pilot_observation(
             observation, now=now, max_age_seconds=max_age_seconds, require_bar=True
         )
-    except (EvidenceRejected, TypeError, AttributeError, ValueError, OverflowError):
+    except EvidenceRejected as exc:
+        # A stale observation is a recoverable data-quality state, not a
+        # generic validation failure. Never return its rejected price.
+        reason = "stale_observation" if str(exc) == "observation exceeds permitted age" else "evidence_rejected"
+        return {"status": "unavailable", "reason": reason, "observation": None}
+    except (TypeError, AttributeError, ValueError, OverflowError):
         return {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
     return {
         "status": "verified_metadata",
