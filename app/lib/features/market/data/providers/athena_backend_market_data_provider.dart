@@ -158,6 +158,25 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       }
     }
 
+    // Reject internally contradictory OHLC bars instead of displaying an
+    // impossible candle as genuine evidence. Adjusted close is intentionally
+    // excluded: corporate actions can place it outside the raw daily range.
+    final open = _parseDouble(data['open']);
+    final high = _parseDouble(data['high']);
+    final low = _parseDouble(data['low']);
+    final close = _parseDouble(data['close']);
+    if (high != null && low != null && high < low) {
+      throw const FormatException('Rango OHLC contradictorio: high < low.');
+    }
+    if (high != null &&
+        ((open != null && open > high) || (close != null && close > high))) {
+      throw const FormatException('Precio OHLC superior al máximo.');
+    }
+    if (low != null &&
+        ((open != null && open < low) || (close != null && close < low))) {
+      throw const FormatException('Precio OHLC inferior al mínimo.');
+    }
+
     return MarketDataPoint(
       symbol: symbol,
       timestamp: timestamp,
