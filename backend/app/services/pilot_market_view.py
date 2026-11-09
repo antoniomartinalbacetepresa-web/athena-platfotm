@@ -23,7 +23,7 @@ def build_pilot_market_view(
         return {"status": "unavailable", "reason": "independent_rights_review_required", "observation": None}
     if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
         return {"status": "unavailable", "reason": "invalid_freshness_policy", "observation": None}
-    if now.tzinfo is None or now.utcoffset() is None:
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         return {"status": "unavailable", "reason": "invalid_research_clock", "observation": None}
     if observation is None:
         return {"status": "unavailable", "reason": "no_authorized_observation", "observation": None}
