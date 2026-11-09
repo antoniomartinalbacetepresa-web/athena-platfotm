@@ -42,3 +42,15 @@ def test_naive_clock_fails_closed():
     assert not usable_for_research(
         evidence(available_at=NOW.replace(tzinfo=None)), now=NOW
     )
+
+
+def test_observation_age_is_measured_from_market_time_not_retrieval():
+    # A recent download cannot refresh an old price observation.
+    assert not usable_for_research(evidence(), now=NOW, max_age_seconds=86400)
+    assert usable_for_research(evidence(), now=NOW, max_age_seconds=172800)
+    assert not usable_for_research(evidence(), now=NOW, max_age_seconds=0)
+
+
+def test_invalid_freshness_policy_fails_closed():
+    for invalid in (-1, True, 1.5, "86400"):
+        assert not usable_for_research(evidence(), now=NOW, max_age_seconds=invalid)
