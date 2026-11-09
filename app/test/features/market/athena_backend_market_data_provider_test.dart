@@ -326,6 +326,49 @@ void main() {
     });
 
 
+    for (final invalid in <String, Object>{
+      'close': 'NaN',
+      'adjustedClose': '-1',
+      'open': 'Infinity',
+      'volume': '-2',
+      'changePercentage': 'Infinity',
+    }.entries) {
+      test('rechaza dato financiero inválido: ${invalid.key}', () async {
+        final provider = AthenaBackendMarketDataProvider(
+          baseUrl: 'https://api.athena.test',
+          client: MockClient((_) async => http.Response(jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-11-09T16:00:00Z',
+              'close': 250.0,
+              invalid.key: invalid.value,
+            },
+          }), 200)),
+        );
+        await expectLater(provider.getQuote('AAPL'), throwsFormatException);
+        provider.dispose();
+      });
+    }
+
+    test('rechaza volumen inválido en histórico antes de llegar al Radar', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [{
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-09T16:00:00Z',
+            'close': 250.0,
+            'volume': 'NaN',
+          }],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
+
     test('rechaza cotización sin símbolo en lugar de inventar identidad', () async {
       final provider = AthenaBackendMarketDataProvider(
         baseUrl: 'https://api.athena.test',
