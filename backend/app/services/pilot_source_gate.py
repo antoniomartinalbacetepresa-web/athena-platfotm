@@ -19,9 +19,11 @@ class PilotSourceEvidence:
     reviewed: bool = False
 
 
-def usable_for_research(evidence: PilotSourceEvidence, *, now: datetime) -> bool:
+def usable_for_research(
+    evidence: PilotSourceEvidence, *, now: datetime, max_age_seconds: int | None = None
+) -> bool:
     """Require explicit reviewed rights and causally ordered UTC timestamps."""
-    timestamps = (
+    if max_age_seconds is not None and (\n        isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, int)\n        or max_age_seconds < 0\n    ):\n        return False\n    timestamps = (
         evidence.observation_at,
         evidence.available_at,
         evidence.retrieved_at,
@@ -37,4 +39,4 @@ def usable_for_research(evidence: PilotSourceEvidence, *, now: datetime) -> bool
     observation, available, retrieved, current = (
         value.astimezone(timezone.utc) for value in timestamps
     )
-    return observation <= available <= retrieved <= current
+    if not observation <= available <= retrieved <= current:\n        return False\n    return max_age_seconds is None or (current - observation).total_seconds() <= max_age_seconds
