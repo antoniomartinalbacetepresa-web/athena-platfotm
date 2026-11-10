@@ -97,6 +97,9 @@ def select_pit_prices(
                 "observed_at": str(row["observed_at"]),
                 "retrieved_at": str(row["retrieved_at"]),
                 "source_provider": provider,
+                # Preserve the validated publication timestamp for downstream
+                # provenance displays; absence is explicit, never inferred.
+                "source_timestamp": source_instant.isoformat() if source_timestamp is not None else None,
                 "price": price,
             }
             key = (retrieved, int(row["id"]))
