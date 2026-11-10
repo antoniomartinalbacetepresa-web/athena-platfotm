@@ -16,6 +16,10 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
 
     Freshness is measured from market observation, not later ingestion/availability.
     """
+    if not isinstance(record, Mapping):
+        raise EvidenceRejected("market observation must be a mapping")
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise EvidenceRejected("now must be timezone-aware")
     if not isinstance(require_bar, bool):
         raise EvidenceRejected("invalid require_bar flag")
     if now.tzinfo is None or now.utcoffset() is None:
