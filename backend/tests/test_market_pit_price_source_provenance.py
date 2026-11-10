@@ -34,6 +34,13 @@ def test_pit_price_exposes_only_validated_source_timestamp(tmp_path):
     assert len(rows) == 1
     assert rows[0]["source_timestamp"] == (observed + timedelta(minutes=5)).isoformat()
     assert rows[0]["source_provider"] == "yahoo"
+    # Selection exposes the exact persisted row, not a synthetic identifier.
+    with database.connect() as connection:
+        stored_id = connection.execute(
+            "SELECT id FROM market_observations WHERE instrument_id = ?",
+            (instrument_id,),
+        ).fetchone()["id"]
+    assert rows[0]["observation_id"] == stored_id
 
     # Imported legacy evidence claiming publication after retrieval must fail closed.
     with database.connect() as connection:
