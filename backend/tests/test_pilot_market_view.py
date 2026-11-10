@@ -93,3 +93,13 @@ def test_stale_observation_never_leaks_price_or_appears_as_invalid_license():
     assert view == {"status": "unavailable", "reason": "stale_observation", "observation": None}
     invalid = build_pilot_market_view({**BAR, "close": -1}, now=NOW, rights_reviewed=True)
     assert invalid == {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
+
+
+def test_future_pit_evidence_is_explicitly_unavailable_without_price_leak():
+    for change in (
+        {"availableAt": "2026-11-09T00:00:00Z"},
+        {"retrievedAt": "2026-11-09T00:00:00Z"},
+        {"observationAt": "2026-11-09T00:00:00Z"},
+    ):
+        view = build_pilot_market_view({**BAR, **change}, now=NOW, rights_reviewed=True)
+        assert view == {"status": "unavailable", "reason": "pit_unavailable", "observation": None}
