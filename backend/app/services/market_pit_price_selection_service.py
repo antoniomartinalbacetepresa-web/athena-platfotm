@@ -94,6 +94,9 @@ def select_pit_prices(
             if not math.isfinite(price) or price <= 0:
                 continue
             candidate = {
+                # Stable persisted evidence identity for downstream audit trails.
+                # This is not a claim that the provider license is verified.
+                "observation_id": int(row["id"]),
                 "observed_at": str(row["observed_at"]),
                 "retrieved_at": str(row["retrieved_at"]),
                 "source_provider": provider,
