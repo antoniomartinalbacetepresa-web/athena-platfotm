@@ -35,6 +35,8 @@ def build_pilot_market_view(
         # A stale observation is a recoverable data-quality state, not a
         # generic validation failure. Never return its rejected price.
         reason = "stale_observation" if str(exc) == "observation exceeds permitted age" else "evidence_rejected"
+        if str(exc) == "observation, availability, retrieval and clock violate PIT ordering":
+            reason = "pit_unavailable"
         return {"status": "unavailable", "reason": reason, "observation": None}
     except (TypeError, AttributeError, ValueError, OverflowError):
         return {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
