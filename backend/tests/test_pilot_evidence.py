@@ -217,3 +217,15 @@ def test_history_session_cutoff_uses_utc_not_local_calendar_date():
     )
     assert result["missingSessions"] == ["2026-11-08"]
     assert result["operationallyVerified"] is False
+
+
+@pytest.mark.parametrize("invalid_record", [None, [], "MSFT", 42, object()])
+def test_non_mapping_observation_fails_closed_with_domain_error(invalid_record):
+    with pytest.raises(EvidenceRejected, match="market observation must be a mapping"):
+        validate_pilot_observation(invalid_record, now=NOW)
+
+
+@pytest.mark.parametrize("invalid_clock", [None, "2026-11-08T00:00:00Z", 0, datetime(2026, 11, 8)])
+def test_invalid_research_clock_fails_closed_with_domain_error(invalid_clock):
+    with pytest.raises(EvidenceRejected, match="now must be timezone-aware"):
+        validate_pilot_observation(BASE, now=invalid_clock)
