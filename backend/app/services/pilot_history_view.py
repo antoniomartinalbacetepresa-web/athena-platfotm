@@ -54,6 +54,14 @@ def build_pilot_history_view(
     # This conservative pilot-equity guard is not an exchange-calendar attestation.
     sufficient_sessions = history["expectedSessionCount"] >= 200
     return {
+        "instrumentId": history["instrumentId"],
+        "source": history["source"],
+        "licenseRef": history["licenseRef"],
+        "currency": history["currency"],
+        "latestObservationAt": history["latestObservationAt"],
+        "latestAvailableAt": history["bars"][-1]["availableAt"],
+        "latestRetrievedAt": history["bars"][-1]["retrievedAt"],
+        "latestAgeSeconds": history["latestAgeSeconds"],
         "calendarSpanDays": calendar_span_days,
         "sufficientAnnualSessions": sufficient_sessions,
         "meets365DayDepth": history["coverageComplete"] and calendar_span_days >= 365 and sufficient_sessions,
