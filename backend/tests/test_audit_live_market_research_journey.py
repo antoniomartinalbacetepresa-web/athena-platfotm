@@ -221,3 +221,16 @@ def test_fresh_quote_and_news_feed_have_explicit_nonstale_flags():
     report, _ = _audit(_responses())
     assert report["quote"]["staleOver24Hours"] is False
     assert report["news"]["feedStaleOver24Hours"] is False
+
+
+def test_stale_quote_or_news_cannot_be_reported_as_partial_current_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    assert _audit(responses)[0]["status"] == "partial_research_evidence"
+    old = (NOW - timedelta(hours=30)).isoformat()
+    responses["/api/v1/market/quote"]["data"].update(retrievedAt=old, timestamp=old)
+    assert _audit(responses)[0]["status"] == "stale_research_evidence"
+    responses["/api/v1/market/quote"]["data"].update(retrievedAt=(NOW - timedelta(minutes=10)).isoformat(), timestamp=(NOW - timedelta(minutes=10)).isoformat())
+    responses["/api/v1/news/feed"]["retrievedAt"] = old
+    responses["/api/v1/news/feed"]["items"][0].update(retrievedAt=old, publishedAt=old)
+    assert _audit(responses)[0]["status"] == "stale_research_evidence"
