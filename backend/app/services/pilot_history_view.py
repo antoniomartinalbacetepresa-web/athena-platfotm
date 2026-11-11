@@ -42,7 +42,15 @@ def build_pilot_history_view(
     if (max_latest_age_seconds is not None
             and exact_age > max_latest_age_seconds):
         return {**unavailable, "reason": "stale_history"}
+    # A complete caller-supplied session list is not proof of a year of history.
+    # Report calendar span separately so a one-session pilot cannot look like
+    # 365-day coverage. This is metadata, never an operational coverage claim.
+    first_day = datetime.fromisoformat(history["expectedFirstSession"]).date()
+    last_day = datetime.fromisoformat(history["expectedLastSession"]).date()
+    calendar_span_days = (last_day - first_day).days + 1
     return {
+        "calendarSpanDays": calendar_span_days,
+        "meets365DayDepth": history["coverageComplete"] and calendar_span_days >= 365,
         "status": "verified_metadata",
         "reason": "rights_attested_metadata_only_not_operationally_verified",
         "history": history,
