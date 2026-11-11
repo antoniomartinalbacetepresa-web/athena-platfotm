@@ -201,3 +201,23 @@ def test_recent_history_with_less_than_one_year_is_not_coverage_candidate():
     ).isoformat()
     report, _ = _audit(responses)
     assert report["history"]["current365DayCoverageCandidate"] is False
+
+
+def test_quote_and_news_feed_freshness_are_reported_separately():
+    responses = _responses()
+    old = (NOW - timedelta(hours=30)).isoformat()
+    responses["/api/v1/market/quote"]["data"].update(retrievedAt=old, timestamp=old)
+    report, _ = _audit(responses)
+    assert report["quote"]["staleOver24Hours"] is True
+    assert report["news"]["feedStaleOver24Hours"] is False
+    responses["/api/v1/news/feed"]["retrievedAt"] = old
+    responses["/api/v1/news/feed"]["items"][0].update(retrievedAt=old, publishedAt=old)
+    report, _ = _audit(responses)
+    assert report["news"]["feedStaleOver24Hours"] is True
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_quote_and_news_feed_have_explicit_nonstale_flags():
+    report, _ = _audit(_responses())
+    assert report["quote"]["staleOver24Hours"] is False
+    assert report["news"]["feedStaleOver24Hours"] is False
