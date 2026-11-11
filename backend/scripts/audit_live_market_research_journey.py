@@ -258,7 +258,8 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         (attached if module.get("evidence") is not None else missing).append(name)
 
     return {
-        "status": "partial_research_evidence" if attached and items else "incomplete_evidence",
+        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24))
+                   else "partial_research_evidence" if attached and items else "incomplete_evidence"),
         "symbol": symbol,
         "auditClockUtc": now.isoformat(),
         "quote": {"providerDeclared": provider, "mode": mode,
