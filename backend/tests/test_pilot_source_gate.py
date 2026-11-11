@@ -105,3 +105,22 @@ def test_pilot_history_requires_consistent_rights_order_and_fresh_latest_bar():
     assert not usable_history_for_research([older, latest], now=NOW,
                                            max_age_seconds=10800,
                                            minimum_observations=True)
+
+
+def test_history_span_policy_requires_observed_days_not_just_freshness():
+    older = evidence(observation_at=NOW - timedelta(days=366),
+                     available_at=NOW - timedelta(days=365),
+                     retrieved_at=NOW - timedelta(hours=2))
+    latest = evidence(observation_at=NOW - timedelta(hours=2),
+                      available_at=NOW - timedelta(hours=1),
+                      retrieved_at=NOW - timedelta(minutes=30))
+    assert usable_history_for_research([older, latest], now=NOW,
+                                       max_age_seconds=10800,
+                                       minimum_span_days=365)
+    assert not usable_history_for_research([older, latest], now=NOW,
+                                           max_age_seconds=10800,
+                                           minimum_span_days=367)
+    for invalid in (True, 0, -1, 365.5, "365"):
+        assert not usable_history_for_research([older, latest], now=NOW,
+                                               max_age_seconds=10800,
+                                               minimum_span_days=invalid)
