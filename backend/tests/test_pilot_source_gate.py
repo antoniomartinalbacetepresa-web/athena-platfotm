@@ -54,3 +54,20 @@ def test_observation_age_is_measured_from_market_time_not_retrieval():
 def test_invalid_freshness_policy_fails_closed():
     for invalid in (-1, True, 1.5, "86400"):
         assert not usable_for_research(evidence(), now=NOW, max_age_seconds=invalid)
+
+
+def test_malformed_provider_metadata_and_clock_fail_closed():
+    for bad in (
+        {"provider": None},
+        {"instrument_id": 42},
+        {"license_reference": None},
+        {"permitted_use": None},
+        {"observation_at": "2026-11-08T00:00:00Z"},
+        {"available_at": None},
+        {"retrieved_at": 0},
+        {"reviewed": 1},
+    ):
+        assert usable_for_research(evidence(**bad), now=NOW) is False
+    for bad_now in (None, "2026-11-09T12:00:00Z", 0):
+        assert usable_for_research(evidence(), now=bad_now) is False
+    assert usable_for_research(None, now=NOW) is False
