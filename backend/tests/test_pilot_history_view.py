@@ -137,3 +137,17 @@ def test_invalid_or_naive_research_clock_fails_closed():
             "status": "unavailable", "history": None,
             "reason": "invalid_research_clock",
         }
+
+
+def test_sparse_calendar_cannot_claim_annual_equity_coverage():
+    older = {**BAR, "observationAt": "2025-11-07T21:00:00Z",
+             "availableAt": "2025-11-07T21:01:00Z",
+             "retrievedAt": "2025-11-08T08:00:00Z"}
+    result = build_pilot_history_view(
+        [older, BAR], expected_sessions=["2025-11-07", "2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert result["coverageComplete"] is True
+    assert result["calendarSpanDays"] == 365
+    assert result["sufficientAnnualSessions"] is False
+    assert result["meets365DayDepth"] is False
