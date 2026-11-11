@@ -21,12 +21,25 @@ def build_pilot_history_view(
     unavailable = {"status": "unavailable", "history": None}
     if rights_reviewed is not True:
         return {**unavailable, "reason": "independent_rights_review_required"}
-    if max_latest_age_seconds is not None and (\n        isinstance(max_latest_age_seconds, bool)\n        or not isinstance(max_latest_age_seconds, int)\n        or max_latest_age_seconds < 0\n    ):\n        return {**unavailable, "reason": "invalid_freshness_policy"}\n    try:\n        history = validate_pilot_history(
+    if max_latest_age_seconds is not None and (
+        isinstance(max_latest_age_seconds, bool)
+        or not isinstance(max_latest_age_seconds, int)
+        or max_latest_age_seconds < 0
+    ):
+        return {**unavailable, "reason": "invalid_freshness_policy"}
+    try:
+        history = validate_pilot_history(
             observations, expected_sessions=expected_sessions, now=now
         )
     except (EvidenceRejected, TypeError, AttributeError, ValueError, OverflowError):
         return {**unavailable, "reason": "history_evidence_rejected"}
-    # Historical coverage and recency are separate gates: an old but complete\n    # series must not be presented as a current research snapshot.\n    if (max_latest_age_seconds is not None\n            and history["latestAgeSeconds"] > max_latest_age_seconds):\n        return {**unavailable, "reason": "stale_history"}\n    return {\n        "status": "verified_metadata",
+    # Historical coverage and recency are separate gates: an old but complete
+    # series must not be presented as a current research snapshot.
+    if (max_latest_age_seconds is not None
+            and history["latestAgeSeconds"] > max_latest_age_seconds):
+        return {**unavailable, "reason": "stale_history"}
+    return {
+        "status": "verified_metadata",
         "reason": "rights_attested_metadata_only_not_operationally_verified",
         "history": history,
         "coverageComplete": history["coverageComplete"],
