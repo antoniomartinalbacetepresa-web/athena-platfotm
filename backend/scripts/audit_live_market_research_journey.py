@@ -259,7 +259,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
 
     return {
         "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
-                   else "partial_research_evidence" if attached and items else "incomplete_evidence"),
+                   else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"]) else "incomplete_evidence"),
         "symbol": symbol,
         "auditClockUtc": now.isoformat(),
         "quote": {"providerDeclared": provider, "mode": mode,
