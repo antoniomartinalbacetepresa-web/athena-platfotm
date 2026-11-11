@@ -53,7 +53,7 @@ def build_pilot_history_view(
     # A sparse caller-supplied calendar must not manufacture annual equity depth.
     # This conservative pilot-equity guard is not an exchange-calendar attestation.
     sufficient_sessions = history["expectedSessionCount"] >= 200
-    return {
+    # Zero-volume final sessions may be valid but cannot support a liquidity\n    # conclusion. Surface them explicitly rather than implying tradability.\n    zero_volume_sessions = [bar["session"] for bar in history["bars"] if bar["volume"] == 0]\n    return {
         "instrumentId": history["instrumentId"],
         "source": history["source"],
         "licenseRef": history["licenseRef"],
@@ -70,6 +70,8 @@ def build_pilot_history_view(
         "history": history,
         "coverageComplete": history["coverageComplete"],
         "missingSessions": history["missingSessions"],
+        "zeroVolumeSessions": zero_volume_sessions,
+        "liquidityAssessmentAvailable": False,
         "researchOnly": True,
         "ordersEnabled": False,
     }
