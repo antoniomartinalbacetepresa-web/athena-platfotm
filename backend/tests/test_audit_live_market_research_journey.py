@@ -270,3 +270,23 @@ def test_short_history_cannot_be_reported_as_partial_research():
     report, _ = _audit(responses)
     assert report["history"]["current365DayCoverageCandidate"] is False
     assert report["status"] == "incomplete_evidence"
+
+
+def test_stale_dossier_cannot_masquerade_as_current_partial_research():
+    responses = _responses()
+    dossier = responses["/api/v1/recommendations/production/professional-dossier"]["data"]
+    dossier["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    assert _audit(responses)[0]["status"] == "partial_research_evidence"
+    dossier["asOf"] = (NOW - timedelta(hours=30)).isoformat()
+    report, _ = _audit(responses)
+    assert report["status"] == "stale_research_evidence"
+    assert report["dossier"]["staleOver24Hours"] is True
+    assert report["dossier"]["ageHours"] == 30.0
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_dossier_exposes_age_without_claiming_production():
+    report, _ = _audit(_responses())
+    assert report["dossier"]["staleOver24Hours"] is False
+    assert report["dossier"]["ageHours"] == 0.17
+    assert report["completeResearchVerified"] is False
