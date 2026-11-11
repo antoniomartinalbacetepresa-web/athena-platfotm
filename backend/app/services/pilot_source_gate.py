@@ -59,6 +59,7 @@ def usable_for_research(
 def usable_history_for_research(
     observations: list[PilotSourceEvidence], *, now: datetime,
     max_age_seconds: int, minimum_observations: int = 2,
+    minimum_span_days: int | None = None,
 ) -> bool:
     """Reject partial or mixed-rights pilot histories before analytical use.
 
@@ -69,7 +70,11 @@ def usable_history_for_research(
         or isinstance(minimum_observations, bool)
         or not isinstance(minimum_observations, int)
         or minimum_observations < 2
-        or len(observations) < minimum_observations):
+        or len(observations) < minimum_observations
+        or (minimum_span_days is not None and (
+            isinstance(minimum_span_days, bool)
+            or not isinstance(minimum_span_days, int)
+            or minimum_span_days < 1))):
         return False
     if not all(usable_for_research(item, now=now) for item in observations):
         return False
@@ -81,6 +86,10 @@ def usable_history_for_research(
         return False
     if any(left.observation_at >= right.observation_at
            for left, right in zip(observations, observations[1:])):
+        return False
+    if minimum_span_days is not None and (
+        observations[-1].observation_at - observations[0].observation_at
+    ).total_seconds() < minimum_span_days * 86400:
         return False
     return usable_for_research(observations[-1], now=now,
                                max_age_seconds=max_age_seconds)
