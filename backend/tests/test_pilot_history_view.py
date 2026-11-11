@@ -105,3 +105,23 @@ def test_freshness_gate_uses_fractional_seconds_not_display_age():
         rights_reviewed=True, max_latest_age_seconds=3600,
     )
     assert at_boundary["status"] == "verified_metadata"
+
+
+def test_single_session_is_not_365_day_depth_even_when_coverage_complete():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True,
+    )
+    assert result["coverageComplete"] is True
+    assert result["calendarSpanDays"] == 1
+    assert result["meets365DayDepth"] is False
+
+
+def test_missing_sessions_cannot_claim_365_day_depth():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2025-11-07", "2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert result["calendarSpanDays"] == 365
+    assert result["coverageComplete"] is False
+    assert result["meets365DayDepth"] is False
