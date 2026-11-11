@@ -83,3 +83,25 @@ def test_invalid_history_freshness_policy_fails_closed():
             "status": "unavailable", "history": None,
             "reason": "invalid_freshness_policy",
         }
+
+
+def test_freshness_gate_uses_fractional_seconds_not_display_age():
+    from datetime import timedelta
+
+    observed = datetime(2026, 11, 6, 21, 0, tzinfo=timezone.utc)
+    bar = {**BAR, "observationAt": observed.isoformat(),
+           "availableAt": (observed + timedelta(seconds=1)).isoformat(),
+           "retrievedAt": (observed + timedelta(seconds=2)).isoformat()}
+    now = observed + timedelta(seconds=3600, milliseconds=500)
+    result = build_pilot_history_view(
+        [bar], expected_sessions=["2026-11-06"], now=now,
+        rights_reviewed=True, max_latest_age_seconds=3600,
+    )
+    assert result == {"status": "unavailable", "history": None, "reason": "stale_history"}
+
+    at_boundary = build_pilot_history_view(
+        [bar], expected_sessions=["2026-11-06"],
+        now=observed + timedelta(seconds=3600),
+        rights_reviewed=True, max_latest_age_seconds=3600,
+    )
+    assert at_boundary["status"] == "verified_metadata"
