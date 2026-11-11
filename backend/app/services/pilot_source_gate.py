@@ -28,18 +28,25 @@ def usable_for_research(
         or max_age_seconds < 0
     ):
         return False
+    if not isinstance(evidence, PilotSourceEvidence) or not isinstance(now, datetime):
+        return False
+    if not all(isinstance(value, str) for value in (
+        evidence.provider, evidence.instrument_id, evidence.license_reference,
+        evidence.permitted_use,
+    )):
+        return False
     timestamps = (
         evidence.observation_at,
         evidence.available_at,
         evidence.retrieved_at,
         now,
     )
-    if any(value.tzinfo is None or value.utcoffset() is None for value in timestamps):
+    if any(not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None for value in timestamps):
         return False
     if not all((evidence.provider.strip(), evidence.instrument_id.strip(),
                 evidence.license_reference.strip())):
         return False
-    if evidence.permitted_use != "internal_research" or not evidence.reviewed:
+    if evidence.permitted_use != "internal_research" or evidence.reviewed is not True:
         return False
     observation, available, retrieved, current = (
         value.astimezone(timezone.utc) for value in timestamps
