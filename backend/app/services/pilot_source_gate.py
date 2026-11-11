@@ -54,3 +54,33 @@ def usable_for_research(
     if not observation <= available <= retrieved <= current:
         return False
     return max_age_seconds is None or (current - observation).total_seconds() <= max_age_seconds
+
+
+def usable_history_for_research(
+    observations: list[PilotSourceEvidence], *, now: datetime,
+    max_age_seconds: int, minimum_observations: int = 2,
+) -> bool:
+    """Reject partial or mixed-rights pilot histories before analytical use.
+
+    This is a metadata gate, not proof of 365-day coverage, price adjustment,
+    licensing, or a production-ready source. Those require separate evidence.
+    """
+    if (not isinstance(observations, list)
+        or isinstance(minimum_observations, bool)
+        or not isinstance(minimum_observations, int)
+        or minimum_observations < 2
+        or len(observations) < minimum_observations):
+        return False
+    if not all(usable_for_research(item, now=now) for item in observations):
+        return False
+    first = observations[0]
+    identity = (first.provider, first.instrument_id, first.license_reference,
+                first.permitted_use)
+    if any((item.provider, item.instrument_id, item.license_reference,
+            item.permitted_use) != identity for item in observations[1:]):
+        return False
+    if any(left.observation_at >= right.observation_at
+           for left, right in zip(observations, observations[1:])):
+        return False
+    return usable_for_research(observations[-1], now=now,
+                               max_age_seconds=max_age_seconds)
