@@ -50,9 +50,13 @@ def build_pilot_history_view(
     first_day = datetime.fromisoformat(history["expectedFirstSession"]).date()
     last_day = datetime.fromisoformat(history["expectedLastSession"]).date()
     calendar_span_days = (last_day - first_day).days + 1
+    # A sparse caller-supplied calendar must not manufacture annual equity depth.
+    # This conservative pilot-equity guard is not an exchange-calendar attestation.
+    sufficient_sessions = history["expectedSessionCount"] >= 200
     return {
         "calendarSpanDays": calendar_span_days,
-        "meets365DayDepth": history["coverageComplete"] and calendar_span_days >= 365,
+        "sufficientAnnualSessions": sufficient_sessions,
+        "meets365DayDepth": history["coverageComplete"] and calendar_span_days >= 365 and sufficient_sessions,
         "status": "verified_metadata",
         "reason": "rights_attested_metadata_only_not_operationally_verified",
         "history": history,
