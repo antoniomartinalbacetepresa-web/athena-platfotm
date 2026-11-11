@@ -27,6 +27,8 @@ def build_pilot_history_view(
         or max_latest_age_seconds < 0
     ):
         return {**unavailable, "reason": "invalid_freshness_policy"}
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        return {**unavailable, "reason": "invalid_research_clock"}
     try:
         history = validate_pilot_history(
             observations, expected_sessions=expected_sessions, now=now
