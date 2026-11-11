@@ -56,3 +56,30 @@ def test_future_pit_or_inconsistent_history_never_leaks_quotes():
             "history": None,
             "reason": "history_evidence_rejected",
         }
+
+
+def test_freshness_policy_distinguishes_stale_history_from_complete_coverage():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, max_latest_age_seconds=3600,
+    )
+    assert result == {"status": "unavailable", "history": None, "reason": "stale_history"}
+    fresh = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, max_latest_age_seconds=86400 * 3,
+    )
+    assert fresh["status"] == "verified_metadata"
+    assert fresh["coverageComplete"] is True
+    assert fresh["history"]["operationallyVerified"] is False
+
+
+def test_invalid_history_freshness_policy_fails_closed():
+    for value in (-1, True, 1.5, "86400"):
+        result = build_pilot_history_view(
+            [BAR], expected_sessions=["2026-11-06"], now=NOW,
+            rights_reviewed=True, max_latest_age_seconds=value,
+        )
+        assert result == {
+            "status": "unavailable", "history": None,
+            "reason": "invalid_freshness_policy",
+        }
