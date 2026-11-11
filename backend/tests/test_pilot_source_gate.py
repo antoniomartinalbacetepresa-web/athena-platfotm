@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.services.pilot_source_gate import PilotSourceEvidence, usable_for_research
+from app.services.pilot_source_gate import PilotSourceEvidence, usable_for_research, usable_history_for_research
 
 
 NOW = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
@@ -71,3 +71,37 @@ def test_malformed_provider_metadata_and_clock_fail_closed():
     for bad_now in (None, "2026-11-09T12:00:00Z", 0):
         assert usable_for_research(evidence(), now=bad_now) is False
     assert usable_for_research(None, now=NOW) is False
+
+
+def test_pilot_history_requires_consistent_rights_order_and_fresh_latest_bar():
+    older = evidence(observation_at=NOW - timedelta(days=3),
+                     available_at=NOW - timedelta(days=2),
+                     retrieved_at=NOW - timedelta(hours=2))
+    latest = evidence(observation_at=NOW - timedelta(hours=2),
+                      available_at=NOW - timedelta(hours=1),
+                      retrieved_at=NOW - timedelta(minutes=30))
+    assert usable_history_for_research([older, latest], now=NOW,
+                                       max_age_seconds=10800)
+    assert not usable_history_for_research([older], now=NOW,
+                                           max_age_seconds=10800)
+    assert not usable_history_for_research([latest, older], now=NOW,
+                                           max_age_seconds=10800)
+    assert not usable_history_for_research([older, latest, latest], now=NOW,
+                                           max_age_seconds=10800)
+    assert not usable_history_for_research(
+        [older, evidence(provider="different-provider",
+                         observation_at=latest.observation_at,
+                         available_at=latest.available_at,
+                         retrieved_at=latest.retrieved_at)],
+        now=NOW, max_age_seconds=10800)
+    assert not usable_history_for_research(
+        [older, evidence(license_reference="different-rights",
+                         observation_at=latest.observation_at,
+                         available_at=latest.available_at,
+                         retrieved_at=latest.retrieved_at)],
+        now=NOW, max_age_seconds=10800)
+    assert not usable_history_for_research([older, latest], now=NOW,
+                                           max_age_seconds=3600)
+    assert not usable_history_for_research([older, latest], now=NOW,
+                                           max_age_seconds=10800,
+                                           minimum_observations=True)
