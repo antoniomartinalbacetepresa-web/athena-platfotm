@@ -168,3 +168,23 @@ def test_history_projection_exposes_pit_and_provenance_without_inventing_verific
     assert result["latestAgeSeconds"] == 97200
     assert result["history"]["operationallyVerified"] is False
     assert result["status"] == "verified_metadata"
+
+
+def test_zero_volume_final_session_is_visible_but_not_liquidity_evidence():
+    result = build_pilot_history_view(
+        [{**BAR, "volume": 0}], expected_sessions=["2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert result["status"] == "verified_metadata"
+    assert result["zeroVolumeSessions"] == ["2026-11-06"]
+    assert result["liquidityAssessmentAvailable"] is False
+    assert result["ordersEnabled"] is False
+
+
+def test_positive_volume_does_not_imply_executable_liquidity():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert result["zeroVolumeSessions"] == []
+    assert result["liquidityAssessmentAvailable"] is False
