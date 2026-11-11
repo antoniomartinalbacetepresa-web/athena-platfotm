@@ -248,3 +248,25 @@ def test_stale_history_cannot_masquerade_as_current_partial_research():
     assert report["history"]["current365DayCoverageCandidate"] is False
     assert report["status"] == "stale_research_evidence"
     assert report["completeResearchVerified"] is False
+
+
+def test_missing_history_cannot_be_reported_as_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/history"]["data"] = []
+    responses["/api/v1/market/history"]["provenance"]["sourceProviders"] = []
+    responses["/api/v1/market/history"]["provenance"]["retrievedAt"] = None
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["dossier"]["evidenceAttachedCount"] == 1
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_short_history_cannot_be_reported_as_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/history"]["data"][0]["timestamp"] = (NOW - timedelta(days=300)).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["status"] == "incomplete_evidence"
