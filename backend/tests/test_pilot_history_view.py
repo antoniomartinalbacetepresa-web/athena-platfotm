@@ -125,3 +125,15 @@ def test_missing_sessions_cannot_claim_365_day_depth():
     assert result["calendarSpanDays"] == 365
     assert result["coverageComplete"] is False
     assert result["meets365DayDepth"] is False
+
+
+def test_invalid_or_naive_research_clock_fails_closed():
+    for clock in (None, "2026-11-08T00:00:00Z", datetime(2026, 11, 8)):
+        result = build_pilot_history_view(
+            [BAR], expected_sessions=["2026-11-06"],
+            now=clock, rights_reviewed=True,
+        )
+        assert result == {
+            "status": "unavailable", "history": None,
+            "reason": "invalid_research_clock",
+        }
