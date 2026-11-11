@@ -258,7 +258,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         (attached if module.get("evidence") is not None else missing).append(name)
 
     return {
-        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
+        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
                    else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"]) else "incomplete_evidence"),
         "symbol": symbol,
         "auditClockUtc": now.isoformat(),
@@ -275,7 +275,10 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
                  "feedStaleOver24Hours": now - news_retrieved > timedelta(hours=24),
                  "newestArticleAgeHours": round((now - newest_published).total_seconds() / 3600, 2) if newest_published else None,
                  "issuerIdentityIndependentlyVerified": False},
-        "dossier": {"pitAsOf": as_of.isoformat(), "evidenceAttachedCount": len(attached),
+        "dossier": {"pitAsOf": as_of.isoformat(),
+                    "ageHours": round((now - as_of).total_seconds() / 3600, 2),
+                    "staleOver24Hours": now - as_of > timedelta(hours=24),
+                    "evidenceAttachedCount": len(attached),
                     "moduleCount": len(MODULES), "modulesWithEvidence": attached,
                     "modulesWithoutEvidence": missing,
                     "externalIdentityIndependentlyVerified": False},
