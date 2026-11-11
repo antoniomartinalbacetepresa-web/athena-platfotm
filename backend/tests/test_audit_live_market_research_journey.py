@@ -234,3 +234,17 @@ def test_stale_quote_or_news_cannot_be_reported_as_partial_current_research():
     responses["/api/v1/news/feed"]["retrievedAt"] = old
     responses["/api/v1/news/feed"]["items"][0].update(retrievedAt=old, publishedAt=old)
     assert _audit(responses)[0]["status"] == "stale_research_evidence"
+
+
+def test_stale_history_cannot_masquerade_as_current_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["timestamp"] = (NOW - timedelta(days=395)).isoformat()
+    rows[1]["timestamp"] = (NOW - timedelta(days=20)).isoformat()
+    report, _ = _audit(responses)
+    assert report["quote"]["staleOver24Hours"] is False
+    assert report["news"]["feedStaleOver24Hours"] is False
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
