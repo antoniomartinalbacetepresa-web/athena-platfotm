@@ -203,6 +203,8 @@ def get_history(
             "retrievalMode": "current_provider_history",
             "historicalPointInTimeEligible": False,
             "productionCoverageClaimed": False,
+            "historyStatus": "available_unverified" if history else "empty",
+            "observationCount": len(history),
             "sourceProviders": providers,
             "retrievedAt": retrieval_times[0] if len(retrieval_times) == 1 else None,
         },
