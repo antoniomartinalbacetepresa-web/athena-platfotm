@@ -3,7 +3,7 @@
 The exchange calendar and independent rights attestation are caller responsibilities.
 No interpolation, network access, advice or order execution occurs here.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Mapping
 
 from app.services.pilot_evidence import EvidenceRejected, validate_pilot_history
@@ -35,8 +35,12 @@ def build_pilot_history_view(
         return {**unavailable, "reason": "history_evidence_rejected"}
     # Historical coverage and recency are separate gates: an old but complete
     # series must not be presented as a current research snapshot.
+    # The public age is rounded down for display; enforce freshness with the
+    # exact timestamp so a bar 0.9 seconds too old cannot pass the gate.
+    latest_at = datetime.fromisoformat(history["latestObservationAt"])
+    exact_age = (now.astimezone(timezone.utc) - latest_at.astimezone(timezone.utc)).total_seconds()
     if (max_latest_age_seconds is not None
-            and history["latestAgeSeconds"] > max_latest_age_seconds):
+            and exact_age > max_latest_age_seconds):
         return {**unavailable, "reason": "stale_history"}
     return {
         "status": "verified_metadata",
