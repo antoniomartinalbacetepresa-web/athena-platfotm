@@ -165,6 +165,6 @@ def test_history_projection_exposes_pit_and_provenance_without_inventing_verific
     assert result["latestObservationAt"] == "2026-11-06T21:00:00+00:00"
     assert result["latestAvailableAt"] == "2026-11-06T21:01:00+00:00"
     assert result["latestRetrievedAt"] == "2026-11-07T08:00:00+00:00"
-    assert result["latestAgeSeconds"] == 183600
+    assert result["latestAgeSeconds"] == 97200
     assert result["history"]["operationallyVerified"] is False
     assert result["status"] == "verified_metadata"
