@@ -151,3 +151,20 @@ def test_sparse_calendar_cannot_claim_annual_equity_coverage():
     assert result["calendarSpanDays"] == 365
     assert result["sufficientAnnualSessions"] is False
     assert result["meets365DayDepth"] is False
+
+
+def test_history_projection_exposes_pit_and_provenance_without_inventing_verification():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True,
+    )
+    assert result["instrumentId"] == BAR["instrumentId"]
+    assert result["source"] == BAR["source"]
+    assert result["licenseRef"] == BAR["licenseRef"]
+    assert result["currency"] == BAR["currency"]
+    assert result["latestObservationAt"] == "2026-11-06T21:00:00+00:00"
+    assert result["latestAvailableAt"] == "2026-11-06T21:01:00+00:00"
+    assert result["latestRetrievedAt"] == "2026-11-07T08:00:00+00:00"
+    assert result["latestAgeSeconds"] == 183600
+    assert result["history"]["operationallyVerified"] is False
+    assert result["status"] == "verified_metadata"
