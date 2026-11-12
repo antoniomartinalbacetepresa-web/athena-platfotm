@@ -333,3 +333,26 @@ def test_recent_article_and_empty_feed_have_explicit_recency_states():
     assert report["news"]["newestArticleStaleOver7Days"] is None
     assert report["news"]["newestArticleAgeHours"] is None
     assert report["status"] == "incomplete_evidence"
+
+
+def test_history_volume_coverage_is_explicit_not_inferred_from_prices():
+    responses = _responses()
+    report, _ = _audit(responses)
+    assert report["history"]["volumeMissingCount"] == 2
+    assert report["history"]["volumeCoverageComplete"] is False
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["volume"] = 1000000
+    rows[1]["volume"] = 0
+    report, _ = _audit(responses)
+    assert report["history"]["volumeMissingCount"] == 0
+    assert report["history"]["zeroVolumeSessionCount"] == 1
+    assert report["history"]["volumeCoverageComplete"] is True
+    assert report["completeResearchVerified"] is False
+
+
+@pytest.mark.parametrize("invalid", [-1, 1.5, float("nan"), True, "1000"])
+def test_invalid_historical_volume_fails_closed(invalid):
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["volume"] = invalid
+    with pytest.raises(AuditBlocked, match="invalid traded volume"):
+        _audit(responses)
