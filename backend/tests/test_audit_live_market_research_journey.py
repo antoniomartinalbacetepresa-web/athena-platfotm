@@ -290,3 +290,23 @@ def test_fresh_dossier_exposes_age_without_claiming_production():
     assert report["dossier"]["staleOver24Hours"] is False
     assert report["dossier"]["ageHours"] == 0.17
     assert report["completeResearchVerified"] is False
+
+
+def test_old_quote_observation_is_stale_even_when_just_retrieved():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/quote"]["data"]["timestamp"] = (
+        NOW - timedelta(days=3)
+    ).isoformat()
+    report, _ = _audit(responses)
+    assert report["quote"]["staleOver24Hours"] is False
+    assert report["quote"]["observationStaleOver24Hours"] is True
+    assert report["quote"]["observationAgeHours"] == 72.0
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_quote_observation_and_retrieval_are_distinct():
+    report, _ = _audit(_responses())
+    assert report["quote"]["observationStaleOver24Hours"] is False
+    assert report["quote"]["observedAt"] == report["quote"]["retrievedAt"]
