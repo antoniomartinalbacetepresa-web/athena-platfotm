@@ -48,6 +48,8 @@ void main() {
     await tester.tap(find.byKey(const Key('market-quote-request')));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const Key('market-quote-company-name')), findsOneWidget);
+    expect(find.text('Microsoft'), findsOneWidget);
     expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
     expect(find.textContaining('Tiempo real: NO VERIFICADO'), findsOneWidget);
     expect(find.textContaining('Elegibilidad PIT histórica: NO ACREDITADA'),
@@ -98,6 +100,7 @@ void main() {
       ));
       await tester.tap(find.byKey(const Key('market-quote-request')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-quote-company-name')), findsNothing);
       expect(find.byKey(const Key('market-quote-price')), findsNothing);
       expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
     });
