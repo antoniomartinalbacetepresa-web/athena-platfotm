@@ -258,12 +258,15 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         (attached if module.get("evidence") is not None else missing).append(name)
 
     return {
-        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
+        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
                    else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"]) else "incomplete_evidence"),
         "symbol": symbol,
         "auditClockUtc": now.isoformat(),
         "quote": {"providerDeclared": provider, "mode": mode,
                   "retrievedAt": retrieved.isoformat(),
+                  "observedAt": observed.isoformat(),
+                  "observationAgeHours": round((now - observed).total_seconds() / 3600, 2),
+                  "observationStaleOver24Hours": now - observed > timedelta(hours=24),
                   "ageHours": round((now - retrieved).total_seconds() / 3600, 2),
                   "staleOver24Hours": now - retrieved > timedelta(hours=24),
                   "internalIdentityMatched": instrument_id is not None,
