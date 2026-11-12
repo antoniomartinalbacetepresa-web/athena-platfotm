@@ -131,6 +131,7 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
         quote.quoteMode == 'historical_daily_close_fallback';
     return supportedMode && identityConsistent &&
         quote.symbol.trim().toUpperCase() == requested &&
+        quote.companyName.trim().isNotEmpty &&
         quote.currentPrice.isFinite && quote.currentPrice > 0 &&
         quote.change.isFinite && quote.changePercentage.isFinite &&
         (quote.marketCap == null ||
