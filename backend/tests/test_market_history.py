@@ -215,3 +215,22 @@ def test_market_history_requires_symbol() -> None:
     )
 
     assert response.status_code == 422
+
+
+import pytest
+
+
+@pytest.mark.parametrize("bad_history", [
+    [{"symbol": "MSFT", "close": 200, "sourceProvider": "yahoo"}],
+    [{"symbol": "AAPL"}, {"symbol": "MSFT"}],
+    [{"close": 200}],
+    [None],
+    None,
+    {"symbol": "AAPL"},
+])
+def test_market_history_rejects_untrusted_provider_identity(monkeypatch, bad_history) -> None:
+    """Never display a mismatched or malformed history under a selected ticker."""
+    monkeypatch.setattr(market.market_service, "get_history", lambda **_: bad_history)
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert "incompatibles" in response.json()["detail"]
