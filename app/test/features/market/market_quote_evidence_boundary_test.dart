@@ -12,11 +12,11 @@ class _QuoteRepository implements MarketRepository {
   Future<MarketQuote> getQuote(String symbol) async => quote;
 }
 
-MarketQuote _quote({bool? realtime, bool? pit, double change = 0, double changePercentage = 0, double? marketCap}) {
+MarketQuote _quote({bool? realtime, bool? pit, String companyName = 'Microsoft', double change = 0, double changePercentage = 0, double? marketCap}) {
   final now = DateTime.now().toUtc();
   return MarketQuote(
     symbol: 'MSFT',
-    companyName: 'Microsoft',
+    companyName: companyName,
     currentPrice: 200,
     change: change,
     changePercentage: changePercentage,
@@ -79,6 +79,8 @@ void main() {
   });
 
   for (final invalid in <MarketQuote>[
+    _quote(companyName: ''),
+    _quote(companyName: '   '),
     _quote(change: double.nan),
     _quote(changePercentage: double.infinity),
     _quote(marketCap: -1),
