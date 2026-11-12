@@ -51,11 +51,37 @@ void main() {
     expect(find.byKey(const Key('market-quote-company-name')), findsOneWidget);
     expect(find.text('Microsoft'), findsOneWidget);
     expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-change')), findsOneWidget);
+    expect(find.textContaining('No acredita ajuste por dividendos ni splits'), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-market-cap')), findsNothing);
     expect(find.textContaining('Tiempo real: NO VERIFICADO'), findsOneWidget);
     expect(find.textContaining('Elegibilidad PIT histórica: NO ACREDITADA'),
         findsOneWidget);
     expect(find.textContaining('Derechos de uso y redistribución: NO VERIFICADOS'),
         findsOneWidget);
+  });
+
+  testWidgets('declared capitalization and negative movement are labelled without authority',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: VerifiedMarketQuotePanel(
+            symbol: 'MSFT',
+            repository: _QuoteRepository(_quote(
+              change: -2.5,
+              changePercentage: -1.25,
+              marketCap: 1000000,
+            )),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Variación declarada: -2.50 USD (-1.25%)'), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-market-cap')), findsOneWidget);
+    expect(find.textContaining('Sin verificación independiente'), findsOneWidget);
   });
 
   testWidgets('provider-declared verification does not imply independent rights',
