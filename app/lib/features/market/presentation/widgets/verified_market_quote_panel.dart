@@ -132,6 +132,9 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
     return supportedMode && identityConsistent &&
         quote.symbol.trim().toUpperCase() == requested &&
         quote.currentPrice.isFinite && quote.currentPrice > 0 &&
+        quote.change.isFinite && quote.changePercentage.isFinite &&
+        (quote.marketCap == null ||
+            (quote.marketCap!.isFinite && quote.marketCap! >= 0)) &&
         hasDeclaredQuoteCurrency(quote.currency) &&
         quote.sourceProvider != null && quote.sourceProvider!.trim().isNotEmpty &&
         retrieved != null &&
