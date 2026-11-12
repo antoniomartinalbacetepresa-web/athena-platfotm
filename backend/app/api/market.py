@@ -186,6 +186,20 @@ def get_history(
             ),
         ) from exc
 
+    # A current-provider history is not PIT-certified, but it must still be
+    # tied to the requested ticker. Reject mixed or malformed batches rather
+    # than displaying another company's bars under the selected instrument.
+    if not isinstance(history, list) or any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("symbol"), str)
+        or row["symbol"].strip().upper() != symbol.strip().upper()
+        for row in history
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene instrumentos incompatibles o datos inválidos.",
+        )
+
     providers = sorted({
         str(item.get("sourceProvider")).strip()
         for item in history
