@@ -258,7 +258,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         (attached if module.get("evidence") is not None else missing).append(name)
 
     return {
-        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
+        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or (newest_published is not None and now - newest_published > timedelta(days=7)) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
                    else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"]) else "incomplete_evidence"),
         "symbol": symbol,
         "auditClockUtc": now.isoformat(),
@@ -277,6 +277,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
                  "newestPublishedAt": newest_published.isoformat() if newest_published else None,
                  "feedStaleOver24Hours": now - news_retrieved > timedelta(hours=24),
                  "newestArticleAgeHours": round((now - newest_published).total_seconds() / 3600, 2) if newest_published else None,
+                 "newestArticleStaleOver7Days": now - newest_published > timedelta(days=7) if newest_published else None,
                  "issuerIdentityIndependentlyVerified": False},
         "dossier": {"pitAsOf": as_of.isoformat(),
                     "ageHours": round((now - as_of).total_seconds() / 3600, 2),
@@ -289,6 +290,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
                         "History was retrieved now; 365-day depth is not independently validated continuity or PIT.",
                         "Weekday gaps include exchange holidays and UTC session-date approximation.",
                         "Attached evidence is not independent PIT validation.",
+                        "News article recency uses a seven-day audit threshold, not a market-session or issuer-identity validation.",
                         "No Ollama execution, predictive accuracy or deployment is verified."],
         "completeResearchVerified": False,
     }
