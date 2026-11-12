@@ -196,6 +196,11 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
           ),
         if (quote != null) ...[
           Text(
+            quote.companyName.trim(),
+            key: const Key('market-quote-company-name'),
+            style: const TextStyle(color: AthenaColors.text),
+          ),
+          Text(
             '${quote.symbol} · ${quote.currentPrice.toStringAsFixed(2)} ${quote.currency ?? "(moneda no declarada)"}',
             key: const Key('market-quote-price'),
             style: const TextStyle(color: AthenaColors.text),
