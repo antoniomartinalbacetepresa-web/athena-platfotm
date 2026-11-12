@@ -102,6 +102,8 @@ void main() {
     expect(find.byKey(const Key('market-quote-error')), findsNothing);
     expect(find.byKey(const Key('market-quote-price')), findsOneWidget);
     expect(find.byKey(const Key('market-quote-license-boundary')), findsOneWidget);
+    expect(find.byKey(const Key('market-quote-history-boundary')), findsOneWidget);
+    expect(find.textContaining('Cobertura histórica de 365 sesiones'), findsOneWidget);
     expect(find.byKey(const Key('market-quote-age')), findsOneWidget);
     expect(find.textContaining('Antigüedad de observación:'), findsOneWidget);
     expect(find.textContaining('Antigüedad de observación: 2 minutos'), findsOneWidget);
