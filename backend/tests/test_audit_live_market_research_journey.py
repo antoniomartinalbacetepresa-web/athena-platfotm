@@ -310,3 +310,26 @@ def test_fresh_quote_observation_and_retrieval_are_distinct():
     report, _ = _audit(_responses())
     assert report["quote"]["observationStaleOver24Hours"] is False
     assert report["quote"]["observedAt"] == report["quote"]["retrievedAt"]
+
+
+def test_old_news_article_is_not_refreshed_by_a_new_feed_retrieval():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    article = responses["/api/v1/news/feed"]["items"][0]
+    article["publishedAt"] = (NOW - timedelta(days=9)).isoformat()
+    report, _ = _audit(responses)
+    assert report["news"]["feedStaleOver24Hours"] is False
+    assert report["news"]["newestArticleStaleOver7Days"] is True
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_recent_article_and_empty_feed_have_explicit_recency_states():
+    report, _ = _audit(_responses())
+    assert report["news"]["newestArticleStaleOver7Days"] is False
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"] = []
+    report, _ = _audit(responses)
+    assert report["news"]["newestArticleStaleOver7Days"] is None
+    assert report["news"]["newestArticleAgeHours"] is None
+    assert report["status"] == "incomplete_evidence"
