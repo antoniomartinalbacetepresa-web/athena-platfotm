@@ -46,6 +46,26 @@ The following entries expand coverage without claiming implementation, CI succes
 | PRODUCT-015 | Whole product | Portable secure deployment | Authorized Windows/Linux deployment verifies backups, restore, access isolation, secrets and operational incident handling | PRODUCT-004 | 3 | pending | Not verified | Authorized infrastructure |
 | PRODUCT-016 | Whole product | Future broker safety | Paper-only IBKR adapter validates disconnect/reconnect, reconciliation, idempotency and kill switch; live orders remain disabled pending separate explicit authorization | PRODUCT-005 | 3 | pending | Not verified | Broker contractual review and paper tests |
 
+
+## Approved competitive capabilities — pending verification (2026-11-12)
+
+These IDs preserve the twelve approved improvements. XTrend Lite overlap is not counted twice. Weight 3 = financial safety/critical integration, 2 = user-facing capability, 1 = supporting visualization. No acceptance score increases.
+
+| ID | Area | Module | Observable acceptance | Dependency | Weight | State | Evidence | Blocker |
+| --- | --- | --- | --- | --- | ---: | --- | --- | --- |
+| PRODUCT-017 | Whole product | Company dossier | Cross-screen licensed PIT dossier with prices, volume, fundamentals, risks and error states | CORE-001/002/003 | 3 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-018 | Whole product | Opportunity screener | Auditable price, RVOL, liquidity, valuation and risk filters | CORE-001/012 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-019 | Whole product | Alerts | Human-configured price, volume, breakout, 25-session low and earnings alerts without orders | CORE-004/008 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-020 | Whole product | Paper risk simulator | Costs, liquidity, exposure, drawdown and benchmark for hypothetical positions | CORE-003/012 | 3 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-021 | Whole product | Event calendar | Authorized deduplicated economic and corporate events with timezone and availableAt | CORE-008 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-022 | Whole product | Portfolio analytics | Reconciled concentration, sector, region, benchmark and volatility | PRODUCT-009 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-023 | Whole product | Peer comparator | Comparable valuation, debt, margins and dividend metrics with FX and period warnings | CORE-008 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-024 | Whole product | Strategy lab | Precommitted 25-session rebound and other hypotheses tested OOS with costs and failed firms | CORE-005/007/012 | 3 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-025 | Whole product | Sector heatmap | Licensed PIT sector heatmap and rotation with missing-data states | CORE-006 | 1 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-026 | Whole product | Official insiders | Official filing-linked insider activity with availableAt and no causal claims | CORE-008 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-027 | Whole product | Return and tax breakdown | Separate price, dividend, FX and cost return; verified Spanish tax only | PRODUCT-009 | 3 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+| PRODUCT-028 | Whole product | Contradiction detector | PIT-supported and opposing price, volume, earnings, liquidity and news evidence | CORE-003/014 | 2 | pending | Not verified | Licensed real-clock E2E and deployment evidence |
+
 ## Scope coverage gap (mandatory follow-up)
 
 The table is **not exhaustive**. Extend stable IDs without replacing these: ETFs/indices/commodities/FX/crypto, news filtering, alerts, journal, catalysts, factor risk, attribution, historical crises, portfolio accounting, onboarding, languages, personalization, community, ML, UX/accessibility, backups and all remaining modules in both source documents. Avoid double counting: CORE IDs measure analytical evidence; PRODUCT IDs measure user-visible integration and operational readiness. Do not publish numeric completion until a documented module-by-module coverage review reconciles every source heading and acceptance criterion.
