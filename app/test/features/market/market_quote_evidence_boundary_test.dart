@@ -86,7 +86,7 @@ void main() {
     _quote(marketCap: -1),
     _quote(marketCap: double.nan),
   ]) {
-    testWidgets('invalid supplementary quote evidence fails closed: ${invalid.change}, ${invalid.changePercentage}, ${invalid.marketCap}',
+    testWidgets('invalid supplementary quote evidence fails closed: ${invalid.companyName}, ${invalid.change}, ${invalid.changePercentage}, ${invalid.marketCap}',
         (tester) async {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
