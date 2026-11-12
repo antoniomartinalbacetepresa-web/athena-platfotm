@@ -12,14 +12,15 @@ class _QuoteRepository implements MarketRepository {
   Future<MarketQuote> getQuote(String symbol) async => quote;
 }
 
-MarketQuote _quote({bool? realtime, bool? pit}) {
+MarketQuote _quote({bool? realtime, bool? pit, double change = 0, double changePercentage = 0, double? marketCap}) {
   final now = DateTime.now().toUtc();
   return MarketQuote(
     symbol: 'MSFT',
     companyName: 'Microsoft',
     currentPrice: 200,
-    change: 0,
-    changePercentage: 0,
+    change: change,
+    changePercentage: changePercentage,
+    marketCap: marketCap,
     currency: 'USD',
     exchange: 'NASDAQ',
     updatedAt: now.subtract(const Duration(minutes: 1)),
@@ -76,4 +77,27 @@ void main() {
     expect(find.byKey(const Key('market-quote-license-boundary')),
         findsOneWidget);
   });
+
+  for (final invalid in <MarketQuote>[
+    _quote(change: double.nan),
+    _quote(changePercentage: double.infinity),
+    _quote(marketCap: -1),
+    _quote(marketCap: double.nan),
+  ]) {
+    testWidgets('invalid supplementary quote evidence fails closed: ${invalid.change}, ${invalid.changePercentage}, ${invalid.marketCap}',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: VerifiedMarketQuotePanel(
+            symbol: 'MSFT',
+            repository: _QuoteRepository(invalid),
+          ),
+        ),
+      ));
+      await tester.tap(find.byKey(const Key('market-quote-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-quote-price')), findsNothing);
+      expect(find.byKey(const Key('market-quote-error')), findsOneWidget);
+    });
+  }
 }
