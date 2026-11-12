@@ -206,6 +206,20 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             style: const TextStyle(color: AthenaColors.text),
           ),
           Text(
+            'Variación declarada: ${quote.change >= 0 ? '+' : ''}${quote.change.toStringAsFixed(2)} ${quote.currency} '
+            '(${quote.changePercentage >= 0 ? '+' : ''}${quote.changePercentage.toStringAsFixed(2)}%). '
+            'No acredita ajuste por dividendos ni splits.',
+            key: const Key('market-quote-change'),
+            style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+          ),
+          if (quote.marketCap != null)
+            Text(
+              'Capitalización declarada: ${quote.marketCap!.toStringAsFixed(0)} ${quote.currency}. '
+              'Sin verificación independiente.',
+              key: const Key('market-quote-market-cap'),
+              style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+            ),
+          Text(
             'Fuente declarada: ${quote.sourceProvider} · ${quote.exchange ?? "mercado no declarado"}',
             key: const Key('market-quote-source'),
             style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
