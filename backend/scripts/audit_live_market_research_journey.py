@@ -79,7 +79,7 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
         raise AuditBlocked("History observations missing")
     dates = set()
     providers = set()
-    missing_adjusted = split_events = dividend_events = 0
+    missing_adjusted = missing_volume = zero_volume_sessions = split_events = dividend_events = 0
     for item in rows:
         point = _object(item)
         if _text(point.get("symbol")).upper() != symbol:
@@ -87,6 +87,13 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
         close = point.get("close")
         if type(close) not in (int, float) or not math.isfinite(close) or close <= 0:
             raise AuditBlocked("History has invalid closing price")
+        volume = point.get("volume")
+        if volume is None:
+            missing_volume += 1
+        elif type(volume) is not int or volume < 0:
+            raise AuditBlocked("History has invalid traded volume")
+        elif volume == 0:
+            zero_volume_sessions += 1
         provider = _text(point.get("sourceProvider"))
         if not provider:
             raise AuditBlocked("History source missing")
@@ -154,6 +161,9 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
         "candidateWeekdayGapCount": len(gaps),
         "candidateWeekdayGapDatesFirst20": gaps[:20],
         "adjustedCloseMissingCount": missing_adjusted,
+        "volumeMissingCount": missing_volume,
+        "zeroVolumeSessionCount": zero_volume_sessions,
+        "volumeCoverageComplete": bool(rows) and missing_volume == 0,
         "dividendEventRows": dividend_events, "splitEventRows": split_events,
         "sourceProvidersDeclared": sorted(providers),
         "historicalPointInTimeEligible": False,
