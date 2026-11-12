@@ -278,6 +278,11 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
               fontSize: 11,
             ),
           ),
+          const Text(
+            'Cobertura histórica de 365 sesiones, brechas, ajustes por splits/dividendos y contraste independiente: NO ACREDITADOS por esta cotización. Consultar histórico autorizado antes de análisis retrospectivo.',
+            key: Key('market-quote-history-boundary'),
+            style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
+          ),
           if (quote.instrumentId == null)
             const Text(
               'IDENTIDAD CANÓNICA NO ACREDITADA: esta cotización solo comparte símbolo con el dosier. No hay vínculo de instrumento verificado.',
