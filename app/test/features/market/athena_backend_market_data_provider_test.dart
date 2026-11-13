@@ -227,6 +227,27 @@ void main() {
       provider.dispose();
     });
 
+    test('rechaza intervalo histórico invertido antes de llamar al backend', () async {
+      var requests = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          requests++;
+          return http.Response(jsonEncode({'data': []}), 200);
+        }),
+      );
+      await expectLater(
+        provider.getHistoricalData(
+          symbol: 'MSFT',
+          from: DateTime.utc(2026, 11, 13),
+          to: DateTime.utc(2026, 11, 12),
+        ),
+        throwsArgumentError,
+      );
+      expect(requests, 0);
+      provider.dispose();
+    });
+
     test('devuelve histórico vacío cuando no existen datos', () async {
       final client = MockClient(
         (_) async => http.Response(jsonEncode({'data': []}), 200),
