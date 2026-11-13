@@ -41,6 +41,13 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     _validateResponse(response);
 
     final decoded = _decodeObject(response.body);
+    // An explicit null means the provider has no quote. A missing field is
+    // a broken API contract and must not be presented as ordinary absence.
+    if (!decoded.containsKey('data')) {
+      throw const FormatException(
+        'El backend no proporcionó el campo data de la cotización.',
+      );
+    }
     final data = decoded['data'];
 
     if (data == null) {
