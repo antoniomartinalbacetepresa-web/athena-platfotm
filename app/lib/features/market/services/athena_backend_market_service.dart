@@ -16,7 +16,9 @@ class AthenaBackendMarketService implements MarketService {
       throw StateError('El backend no devolvió cotización para $symbol.');
     }
 
-    final currentPrice = point.close ?? point.adjustedClose;
+    // An adjusted historical close is not an observed quote price. Never
+    // substitute it silently: corporate-action adjustments can differ.
+    final currentPrice = point.close;
     if (currentPrice == null) {
       throw StateError(
         'La cotización de ${point.symbol} no contiene precio actual.',
