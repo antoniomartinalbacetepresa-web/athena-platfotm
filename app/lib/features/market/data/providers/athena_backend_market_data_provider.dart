@@ -59,10 +59,18 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       );
     }
 
-    return _mapPoint(
+    // A quote without a usable close is not a price. Do not render an
+    // apparently successful Market observation with no valuation anchor.
+    final quote = _mapPoint(
       data: Map<String, dynamic>.from(data),
       fallbackSymbol: normalizedSymbol,
     );
+    if (quote.close == null) {
+      throw const FormatException(
+        'La cotización no contiene un precio de cierre válido.',
+      );
+    }
+    return quote;
   }
 
   @override
