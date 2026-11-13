@@ -24,7 +24,14 @@ void main() {
       )),
     );
     final service = AthenaBackendMarketService(provider: provider);
-    await expectLater(service.getQuote('MSFT'), throwsStateError);
+    await expectLater(
+      service.getQuote('MSFT'),
+      throwsA(isA<FormatException>().having(
+        (error) => error.message,
+        'message',
+        contains('precio de cierre válido'),
+      )),
+    );
     provider.dispose();
   });
 
