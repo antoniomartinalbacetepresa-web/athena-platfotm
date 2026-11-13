@@ -122,6 +122,13 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
   }) {
     final timestamp = _parseTimestamp(data['timestamp']);
     final retrievedAt = _parseOptionalTimestamp(data['retrievedAt']);
+    // A price cannot be observed after the backend says it was retrieved.
+    // Reject inconsistent PIT evidence instead of showing a future quote.
+    if (retrievedAt != null && timestamp.isAfter(retrievedAt)) {
+      throw const FormatException(
+        'La observación de mercado es posterior a su recuperación.',
+      );
+    }
 
     final symbol = data['symbol']?.toString().trim().toUpperCase();
     // A missing or different provider symbol must never inherit the requested
