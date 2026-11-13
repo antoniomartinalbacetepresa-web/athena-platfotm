@@ -191,6 +191,24 @@ void main() {
       expect(() => provider.getQuote('AAPL'), throwsFormatException);
     });
 
+    test('rechaza cotización sin campo data, pero acepta ausencia explícita', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(
+            calls == 1 ? jsonEncode({'status': 'ok'}) : jsonEncode({'data': null}),
+            200,
+          );
+        }),
+      );
+      await expectLater(provider.getQuote('MSFT'), throwsFormatException);
+      expect(await provider.getQuote('MSFT'), isNull);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
     test('devuelve null cuando el backend no dispone de cotización', () async {
       final client = MockClient(
         (_) async => http.Response(jsonEncode({'data': null}), 200),
