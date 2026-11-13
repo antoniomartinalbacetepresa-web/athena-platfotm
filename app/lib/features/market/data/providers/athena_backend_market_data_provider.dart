@@ -281,7 +281,43 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     if (value == null) {
       throw const FormatException('El backend no proporcionó fecha/hora.');
     }
+    final raw = value.toString().trim();
+    if (!RegExp(r'(Z|[+-]\\d{2}:\\d{2})
+      throw FormatException(
+        'Fecha/hora inválida recibida del backend: $value',
+      );
+    }
+    return parsed;
+  }
+
+  DateTime? _parseOptionalTimestamp(dynamic value) {
+    if (value == null) {
+      return null;
+    }
     final parsed = DateTime.tryParse(value.toString());
+    if (parsed == null) {
+      throw FormatException(
+        'Fecha/hora de recuperación inválida recibida del backend: $value',
+      );
+    }
+    return parsed;
+  }
+
+  String _formatDate(DateTime value) {
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
+  }
+
+  void dispose() {
+    client.close();
+  }
+}
+, caseSensitive: false).hasMatch(raw)) {
+      throw const FormatException('La fecha/hora de mercado requiere zona horaria explícita.');
+    }
+    final parsed = DateTime.tryParse(raw);
     if (parsed == null) {
       throw FormatException(
         'Fecha/hora inválida recibida del backend: $value',
