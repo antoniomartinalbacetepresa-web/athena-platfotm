@@ -356,3 +356,28 @@ def test_invalid_historical_volume_fails_closed(invalid):
     responses["/api/v1/market/history"]["data"][0]["volume"] = invalid
     with pytest.raises(AuditBlocked, match="invalid traded volume"):
         _audit(responses)
+
+
+@pytest.mark.parametrize("session_date", ["not-a-date", "2026-11-03", "2026-11-02"])
+def test_fallback_quote_rejects_invalid_future_or_post_observation_session(session_date):
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"].update(
+        quoteMode="historical_daily_close_fallback",
+        priceSessionDate=session_date,
+        timestamp=(NOW - timedelta(days=1)).isoformat(),
+    )
+    with pytest.raises(AuditBlocked, match="session date"):
+        _audit(responses)
+
+
+def test_fallback_quote_accepts_valid_prior_session_without_claiming_realtime():
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"].update(
+        quoteMode="historical_daily_close_fallback",
+        priceSessionDate="2026-10-30",
+        timestamp=(NOW - timedelta(days=1)).isoformat(),
+    )
+    report, _ = _audit(responses)
+    assert report["quote"]["mode"] == "historical_daily_close_fallback"
+    assert report["quote"]["realTimeVerified"] is False
+    assert report["completeResearchVerified"] is False
