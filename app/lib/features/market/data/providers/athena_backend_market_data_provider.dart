@@ -100,18 +100,25 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     }
 
     final result = <MarketDataPoint>[];
+    // Duplicate sessions can inflate volume, returns and chart observations.
+    // Reject them instead of silently selecting an arbitrary provider value.
+    final observedInstants = <DateTime>{};
     for (final item in data) {
       if (item is! Map) {
         throw const FormatException(
           'El histórico contiene una observación que no es un objeto válido.',
         );
       }
-      result.add(
-        _mapPoint(
-          data: Map<String, dynamic>.from(item),
-          fallbackSymbol: normalizedSymbol,
-        ),
+      final point = _mapPoint(
+        data: Map<String, dynamic>.from(item),
+        fallbackSymbol: normalizedSymbol,
       );
+      if (!observedInstants.add(point.timestamp.toUtc())) {
+        throw const FormatException(
+          'El histórico contiene observaciones duplicadas para el mismo instante.',
+        );
+      }
+      result.add(point);
     }
     return result;
   }
