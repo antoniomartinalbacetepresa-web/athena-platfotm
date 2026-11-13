@@ -65,6 +65,12 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     DateTime? to,
   }) async {
     final normalizedSymbol = _normalizeSymbol(symbol);
+    // Reject inverted ranges before contacting the backend: otherwise a broken
+    // historical window could appear as a legitimate empty market history.
+    if (from != null && to != null &&
+        _formatDate(from).compareTo(_formatDate(to)) > 0) {
+      throw ArgumentError.value(to, 'to', 'La fecha final precede a la inicial.');
+    }
     final queryParameters = <String, String>{'symbol': normalizedSymbol};
 
     if (from != null) {
