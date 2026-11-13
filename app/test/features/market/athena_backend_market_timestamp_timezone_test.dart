@@ -40,6 +40,20 @@ void main() {
     );
   });
 
+  test('rejects impossible observation timezone offset', () async {
+    await expectLater(
+      fetchQuote(quote('2026-11-12T21:00:00+25:00', '2026-11-13T10:00:00Z')),
+      throwsFormatException,
+    );
+  });
+
+  test('rejects impossible retrieval timezone minutes', () async {
+    await expectLater(
+      fetchQuote(quote('2026-11-12T21:00:00Z', '2026-11-13T10:00:00+01:90')),
+      throwsFormatException,
+    );
+  });
+
   test('accepts offset-aware timestamps with consistent PIT order', () async {
     await fetchQuote(quote('2026-11-12T22:00:00+01:00', '2026-11-13T10:00:00Z'));
   });
