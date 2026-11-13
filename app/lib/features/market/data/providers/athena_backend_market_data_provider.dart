@@ -91,7 +91,12 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final data = decoded['data'];
 
     if (data == null) {
-      return const [];
+      // Missing history is not evidence of a legitimate empty trading window.
+      // Preserve the failure for Market/Radar rather than silently hiding a
+      // broken or incompatible backend contract as zero observations.
+      throw const FormatException(
+        'El backend no proporcionó el campo data del histórico de mercado.',
+      );
     }
     if (data is! List) {
       throw const FormatException(
