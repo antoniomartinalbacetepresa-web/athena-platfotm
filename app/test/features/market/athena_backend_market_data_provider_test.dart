@@ -206,6 +206,27 @@ void main() {
       expect(quote, isNull);
     });
 
+    test('rechaza histórico parcialmente malformado sin omitir observaciones', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [
+            {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-11T21:00:00Z',
+              'close': 500.0,
+            },
+            null,
+          ],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'MSFT'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
+
     test('devuelve histórico vacío cuando no existen datos', () async {
       final client = MockClient(
         (_) async => http.Response(jsonEncode({'data': []}), 200),
