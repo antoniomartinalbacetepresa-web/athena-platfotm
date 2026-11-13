@@ -198,8 +198,14 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
     mode = quote.get("quoteMode")
     if mode not in ("provider_fast_info", "historical_daily_close_fallback"):
         raise AuditBlocked("Unknown quote mode")
-    if mode == "historical_daily_close_fallback" and not _text(quote.get("priceSessionDate")):
-        raise AuditBlocked("Daily close has no session date")
+    if mode == "historical_daily_close_fallback":
+        session_text = _text(quote.get("priceSessionDate"))
+        try:
+            session_date = datetime.strptime(session_text, "%Y-%m-%d").date()
+        except ValueError:
+            raise AuditBlocked("Daily close has invalid session date") from None
+        if session_date > now.date() or session_date > observed.date():
+            raise AuditBlocked("Daily close session date exceeds observation or audit clock")
     if quote.get("realTimePriceVerified") is not False or quote.get("historicalPointInTimeEligible") is not False:
         raise AuditBlocked("Quote claims unsupported market authority")
     identity_status = quote.get("canonicalIdentityStatus", "unresolved")
