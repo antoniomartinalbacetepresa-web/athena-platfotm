@@ -282,7 +282,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       throw const FormatException('El backend no proporcionó fecha/hora.');
     }
     final raw = value.toString().trim();
-    if (!RegExp(r'(Z|[+-]\\d{2}:\\d{2})$', caseSensitive: false).hasMatch(raw)) {
+    if (!RegExp(r'(Z|[+-]\d{2}:\d{2})$', caseSensitive: false).hasMatch(raw)) {
       throw const FormatException(
         'La fecha/hora de mercado requiere zona horaria explícita.',
       );
