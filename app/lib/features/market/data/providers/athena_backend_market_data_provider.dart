@@ -300,13 +300,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     if (value == null) {
       return null;
     }
-    final parsed = DateTime.tryParse(value.toString());
-    if (parsed == null) {
-      throw FormatException(
-        'Fecha/hora de recuperación inválida recibida del backend: $value',
-      );
-    }
-    return parsed;
+    return _parseTimestamp(value);
   }
 
   String _formatDate(DateTime value) {
