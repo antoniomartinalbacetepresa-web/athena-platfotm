@@ -209,6 +209,28 @@ void main() {
       provider.dispose();
     });
 
+    test('rechaza cotización sin precio de cierre y recupera después', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode({
+            'data': {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-13T18:00:00Z',
+              if (calls == 2) 'close': 500.0,
+              'volume': 1200000,
+            },
+          }), 200);
+        }),
+      );
+      await expectLater(provider.getQuote('MSFT'), throwsFormatException);
+      expect((await provider.getQuote('MSFT'))?.close, 500.0);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
     test('devuelve null cuando el backend no dispone de cotización', () async {
       final client = MockClient(
         (_) async => http.Response(jsonEncode({'data': null}), 200),
