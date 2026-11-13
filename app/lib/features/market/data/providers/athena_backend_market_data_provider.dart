@@ -289,33 +289,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     }
     // DateTime.tryParse normalizes some out-of-range offsets. Reject those
     // before conversion so invalid provider clocks cannot enter PIT research.
-    final offset = RegExp(r'([+-])(\d{2}):(\d{2})    if (parsed == null) {
-      throw FormatException(
-        'Fecha/hora inválida recibida del backend: $value',
-      );
-    }
-    return parsed;
-  }
-
-  DateTime? _parseOptionalTimestamp(dynamic value) {
-    if (value == null) {
-      return null;
-    }
-    return _parseTimestamp(value);
-  }
-
-  String _formatDate(DateTime value) {
-    final year = value.year.toString().padLeft(4, '0');
-    final month = value.month.toString().padLeft(2, '0');
-    final day = value.day.toString().padLeft(2, '0');
-    return '$year-$month-$day';
-  }
-
-  void dispose() {
-    client.close();
-  }
-}
-).firstMatch(raw);
+    final offset = RegExp(r'([+-])(\d{2}):(\d{2})$').firstMatch(raw);
     if (offset != null) {
       final hours = int.parse(offset.group(2)!);
       final minutes = int.parse(offset.group(3)!);
