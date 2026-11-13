@@ -96,7 +96,9 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final result = <MarketDataPoint>[];
     for (final item in data) {
       if (item is! Map) {
-        continue;
+        throw const FormatException(
+          'El histórico contiene una observación que no es un objeto válido.',
+        );
       }
       result.add(
         _mapPoint(
