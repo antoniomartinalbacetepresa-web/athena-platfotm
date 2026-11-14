@@ -200,6 +200,22 @@ def get_history(
             detail="El histórico contiene instrumentos incompatibles o datos inválidos.",
         )
 
+    # Never expose missing, non-finite or non-positive closes to a chart.
+    # This gate does not certify PIT eligibility or licensed coverage.
+    from math import isfinite
+
+    if any(
+        isinstance(row.get("close"), bool)
+        or not isinstance(row.get("close"), (int, float))
+        or not isfinite(row["close"])
+        or row["close"] <= 0
+        for row in history
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene precios de cierre inválidos.",
+        )
+
     providers = sorted({
         str(item.get("sourceProvider")).strip()
         for item in history
