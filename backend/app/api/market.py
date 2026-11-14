@@ -216,6 +216,21 @@ def get_history(
             detail="El histórico contiene precios de cierre inválidos.",
         )
 
+    # A chart must not silently accept missing, naive or future observation
+    # timestamps as valid historical sessions. This is a safety check only,
+    # not a claim that the provider supplied licensed PIT observations.
+    for row in history:
+        try:
+            observed = datetime.fromisoformat(str(row["timestamp"]))
+            if (observed.tzinfo is None or observed.utcoffset() is None
+                    or observed > datetime.now(timezone.utc)):
+                raise ValueError("invalid observation time")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=502,
+                detail="El histórico contiene fechas de observación inválidas.",
+            ) from None
+
     providers = sorted({
         str(item.get("sourceProvider")).strip()
         for item in history
