@@ -216,6 +216,23 @@ def get_history(
             detail="El histórico contiene precios de cierre inválidos.",
         )
 
+    # A supplied volume is part of the chart evidence. Reject negative,
+    # non-finite and non-numeric values rather than displaying misleading
+    # liquidity. Missing volume remains explicitly missing, never zero-filled.
+    if any(
+        row.get("volume") is not None and (
+            isinstance(row["volume"], bool)
+            or not isinstance(row["volume"], (int, float))
+            or not isfinite(row["volume"])
+            or row["volume"] < 0
+        )
+        for row in history
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene volúmenes negociados inválidos.",
+        )
+
     # A chart must not silently accept missing, naive or future observation
     # timestamps as valid historical sessions. This is a safety check only,
     # not a claim that the provider supplied licensed PIT observations.
