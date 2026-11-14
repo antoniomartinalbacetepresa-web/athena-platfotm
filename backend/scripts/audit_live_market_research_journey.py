@@ -126,6 +126,8 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
     if not isinstance(declared, list) or declared != sorted(providers):
         raise AuditBlocked("History provider inventory mismatch")
     retrieval = provenance.get("retrievedAt")
+    if rows and retrieval is None:
+        raise AuditBlocked("History retrieval provenance missing")
     if retrieval is not None:
         _timestamp(retrieval, now=now)
         if any(item.get("retrievedAt") != retrieval for item in rows):
