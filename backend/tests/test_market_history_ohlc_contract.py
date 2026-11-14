@@ -80,3 +80,28 @@ def test_empty_history_has_explicit_empty_coverage():
     assert provenance["firstObservedAt"] is None
     assert provenance["lastObservedAt"] is None
     assert provenance["missingVolumeCount"] == 0
+
+
+@pytest.mark.parametrize("retrieved_at", [
+    "2026-01-04T23:59:59+00:00",
+    "2099-01-01T00:00:00+00:00",
+    "2026-01-06T00:00:00",
+    "not-a-date",
+])
+def test_history_rejects_impossible_retrieval_provenance(retrieved_at):
+    with patch("app.api.market.market_service.get_history", return_value=[
+        _bar(retrievedAt=retrieved_at)
+    ]):
+        with pytest.raises(HTTPException) as exc:
+            get_history(symbol="MSFT")
+    assert exc.value.status_code == 502
+
+
+def test_history_missing_retrieval_is_not_pit_verified():
+    with patch("app.api.market.market_service.get_history", return_value=[
+        _bar(retrievedAt=None)
+    ]):
+        provenance = get_history(symbol="MSFT")["provenance"]
+    assert provenance["retrievedAt"] is None
+    assert provenance["historicalPointInTimeEligible"] is False
+    assert provenance["licenceVerified"] is False
