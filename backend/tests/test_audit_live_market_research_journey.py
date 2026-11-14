@@ -381,3 +381,10 @@ def test_fallback_quote_accepts_valid_prior_session_without_claiming_realtime():
     assert report["quote"]["mode"] == "historical_daily_close_fallback"
     assert report["quote"]["realTimeVerified"] is False
     assert report["completeResearchVerified"] is False
+
+
+def test_populated_history_requires_batch_retrieval_provenance():
+    responses = _responses()
+    responses["/api/v1/market/history"]["provenance"]["retrievedAt"] = None
+    with pytest.raises(AuditBlocked, match="retrieval provenance missing"):
+        _audit(responses)
