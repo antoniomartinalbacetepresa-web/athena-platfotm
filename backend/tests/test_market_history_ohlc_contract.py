@@ -105,3 +105,22 @@ def test_history_missing_retrieval_is_not_pit_verified():
     assert provenance["retrievedAt"] is None
     assert provenance["historicalPointInTimeEligible"] is False
     assert provenance["licenceVerified"] is False
+
+
+def test_history_reports_observation_age_span_and_missing_retrieval():
+    earlier = _bar(timestamp="2026-01-02T00:00:00+00:00", retrievedAt=None)
+    later = _bar(timestamp="2026-01-05T00:00:00+00:00")
+    with patch("app.api.market.market_service.get_history", return_value=[later, earlier]):
+        provenance = get_history(symbol="MSFT")["provenance"]
+    assert provenance["observationSpanDays"] == 3
+    assert provenance["latestObservationAgeDays"] >= 0
+    assert provenance["missingRetrievalCount"] == 1
+    assert provenance["licenceVerified"] is False
+
+
+def test_empty_history_reports_unknown_age_and_span():
+    with patch("app.api.market.market_service.get_history", return_value=[]):
+        provenance = get_history(symbol="MSFT")["provenance"]
+    assert provenance["observationSpanDays"] is None
+    assert provenance["latestObservationAgeDays"] is None
+    assert provenance["missingRetrievalCount"] == 0
