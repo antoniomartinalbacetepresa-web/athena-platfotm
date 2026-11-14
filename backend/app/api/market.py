@@ -254,7 +254,11 @@ def get_history(
         datetime.fromisoformat(str(row["timestamp"])).astimezone(timezone.utc)
         for row in history
     ]
-    if len(observed_sessions) != len(set(observed_sessions)):
+    # The provider endpoint supplies daily bars, not intraday ticks. Different
+    # instants on the same UTC session are still conflicting daily evidence.
+    # This is a conservative UTC-day gate, not an exchange-calendar validation.
+    observed_days = [instant.date() for instant in observed_sessions]
+    if len(observed_days) != len(set(observed_days)):
         raise HTTPException(
             status_code=502,
             detail="El histórico contiene observaciones temporales duplicadas.",
