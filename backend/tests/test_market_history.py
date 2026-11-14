@@ -270,3 +270,22 @@ def test_market_history_rejects_invalid_observation_time(monkeypatch, bad_timest
     response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
     assert response.status_code == 502
     assert response.json()["detail"] == "El histórico contiene fechas de observación inválidas."
+
+
+@pytest.mark.parametrize("invalid_volume", [True, -1, float("nan"), float("inf"), "1000"])
+def test_market_history_rejects_invalid_traded_volume(monkeypatch, invalid_volume) -> None:
+    """Malformed liquidity evidence must not enter the Market chart."""
+    monkeypatch.setattr(
+        market.market_service,
+        "get_history",
+        lambda **_: [{
+            "symbol": "AAPL",
+            "timestamp": "2026-11-12T21:00:00+00:00",
+            "close": 120.5,
+            "volume": invalid_volume,
+            "sourceProvider": "yahoo",
+        }],
+    )
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "El histórico contiene volúmenes negociados inválidos."
