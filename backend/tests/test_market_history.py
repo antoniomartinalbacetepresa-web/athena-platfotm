@@ -66,7 +66,10 @@ def test_market_history_returns_normalized_data(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert isinstance(payload["provenance"]["latestObservationAgeDays"], int)
+    assert payload["provenance"]["latestObservationAgeDays"] >= 0
+    assert payload == {
         "data": [
             {
                 "symbol": "AAPL",
@@ -107,6 +110,12 @@ def test_market_history_returns_normalized_data(
             "historicalPointInTimeStatus": "not_verified",
             "historyStatus": "available_unverified",
             "observationCount": 2,
+            "firstObservedAt": "2026-08-27T04:00:00+00:00",
+            "lastObservedAt": "2026-08-28T04:00:00+00:00",
+            "missingVolumeCount": 0,
+            "missingRetrievalCount": 0,
+            "observationSpanDays": 1,
+            "latestObservationAgeDays": payload["provenance"]["latestObservationAgeDays"],
             "sourceProviders": ["yahoo"],
             "retrievedAt": "2026-10-05T21:40:00+00:00",
         },
@@ -147,6 +156,12 @@ def test_market_history_can_return_empty_list(
             "historicalPointInTimeStatus": "not_verified",
             "historyStatus": "empty",
             "observationCount": 0,
+            "firstObservedAt": None,
+            "lastObservedAt": None,
+            "missingVolumeCount": 0,
+            "missingRetrievalCount": 0,
+            "observationSpanDays": None,
+            "latestObservationAgeDays": None,
             "sourceProviders": [],
             "retrievedAt": None,
         },
