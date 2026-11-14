@@ -216,6 +216,29 @@ def get_history(
             detail="El histórico contiene precios de cierre inválidos.",
         )
 
+    # A daily candle with contradictory OHLC bounds is not usable chart
+    # evidence. Optional fields may be absent; never synthesize them.
+    for row in history:
+        prices = [row.get(key) for key in ("open", "high", "low", "adjustedClose")]
+        if any(value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not isfinite(value) or value <= 0
+        ) for value in prices):
+            raise HTTPException(status_code=502, detail="El histórico contiene precios OHLC inválidos.")
+        high, low = row.get("high"), row.get("low")
+        if high is not None and low is not None and high < low:
+            raise HTTPException(status_code=502, detail="El histórico contiene rangos OHLC contradictorios.")
+        if high is not None and any(
+            row.get(key) is not None and row[key] > high
+            for key in ("open", "close")
+        ):
+            raise HTTPException(status_code=502, detail="El histórico contiene rangos OHLC contradictorios.")
+        if low is not None and any(
+            row.get(key) is not None and row[key] < low
+            for key in ("open", "close")
+        ):
+            raise HTTPException(status_code=502, detail="El histórico contiene rangos OHLC contradictorios.")
+
     # A supplied volume is part of the chart evidence. Reject negative,
     # non-finite and non-numeric values rather than displaying misleading
     # liquidity. Missing volume remains explicitly missing, never zero-filled.
