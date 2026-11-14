@@ -292,6 +292,25 @@ def get_history(
         for item in history
         if isinstance(item, dict) and item.get("sourceProvider")
     })
+    # A retrieval timestamp cannot precede its observation or lie in the future.
+    # Unparseable/missing retrieval provenance is never silently promoted to PIT.
+    now_utc = datetime.now(timezone.utc)
+    for row, observed in zip(history, observed_sessions):
+        retrieved_raw = row.get("retrievedAt")
+        if retrieved_raw is None:
+            continue
+        try:
+            retrieved = datetime.fromisoformat(str(retrieved_raw))
+            if (retrieved.tzinfo is None or retrieved.utcoffset() is None
+                    or retrieved.astimezone(timezone.utc) < observed
+                    or retrieved.astimezone(timezone.utc) > now_utc):
+                raise ValueError("invalid retrieval timestamp")
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=502,
+                detail="El histórico contiene fechas de recuperación inválidas.",
+            ) from None
+
     retrieval_times = sorted({
         str(item.get("retrievedAt")).strip()
         for item in history
