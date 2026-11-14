@@ -398,6 +398,13 @@ def get_opportunity_pattern_readiness(
             detail="No se pudo consultar la cobertura del proveedor de mercado.",
         ) from exc
 
+    # A malformed provider response is an upstream failure, not empty coverage.
+    if not isinstance(history, list):
+        raise HTTPException(
+            status_code=502,
+            detail="La fuente devolvió un histórico con formato inválido.",
+        )
+
     # Only count records with a matching instrument identity and valid daily
     # close/volume; malformed or mismatched provider records fail closed.
     from datetime import timezone
@@ -405,6 +412,7 @@ def get_opportunity_pattern_readiness(
 
     normalized = symbol.strip().upper()
     valid_days: set[str] = set()
+    ambiguous_days: set[str] = set()
     eligible_lows: dict[str, float] = {}
     checked_at = datetime.now(timezone.utc)
     provider_names: set[str] = set()
@@ -434,7 +442,12 @@ def get_opportunity_pattern_readiness(
             invalid_rows += 1
             continue
         day = observed.astimezone(timezone.utc).date().isoformat()
-        if day in valid_days:
+        if day in valid_days or day in ambiguous_days:
+            # Conflicting same-session bars must not determine the 25-session
+            # reference by arbitrary provider ordering.
+            valid_days.discard(day)
+            eligible_lows.pop(day, None)
+            ambiguous_days.add(day)
             invalid_rows += 1
             continue
         valid_days.add(day)
