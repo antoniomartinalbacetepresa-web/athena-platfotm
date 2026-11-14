@@ -234,3 +234,21 @@ def test_market_history_rejects_untrusted_provider_identity(monkeypatch, bad_his
     response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
     assert response.status_code == 502
     assert "incompatibles" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("invalid_close", [None, True, float("nan"), float("inf"), 0, -1, "120.5"])
+def test_market_history_rejects_invalid_close_before_chart(monkeypatch, invalid_close) -> None:
+    """No invalid closing price may be presented as usable chart history."""
+    monkeypatch.setattr(
+        market.market_service,
+        "get_history",
+        lambda **_: [{
+            "symbol": "AAPL",
+            "timestamp": "2026-11-12T21:00:00+00:00",
+            "close": invalid_close,
+            "sourceProvider": "yahoo",
+        }],
+    )
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "El histórico contiene precios de cierre inválidos."
