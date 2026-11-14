@@ -252,3 +252,21 @@ def test_market_history_rejects_invalid_close_before_chart(monkeypatch, invalid_
     response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
     assert response.status_code == 502
     assert response.json()["detail"] == "El histórico contiene precios de cierre inválidos."
+
+
+@pytest.mark.parametrize("bad_timestamp", [None, "", "2026-11-12T21:00:00", "not-a-date", "2999-01-01T00:00:00+00:00"])
+def test_market_history_rejects_invalid_observation_time(monkeypatch, bad_timestamp) -> None:
+    """A malformed, timezone-naive or future bar cannot enter a chart."""
+    monkeypatch.setattr(
+        market.market_service,
+        "get_history",
+        lambda **_: [{
+            "symbol": "AAPL",
+            "timestamp": bad_timestamp,
+            "close": 120.5,
+            "sourceProvider": "yahoo",
+        }],
+    )
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "El histórico contiene fechas de observación inválidas."
