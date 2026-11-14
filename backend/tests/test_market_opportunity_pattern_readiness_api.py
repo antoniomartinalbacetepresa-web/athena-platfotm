@@ -48,7 +48,8 @@ def test_bad_identity_duplicate_and_invalid_rows_are_not_counted(monkeypatch):
              {**rows[0], "close": float("nan")}]
     monkeypatch.setattr(market.market_service, "get_history", lambda **kwargs: rows)
     result = market.get_opportunity_pattern_readiness("MSFT")["data"]
-    assert result["validDailySessions"] == 20
+    # The duplicated session is ambiguous: discard both copies, not just the later row.
+    assert result["validDailySessions"] == 19
     assert result["invalidOrDuplicateRows"] == 3
     assert result["minimum20SessionReferenceAvailable"] is False
     assert result["patternComputed"] is False
