@@ -59,3 +59,24 @@ def test_history_accepts_missing_optional_ohlc_without_fabrication():
     ]):
         response = get_history(symbol="MSFT")
     assert response["data"][0]["high"] is None
+
+
+def test_history_exposes_observation_bounds_and_missing_volume():
+    earlier = _bar(timestamp="2026-01-02T00:00:00+00:00", volume=None)
+    later = _bar(timestamp="2026-01-05T00:00:00+00:00")
+    with patch("app.api.market.market_service.get_history", return_value=[later, earlier]):
+        provenance = get_history(symbol="MSFT")["provenance"]
+    assert provenance["firstObservedAt"] == "2026-01-02T00:00:00+00:00"
+    assert provenance["lastObservedAt"] == "2026-01-05T00:00:00+00:00"
+    assert provenance["missingVolumeCount"] == 1
+    assert provenance["historicalPointInTimeEligible"] is False
+    assert provenance["licenceVerified"] is False
+
+
+def test_empty_history_has_explicit_empty_coverage():
+    with patch("app.api.market.market_service.get_history", return_value=[]):
+        provenance = get_history(symbol="MSFT")["provenance"]
+    assert provenance["historyStatus"] == "empty"
+    assert provenance["firstObservedAt"] is None
+    assert provenance["lastObservedAt"] is None
+    assert provenance["missingVolumeCount"] == 0
