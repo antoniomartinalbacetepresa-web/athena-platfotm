@@ -248,6 +248,18 @@ def get_history(
                 detail="El histórico contiene fechas de observación inválidas.",
             ) from None
 
+    # Duplicate observations make a historical chart ambiguous even when each
+    # row is individually well formed. Reject instead of silently drawing one.
+    observed_sessions = [
+        datetime.fromisoformat(str(row["timestamp"])).astimezone(timezone.utc)
+        for row in history
+    ]
+    if len(observed_sessions) != len(set(observed_sessions)):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene observaciones temporales duplicadas.",
+        )
+
     providers = sorted({
         str(item.get("sourceProvider")).strip()
         for item in history
