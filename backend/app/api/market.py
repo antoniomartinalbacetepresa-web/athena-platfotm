@@ -416,6 +416,13 @@ def get_opportunity_pattern_readiness(
             continue
         try:
             observed = datetime.fromisoformat(str(row["timestamp"]))
+            # Reject booleans and numeric strings: provider coercion would
+            # fabricate seemingly valid price/volume evidence for the Radar.
+            if (isinstance(row["close"], bool)
+                    or not isinstance(row["close"], (int, float))
+                    or isinstance(row["volume"], bool)
+                    or not isinstance(row["volume"], (int, float))):
+                raise ValueError("invalid numeric bar")
             close = float(row["close"])
             volume = float(row["volume"])
             if (observed.tzinfo is None or observed.utcoffset() is None
