@@ -332,6 +332,15 @@ def get_history(
             "firstObservedAt": min(observed_sessions).isoformat() if observed_sessions else None,
             "lastObservedAt": max(observed_sessions).isoformat() if observed_sessions else None,
             "missingVolumeCount": sum(row.get("volume") is None for row in history),
+            "missingRetrievalCount": sum(row.get("retrievedAt") is None for row in history),
+            "observationSpanDays": (
+                (max(observed_days) - min(observed_days)).days
+                if observed_days else None
+            ),
+            "latestObservationAgeDays": (
+                (now_utc.date() - max(observed_days)).days
+                if observed_days else None
+            ),
             "sourceProviders": providers,
             "retrievedAt": retrieval_times[0] if len(retrieval_times) == 1 else None,
         },
