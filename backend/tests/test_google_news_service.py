@@ -214,5 +214,8 @@ def test_google_news_deduplicates_same_article_with_changed_headline() -> None:
     )
     assert len(items) == 1
     assert items[0]["articleUrl"] == "https://news.google.com/rss/articles/same"
+    assert items[0]["title"] == "Updated headline"
+    assert items[0]["publisher"] == "Publisher B"
+    assert items[0]["publishedAt"] == "2026-09-03T13:00:00+00:00"
     assert items[0]["contentRights"] == "unverified"
     assert items[0]["researchUseAuthorized"] is False
