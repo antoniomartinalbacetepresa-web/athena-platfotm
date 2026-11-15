@@ -97,6 +97,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('historical observations without a named provider fail closed',
+      (tester) async {
+    final invalid = _report('MSFT')
+      ..['sourceProviders'] = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: MarketPatternReadinessPanel(
+        symbol: 'MSFT',
+        load: (_) async => invalid,
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-source')), findsNothing);
+    expect(find.byKey(const Key('market-pattern-readiness-coverage')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('negative ages and invalid timestamps never render as evidence',
       (tester) async {
     final malformed = _report('MSFT')
