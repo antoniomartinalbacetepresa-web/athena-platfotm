@@ -60,6 +60,7 @@ def usable_history_for_research(
     observations: list[PilotSourceEvidence], *, now: datetime,
     max_age_seconds: int, minimum_observations: int = 2,
     minimum_span_days: int | None = None,
+    maximum_gap_days: int | None = None,
 ) -> bool:
     """Reject partial or mixed-rights pilot histories before analytical use.
 
@@ -74,7 +75,11 @@ def usable_history_for_research(
         or (minimum_span_days is not None and (
             isinstance(minimum_span_days, bool)
             or not isinstance(minimum_span_days, int)
-            or minimum_span_days < 1))):
+            or minimum_span_days < 1))
+        or (maximum_gap_days is not None and (
+            isinstance(maximum_gap_days, bool)
+            or not isinstance(maximum_gap_days, int)
+            or maximum_gap_days < 1))):
         return False
     if not all(usable_for_research(item, now=now) for item in observations):
         return False
@@ -86,6 +91,11 @@ def usable_history_for_research(
         return False
     if any(left.observation_at >= right.observation_at
            for left, right in zip(observations, observations[1:])):
+        return False
+    if maximum_gap_days is not None and any(
+        (right.observation_at - left.observation_at).total_seconds() > maximum_gap_days * 86400
+        for left, right in zip(observations, observations[1:])
+    ):
         return False
     if minimum_span_days is not None and (
         observations[-1].observation_at - observations[0].observation_at
