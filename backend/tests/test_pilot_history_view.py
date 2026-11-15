@@ -209,3 +209,21 @@ def test_session_coverage_is_explicitly_scoped_to_unattested_calendar():
     assert complete["coverageRatio"] == 1.0
     assert complete["meets365DayDepth"] is False
     assert complete["history"]["operationallyVerified"] is False
+
+
+def test_missing_latest_expected_session_is_visible_separately_from_age():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06", "2026-11-07"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert result["status"] == "verified_metadata"
+    assert result["latestExpectedSession"] == "2026-11-07"
+    assert result["latestExpectedSessionMissing"] is True
+    assert result["latestAgeSeconds"] == 97200
+    assert result["coverageComplete"] is False
+
+    complete = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert complete["latestExpectedSessionMissing"] is False
