@@ -179,6 +179,25 @@ void main() {
   });
 
 
+  testWidgets('contradictory freshness age fails closed', (tester) async {
+    for (final claimedAge in [0, 9, 11]) {
+      final invalid = _report('MSFT')
+        ..['latestObservationAgeCalendarDays'] = claimedAge;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: MarketPatternReadinessPanel(
+          key: ValueKey(claimedAge),
+          symbol: 'MSFT',
+          load: (_) async => invalid,
+        )),
+      ));
+      await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+      expect(find.byKey(const Key('market-pattern-readiness-time')), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('rejects unqualified check time and future observations',
       (tester) async {
     for (final override in <Map<String, dynamic>>[
