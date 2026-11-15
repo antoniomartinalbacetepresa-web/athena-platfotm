@@ -216,6 +216,24 @@ void main() {
     }
   });
 
+  testWidgets('future-dated coverage checks are not presented as current evidence',
+      (tester) async {
+    final invalid = _report('MSFT')
+      ..['checkedAt'] = DateTime.now().toUtc()
+          .add(const Duration(days: 2)).toIso8601String();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: MarketPatternReadinessPanel(
+        symbol: 'MSFT',
+        load: (_) async => invalid,
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('market-pattern-readiness-request')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('market-pattern-readiness-error')), findsOneWidget);
+    expect(find.byKey(const Key('market-pattern-readiness-time')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('rejects unqualified check time and future observations',
       (tester) async {
     for (final override in <Map<String, dynamic>>[
