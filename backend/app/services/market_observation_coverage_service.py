@@ -85,6 +85,9 @@ class MarketObservationCoverageReport:
             "bySource": {
                 key: dict(value) for key, value in sorted(self.by_source.items())
             },
+            "providerLicenseVerified": False,
+            "corporateActionsVerified": False,
+            "independentReconciliationVerified": False,
             "productionCoverageClaimed": False,
             "warning": (
                 "historyDepthReady exige al 100% del universo elegible un mínimo operativo "
