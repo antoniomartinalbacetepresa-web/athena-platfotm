@@ -97,6 +97,7 @@ class _MarketPatternReadinessPanelState
           discarded is! int || discarded < 0 ||
           (age != null && (age is! int || age < 0)) ||
           providers is! List ||
+          (sessions > 0 && providers.isEmpty) ||
           providers.any((value) => value is! String || value.trim().isEmpty) ||
           checkedAt is! String ||
           DateTime.tryParse(checkedAt) == null ||
