@@ -188,3 +188,24 @@ def test_positive_volume_does_not_imply_executable_liquidity():
     )
     assert result["zeroVolumeSessions"] == []
     assert result["liquidityAssessmentAvailable"] is False
+
+
+def test_session_coverage_is_explicitly_scoped_to_unattested_calendar():
+    partial = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-05", "2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert partial["observedSessionCount"] == 1
+    assert partial["expectedSessionCount"] == 2
+    assert partial["missingSessionCount"] == 1
+    assert partial["coverageRatio"] == 0.5
+    assert partial["coverageBasis"] == "caller_supplied_expected_sessions_not_exchange_attested"
+    assert partial["meets365DayDepth"] is False
+
+    complete = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"],
+        now=NOW, rights_reviewed=True,
+    )
+    assert complete["coverageRatio"] == 1.0
+    assert complete["meets365DayDepth"] is False
+    assert complete["history"]["operationallyVerified"] is False
