@@ -80,6 +80,10 @@ def build_pilot_history_view(
         "coverageBasis": "caller_supplied_expected_sessions_not_exchange_attested",
         "coverageComplete": history["coverageComplete"],
         "missingSessions": history["missingSessions"],
+        # A valid older bar does not establish coverage of the latest expected
+        # exchange session. Keep this separate from timestamp freshness.
+        "latestExpectedSession": history["expectedLastSession"],
+        "latestExpectedSessionMissing": history["expectedLastSession"] in history["missingSessions"],
         "zeroVolumeSessions": zero_volume_sessions,
         "liquidityAssessmentAvailable": False,
         "researchOnly": True,
