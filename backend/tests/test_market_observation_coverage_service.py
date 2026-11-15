@@ -112,6 +112,12 @@ def test_history_depth_requires_full_eligible_universe_by_default(tmp_path: Path
     assert payload["providerLicenseVerified"] is False
     assert payload["corporateActionsVerified"] is False
     assert payload["independentReconciliationVerified"] is False
+    readiness = payload["operationalReadiness"]
+    assert readiness["ready"] is False
+    assert "provider_license_unverified" in readiness["blockingReasons"]
+    assert "corporate_actions_unverified" in readiness["blockingReasons"]
+    assert "independent_reconciliation_unverified" in readiness["blockingReasons"]
+    assert "current_365_day_coverage_unverified" in readiness["blockingReasons"]
 
 
 def test_history_depth_rejects_sparse_same_source_span(tmp_path: Path) -> None:
