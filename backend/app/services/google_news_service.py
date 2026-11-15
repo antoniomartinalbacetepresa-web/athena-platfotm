@@ -94,6 +94,7 @@ class GoogleNewsService:
 
         result: list[dict] = []
         seen: set[tuple[str, str]] = set()
+        seen_urls: set[str] = set()
         for node in root.findall("./channel/item"):
             title = cls._text(node.find("title"))
             article_url = cls._text(node.find("link"))
@@ -113,9 +114,10 @@ class GoogleNewsService:
                 continue
 
             key = (cls._dedupe_text(title), cls._dedupe_text(publisher))
-            if key in seen:
+            if key in seen or article_url in seen_urls:
                 continue
             seen.add(key)
+            seen_urls.add(article_url)
 
             result.append(
                 {
