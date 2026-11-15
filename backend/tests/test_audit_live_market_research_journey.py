@@ -388,3 +388,19 @@ def test_populated_history_requires_batch_retrieval_provenance():
     responses["/api/v1/market/history"]["provenance"]["retrievedAt"] = None
     with pytest.raises(AuditBlocked, match="retrieval provenance missing"):
         _audit(responses)
+
+
+def test_quote_and_history_provider_disagreement_is_visible_not_silently_reconciled():
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"]["sourceProvider"] = "independent_quote"
+    report, _ = _audit(responses)
+    assert report["history"]["quoteProviderIncludedInHistory"] is False
+    assert report["history"]["crossSourceContinuityVerified"] is False
+    assert report["completeResearchVerified"] is False
+    assert report["status"] == "incomplete_evidence"
+
+
+def test_matching_provider_does_not_prove_cross_source_continuity():
+    report, _ = _audit(_responses())
+    assert report["history"]["quoteProviderIncludedInHistory"] is True
+    assert report["history"]["crossSourceContinuityVerified"] is False
