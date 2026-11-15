@@ -71,6 +71,13 @@ def build_pilot_history_view(
         "status": "verified_metadata",
         "reason": "rights_attested_metadata_only_not_operationally_verified",
         "history": history,
+        # Completeness is relative to the caller-supplied calendar, not proof
+        # that the calendar or provider license has been independently audited.
+        "observedSessionCount": len(history["bars"]),
+        "expectedSessionCount": history["expectedSessionCount"],
+        "missingSessionCount": len(history["missingSessions"]),
+        "coverageRatio": len(history["bars"]) / history["expectedSessionCount"],
+        "coverageBasis": "caller_supplied_expected_sessions_not_exchange_attested",
         "coverageComplete": history["coverageComplete"],
         "missingSessions": history["missingSessions"],
         "zeroVolumeSessions": zero_volume_sessions,
