@@ -75,7 +75,7 @@ def get_news_feed(
 @router.get("/company-evidence")
 def get_company_news_radar_evidence(
     companyName: str = Query(min_length=1, max_length=100),
-    symbol: str = Query(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.\\-]*$"),
+    symbol: str = Query(min_length=1, max_length=20, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*$"),
     limit: int = Query(default=8, ge=1, le=25),
     asOf: datetime | None = Query(default=None),
 ) -> dict:
