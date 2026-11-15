@@ -133,6 +133,12 @@ class _MarketPatternReadinessPanelState
       if (last != null && last.isAfter(checkedUtcDate)) {
         throw const FormatException('Observation after coverage check');
       }
+      // The provider's age must agree with its own UTC check instant and
+      // last observation. Never display a contradictory freshness claim.
+      if (last != null &&
+          age != checkedUtcDate.difference(last).inDays) {
+        throw const FormatException('Inconsistent observation age');
+      }
       if ((sessions == 0 && (first != null || last != null || age != null)) ||
           (sessions > 0 && (first == null || last == null || age == null)) ||
           (first != null && last != null && first.isAfter(last))) {
