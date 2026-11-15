@@ -196,3 +196,23 @@ def test_google_news_rejects_untrusted_dtd_and_entities(xml: str) -> None:
         GoogleNewsService._parse_items(
             xml, retrieved_at=datetime.now(timezone.utc), limit=8
         )
+
+
+def test_google_news_deduplicates_same_article_with_changed_headline() -> None:
+    xml = """<rss><channel>
+      <item><title>Original headline</title>
+        <link>https://news.google.com/rss/articles/same</link>
+        <pubDate>Thu, 03 Sep 2026 12:00:00 GMT</pubDate>
+        <source>Publisher A</source></item>
+      <item><title>Updated headline</title>
+        <link>https://news.google.com/rss/articles/same</link>
+        <pubDate>Thu, 03 Sep 2026 13:00:00 GMT</pubDate>
+        <source>Publisher B</source></item>
+    </channel></rss>"""
+    items = GoogleNewsService._parse_items(
+        xml, retrieved_at=datetime(2026, 9, 4, tzinfo=timezone.utc), limit=8
+    )
+    assert len(items) == 1
+    assert items[0]["articleUrl"] == "https://news.google.com/rss/articles/same"
+    assert items[0]["contentRights"] == "unverified"
+    assert items[0]["researchUseAuthorized"] is False
