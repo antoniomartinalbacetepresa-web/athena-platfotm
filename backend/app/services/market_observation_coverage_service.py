@@ -89,6 +89,15 @@ class MarketObservationCoverageReport:
             "corporateActionsVerified": False,
             "independentReconciliationVerified": False,
             "productionCoverageClaimed": False,
+            "operationalReadiness": {
+                "ready": False,
+                "blockingReasons": [
+                    *([] if self.current_history_depth_ready else ["current_365_day_coverage_unverified"]),
+                    "provider_license_unverified",
+                    "corporate_actions_unverified",
+                    "independent_reconciliation_unverified",
+                ],
+            },
             "warning": (
                 "historyDepthReady exige al 100% del universo elegible un mínimo operativo "
                 "de 365 días dentro de un tramo continuo de una misma fuente por instrumento "
