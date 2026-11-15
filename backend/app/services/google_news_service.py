@@ -95,10 +95,16 @@ class GoogleNewsService:
         result: list[dict] = []
         seen: set[tuple[str, str]] = set()
         seen_urls: set[str] = set()
+        # Newer revisions of the same article URL take precedence regardless of RSS order.
+        candidates: list[tuple[datetime, ET.Element]] = []
         for node in root.findall("./channel/item"):
+            published_at = cls._parse_published_at(cls._text(node.find("pubDate")))
+            if published_at is not None and published_at <= retrieved_at:
+                candidates.append((published_at, node))
+        candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+        for published_at, node in candidates:
             title = cls._text(node.find("title"))
             article_url = cls._text(node.find("link"))
-            published_raw = cls._text(node.find("pubDate"))
             source_node = node.find("source")
             publisher = cls._text(source_node)
             publisher_url = (
@@ -108,9 +114,6 @@ class GoogleNewsService:
             )
 
             if not title or not publisher or not cls._is_https_url(article_url):
-                continue
-            published_at = cls._parse_published_at(published_raw)
-            if published_at is None or published_at > retrieved_at:
                 continue
 
             key = (cls._dedupe_text(title), cls._dedupe_text(publisher))
