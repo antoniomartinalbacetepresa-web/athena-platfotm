@@ -131,6 +131,11 @@ class _MarketPatternReadinessPanelState
       final checkedInstant = DateTime.parse(checkedAt).toUtc();
       final checkedUtcDate = DateTime.utc(
           checkedInstant.year, checkedInstant.month, checkedInstant.day);
+      // A future check timestamp cannot be evidence already observed by the user.
+      // Allow a small clock-skew margin, but never a future calendar day.
+      if (checkedInstant.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 5)))) {
+        throw const FormatException('Coverage check is in the future');
+      }
       if (last != null && last.isAfter(checkedUtcDate)) {
         throw const FormatException('Observation after coverage check');
       }
