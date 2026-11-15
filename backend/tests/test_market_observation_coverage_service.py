@@ -109,6 +109,9 @@ def test_history_depth_requires_full_eligible_universe_by_default(tmp_path: Path
     assert payload["sourceContinuityRequired"] is True
     assert payload["maximumSourceGapDays"] == 7
     assert payload["productionCoverageClaimed"] is False
+    assert payload["providerLicenseVerified"] is False
+    assert payload["corporateActionsVerified"] is False
+    assert payload["independentReconciliationVerified"] is False
 
 
 def test_history_depth_rejects_sparse_same_source_span(tmp_path: Path) -> None:
