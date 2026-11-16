@@ -15,8 +15,8 @@ def validate_pilot_observation(observation: dict, *, as_of: datetime) -> dict:
 
     The caller must separately establish the legal basis of the provider licence.
     """
-    if as_of.tzinfo is None:
-        raise UnverifiedMarketObservation("as_of must be timezone-aware")
+    if not isinstance(as_of, datetime) or as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise UnverifiedMarketObservation("as_of must be a timezone-aware datetime")
     required = (
         "instrument_id", "symbol", "source", "license_reference",
         "observation_at", "available_at", "retrieved_at", "currency",
