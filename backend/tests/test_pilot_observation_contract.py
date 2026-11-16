@@ -49,3 +49,9 @@ def test_rejects_unverified_or_invalid_evidence(field, value):
 def test_rejects_naive_clock():
     with pytest.raises(UnverifiedMarketObservation):
         validate_pilot_observation(valid_bar(), as_of=datetime(2026, 11, 9))
+
+
+@pytest.mark.parametrize("invalid_clock", [None, "2026-11-09T00:00:00Z", 0])
+def test_rejects_non_datetime_clock_without_crashing(invalid_clock):
+    with pytest.raises(UnverifiedMarketObservation, match="timezone-aware datetime"):
+        validate_pilot_observation(valid_bar(), as_of=invalid_clock)
