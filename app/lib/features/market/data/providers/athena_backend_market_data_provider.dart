@@ -143,6 +143,15 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
         );
       }
       final instant = point.timestamp.toUtc();
+      // A provider must not silently expand the requested historical window.
+      // Compare calendar dates as sent to the backend, not local instants.
+      final sessionDate = _formatDate(point.timestamp);
+      if ((from != null && sessionDate.compareTo(_formatDate(from)) < 0) ||
+          (to != null && sessionDate.compareTo(_formatDate(to)) > 0)) {
+        throw const FormatException(
+          'El histórico contiene una sesión fuera del intervalo solicitado.',
+        );
+      }
       if (previousInstant != null && instant.isBefore(previousInstant)) {
         throw const FormatException(
           'El histórico contiene observaciones fuera de orden cronológico.',
