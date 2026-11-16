@@ -301,6 +301,39 @@ void main() {
       provider.dispose();
     });
 
+    test('rechaza histórico desordenado y recupera orden cronológico', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          final bars = [
+            {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-12T21:00:00Z',
+              'close': 502.0,
+            },
+            {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-11T21:00:00Z',
+              'close': 500.0,
+            },
+          ];
+          return http.Response(jsonEncode({
+            'data': calls == 1 ? bars : bars.reversed.toList(),
+          }), 200);
+        }),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'MSFT'),
+        throwsFormatException,
+      );
+      final recovered = await provider.getHistoricalData(symbol: 'MSFT');
+      expect(recovered.map((point) => point.close).toList(), [500.0, 502.0]);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
     test('rechaza intervalo histórico invertido antes de llamar al backend', () async {
       var requests = 0;
       final provider = AthenaBackendMarketDataProvider(
