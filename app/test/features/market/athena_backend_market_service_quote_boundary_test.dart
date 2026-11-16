@@ -35,6 +35,25 @@ void main() {
     provider.dispose();
   });
 
+  test('nonpositive close cannot be presented as a valid quote', () async {
+    final provider = AthenaBackendMarketDataProvider(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async => http.Response(
+        jsonEncode({
+          'data': {
+            'symbol': 'MSFT',
+            'timestamp': '2026-11-12T21:00:00Z',
+            'close': 0.0,
+          },
+        }),
+        200,
+      )),
+    );
+    final service = AthenaBackendMarketService(provider: provider);
+    await expectLater(service.getQuote('MSFT'), throwsA(isA<Exception>()));
+    provider.dispose();
+  });
+
   test('unadjusted close remains the displayed price when both are present', () async {
     final provider = AthenaBackendMarketDataProvider(
       baseUrl: 'https://api.athena.test',
