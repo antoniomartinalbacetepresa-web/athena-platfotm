@@ -133,6 +133,14 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
         data: Map<String, dynamic>.from(item),
         fallbackSymbol: normalizedSymbol,
       );
+      // A bar without a close cannot support historical returns or Radar.
+      // Fail the whole window rather than silently treating a partial bar
+      // as a valid price observation.
+      if (point.close == null) {
+        throw const FormatException(
+          'El histórico contiene una observación sin cierre válido.',
+        );
+      }
       if (!observedInstants.add(point.timestamp.toUtc())) {
         throw const FormatException(
           'El histórico contiene observaciones duplicadas para el mismo instante.',
