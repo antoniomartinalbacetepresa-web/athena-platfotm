@@ -24,7 +24,7 @@ def validate_pilot_observation(observation: dict, *, as_of: datetime) -> dict:
     )
     if not isinstance(observation, dict) or any(
         not isinstance(observation.get(key), str) or not observation[key].strip()
-        for key in required if key not in ("close", "volume")
+        for key in required if key not in ("close", "volume", "currency")
     ) or any(key not in observation for key in required):
         raise UnverifiedMarketObservation("missing mandatory provenance or financial fields")
     currency = observation["currency"]
