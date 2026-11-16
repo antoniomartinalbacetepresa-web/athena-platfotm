@@ -42,9 +42,20 @@ void main() {
 
   test('accepts distinct historical instants without modifying order', () async {
     final history = await fetchHistory([
-      bar('2026-11-12T21:00:00Z'),
       bar('2026-11-11T21:00:00Z'),
+      bar('2026-11-12T21:00:00Z'),
     ]);
     expect(history, hasLength(2));
+    expect(history.first.timestamp.isBefore(history.last.timestamp), isTrue);
+  });
+
+  test('rejects descending historical instants instead of silently sorting', () async {
+    await expectLater(
+      fetchHistory([
+        bar('2026-11-12T21:00:00Z'),
+        bar('2026-11-11T21:00:00Z'),
+      ]),
+      throwsFormatException,
+    );
   });
 }
