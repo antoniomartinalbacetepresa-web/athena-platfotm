@@ -19,7 +19,7 @@ class AthenaBackendMarketService implements MarketService {
     // An adjusted historical close is not an observed quote price. Never
     // substitute it silently: corporate-action adjustments can differ.
     final currentPrice = point.close;
-    if (currentPrice == null) {
+    if (currentPrice == null || !currentPrice.isFinite || currentPrice <= 0) {
       throw StateError(
         'La cotización de ${point.symbol} no contiene precio actual.',
       );
