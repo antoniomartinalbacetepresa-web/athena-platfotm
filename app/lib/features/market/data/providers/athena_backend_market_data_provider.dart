@@ -198,6 +198,16 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     }
     final sourceProvider = _optionalText(data['sourceProvider']);
     final currency = _optionalText(data['currency'])?.toUpperCase();
+    // Reject malformed verification flags: coercing them to null would hide a
+    // broken backend contract and weaken the provenance boundary.
+    for (final field in const [
+      'realTimePriceVerified',
+      'historicalPointInTimeEligible',
+    ]) {
+      if (data[field] != null && data[field] is! bool) {
+        throw FormatException('Indicador de verificación inválido: $field.');
+      }
+    }
     final identityStatus = data['canonicalIdentityStatus'];
     final instrumentId = data['instrumentId'];
     if (identityStatus != null &&
