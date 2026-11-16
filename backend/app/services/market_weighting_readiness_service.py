@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -35,7 +36,11 @@ class MarketWeightingReadinessReport:
 
     @property
     def all_regions_represented(self) -> bool:
-        return all(float(self.region_market_cap_usd.get(region, 0.0)) > 0 for region in ("america", "europe", "asia"))
+        return all(
+            math.isfinite(float(self.region_market_cap_usd.get(region, 0.0)))
+            and float(self.region_market_cap_usd.get(region, 0.0)) > 0
+            for region in ("america", "europe", "asia")
+        )
 
     @property
     def external_validation_evidence_complete(self) -> bool:
@@ -49,9 +54,9 @@ class MarketWeightingReadinessReport:
     @property
     def blockers(self) -> tuple[str, ...]:
         blockers: list[str] = []
-        if self.identity_market_cap_coverage < self.minimum_identity_market_cap_coverage:
+        if not math.isfinite(self.identity_market_cap_coverage) or self.identity_market_cap_coverage < self.minimum_identity_market_cap_coverage:
             blockers.append("insufficient_canonical_identity_market_cap_coverage")
-        if self.domicile_market_cap_coverage < self.minimum_domicile_market_cap_coverage:
+        if not math.isfinite(self.domicile_market_cap_coverage) or self.domicile_market_cap_coverage < self.minimum_domicile_market_cap_coverage:
             blockers.append("insufficient_issuer_domicile_market_cap_coverage")
         if self.canonical_issuer_count < self.minimum_canonical_issuer_count:
             blockers.append("insufficient_canonical_issuer_count")
