@@ -55,3 +55,11 @@ def test_rejects_naive_clock():
 def test_rejects_non_datetime_clock_without_crashing(invalid_clock):
     with pytest.raises(UnverifiedMarketObservation, match="timezone-aware datetime"):
         validate_pilot_observation(valid_bar(), as_of=invalid_clock)
+
+
+@pytest.mark.parametrize("currency", ["", "US", "usd", "USDD", "U$D", "EURO", " U S ", "€UR"])
+def test_rejects_invalid_currency_contract(currency):
+    bar = valid_bar()
+    bar["currency"] = currency
+    with pytest.raises(UnverifiedMarketObservation, match="currency"):
+        validate_pilot_observation(bar, as_of=AS_OF)
