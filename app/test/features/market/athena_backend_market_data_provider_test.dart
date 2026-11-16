@@ -334,6 +334,38 @@ void main() {
       provider.dispose();
     });
 
+    test('rechaza sesiones fuera del rango solicitado y permite recuperar', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode({
+            'data': [
+              {
+                'symbol': 'MSFT',
+                'timestamp': calls == 1
+                    ? '2026-11-10T21:00:00Z'
+                    : '2026-11-11T21:00:00Z',
+                'close': 500.0,
+              },
+            ],
+          }), 200);
+        }),
+      );
+      Future<List<dynamic>> load() async => provider.getHistoricalData(
+        symbol: 'MSFT',
+        from: DateTime.utc(2026, 11, 11),
+        to: DateTime.utc(2026, 11, 12),
+      );
+      await expectLater(load(), throwsFormatException);
+      final recovered = await load();
+      expect(recovered.length, 1);
+      expect(recovered.single.close, 500.0);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
     test('rechaza intervalo histórico invertido antes de llamar al backend', () async {
       var requests = 0;
       final provider = AthenaBackendMarketDataProvider(
