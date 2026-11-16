@@ -267,6 +267,40 @@ void main() {
       provider.dispose();
     });
 
+    test('rechaza histórico con cierre ausente y permite recuperación', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode({
+            'data': [
+              {
+                'symbol': 'MSFT',
+                'timestamp': '2026-11-11T21:00:00Z',
+                'close': 500.0,
+              },
+              {
+                'symbol': 'MSFT',
+                'timestamp': '2026-11-12T21:00:00Z',
+                if (calls == 2) 'close': 502.0,
+                'volume': 1200000,
+              },
+            ],
+          }), 200);
+        }),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'MSFT'),
+        throwsFormatException,
+      );
+      final recovered = await provider.getHistoricalData(symbol: 'MSFT');
+      expect(recovered.length, 2);
+      expect(recovered.last.close, 502.0);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
     test('rechaza intervalo histórico invertido antes de llamar al backend', () async {
       var requests = 0;
       final provider = AthenaBackendMarketDataProvider(
