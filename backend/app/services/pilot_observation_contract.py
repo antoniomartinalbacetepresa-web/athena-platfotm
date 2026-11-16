@@ -28,7 +28,8 @@ def validate_pilot_observation(observation: dict, *, as_of: datetime) -> dict:
     ) or any(key not in observation for key in required):
         raise UnverifiedMarketObservation("missing mandatory provenance or financial fields")
     currency = observation["currency"]
-    if len(currency) != 3 or not currency.isascii() or not currency.isalpha() or currency != currency.upper():
+    if (not isinstance(currency, str) or len(currency) != 3 or
+            not currency.isascii() or not currency.isalpha() or currency != currency.upper()):
         raise UnverifiedMarketObservation("currency must be an uppercase ISO 4217 code")
     timestamps = {}
     for key in ("observation_at", "available_at", "retrieved_at"):
