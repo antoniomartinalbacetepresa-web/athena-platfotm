@@ -123,6 +123,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     // Duplicate sessions can inflate volume, returns and chart observations.
     // Reject them instead of silently selecting an arbitrary provider value.
     final observedInstants = <DateTime>{};
+    final observedSessions = <String>{};
     DateTime? previousInstant;
     for (final item in data) {
       if (item is! Map) {
@@ -158,6 +159,11 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
         );
       }
       previousInstant = instant;
+      if (!observedSessions.add(sessionDate)) {
+        throw const FormatException(
+          'El histórico contiene varias barras para una misma sesión.',
+        );
+      }
       if (!observedInstants.add(instant)) {
         throw const FormatException(
           'El histórico contiene observaciones duplicadas para el mismo instante.',
