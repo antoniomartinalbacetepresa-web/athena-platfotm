@@ -57,7 +57,7 @@ def test_rejects_non_datetime_clock_without_crashing(invalid_clock):
         validate_pilot_observation(valid_bar(), as_of=invalid_clock)
 
 
-@pytest.mark.parametrize("currency", ["", "US", "usd", "USDD", "U$D", "EURO", " U S ", "€UR"])
+@pytest.mark.parametrize("currency", ["", "US", "usd", "USDD", "U$D", "EURO", " U S ", "€UR", None, 123, ["USD"], {"code": "USD"}])
 def test_rejects_invalid_currency_contract(currency):
     bar = valid_bar()
     bar["currency"] = currency
