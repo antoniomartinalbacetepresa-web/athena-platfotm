@@ -169,3 +169,18 @@ def test_weighting_readiness_configuration_is_conservative_and_validated() -> No
 
     with pytest.raises(ValueError, match="minimum_canonical_issuer_count"):
         MarketWeightingReadinessService(minimum_canonical_issuer_count=0)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_weighting_readiness_rejects_nonfinite_coverage_and_region_caps(invalid: float) -> None:
+    identity = replace(_report(), identity_market_cap_coverage=invalid)
+    assert not identity.ready
+    assert "insufficient_canonical_identity_market_cap_coverage" in identity.blockers
+
+    domicile = replace(_report(), domicile_market_cap_coverage=invalid)
+    assert not domicile.ready
+    assert "insufficient_issuer_domicile_market_cap_coverage" in domicile.blockers
+
+    regions = replace(_report(), region_market_cap_usd={"america": invalid, "europe": 20.0, "asia": 20.0})
+    assert not regions.ready
+    assert "required_regions_not_represented" in regions.blockers
