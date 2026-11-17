@@ -57,4 +57,16 @@ void main() {
   test('accepts offset-aware timestamps with consistent PIT order', () async {
     await fetchQuote(quote('2026-11-12T22:00:00+01:00', '2026-11-13T10:00:00Z'));
   });
+  test('rejects invalid session date metadata', () async {
+    final invalid = quote('2026-11-12T21:00:00Z', '2026-11-13T10:00:00Z');
+    invalid['priceSessionDate'] = '2026-02-30';
+    await expectLater(fetchQuote(invalid), throwsFormatException);
+  });
+
+  test('accepts valid session date metadata', () async {
+    final valid = quote('2026-11-12T21:00:00Z', '2026-11-13T10:00:00Z');
+    valid['priceSessionDate'] = '2026-11-12';
+    await fetchQuote(valid);
+  });
+
 }
