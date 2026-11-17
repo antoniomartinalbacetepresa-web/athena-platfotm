@@ -14,7 +14,7 @@ void main() {
     'close': 400.0,
   };
 
-  Future<void> fetch(List<Map<String, Object>> bars) async {
+  Future<void> fetch(List<Map<String, Object>> bars, {DateTime? from}) async {
     final provider = AthenaBackendMarketDataProvider(
       baseUrl: 'https://api.athena.test',
       client: MockClient((_) async => http.Response(jsonEncode({'data': bars}), 200)),
@@ -22,7 +22,7 @@ void main() {
     try {
       await provider.getHistoricalData(
         symbol: 'MSFT',
-        from: DateTime.utc(2026, 11, 12),
+        from: from ?? DateTime.utc(2026, 11, 12),
         to: DateTime.utc(2026, 11, 12),
       );
     } finally {
@@ -56,7 +56,7 @@ void main() {
       fetch([
         bar('2026-11-12T19:00:00Z', '2026-11-12'),
         bar('2026-11-12T20:00:00Z', '2026-11-11'),
-      ]),
+      ], from: DateTime.utc(2026, 11, 11)),
       throwsFormatException,
     );
   });
