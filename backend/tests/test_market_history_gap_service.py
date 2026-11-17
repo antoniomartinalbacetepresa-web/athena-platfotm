@@ -109,6 +109,13 @@ def test_history_gap_report_paginates_without_changing_totals(tmp_path: Path) ->
     assert report.total_blocking_count == 3
     assert len(report.items) == 1
     assert report.items[0].symbol == "BBB"
+    payload = report.to_api_dict()
+    assert payload["returnedCount"] == 1
+    assert payload["hasMore"] is True
+    assert payload["nextOffset"] == 2
+    last_page = MarketHistoryGapService(database=database).get_report(limit=2, offset=2).to_api_dict()
+    assert last_page["hasMore"] is False
+    assert last_page["nextOffset"] is None
 
 
 def test_history_gap_report_rejects_invalid_pagination_and_thresholds(tmp_path: Path) -> None:
@@ -509,4 +516,14 @@ def test_gap_diagnostics_reject_noninteger_minimum_history_days(
         MarketHistoryGapService(
             database=AthenaDatabase(source), minimum_history_days=invalid_days
         )
+    assert not source.exists()
+
+
+@pytest.mark.parametrize("pagination", [{"limit": True}, {"limit": 1.5}, {"limit": "1"}, {"offset": True}, {"offset": 1.5}, {"offset": "1"}])
+def test_history_gap_rejects_noninteger_pagination_before_database_access(
+    tmp_path: Path, pagination: dict[str, object],
+) -> None:
+    source = tmp_path / "must-not-create.db"
+    with pytest.raises(ValueError, match="limit|offset"):
+        MarketHistoryGapService(database=AthenaDatabase(source)).get_report(**pagination)
     assert not source.exists()
