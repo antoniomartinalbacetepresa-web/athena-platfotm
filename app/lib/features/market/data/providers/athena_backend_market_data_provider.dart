@@ -125,6 +125,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     final observedInstants = <DateTime>{};
     final observedSessions = <String>{};
     DateTime? previousInstant;
+    String? previousSession;
     for (final item in data) {
       if (item is! Map) {
         throw const FormatException(
@@ -153,6 +154,15 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
           'El histórico contiene una sesión fuera del intervalo solicitado.',
         );
       }
+      // Session dates must also be monotonic: timezone offsets and delayed
+      // publication can make UTC instants increase while trading sessions
+      // regress, corrupting chart and return ordering.
+      if (previousSession != null && sessionDate.compareTo(previousSession) < 0) {
+        throw const FormatException(
+          'El histórico contiene sesiones fuera de orden cronológico.',
+        );
+      }
+      previousSession = sessionDate;
       if (previousInstant != null && instant.isBefore(previousInstant)) {
         throw const FormatException(
           'El histórico contiene observaciones fuera de orden cronológico.',
