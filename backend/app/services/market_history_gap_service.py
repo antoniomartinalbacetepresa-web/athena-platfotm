@@ -57,6 +57,9 @@ class MarketHistoryGapReport:
             "maximumSourceGapDays": self.maximum_source_gap_days,
             "limit": self.limit,
             "offset": self.offset,
+            "returnedCount": len(self.items),
+            "hasMore": self.offset + len(self.items) < self.total_blocking_count,
+            "nextOffset": (self.offset + len(self.items)) if self.offset + len(self.items) < self.total_blocking_count else None,
             "asOf": self.as_of,
             "pointInTimeCutoffApplied": self.as_of is not None,
             "positiveFiniteCloseRequired": True,
@@ -114,9 +117,9 @@ class MarketHistoryGapService:
         offset: int = 0,
         as_of: datetime | None = None,
     ) -> MarketHistoryGapReport:
-        if limit <= 0 or limit > self.MAX_LIMIT:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0 or limit > self.MAX_LIMIT:
             raise ValueError(f"limit debe estar entre 1 y {self.MAX_LIMIT}.")
-        if offset < 0:
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("offset no puede ser negativo.")
 
         cutoff = as_of if as_of is not None else datetime.now(timezone.utc)
