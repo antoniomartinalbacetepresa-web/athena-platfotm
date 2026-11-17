@@ -88,7 +88,11 @@ class MarketHistoryGapService:
         minimum_history_days: int = DEFAULT_MINIMUM_HISTORY_DAYS,
         maximum_source_gap_days: int = DEFAULT_MAXIMUM_SOURCE_GAP_DAYS,
     ) -> None:
-        if minimum_history_days < self.DEFAULT_MINIMUM_HISTORY_DAYS:
+        if (
+            isinstance(minimum_history_days, bool)
+            or not isinstance(minimum_history_days, int)
+            or minimum_history_days < self.DEFAULT_MINIMUM_HISTORY_DAYS
+        ):
             raise ValueError(
                 "minimum_history_days no puede ser inferior a "
                 f"{self.DEFAULT_MINIMUM_HISTORY_DAYS}."
