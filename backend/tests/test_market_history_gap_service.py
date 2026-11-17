@@ -497,3 +497,16 @@ def test_future_pit_cutoff_fails_before_opening_database(
     with pytest.raises(ValueError, match="fecha futura"):
         service.get_report(as_of=datetime.now(timezone.utc) + timedelta(days=1))
     assert not source.exists()
+
+
+@pytest.mark.parametrize("invalid_days", [True, False, 365.5, "365", None])
+def test_gap_diagnostics_reject_noninteger_minimum_history_days(
+    tmp_path: Path, invalid_days: object,
+) -> None:
+    """Invalid policy values must not be silently rounded or treated as day counts."""
+    source = tmp_path / "must-not-create.db"
+    with pytest.raises(ValueError, match="minimum_history_days"):
+        MarketHistoryGapService(
+            database=AthenaDatabase(source), minimum_history_days=invalid_days
+        )
+    assert not source.exists()
