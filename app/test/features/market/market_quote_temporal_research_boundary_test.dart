@@ -20,8 +20,8 @@ void main() {
         body: VerifiedMarketQuotePanel(
           symbol: 'MSFT',
           repository: _Repository(quote),
-          onQuoteValidated: (_, __) => validated = true,
-          onOpenResearch: (_, __) {},
+          onQuoteValidated: (_, _) => validated = true,
+          onOpenResearch: (_, _) {},
         ),
       ),
     ));
