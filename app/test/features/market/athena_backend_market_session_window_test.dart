@@ -50,4 +50,32 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('rejects reversed sessions even when UTC instants increase', () async {
+    await expectLater(
+      fetch([
+        bar('2026-11-12T19:00:00Z', '2026-11-12'),
+        bar('2026-11-12T20:00:00Z', '2026-11-11'),
+      ]),
+      throwsFormatException,
+    );
+  });
+
+  test('accepts increasing sessions with increasing UTC instants', () async {
+    final provider = AthenaBackendMarketDataProvider(
+      baseUrl: 'https://api.athena.test',
+      client: MockClient((_) async => http.Response(jsonEncode({
+        'data': [
+          bar('2026-11-11T20:00:00Z', '2026-11-11'),
+          bar('2026-11-12T20:00:00Z', '2026-11-12'),
+        ],
+      }), 200)),
+    );
+    try {
+      final points = await provider.getHistoricalData(symbol: 'MSFT');
+      expect(points, hasLength(2));
+    } finally {
+      provider.dispose();
+    }
+  });
 }
