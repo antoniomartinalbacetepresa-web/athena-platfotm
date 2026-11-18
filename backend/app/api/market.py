@@ -348,13 +348,15 @@ def get_history(
 
 
 @router.post("/history/pilot-validation")
-def validate_pilot_history_api(payload: dict = Body(...)) -> dict[str, object]:
+def validate_pilot_history_api(payload: object = Body(...)) -> dict[str, object]:
     """Validate supplied historical bars for a read-only research preview.
 
     This endpoint does not retrieve data, verify provider contracts, or persist
     research. Client-supplied usageAuthorized is never independent proof.
     Limit input size to avoid expensive untrusted historical submissions.
     """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Pilot history must be a JSON object")
     observations = payload.get("observations")
     sessions = payload.get("expectedSessions")
     if (not isinstance(observations, list) or not isinstance(sessions, list)
