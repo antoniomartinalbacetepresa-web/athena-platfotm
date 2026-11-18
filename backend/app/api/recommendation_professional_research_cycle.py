@@ -387,12 +387,20 @@ def post_research_cycle_from_live_company_news(
     # The PIT cutoff is AFTER the real retrieval, not an invented past timestamp.
     # A caller cannot inject a historical cutoff to relabel live RSS as PIT replay.
     cutoff = datetime.now(timezone.utc)
-    retrieved_at = _aware_utc(
-        datetime.fromisoformat(str(news["retrievedAt"]).replace("Z", "+00:00")),
-        "retrievedAt",
-    )
-    if retrieved_at > cutoff or any(item.available_at > cutoff for item in evidence):
-        raise HTTPException(status_code=502, detail="El feed contiene evidencia posterior al reloj real.")
+    try:
+        retrieved_at = _aware_utc(
+            datetime.fromisoformat(str(news["retrievedAt"]).replace("Z", "+00:00")),
+            "retrievedAt",
+        )
+    except (KeyError, TypeError, ValueError, HTTPException) as exc:
+        raise HTTPException(status_code=502, detail="El feed no tiene retrievedAt UTC verificable.") from exc
+    # Retrieval is the earliest defensible availability bound for a live RSS
+    # observation. A later evidence timestamp would invent knowledge not yet
+    # available when the server claims to have fetched the feed.
+    if (retrieved_at > cutoff
+            or any(item.available_at > cutoff or item.available_at > retrieved_at
+                   for item in evidence)):
+        raise HTTPException(status_code=502, detail="El feed contiene evidencia posterior a su recuperación o al reloj real.")
 
     cycle_request = ProfessionalResearchCycleRequest(
         instrumentId=request.instrumentId,
