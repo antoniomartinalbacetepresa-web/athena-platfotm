@@ -30,7 +30,8 @@ def validate_daily_price_evidence(record: dict, *, as_of: datetime) -> dict:
         raise EvidenceRejected("data usage not authorized")
     for key in ("instrumentId", "symbol", "source", "licenseId",
                 "currency", "adjustmentPolicy"):
-        if (not isinstance(record[key], str) or not record[key].strip()\n            or any(ord(char) < 32 or ord(char) == 127 for char in record[key])):
+        if (not isinstance(record[key], str) or not record[key].strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in record[key])):
             raise EvidenceRejected(f"invalid {key}")
     if record["adjustmentPolicy"] not in ("raw", "split_adjusted", "total_return"):
         raise EvidenceRejected("unknown corporate action adjustment")
