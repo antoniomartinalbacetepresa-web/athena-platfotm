@@ -103,3 +103,9 @@ def test_future_pit_evidence_is_explicitly_unavailable_without_price_leak():
     ):
         view = build_pilot_market_view({**BAR, **change}, now=NOW, rights_reviewed=True)
         assert view == {"status": "unavailable", "reason": "pit_unavailable", "observation": None}
+
+
+def test_malformed_currency_never_reaches_market_view():
+    for currency in ("usd", "US", "USDD", "U$D", "ÉUR", "123", "USD "):
+        view = build_pilot_market_view({**BAR, "currency": currency}, now=NOW, rights_reviewed=True)
+        assert view == {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
