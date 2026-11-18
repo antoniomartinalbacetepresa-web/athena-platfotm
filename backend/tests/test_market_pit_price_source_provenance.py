@@ -85,3 +85,34 @@ def test_pit_price_rejects_unparseable_or_timezone_naive_source_timestamp(tmp_pa
     rows = select_pit_prices(**params)
     assert len(rows) == 1
     assert rows[0]["source_timestamp"] is None
+
+
+def test_pit_price_basis_distinguishes_adjusted_close(tmp_path):
+    """Expose whether the persisted price is raw or adjusted, without guessing."""
+    database = AthenaDatabase(tmp_path / "pit-basis.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "TEST", "companyName": "Test", "country": "United States",
+        "regionKey": "america", "exchangeShortName": "TEST",
+        "instrumentType": "common_stock",
+    })
+    observed = datetime(2025, 1, 2, 21, tzinfo=timezone.utc)
+    retrieved = observed + timedelta(hours=1)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 101.0}],
+        source_provider="yahoo", retrieved_at=retrieved,
+    )
+    params = dict(database=database, instrument_id=instrument_id,
+                  at_or_after=observed, not_after=observed,
+                  knowledge_cutoff=retrieved)
+    assert select_pit_prices(**params)[0]["price_basis"] == "close"
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET close = NULL, adjusted_close = 99.0 WHERE instrument_id = ?",
+            (instrument_id,),
+        )
+    selected = select_pit_prices(**params)
+    assert len(selected) == 1
+    assert selected[0]["price"] == 99.0
+    assert selected[0]["price_basis"] == "adjusted_close"
