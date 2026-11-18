@@ -112,3 +112,17 @@ def test_daily_coverage_empty_is_not_operational_evidence():
     result = summarize_daily_price_coverage([], as_of=NOW)
     assert result["depthSatisfied"] is False
     assert result["sessionCoverageVerified"] is False
+
+
+def test_daily_coverage_exposes_age_without_claiming_freshness():
+    item = sample()
+    summary = summarize_daily_price_coverage([item], as_of=NOW)
+    assert summary["latestObservationAgeDays"] == 2
+    assert summary["freshnessVerified"] is False
+    assert summary["depthSatisfied"] is False
+
+
+def test_empty_coverage_has_no_observation_age():
+    summary = summarize_daily_price_coverage([], as_of=NOW)
+    assert summary["latestObservationAgeDays"] is None
+    assert summary["freshnessVerified"] is False
