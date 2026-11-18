@@ -76,7 +76,8 @@ def summarize_daily_price_coverage(records: list[dict], *, as_of: datetime,
     if not validated:
         return {"observations": 0, "calendarSpanDays": 0,
                 "requiredDays": required_days, "depthSatisfied": False,
-                "calendarGaps": [], "sessionCoverageVerified": False}
+                "calendarGaps": [], "sessionCoverageVerified": False,
+                "latestObservationAgeDays": None, "freshnessVerified": False}
     identities = {(item["instrumentId"], item["source"], item["currency"],
                    item["adjustmentPolicy"], item["licenseId"]) for item in validated}
     if len(identities) != 1:
@@ -92,4 +93,6 @@ def summarize_daily_price_coverage(records: list[dict], *, as_of: datetime,
     span = (dates[-1] - dates[0]).days + 1
     return {"observations": len(ordered), "calendarSpanDays": span,
             "requiredDays": required_days, "depthSatisfied": span >= required_days,
-            "calendarGaps": gaps, "sessionCoverageVerified": False}
+            "calendarGaps": gaps, "sessionCoverageVerified": False,
+            "latestObservationAgeDays": (as_of.astimezone(timezone.utc).date() - dates[-1]).days,
+            "freshnessVerified": False}
