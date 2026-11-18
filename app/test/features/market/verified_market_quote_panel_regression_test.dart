@@ -36,6 +36,14 @@ MarketQuote _quote(String symbol, {String companyName = 'Example Company', Strin
 }
 
 void main() {
+  test('Currency validation rejects newline and whitespace suffixes', () {
+    expect(hasDeclaredQuoteCurrency('USD'), isTrue);
+    expect(hasDeclaredQuoteCurrency('USD\\n'), isFalse);
+    expect(hasDeclaredQuoteCurrency('USD '), isFalse);
+    expect(hasDeclaredQuoteCurrency('usd'), isFalse);
+    expect(hasDeclaredQuoteCurrency(null), isFalse);
+  });
+
   testWidgets('Late quote from prior symbol cannot replace the selected instrument',
       (tester) async {
     final stale = Completer<MarketQuote>();
