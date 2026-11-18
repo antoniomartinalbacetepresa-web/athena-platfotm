@@ -27,6 +27,9 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
     required = ("instrumentId", "source", "licenseRef", "observationAt", "availableAt", "retrievedAt", "currency")
     if any(not isinstance(record.get(k), str) or not record[k].strip() for k in required):
         raise EvidenceRejected("missing provenance, identity, license reference or currency")
+    currency = record["currency"]
+    if len(currency) != 3 or not currency.isascii() or not currency.isalpha() or currency != currency.upper():
+        raise EvidenceRejected("currency must be an uppercase ISO 4217 code")
     if record.get("usageAuthorized") is not True:
         raise EvidenceRejected("provider usage rights not confirmed")
     timestamps = {}
