@@ -49,3 +49,39 @@ def test_pit_price_exposes_only_validated_source_timestamp(tmp_path):
             ((retrieved + timedelta(microseconds=1)).isoformat(), instrument_id),
         )
     assert select_pit_prices(**params) == ()
+
+
+def test_pit_price_rejects_unparseable_or_timezone_naive_source_timestamp(tmp_path):
+    """Legacy imports must not silently turn malformed publication time into PIT evidence."""
+    database = AthenaDatabase(tmp_path / "pit-malformed-source.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "TEST", "companyName": "Test", "country": "United States",
+        "regionKey": "america", "exchangeShortName": "TEST",
+        "instrumentType": "common_stock",
+    })
+    observed = datetime(2025, 1, 2, 21, tzinfo=timezone.utc)
+    retrieved = observed + timedelta(hours=1)
+    MarketObservationRepository(database=database).save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 101.0}],
+        source_provider="yahoo", retrieved_at=retrieved,
+    )
+    params = dict(database=database, instrument_id=instrument_id,
+                  at_or_after=observed, not_after=observed,
+                  knowledge_cutoff=retrieved)
+    for malformed in ("not-a-date", "2025-01-02T21:00:00", ""):
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE market_observations SET source_timestamp = ? WHERE instrument_id = ?",
+                (malformed, instrument_id),
+            )
+        assert select_pit_prices(**params) == ()
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_timestamp = NULL WHERE instrument_id = ?",
+            (instrument_id,),
+        )
+    rows = select_pit_prices(**params)
+    assert len(rows) == 1
+    assert rows[0]["source_timestamp"] is None
