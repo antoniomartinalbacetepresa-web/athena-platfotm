@@ -56,7 +56,8 @@ def select_pit_prices(
     # rounding error. Exact boundaries are checked again in Python.
     sql = """
         SELECT id, observed_at, retrieved_at, source_timestamp, source_provider,
-               COALESCE(close, adjusted_close) AS price
+               COALESCE(close, adjusted_close) AS price,
+               CASE WHEN close IS NOT NULL THEN 'close' ELSE 'adjusted_close' END AS price_basis
         FROM market_observations
         WHERE instrument_id = ?
           AND julianday(observed_at) >= julianday(?) - (1.0 / 86400.0)
@@ -104,6 +105,7 @@ def select_pit_prices(
                 # provenance displays; absence is explicit, never inferred.
                 "source_timestamp": source_instant.isoformat() if source_timestamp is not None else None,
                 "price": price,
+                "price_basis": str(row["price_basis"]),
             }
             key = (retrieved, int(row["id"]))
             previous = latest.get(observed)
