@@ -100,6 +100,9 @@ def select_pit_prices(
                 "observation_id": int(row["id"]),
                 "observed_at": str(row["observed_at"]),
                 "retrieved_at": str(row["retrieved_at"]),
+                # Local PIT availability is the verified retrieval instant, not
+                # an invented upstream publication/market availability time.
+                "available_at": retrieved.isoformat(),
                 "source_provider": provider,
                 # Preserve the validated publication timestamp for downstream
                 # provenance displays; absence is explicit, never inferred.
