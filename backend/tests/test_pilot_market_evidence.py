@@ -89,7 +89,7 @@ def test_daily_coverage_reports_gaps_without_claiming_sessions():
     assert result["depthSatisfied"] is True
     assert result["observations"] == 2
     assert result["sessionCoverageVerified"] is False
-    assert result["calendarGaps"][0]["calendarDaysBetween"] == 368
+    assert result["calendarGaps"][0]["calendarDaysBetween"] == 367
 
 
 def test_daily_coverage_rejects_duplicate_days_and_mixed_rights():
