@@ -405,3 +405,35 @@ def test_private_cycle_discovery_fails_closed_on_tampered_package(tmp_path, monk
     assert response.status_code == 500
     assert response.json()["detail"] == "No se pudo verificar el índice privado de investigaciones."
     assert "items" not in response.json()
+
+
+@pytest.mark.parametrize("corruption", ["missing", "naive", "before_evidence"])
+def test_live_news_bridge_rejects_unverifiable_retrieval_clock_without_storage(
+    tmp_path, monkeypatch, corruption,
+):
+    fake = FakeNewsService()
+    client = _setup(tmp_path, monkeypatch, fake)
+    original = cycle_api.live_news_evidence_service.build_company_evidence
+
+    def corrupted_evidence(**kwargs):
+        result = original(**kwargs)
+        if corruption == "missing":
+            result.pop("retrievedAt")
+        elif corruption == "naive":
+            result["retrievedAt"] = "2026-11-18T08:00:00"
+        else:
+            result["retrievedAt"] = "2000-01-01T00:00:00+00:00"
+        return result
+
+    monkeypatch.setattr(
+        cycle_api.live_news_evidence_service,
+        "build_company_evidence",
+        corrupted_evidence,
+    )
+    response = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert response.status_code == 502
+    with pytest.raises(ValueError, match="No existe un journal"):
+        cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
