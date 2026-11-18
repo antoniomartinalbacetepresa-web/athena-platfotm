@@ -398,8 +398,18 @@ def post_research_cycle_from_live_company_news(
     # observation. A later evidence timestamp would invent knowledge not yet
     # available when the server claims to have fetched the feed.
     if (retrieved_at > cutoff
-            or any(item.available_at > cutoff or item.available_at > retrieved_at
-                   for item in evidence)):
+            or any(
+                not isinstance(item, AthenaRadarEvidenceInput)
+                or item.available_at.tzinfo is None
+                or item.available_at.utcoffset() is None
+                or item.available_at > cutoff
+                or item.available_at > retrieved_at
+                or item.published_at is None
+                or item.published_at.tzinfo is None
+                or item.published_at.utcoffset() is None
+                or item.published_at > item.available_at
+                for item in evidence
+            )):
         raise HTTPException(status_code=502, detail="El feed contiene evidencia posterior a su recuperación o al reloj real.")
 
     cycle_request = ProfessionalResearchCycleRequest(
