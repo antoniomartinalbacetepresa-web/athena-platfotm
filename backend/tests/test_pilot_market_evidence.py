@@ -54,3 +54,27 @@ def test_rejects_naive_clock_and_unverified_licensing():
     del item["usageAuthorized"]
     with pytest.raises(EvidenceRejected):
         validate_daily_price_evidence(item, as_of=NOW)
+
+def test_accepts_authorized_daily_share_volume():
+    item = sample()
+    item.update(volume=123456, volumeUnit="shares")
+    assert validate_daily_price_evidence(item, as_of=NOW)["volume"] == 123456
+
+
+@pytest.mark.parametrize("volume,unit", [
+    (-1, "shares"), (True, "shares"), (1.5, "shares"),
+    ("123", "shares"), (None, "shares"), (100, "contracts"),
+    (100, None),
+])
+def test_rejects_invalid_or_unattributed_volume(volume, unit):
+    item = sample()
+    item.update(volume=volume, volumeUnit=unit)
+    with pytest.raises(EvidenceRejected):
+        validate_daily_price_evidence(item, as_of=NOW)
+
+
+def test_rejects_volume_unit_without_volume():
+    item = sample()
+    item["volumeUnit"] = "shares"
+    with pytest.raises(EvidenceRejected):
+        validate_daily_price_evidence(item, as_of=NOW)
