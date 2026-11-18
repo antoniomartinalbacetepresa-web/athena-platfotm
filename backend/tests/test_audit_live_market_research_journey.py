@@ -404,3 +404,13 @@ def test_matching_provider_does_not_prove_cross_source_continuity():
     report, _ = _audit(_responses())
     assert report["history"]["quoteProviderIncludedInHistory"] is True
     assert report["history"]["crossSourceContinuityVerified"] is False
+
+
+def test_quote_provider_absent_from_history_does_not_claim_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/quote"]["data"]["sourceProvider"] = "independent_quote_provider"
+    report, _ = _audit(responses)
+    assert report["history"]["quoteProviderIncludedInHistory"] is False
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
