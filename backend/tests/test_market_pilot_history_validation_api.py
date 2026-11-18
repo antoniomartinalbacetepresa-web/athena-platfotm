@@ -56,3 +56,17 @@ def test_pilot_history_api_bounds_untrusted_input():
     payload["expectedSessions"] = ["2026-01-01"] * 401
     response = client.post("/api/v1/market/history/pilot-validation", json=payload)
     assert response.status_code == 422
+
+
+def test_pilot_history_api_rejects_non_object_json_without_server_error():
+    for payload in ([], None, "not-an-object", 7):
+        response = client.post("/api/v1/market/history/pilot-validation", json=payload)
+        assert response.status_code == 422
+
+
+def test_pilot_history_api_rejects_non_array_sessions_and_observations():
+    for field in ("expectedSessions", "observations"):
+        payload = _payload()
+        payload[field] = {"unexpected": "object"}
+        response = client.post("/api/v1/market/history/pilot-validation", json=payload)
+        assert response.status_code == 422
