@@ -22,10 +22,10 @@ def _responses():
         }},
         "/api/v1/market/history": {
             "data": [
-                {"symbol": "AAPL", "close": 101.0, "adjustedClose": 101.0,
+                {"symbol": "AAPL", "close": 101.0, "adjustedClose": 101.0, "volume": 1000000,
                  "sourceProvider": "yahoo", "timestamp": (NOW - timedelta(days=380)).isoformat(),
                  "retrievedAt": stamp, "dividend": None, "stockSplit": None},
-                {"symbol": "AAPL", "close": 123.0, "adjustedClose": 122.0,
+                {"symbol": "AAPL", "close": 123.0, "adjustedClose": 122.0, "volume": 1100000,
                  "sourceProvider": "yahoo", "timestamp": (NOW - timedelta(days=3)).isoformat(),
                  "retrievedAt": stamp, "dividend": 0.2, "stockSplit": None},
             ],
@@ -82,6 +82,18 @@ def test_audit_reports_gaps_without_fabricating_evidence():
     assert report["completeResearchVerified"] is False
     assert report["quote"]["realTimeVerified"] is False
     assert report["news"]["issuerIdentityIndependentlyVerified"] is False
+
+
+def test_missing_volume_blocks_partial_research_even_with_fresh_price_news_and_modules():
+    responses = _responses()
+    modules = responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]
+    modules["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/history"]["data"][0].pop("volume")
+    report, _ = _audit(responses)
+    assert report["history"]["volumeMissingCount"] == 1
+    assert report["history"]["volumeCoverageComplete"] is False
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
 
 
 def test_partial_evidence_is_not_claimed_as_full_coverage():
