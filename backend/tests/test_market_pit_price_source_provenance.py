@@ -34,6 +34,10 @@ def test_pit_price_exposes_only_validated_source_timestamp(tmp_path):
     assert len(rows) == 1
     assert rows[0]["source_timestamp"] == (observed + timedelta(minutes=5)).isoformat()
     assert rows[0]["source_provider"] == "yahoo"
+    # Retrieval is the conservative local availability boundary; provider
+    # publication time is separate and cannot be used to backdate knowledge.
+    assert rows[0]["available_at"] == retrieved.isoformat()
+    assert rows[0]["available_at"] != rows[0]["source_timestamp"]
     # Selection exposes the exact persisted row, not a synthetic identifier.
     with database.connect() as connection:
         stored_id = connection.execute(
