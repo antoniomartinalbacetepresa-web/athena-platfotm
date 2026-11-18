@@ -349,10 +349,12 @@ def test_recent_article_and_empty_feed_have_explicit_recency_states():
 
 def test_history_volume_coverage_is_explicit_not_inferred_from_prices():
     responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    for row in rows:
+        row.pop("volume")
     report, _ = _audit(responses)
     assert report["history"]["volumeMissingCount"] == 2
     assert report["history"]["volumeCoverageComplete"] is False
-    rows = responses["/api/v1/market/history"]["data"]
     rows[0]["volume"] = 1000000
     rows[1]["volume"] = 0
     report, _ = _audit(responses)
