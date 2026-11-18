@@ -78,7 +78,7 @@ def summarize_daily_price_coverage(records: list[dict], *, as_of: datetime,
                 "requiredDays": required_days, "depthSatisfied": False,
                 "calendarGaps": [], "sessionCoverageVerified": False,
                 "latestObservationAgeDays": None, "freshnessVerified": False}
-    identities = {(item["instrumentId"], item["source"], item["currency"],
+    identities = {(item["instrumentId"], item["symbol"], item["source"], item["currency"],
                    item["adjustmentPolicy"], item["licenseId"]) for item in validated}
     if len(identities) != 1:
         raise EvidenceRejected("mixed instrument or provenance in price series")
