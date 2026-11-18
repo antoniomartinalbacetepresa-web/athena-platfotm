@@ -437,3 +437,35 @@ def test_live_news_bridge_rejects_unverifiable_retrieval_clock_without_storage(
     assert response.status_code == 502
     with pytest.raises(ValueError, match="No existe un journal"):
         cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
+
+
+@pytest.mark.parametrize("corruption", ["future_publication", "missing_publication"])
+def test_live_news_bridge_rejects_corrupted_publication_chronology_before_storage(
+    tmp_path, monkeypatch, corruption,
+):
+    from dataclasses import replace
+
+    fake = FakeNewsService()
+    client = _setup(tmp_path, monkeypatch, fake)
+    original = cycle_api.live_news_evidence_service.build_company_evidence
+
+    def corrupted_evidence(**kwargs):
+        result = original(**kwargs)
+        evidence = result["evidence"][0]
+        published = (
+            evidence.available_at + timedelta(minutes=1)
+            if corruption == "future_publication" else None
+        )
+        result["evidence"] = (replace(evidence, published_at=published),)
+        return result
+
+    monkeypatch.setattr(
+        cycle_api.live_news_evidence_service, "build_company_evidence", corrupted_evidence,
+    )
+    response = client.post(
+        "/api/v1/recommendations/professional-research/research-cycle/from-live-company-news",
+        json=_payload(),
+    )
+    assert response.status_code == 502
+    with pytest.raises(ValueError, match="No existe un journal"):
+        cycle_api.journal_repository.verify_lineage(journal_id="journal-live-acme")
