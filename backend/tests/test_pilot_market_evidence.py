@@ -126,3 +126,13 @@ def test_empty_coverage_has_no_observation_age():
     summary = summarize_daily_price_coverage([], as_of=NOW)
     assert summary["latestObservationAgeDays"] is None
     assert summary["freshnessVerified"] is False
+
+
+def test_daily_coverage_rejects_symbol_mismatch_for_same_instrument_id():
+    """A ticker mismatch must not silently merge daily series."""
+    first, second = sample(), sample()
+    first["observationAt"] = NOW - timedelta(days=3)
+    first["availableAt"] = NOW - timedelta(days=2)
+    second["symbol"] = "OTHER"
+    with pytest.raises(EvidenceRejected, match="mixed"):
+        summarize_daily_price_coverage([first, second], as_of=NOW)
