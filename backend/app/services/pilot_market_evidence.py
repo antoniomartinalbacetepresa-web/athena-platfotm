@@ -52,4 +52,12 @@ def validate_daily_price_evidence(record: dict, *, as_of: datetime) -> dict:
         raise EvidenceRejected("invalid close") from None
     if not close.is_finite() or close <= 0:
         raise EvidenceRejected("close must be positive and finite")
+    if "volume" in record:
+        volume = record["volume"]
+        if isinstance(volume, bool) or not isinstance(volume, int) or volume < 0:
+            raise EvidenceRejected("volume must be a nonnegative integer")
+        if record.get("volumeUnit") != "shares":
+            raise EvidenceRejected("volumeUnit must be shares")
+    elif "volumeUnit" in record:
+        raise EvidenceRejected("volumeUnit without volume")
     return dict(record)
