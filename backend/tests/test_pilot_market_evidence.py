@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.services.pilot_market_evidence import EvidenceRejected, validate_daily_price_evidence
+from app.services.pilot_market_evidence import EvidenceRejected, validate_daily_price_evidence, summarize_daily_price_coverage
 
 
 NOW = datetime(2026, 11, 9, tzinfo=timezone.utc)
@@ -78,3 +78,37 @@ def test_rejects_volume_unit_without_volume():
     item["volumeUnit"] = "shares"
     with pytest.raises(EvidenceRejected):
         validate_daily_price_evidence(item, as_of=NOW)
+
+
+def test_daily_coverage_reports_gaps_without_claiming_sessions():
+    first = sample()
+    first["observationAt"] = NOW - timedelta(days=370)
+    first["availableAt"] = NOW - timedelta(days=369)
+    second = sample()
+    result = summarize_daily_price_coverage([second, first], as_of=NOW)
+    assert result["depthSatisfied"] is True
+    assert result["observations"] == 2
+    assert result["sessionCoverageVerified"] is False
+    assert result["calendarGaps"][0]["calendarDaysBetween"] == 368
+
+
+def test_daily_coverage_rejects_duplicate_days_and_mixed_rights():
+    first, second = sample(), sample()
+    with pytest.raises(EvidenceRejected, match="duplicate"):
+        summarize_daily_price_coverage([first, second], as_of=NOW)
+    second["licenseId"] = "different-contract"
+    with pytest.raises(EvidenceRejected, match="mixed"):
+        summarize_daily_price_coverage([first, second], as_of=NOW)
+
+
+def test_daily_coverage_rejects_unauthorized_observation():
+    record = sample()
+    record["usageAuthorized"] = False
+    with pytest.raises(EvidenceRejected):
+        summarize_daily_price_coverage([record], as_of=NOW)
+
+
+def test_daily_coverage_empty_is_not_operational_evidence():
+    result = summarize_daily_price_coverage([], as_of=NOW)
+    assert result["depthSatisfied"] is False
+    assert result["sessionCoverageVerified"] is False
