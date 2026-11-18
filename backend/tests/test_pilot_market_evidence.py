@@ -27,6 +27,11 @@ def test_accepts_explicit_authorized_pit_metadata():
 @pytest.mark.parametrize("field,value", [
     ("usageAuthorized", False),
     ("licenseId", ""),
+    ("licenseId", "contract-123\nforged"),
+    ("source", "provider\x00injected"),
+    ("instrumentId", "NASDAQ:MSFT\rforged"),
+    ("currency", "USD\x7f"),
+    ("close", True),
     ("adjustmentPolicy", "unknown"),
     ("close", "NaN"),
     ("close", "-1"),
