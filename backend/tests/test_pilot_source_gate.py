@@ -144,3 +144,10 @@ def test_history_gap_policy_rejects_sparse_year_without_claiming_coverage():
         assert not usable_history_for_research(
             [older, latest], now=NOW, max_age_seconds=10800,
             maximum_gap_days=invalid)
+
+
+def test_control_characters_cannot_enter_pilot_provenance():
+    for field in ("provider", "instrument_id", "license_reference", "permitted_use"):
+        original = getattr(evidence(), field)
+        for suffix in ("\nforged-source", "\r", "\x00", "\x7f"):
+            assert not usable_for_research(evidence(**{field: original + suffix}), now=NOW)
