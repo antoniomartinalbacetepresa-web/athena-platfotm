@@ -61,3 +61,35 @@ def validate_daily_price_evidence(record: dict, *, as_of: datetime) -> dict:
     elif "volumeUnit" in record:
         raise EvidenceRejected("volumeUnit without volume")
     return dict(record)
+
+
+def summarize_daily_price_coverage(records: list[dict], *, as_of: datetime,
+                                   required_days: int = 365) -> dict:
+    """Report observed calendar coverage without inventing missing sessions.
+
+    Every observation passes the same authorization/PIT gate. Calendar gaps
+    are diagnostics, NOT proof that a market session or trade is missing.
+    """
+    if not isinstance(records, list) or not isinstance(required_days, int) or isinstance(required_days, bool) or required_days < 1:
+        raise EvidenceRejected("invalid coverage input")
+    validated = [validate_daily_price_evidence(item, as_of=as_of) for item in records]
+    if not validated:
+        return {"observations": 0, "calendarSpanDays": 0,
+                "requiredDays": required_days, "depthSatisfied": False,
+                "calendarGaps": [], "sessionCoverageVerified": False}
+    identities = {(item["instrumentId"], item["source"], item["currency"],
+                   item["adjustmentPolicy"], item["licenseId"]) for item in validated}
+    if len(identities) != 1:
+        raise EvidenceRejected("mixed instrument or provenance in price series")
+    ordered = sorted(validated, key=lambda item: item["observationAt"])
+    dates = [item["observationAt"].astimezone(timezone.utc).date() for item in ordered]
+    if len(set(dates)) != len(dates):
+        raise EvidenceRejected("duplicate observation date")
+    gaps = [{"after": left.isoformat(), "before": right.isoformat(),
+             "calendarDaysBetween": (right - left).days - 1}
+            for left, right in zip(dates, dates[1:])
+            if (right - left).days > 1]
+    span = (dates[-1] - dates[0]).days + 1
+    return {"observations": len(ordered), "calendarSpanDays": span,
+            "requiredDays": required_days, "depthSatisfied": span >= required_days,
+            "calendarGaps": gaps, "sessionCoverageVerified": False}
