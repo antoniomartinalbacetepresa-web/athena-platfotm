@@ -43,6 +43,13 @@ def usable_for_research(
     )
     if any(not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None for value in timestamps):
         return False
+    # Reject control characters that can corrupt audit logs or provenance displays.
+    # Whitespace trimming alone does not reject embedded newlines or NUL bytes.
+    metadata = (evidence.provider, evidence.instrument_id,
+                evidence.license_reference, evidence.permitted_use)
+    if any(any(ord(char) < 32 or ord(char) == 127 for char in field)
+           for field in metadata):
+        return False
     if not all((evidence.provider.strip(), evidence.instrument_id.strip(),
                 evidence.license_reference.strip())):
         return False
