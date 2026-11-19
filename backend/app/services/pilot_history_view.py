@@ -79,6 +79,19 @@ def build_pilot_history_view(
         # Stable read-only latest-session projection for Market consumers.
         # Preserve the full PIT/provenance-bearing bar; never synthesize a quote.
         "latestBar": None if latest_expected_missing else history["bars"][-1],
+        # Consumers must not treat a historical close as a current quote
+        # unless an explicit recency policy was supplied and satisfied.
+        "currentQuoteEligible": (
+            max_latest_age_seconds is not None
+            and not latest_expected_missing
+        ),
+        "currentQuoteEligibilityReason": (
+            "freshness_policy_not_supplied"
+            if max_latest_age_seconds is None
+            else "latest_expected_session_missing"
+            if latest_expected_missing
+            else "freshness_policy_satisfied_metadata_only"
+        ),
         "lastObservedBar": history["bars"][-1],
         "latestObservationAt": history["latestObservationAt"],
         "latestAvailableAt": history["bars"][-1]["availableAt"],
