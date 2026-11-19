@@ -89,6 +89,9 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
           }
           final evidence = snapshot.data!;
           // Injected loaders are untrusted, just like external JSON.
+          // Duplicate URLs or IDs must not be displayed as independent evidence.
+          final seenUrls = <String>{};
+          final seenIds = <String>{};
           if (evidence.symbol != widget.symbol ||
               evidence.companyName != widget.companyName ||
               evidence.retrievedAt.isAfter(DateTime.now().toUtc()) ||
@@ -97,6 +100,8 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
               evidence.items.any((item) {
                 final uri = Uri.tryParse(item.sourceUrl);
                 return item.id.trim().isEmpty ||
+                    !seenIds.add(item.id) ||
+                    !seenUrls.add(item.sourceUrl.toLowerCase()) ||
                     item.summary.trim().isEmpty ||
                     item.publisher.trim().isEmpty ||
                     item.provider != evidence.provider ||
