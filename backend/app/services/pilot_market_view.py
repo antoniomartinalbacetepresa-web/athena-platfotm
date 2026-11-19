@@ -15,6 +15,7 @@ def build_pilot_market_view(
     now: datetime,
     max_age_seconds: int = 86400 * 4,
     rights_reviewed: bool = False,
+    expected_instrument_id: str | None = None,
 ) -> dict:
     """Produce a UI-safe state without presenting rejected evidence as a quote."""
     # A feed must not authorize itself by setting usageAuthorized=True.
@@ -25,6 +26,12 @@ def build_pilot_market_view(
         return {"status": "unavailable", "reason": "invalid_freshness_policy", "observation": None}
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         return {"status": "unavailable", "reason": "invalid_research_clock", "observation": None}
+    if expected_instrument_id is not None and (
+        not isinstance(expected_instrument_id, str)
+        or not expected_instrument_id.strip()
+        or expected_instrument_id != expected_instrument_id.strip()
+    ):
+        return {"status": "unavailable", "reason": "invalid_instrument_selection", "observation": None}
     if observation is None:
         return {"status": "unavailable", "reason": "no_authorized_observation", "observation": None}
     try:
@@ -40,6 +47,8 @@ def build_pilot_market_view(
         return {"status": "unavailable", "reason": reason, "observation": None}
     except (TypeError, AttributeError, ValueError, OverflowError):
         return {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
+    if expected_instrument_id is not None and verified["instrumentId"] != expected_instrument_id:
+        return {"status": "unavailable", "reason": "instrument_mismatch", "observation": None}
     return {
         "status": "verified_metadata",
         "reason": "rights_attested_metadata_only_not_operationally_verified",
