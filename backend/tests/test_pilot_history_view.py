@@ -254,3 +254,22 @@ def test_selected_instrument_is_enforced_on_history_without_leaking_other_quotes
             "status": "unavailable", "history": None,
             "reason": "invalid_instrument_selection",
         }
+
+
+def test_freshness_cannot_hide_missing_latest_expected_session():
+    missing = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06", "2026-11-07"],
+        now=NOW, rights_reviewed=True, max_latest_age_seconds=86400 * 3,
+        expected_instrument_id="MSFT",
+    )
+    assert missing == {
+        "status": "unavailable", "history": None,
+        "reason": "latest_expected_session_missing",
+    }
+    complete = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"],
+        now=NOW, rights_reviewed=True, max_latest_age_seconds=86400 * 3,
+        expected_instrument_id="MSFT",
+    )
+    assert complete["status"] == "verified_metadata"
+    assert complete["latestExpectedSessionMissing"] is False
