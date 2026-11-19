@@ -227,3 +227,30 @@ def test_missing_latest_expected_session_is_visible_separately_from_age():
         now=NOW, rights_reviewed=True,
     )
     assert complete["latestExpectedSessionMissing"] is False
+
+
+def test_selected_instrument_is_enforced_on_history_without_leaking_other_quotes():
+    matched = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+    )
+    assert matched["status"] == "verified_metadata"
+    assert matched["instrumentId"] == "MSFT"
+
+    mismatch = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="AAPL",
+    )
+    assert mismatch == {
+        "status": "unavailable", "history": None, "reason": "instrument_mismatch",
+    }
+
+    for selection in ("", " MSFT", "MSFT ", 0, True):
+        invalid = build_pilot_history_view(
+            [BAR], expected_sessions=["2026-11-06"], now=NOW,
+            rights_reviewed=True, expected_instrument_id=selection,
+        )
+        assert invalid == {
+            "status": "unavailable", "history": None,
+            "reason": "invalid_instrument_selection",
+        }
