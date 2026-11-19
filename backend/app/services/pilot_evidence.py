@@ -27,7 +27,12 @@ def validate_pilot_observation(record: Mapping[str, object], *, now: datetime, m
     required = ("instrumentId", "source", "licenseRef", "observationAt", "availableAt", "retrievedAt", "currency")
     if any(not isinstance(record.get(k), str) or not record[k].strip() for k in required):
         raise EvidenceRejected("missing provenance, identity, license reference or currency")
-    # Identity and provenance keys are exact-match contract values: whitespace\n    # would create ambiguous joins between Market, News and persisted research.\n    for key in ("instrumentId", "source", "licenseRef"):\n        if record[key] != record[key].strip():\n            raise EvidenceRejected(f"invalid {key} whitespace")\n    currency = record["currency"]
+    # Identity and provenance keys are exact-match contract values: whitespace
+    # would create ambiguous joins between Market, News and persisted research.
+    for key in ("instrumentId", "source", "licenseRef"):
+        if record[key] != record[key].strip():
+            raise EvidenceRejected(f"invalid {key} whitespace")
+    currency = record["currency"]
     if len(currency) != 3 or not currency.isascii() or not currency.isalpha() or currency != currency.upper():
         raise EvidenceRejected("currency must be an uppercase ISO 4217 code")
     if record.get("usageAuthorized") is not True:
