@@ -40,7 +40,7 @@ Map<String, dynamic> payload() {
       'licenseVerified': false,
       'modelExecutionVerified': false,
       'persisted': false,
-      'evidence': [{
+      'evidence': <Map<String, dynamic>>[{
         'evidenceId': 'news:123456789012345678901234',
         'category': 'news',
         'urgency': 'routine',
