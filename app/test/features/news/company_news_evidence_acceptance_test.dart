@@ -154,6 +154,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('injected unsafe headline URL fails closed before rendering',
+      (tester) async {
+    final original = parse(payload());
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: CompanyNewsEvidencePanel(
+        symbol: 'ACME', companyName: 'Acme Corporation',
+        loadEvidence: (_, _) async => CompanyNewsEvidence(
+          symbol: original.symbol, companyName: original.companyName,
+          provider: original.provider, retrievedAt: original.retrievedAt,
+          rejectedCount: original.rejectedCount,
+          items: [
+            CompanyNewsEvidenceItem(
+              id: original.items.single.id,
+              summary: original.items.single.summary,
+              publisher: original.items.single.publisher,
+              provider: original.provider,
+              sourceUrl: 'http://unsafe.example/article',
+              publishedAt: original.items.single.publishedAt,
+              availableAt: original.items.single.availableAt,
+            ),
+          ],
+        ),
+      ),
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('company-news-evidence-error')), findsOneWidget);
+    expect(find.text('Acme announces results'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('contradictory company evidence never retains a previous headline',
       (tester) async {
     var calls = 0;
