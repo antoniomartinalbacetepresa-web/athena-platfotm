@@ -53,7 +53,12 @@ def build_pilot_history_view(
     if (max_latest_age_seconds is not None
             and exact_age > max_latest_age_seconds):
         return {**unavailable, "reason": "stale_history"}
-    # A recency limit cannot make a missing latest expected session current.\n    # The exchange calendar is still caller-supplied and not independently attested.\n    if (max_latest_age_seconds is not None\n            and history["expectedLastSession"] in history["missingSessions"]):\n        return {**unavailable, "reason": "latest_expected_session_missing"}\n    # A complete caller-supplied session list is not proof of a year of history.
+    # A recency limit cannot make a missing latest expected session current.
+    # The exchange calendar is still caller-supplied and not independently attested.
+    if (max_latest_age_seconds is not None
+            and history["expectedLastSession"] in history["missingSessions"]):
+        return {**unavailable, "reason": "latest_expected_session_missing"}
+    # A complete caller-supplied session list is not proof of a year of history.
     # Report calendar span separately so a one-session pilot cannot look like
     # 365-day coverage. This is metadata, never an operational coverage claim.
     first_day = datetime.fromisoformat(history["expectedFirstSession"]).date()
