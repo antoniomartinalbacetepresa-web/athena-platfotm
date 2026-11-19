@@ -140,6 +140,11 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
                   Text('${item.publisher} · publicado ${item.publishedAt.toIso8601String()}'
                     ' · disponible ${item.availableAt.toIso8601String()}',
                     style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11)),
+                  if (DateTime.now().toUtc().difference(item.availableAt) >
+                      const Duration(days: 7))
+                    const Text('Titular antiguo: disponible hace más de 7 días.',
+                      key: Key('company-news-headline-stale'),
+                      style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11)),
                   SelectableText(item.sourceUrl,
                     style: const TextStyle(color: AthenaColors.textSecondary, fontSize: 11)),
                 ]),
