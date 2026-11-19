@@ -273,3 +273,27 @@ def test_freshness_cannot_hide_missing_latest_expected_session():
     )
     assert complete["status"] == "verified_metadata"
     assert complete["latestExpectedSessionMissing"] is False
+
+
+def test_latest_bar_projection_keeps_observed_price_volume_and_pit():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+    )
+    assert result["status"] == "verified_metadata"
+    assert result["latestBar"] == result["history"]["bars"][-1]
+    assert result["latestBar"]["close"] == 10.5
+    assert result["latestBar"]["volume"] == 1000
+    assert result["latestBar"]["availableAt"] == result["latestAvailableAt"]
+    assert result["history"]["operationallyVerified"] is False
+
+
+def test_latest_bar_is_never_exposed_without_rights_or_for_wrong_instrument():
+    for rights, instrument in ((False, "MSFT"), (True, "AAPL")):
+        result = build_pilot_history_view(
+            [BAR], expected_sessions=["2026-11-06"], now=NOW,
+            rights_reviewed=rights, expected_instrument_id=instrument,
+        )
+        assert result["status"] == "unavailable"
+        assert "latestBar" not in result
+        assert result["history"] is None
