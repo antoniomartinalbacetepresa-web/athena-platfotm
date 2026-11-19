@@ -70,6 +70,7 @@ def build_pilot_history_view(
     # Zero-volume final sessions may be valid but cannot support a liquidity
     # conclusion. Surface them explicitly rather than implying tradability.
     zero_volume_sessions = [bar["session"] for bar in history["bars"] if bar["volume"] == 0]
+    latest_expected_missing = history["expectedLastSession"] in history["missingSessions"]
     return {
         "instrumentId": history["instrumentId"],
         "source": history["source"],
@@ -77,7 +78,8 @@ def build_pilot_history_view(
         "currency": history["currency"],
         # Stable read-only latest-session projection for Market consumers.
         # Preserve the full PIT/provenance-bearing bar; never synthesize a quote.
-        "latestBar": history["bars"][-1],
+        "latestBar": None if latest_expected_missing else history["bars"][-1],
+        "lastObservedBar": history["bars"][-1],
         "latestObservationAt": history["latestObservationAt"],
         "latestAvailableAt": history["bars"][-1]["availableAt"],
         "latestRetrievedAt": history["bars"][-1]["retrievedAt"],
@@ -100,7 +102,7 @@ def build_pilot_history_view(
         # A valid older bar does not establish coverage of the latest expected
         # exchange session. Keep this separate from timestamp freshness.
         "latestExpectedSession": history["expectedLastSession"],
-        "latestExpectedSessionMissing": history["expectedLastSession"] in history["missingSessions"],
+        "latestExpectedSessionMissing": latest_expected_missing,
         "zeroVolumeSessions": zero_volume_sessions,
         "liquidityAssessmentAvailable": False,
         "researchOnly": True,
