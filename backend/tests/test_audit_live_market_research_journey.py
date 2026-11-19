@@ -428,3 +428,19 @@ def test_quote_provider_absent_from_history_does_not_claim_partial_research():
     assert report["history"]["quoteProviderIncludedInHistory"] is False
     assert report["status"] == "incomplete_evidence"
     assert report["completeResearchVerified"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("adjustedClose", None),
+    ("volume", 0),
+])
+def test_unadjusted_or_zero_liquidity_history_cannot_be_partial_research(field, value):
+    responses = _responses()
+    modules = responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]
+    modules["factorRisk"]["evidence"] = {"source": "example"}
+    assert _audit(responses)[0]["status"] == "partial_research_evidence"
+    responses["/api/v1/market/history"]["data"][0][field] = value
+    report, _ = _audit(responses)
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
+    assert report["dossier"]["evidenceAttachedCount"] == 1
