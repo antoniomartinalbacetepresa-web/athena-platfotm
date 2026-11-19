@@ -321,3 +321,32 @@ def test_complete_latest_session_preserves_quote_and_last_observed_bar():
     assert result["latestExpectedSessionMissing"] is False
     assert result["latestBar"] == result["lastObservedBar"]
     assert result["latestBar"]["close"] == 10.5
+
+
+def test_current_quote_eligibility_requires_explicit_freshness_policy():
+    no_policy = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+    )
+    assert no_policy["latestBar"] is not None  # Historical bar remains visible.
+    assert no_policy["currentQuoteEligible"] is False
+    assert no_policy["currentQuoteEligibilityReason"] == "freshness_policy_not_supplied"
+
+    policy = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+        max_latest_age_seconds=86400 * 3,
+    )
+    assert policy["currentQuoteEligible"] is True
+    assert policy["currentQuoteEligibilityReason"] == "freshness_policy_satisfied_metadata_only"
+    assert policy["history"]["operationallyVerified"] is False
+
+
+def test_missing_latest_session_cannot_be_eligible_for_current_quote():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06", "2026-11-07"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+    )
+    assert result["currentQuoteEligible"] is False
+    assert result["currentQuoteEligibilityReason"] == "freshness_policy_not_supplied"
+    assert result["latestBar"] is None
