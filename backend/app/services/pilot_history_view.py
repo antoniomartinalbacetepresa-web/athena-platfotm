@@ -75,6 +75,9 @@ def build_pilot_history_view(
         "source": history["source"],
         "licenseRef": history["licenseRef"],
         "currency": history["currency"],
+        # Stable read-only latest-session projection for Market consumers.
+        # Preserve the full PIT/provenance-bearing bar; never synthesize a quote.
+        "latestBar": history["bars"][-1],
         "latestObservationAt": history["latestObservationAt"],
         "latestAvailableAt": history["bars"][-1]["availableAt"],
         "latestRetrievedAt": history["bars"][-1]["retrievedAt"],
