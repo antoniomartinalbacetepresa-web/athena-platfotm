@@ -184,6 +184,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('duplicate injected company headlines fail closed', (tester) async {
+    final original = parse(payload());
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: CompanyNewsEvidencePanel(
+        symbol: 'ACME', companyName: 'Acme Corporation',
+        loadEvidence: (_, _) async => CompanyNewsEvidence(
+          symbol: original.symbol, companyName: original.companyName,
+          provider: original.provider, retrievedAt: original.retrievedAt,
+          rejectedCount: original.rejectedCount,
+          items: [original.items.single, original.items.single],
+        ),
+      ),
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('company-news-evidence-error')), findsOneWidget);
+    expect(find.text('Acme announces results'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('contradictory company evidence never retains a previous headline',
       (tester) async {
     var calls = 0;
