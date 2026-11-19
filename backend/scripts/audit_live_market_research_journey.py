@@ -275,7 +275,29 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
             raise AuditBlocked("Dossier module authority escalation")
         (attached if module.get("evidence") is not None else missing).append(name)
 
+    # Diagnostic reasons are descriptive only; they never grant research authority.
+    blocking_reasons = []
+    if not history["current365DayCoverageCandidate"]:
+        blocking_reasons.append("history_depth_or_recency_unverified")
+    if not history["volumeCoverageComplete"] or history["zeroVolumeSessionCount"]:
+        blocking_reasons.append("history_volume_incomplete_or_illiquid")
+    if history["adjustedCloseMissingCount"]:
+        blocking_reasons.append("history_adjustments_missing")
+    if provider not in history["sourceProvidersDeclared"]:
+        blocking_reasons.append("quote_provider_absent_from_history")
+    if not items:
+        blocking_reasons.append("news_feed_empty")
+    if not attached:
+        blocking_reasons.append("dossier_evidence_missing")
+    if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24)
+            or now - news_retrieved > timedelta(hours=24)
+            or (newest_published is not None and now - newest_published > timedelta(days=7))
+            or now - as_of > timedelta(hours=24)
+            or (history["latestObservationAgeCalendarDays"] is not None
+                and history["latestObservationAgeCalendarDays"] > 7)):
+        blocking_reasons.append("research_evidence_stale")
     return {
+        "blockingReasons": blocking_reasons,
         "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or (newest_published is not None and now - newest_published > timedelta(days=7)) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
                    else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"] and history["volumeCoverageComplete"] and history["adjustedCloseMissingCount"] == 0 and history["zeroVolumeSessionCount"] == 0 and provider in history["sourceProvidersDeclared"]) else "incomplete_evidence"),
         "symbol": symbol,
