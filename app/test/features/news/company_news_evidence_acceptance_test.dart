@@ -90,6 +90,17 @@ void main() {
     expect(() => parse(fakeLicense), throwsFormatException);
   });
 
+  test('typed company evidence rejects duplicate IDs even with different HTTPS URLs', () {
+    final duplicate = payload();
+    final data = duplicate['data'] as Map<String, dynamic>;
+    final entries = data['evidence'] as List;
+    final second = Map<String, dynamic>.from(entries.single as Map);
+    second['sourceRef'] = 'https://news.google.com/rss/articles/another';
+    entries.add(second);
+    data['acceptedCount'] = 2;
+    expect(() => parse(duplicate), throwsFormatException);
+  });
+
   test('rejects future retrieval and tampered PIT provenance', () {
     final future = payload();
     (future['data'] as Map<String, dynamic>)['retrievedAt'] =
