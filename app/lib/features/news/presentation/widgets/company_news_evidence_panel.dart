@@ -92,9 +92,20 @@ class _CompanyNewsEvidencePanelState extends State<CompanyNewsEvidencePanel> {
           if (evidence.symbol != widget.symbol ||
               evidence.companyName != widget.companyName ||
               evidence.retrievedAt.isAfter(DateTime.now().toUtc()) ||
-              evidence.items.any((item) =>
-                  item.availableAt.isAfter(evidence.retrievedAt) ||
-                  item.publishedAt.isAfter(item.availableAt))) {
+              evidence.provider != 'google_news_rss' ||
+              evidence.rejectedCount < 0 ||
+              evidence.items.any((item) {
+                final uri = Uri.tryParse(item.sourceUrl);
+                return item.id.trim().isEmpty ||
+                    item.summary.trim().isEmpty ||
+                    item.publisher.trim().isEmpty ||
+                    item.provider != evidence.provider ||
+                    uri == null || uri.scheme != 'https' ||
+                    uri.host.isEmpty || uri.userInfo.isNotEmpty ||
+                    item.sourceUrl.contains('\\') ||
+                    item.availableAt.isAfter(evidence.retrievedAt) ||
+                    item.publishedAt.isAfter(item.availableAt);
+              })) {
             return const Text('Evidencia empresarial contradictoria.',
               key: Key('company-news-evidence-error'),
               style: TextStyle(color: AthenaColors.textSecondary));
