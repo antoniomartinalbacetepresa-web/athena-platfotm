@@ -90,6 +90,7 @@ def validate_pilot_history(
     *,
     expected_sessions: list[str],
     now: datetime,
+    expected_instrument_id: str | None = None,
 ) -> dict:
     """Validate complete final daily bars and expose missing expected trading sessions.
 
@@ -113,6 +114,12 @@ def validate_pilot_history(
     # Session keys use UTC observation dates, so the clock cutoff must also use UTC.
     if sessions[-1] > now.astimezone(timezone.utc).date().isoformat():
         raise EvidenceRejected("expected sessions include future dates")
+    if expected_instrument_id is not None and (
+        not isinstance(expected_instrument_id, str)
+        or not expected_instrument_id.strip()
+        or expected_instrument_id != expected_instrument_id.strip()
+    ):
+        raise EvidenceRejected("invalid selected instrument")
     if not isinstance(observations, list) or not observations:
         raise EvidenceRejected("no verified market observations")
     accepted = []
@@ -121,6 +128,8 @@ def validate_pilot_history(
         if not isinstance(record, Mapping):
             raise EvidenceRejected("market observation must be a mapping")
         bar = validate_pilot_observation(record, now=now, require_bar=True)
+        if expected_instrument_id is not None and bar["instrumentId"] != expected_instrument_id:
+            raise EvidenceRejected("selected instrument does not match history")
         session = datetime.fromisoformat(bar["observationAt"]).date().isoformat()
         if session not in sessions or session in seen:
             raise EvidenceRejected("unexpected or duplicate trading session")
