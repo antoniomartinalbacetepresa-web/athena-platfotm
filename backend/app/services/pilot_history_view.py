@@ -16,6 +16,7 @@ def build_pilot_history_view(
     now: datetime,
     rights_reviewed: bool = False,
     max_latest_age_seconds: int | None = None,
+    expected_instrument_id: str | None = None,
 ) -> dict:
     """Expose verified bars and coverage only after independent rights review."""
     unavailable = {"status": "unavailable", "history": None}
@@ -29,12 +30,20 @@ def build_pilot_history_view(
         return {**unavailable, "reason": "invalid_freshness_policy"}
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         return {**unavailable, "reason": "invalid_research_clock"}
+    if expected_instrument_id is not None and (
+        not isinstance(expected_instrument_id, str)
+        or not expected_instrument_id.strip()
+        or expected_instrument_id != expected_instrument_id.strip()
+    ):
+        return {**unavailable, "reason": "invalid_instrument_selection"}
     try:
         history = validate_pilot_history(
             observations, expected_sessions=expected_sessions, now=now
         )
     except (EvidenceRejected, TypeError, AttributeError, ValueError, OverflowError):
         return {**unavailable, "reason": "history_evidence_rejected"}
+    if expected_instrument_id is not None and history["instrumentId"] != expected_instrument_id:
+        return {**unavailable, "reason": "instrument_mismatch"}
     # Historical coverage and recency are separate gates: an old but complete
     # series must not be presented as a current research snapshot.
     # The public age is rounded down for display; enforce freshness with the
