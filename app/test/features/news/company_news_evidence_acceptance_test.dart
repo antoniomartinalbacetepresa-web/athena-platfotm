@@ -177,6 +177,27 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('old company headline is flagged even after fresh retrieval',
+      (tester) async {
+    final response = payload();
+    final item = ((response['data'] as Map<String, dynamic>)['evidence'] as List)
+        .single as Map<String, dynamic>;
+    final old = DateTime.now().toUtc().subtract(const Duration(days: 9));
+    item['publishedAt'] = old.toIso8601String();
+    item['availableAt'] = old.add(const Duration(hours: 1)).toIso8601String();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: CompanyNewsEvidencePanel(
+        symbol: 'ACME', companyName: 'Acme Corporation',
+        loadEvidence: (_, _) async => parse(response),
+      ),
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('company-news-headline-stale')), findsOneWidget);
+    expect(find.byKey(const Key('company-news-evidence-stale')), findsNothing);
+    expect(find.text('Acme announces results'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('injected unsafe headline URL fails closed before rendering',
       (tester) async {
     final original = parse(payload());
