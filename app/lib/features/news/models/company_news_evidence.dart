@@ -95,8 +95,8 @@ class CompanyNewsEvidence {
     }
     final asOfRaw = data['asOf'];
     final asOf = asOfRaw == null ? null : _date(asOfRaw, 'asOf');
-    if (asOf != null && asOf.isAfter(DateTime.now().toUtc())) {
-      throw const FormatException('Corte PIT futuro.');
+    if (asOf != null && asOf.isAfter(retrievedAt)) {
+      throw const FormatException('Corte PIT posterior a la recuperación.');
     }
     final entries = data['evidence'];
     if (entries is! List) throw const FormatException('Evidencias inválidas.');
