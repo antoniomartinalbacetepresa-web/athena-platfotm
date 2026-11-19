@@ -444,3 +444,28 @@ def test_unadjusted_or_zero_liquidity_history_cannot_be_partial_research(field, 
     assert report["status"] == "incomplete_evidence"
     assert report["completeResearchVerified"] is False
     assert report["dossier"]["evidenceAttachedCount"] == 1
+
+
+def test_audit_exposes_specific_missing_dependencies_without_claiming_acceptance():
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["adjustedClose"] = None
+    responses["/api/v1/market/history"]["data"][1]["volume"] = 0
+    responses["/api/v1/news/feed"]["items"] = []
+    report, _ = _audit(responses)
+    assert report["status"] == "incomplete_evidence"
+    assert report["blockingReasons"] == [
+        "history_volume_incomplete_or_illiquid",
+        "history_adjustments_missing",
+        "news_feed_empty",
+        "dossier_evidence_missing",
+    ]
+    assert report["completeResearchVerified"] is False
+
+
+def test_partial_evidence_keeps_operational_gates_unverified():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    report, _ = _audit(responses)
+    assert report["status"] == "partial_research_evidence"
+    assert report["blockingReasons"] == []
+    assert report["completeResearchVerified"] is False
