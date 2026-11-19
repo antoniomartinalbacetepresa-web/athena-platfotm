@@ -110,6 +110,7 @@ class CompanyNewsEvidence {
       throw const FormatException('Inventario de noticias incoherente.');
     }
     final seen = <String>{};
+    final seenIds = <String>{};
     final items = <CompanyNewsEvidenceItem>[];
     for (final entry in entries) {
       if (entry is! Map) throw const FormatException('Evidencia inválida.');
@@ -123,7 +124,7 @@ class CompanyNewsEvidence {
           item['provider'] != provider || !id.startsWith('news:') ||
           published.isAfter(available) || available.isAfter(retrievedAt) ||
           (asOf != null && available.isAfter(asOf)) ||
-          !seen.add(url.toLowerCase())) {
+          !seenIds.add(id) || !seen.add(url.toLowerCase())) {
         throw const FormatException('Evidencia PIT o procedencia inválida.');
       }
       items.add(CompanyNewsEvidenceItem(
