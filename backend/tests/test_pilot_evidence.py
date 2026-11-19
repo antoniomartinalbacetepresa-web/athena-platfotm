@@ -258,3 +258,14 @@ def test_history_rejects_invalid_selected_instrument(invalid_selection):
             [bar], expected_sessions=["2026-11-06"], now=NOW,
             expected_instrument_id=invalid_selection,
         )
+
+
+@pytest.mark.parametrize("key", ["instrumentId", "source", "licenseRef"])
+@pytest.mark.parametrize("padding", [" ", "\t"])
+def test_provenance_identity_rejects_whitespace_padding(key, padding):
+    record = {**BASE, key: padding + BASE[key]}
+    with pytest.raises(EvidenceRejected, match=f"invalid {key} whitespace"):
+        validate_pilot_observation(record, now=NOW)
+    record[key] = BASE[key] + padding
+    with pytest.raises(EvidenceRejected, match=f"invalid {key} whitespace"):
+        validate_pilot_observation(record, now=NOW)
