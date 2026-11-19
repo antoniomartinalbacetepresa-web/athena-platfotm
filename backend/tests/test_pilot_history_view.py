@@ -297,3 +297,27 @@ def test_latest_bar_is_never_exposed_without_rights_or_for_wrong_instrument():
         assert result["status"] == "unavailable"
         assert "latestBar" not in result
         assert result["history"] is None
+
+
+def test_missing_latest_session_never_projects_old_close_as_current_quote():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06", "2026-11-07"],
+        now=NOW, rights_reviewed=True, expected_instrument_id="MSFT",
+    )
+    assert result["status"] == "verified_metadata"
+    assert result["latestExpectedSessionMissing"] is True
+    assert result["latestBar"] is None
+    assert result["lastObservedBar"]["session"] == "2026-11-06"
+    assert result["lastObservedBar"]["close"] == 10.5
+    assert result["latestObservationAt"] == result["lastObservedBar"]["observationAt"]
+    assert result["history"]["operationallyVerified"] is False
+
+
+def test_complete_latest_session_preserves_quote_and_last_observed_bar():
+    result = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+    )
+    assert result["latestExpectedSessionMissing"] is False
+    assert result["latestBar"] == result["lastObservedBar"]
+    assert result["latestBar"]["close"] == 10.5
