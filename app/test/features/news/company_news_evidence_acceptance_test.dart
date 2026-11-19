@@ -101,6 +101,18 @@ void main() {
     expect(() => parse(duplicate), throwsFormatException);
   });
 
+  test('rejects a PIT cut after retrieval even when both dates are in the past', () {
+    final evidence = payload();
+    final data = evidence['data'] as Map<String, dynamic>;
+    final retrieved = DateTime.now().toUtc().subtract(const Duration(minutes: 5));
+    data['retrievedAt'] = retrieved.toIso8601String();
+    data['asOf'] = retrieved.add(const Duration(minutes: 1)).toIso8601String();
+    final item = (data['evidence'] as List).single as Map<String, dynamic>;
+    item['availableAt'] = retrieved.subtract(const Duration(minutes: 1)).toIso8601String();
+    item['publishedAt'] = retrieved.subtract(const Duration(minutes: 2)).toIso8601String();
+    expect(() => parse(evidence), throwsFormatException);
+  });
+
   test('rejects future retrieval and tampered PIT provenance', () {
     final future = payload();
     (future['data'] as Map<String, dynamic>)['retrievedAt'] =
