@@ -229,3 +229,32 @@ def test_non_mapping_observation_fails_closed_with_domain_error(invalid_record):
 def test_invalid_research_clock_fails_closed_with_domain_error(invalid_clock):
     with pytest.raises(EvidenceRejected, match="now must be timezone-aware"):
         validate_pilot_observation(BASE, now=invalid_clock)
+
+
+def test_history_selected_instrument_rejects_wrong_single_symbol_without_leaking_bars():
+    from app.services.pilot_evidence import validate_pilot_history
+
+    bar = {**BASE, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}
+    expected_sessions = ["2026-11-06"]
+    accepted = validate_pilot_history(
+        [bar], expected_sessions=expected_sessions, now=NOW, expected_instrument_id="MSFT"
+    )
+    assert accepted["instrumentId"] == "MSFT"
+    assert accepted["bars"][0]["close"] == 10
+
+    with pytest.raises(EvidenceRejected, match="selected instrument does not match history"):
+        validate_pilot_history(
+            [bar], expected_sessions=expected_sessions, now=NOW, expected_instrument_id="AAPL"
+        )
+
+
+@pytest.mark.parametrize("invalid_selection", ["", " MSFT", "MSFT ", 0, True])
+def test_history_rejects_invalid_selected_instrument(invalid_selection):
+    from app.services.pilot_evidence import validate_pilot_history
+
+    bar = {**BASE, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}
+    with pytest.raises(EvidenceRejected, match="invalid selected instrument"):
+        validate_pilot_history(
+            [bar], expected_sessions=["2026-11-06"], now=NOW,
+            expected_instrument_id=invalid_selection,
+        )
