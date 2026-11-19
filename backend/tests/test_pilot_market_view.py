@@ -109,3 +109,16 @@ def test_malformed_currency_never_reaches_market_view():
     for currency in ("usd", "US", "USDD", "U$D", "ÉUR", "123", "USD "):
         view = build_pilot_market_view({**BAR, "currency": currency}, now=NOW, rights_reviewed=True)
         assert view == {"status": "unavailable", "reason": "evidence_rejected", "observation": None}
+
+
+def test_selected_instrument_must_match_verified_quote_without_leaking_other_price():
+    matched = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_instrument_id="MSFT")
+    assert matched["status"] == "verified_metadata"
+    assert matched["observation"]["instrumentId"] == "MSFT"
+
+    mismatched = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_instrument_id="AAPL")
+    assert mismatched == {"status": "unavailable", "reason": "instrument_mismatch", "observation": None}
+
+    for selection in ("", " MSFT", "MSFT ", 0, True):
+        result = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_instrument_id=selection)
+        assert result == {"status": "unavailable", "reason": "invalid_instrument_selection", "observation": None}
