@@ -348,5 +348,5 @@ def test_missing_latest_session_cannot_be_eligible_for_current_quote():
         rights_reviewed=True, expected_instrument_id="MSFT",
     )
     assert result["currentQuoteEligible"] is False
-    assert result["currentQuoteEligibilityReason"] == "freshness_policy_not_supplied"
+    assert result["currentQuoteEligibilityReason"] == "latest_expected_session_missing"
     assert result["latestBar"] is None
