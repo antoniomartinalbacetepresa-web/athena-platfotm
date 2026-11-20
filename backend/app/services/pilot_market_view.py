@@ -32,6 +32,7 @@ def build_pilot_market_view(
         not isinstance(expected_instrument_id, str)
         or not expected_instrument_id.strip()
         or expected_instrument_id != expected_instrument_id.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in expected_instrument_id)
     ):
         return {"status": "unavailable", "reason": "invalid_instrument_selection", "observation": None}
     for expected in (expected_source, expected_license_ref):
