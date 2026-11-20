@@ -136,6 +136,6 @@ def test_selected_provider_and_license_must_match_verified_metadata():
     ):
         view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, **expected)
         assert view == {"status": "unavailable", "reason": reason, "observation": None}
-    for bad in ("", " test-only", "test-only ", "test\\nforged", True, 42):
+    for bad in ("", " test-only", "test-only ", "test\nforged", True, 42):
         view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_source=bad)
         assert view == {"status": "unavailable", "reason": "invalid_source_selection", "observation": None}
