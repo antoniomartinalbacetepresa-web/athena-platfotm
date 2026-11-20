@@ -86,10 +86,10 @@ def build_pilot_history_view(
             and not latest_expected_missing
         ),
         "currentQuoteEligibilityReason": (
-            "freshness_policy_not_supplied"
-            if max_latest_age_seconds is None
-            else "latest_expected_session_missing"
+            "latest_expected_session_missing"
             if latest_expected_missing
+            else "freshness_policy_not_supplied"
+            if max_latest_age_seconds is None
             else "freshness_policy_satisfied_metadata_only"
         ),
         "lastObservedBar": history["bars"][-1],
