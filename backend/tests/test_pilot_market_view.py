@@ -122,3 +122,20 @@ def test_selected_instrument_must_match_verified_quote_without_leaking_other_pri
     for selection in ("", " MSFT", "MSFT ", 0, True):
         result = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_instrument_id=selection)
         assert result == {"status": "unavailable", "reason": "invalid_instrument_selection", "observation": None}
+
+
+def test_selected_provider_and_license_must_match_verified_metadata():
+    matched = build_pilot_market_view(
+        BAR, now=NOW, rights_reviewed=True,
+        expected_source="test-only", expected_license_ref="test-only-not-a-license",
+    )
+    assert matched["status"] == "verified_metadata"
+    for expected, reason in (
+        ({"expected_source": "other-provider"}, "source_mismatch"),
+        ({"expected_license_ref": "other-license"}, "license_mismatch"),
+    ):
+        view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, **expected)
+        assert view == {"status": "unavailable", "reason": reason, "observation": None}
+    for bad in ("", " test-only", "test-only ", "test\\nforged", True, 42):
+        view = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_source=bad)
+        assert view == {"status": "unavailable", "reason": "invalid_source_selection", "observation": None}
