@@ -469,3 +469,16 @@ def test_partial_evidence_keeps_operational_gates_unverified():
     assert report["status"] == "partial_research_evidence"
     assert report["blockingReasons"] == []
     assert report["completeResearchVerified"] is False
+
+
+def test_live_journey_never_implies_source_license_from_provider_metadata():
+    report, _ = _audit(_responses())
+    assert "provider_usage_rights_unverified" in report["blockingReasons"]
+    assert "historical_pit_unverified" in report["blockingReasons"]
+    assert report["sourceRights"] == {
+        "quoteLicensedForResearchVerified": False,
+        "historyLicensedForResearchVerified": False,
+        "newsLicensedForResearchVerified": False,
+        "redistributionPermittedVerified": False,
+    }
+    assert report["completeResearchVerified"] is False
