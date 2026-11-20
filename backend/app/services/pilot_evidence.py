@@ -123,6 +123,7 @@ def validate_pilot_history(
         not isinstance(expected_instrument_id, str)
         or not expected_instrument_id.strip()
         or expected_instrument_id != expected_instrument_id.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in expected_instrument_id)
     ):
         raise EvidenceRejected("invalid selected instrument")
     if not isinstance(observations, list) or not observations:
