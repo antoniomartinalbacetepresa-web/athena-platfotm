@@ -248,7 +248,7 @@ def test_history_selected_instrument_rejects_wrong_single_symbol_without_leaking
         )
 
 
-@pytest.mark.parametrize("invalid_selection", ["", " MSFT", "MSFT ", 0, True])
+@pytest.mark.parametrize("invalid_selection", ["", " MSFT", "MSFT ", "MSFT\nforged", "MSFT\rforged", "MSFT\x7fforged", 0, True])
 def test_history_rejects_invalid_selected_instrument(invalid_selection):
     from app.services.pilot_evidence import validate_pilot_history
 
