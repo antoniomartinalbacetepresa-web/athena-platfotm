@@ -119,7 +119,7 @@ def test_selected_instrument_must_match_verified_quote_without_leaking_other_pri
     mismatched = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_instrument_id="AAPL")
     assert mismatched == {"status": "unavailable", "reason": "instrument_mismatch", "observation": None}
 
-    for selection in ("", " MSFT", "MSFT ", 0, True):
+    for selection in ("", " MSFT", "MSFT ", "MSFT\nforged", "MSFT\rforged", "MSFT\x7fforged", 0, True):
         result = build_pilot_market_view(BAR, now=NOW, rights_reviewed=True, expected_instrument_id=selection)
         assert result == {"status": "unavailable", "reason": "invalid_instrument_selection", "observation": None}
 
