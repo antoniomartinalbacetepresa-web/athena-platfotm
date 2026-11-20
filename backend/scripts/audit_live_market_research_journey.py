@@ -276,7 +276,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         (attached if module.get("evidence") is not None else missing).append(name)
 
     # Diagnostic reasons are descriptive only; they never grant research authority.
-    blocking_reasons = []
+    blocking_reasons = ["provider_usage_rights_unverified", "historical_pit_unverified"]
     if not history["current365DayCoverageCandidate"]:
         blocking_reasons.append("history_depth_or_recency_unverified")
     if not history["volumeCoverageComplete"] or history["zeroVolumeSessionCount"]:
@@ -334,6 +334,10 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
                         "Attached evidence is not independent PIT validation.",
                         "News article recency uses a seven-day audit threshold, not a market-session or issuer-identity validation.",
                         "No Ollama execution, predictive accuracy or deployment is verified."],
+        "sourceRights": {"quoteLicensedForResearchVerified": False,
+                         "historyLicensedForResearchVerified": False,
+                         "newsLicensedForResearchVerified": False,
+                         "redistributionPermittedVerified": False},
         "completeResearchVerified": False,
     }
 
