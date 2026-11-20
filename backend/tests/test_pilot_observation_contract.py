@@ -63,3 +63,19 @@ def test_rejects_invalid_currency_contract(currency):
     bar["currency"] = currency
     with pytest.raises(UnverifiedMarketObservation, match="currency"):
         validate_pilot_observation(bar, as_of=AS_OF)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("instrument_id", "TEST:\nMSFT"),
+    ("symbol", "MSFT\x00"),
+    ("source", "provider\rspoof"),
+    ("license_reference", "contract\x7f"),
+    ("adjustment_status", "raw\t"),
+    ("close", True),
+    ("volume", False),
+])
+def test_rejects_control_characters_and_boolean_financial_values(field, value):
+    bar = valid_bar()
+    bar[field] = value
+    with pytest.raises(UnverifiedMarketObservation):
+        validate_pilot_observation(bar, as_of=AS_OF)
