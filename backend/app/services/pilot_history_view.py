@@ -17,6 +17,8 @@ def build_pilot_history_view(
     rights_reviewed: bool = False,
     max_latest_age_seconds: int | None = None,
     expected_instrument_id: str | None = None,
+    expected_source: str | None = None,
+    expected_license_ref: str | None = None,
 ) -> dict:
     """Expose verified bars and coverage only after independent rights review."""
     unavailable = {"status": "unavailable", "history": None}
@@ -36,6 +38,13 @@ def build_pilot_history_view(
         or expected_instrument_id != expected_instrument_id.strip()
     ):
         return {**unavailable, "reason": "invalid_instrument_selection"}
+    for expected in (expected_source, expected_license_ref):
+        if expected is not None and (
+            not isinstance(expected, str) or not expected
+            or expected != expected.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in expected)
+        ):
+            return {**unavailable, "reason": "invalid_source_selection"}
     try:
         history = validate_pilot_history(
             observations, expected_sessions=expected_sessions, now=now
@@ -44,6 +53,10 @@ def build_pilot_history_view(
         return {**unavailable, "reason": "history_evidence_rejected"}
     if expected_instrument_id is not None and history["instrumentId"] != expected_instrument_id:
         return {**unavailable, "reason": "instrument_mismatch"}
+    if expected_source is not None and history["source"] != expected_source:
+        return {**unavailable, "reason": "source_mismatch"}
+    if expected_license_ref is not None and history["licenseRef"] != expected_license_ref:
+        return {**unavailable, "reason": "license_mismatch"}
     # Historical coverage and recency are separate gates: an old but complete
     # series must not be presented as a current research snapshot.
     # The public age is rounded down for display; enforce freshness with the
