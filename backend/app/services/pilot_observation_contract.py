@@ -55,8 +55,8 @@ def validate_pilot_observation(observation: dict, *, as_of: datetime) -> dict:
         volume = Decimal(str(observation["volume"]))
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise UnverifiedMarketObservation("invalid close or volume") from exc
-    if not close.is_finite() or close <= 0 or not volume.is_finite() or volume < 0:
-        raise UnverifiedMarketObservation("nonfinite or out-of-range close/volume")
+    if not close.is_finite() or close <= 0 or not volume.is_finite() or volume < 0 or volume != volume.to_integral_value():
+        raise UnverifiedMarketObservation("nonfinite, fractional or out-of-range close/volume")
     if observation.get("bar_status") != "closed":
         raise UnverifiedMarketObservation("unclosed or unverified bar")
     if observation.get("license_verified") is not True:
