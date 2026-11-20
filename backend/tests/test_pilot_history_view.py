@@ -350,3 +350,27 @@ def test_missing_latest_session_cannot_be_eligible_for_current_quote():
     assert result["currentQuoteEligible"] is False
     assert result["currentQuoteEligibilityReason"] == "latest_expected_session_missing"
     assert result["latestBar"] is None
+
+
+def test_history_source_and_license_must_match_independent_selection():
+    accepted = build_pilot_history_view(
+        [BAR], expected_sessions=["2026-11-06"], now=NOW,
+        rights_reviewed=True, expected_instrument_id="MSFT",
+        expected_source="test-only", expected_license_ref="test-only-not-a-license",
+    )
+    assert accepted["status"] == "verified_metadata"
+    assert accepted["history"]["operationallyVerified"] is False
+
+    for field, value, reason in (
+        ("expected_source", "other-provider", "source_mismatch"),
+        ("expected_license_ref", "other-license", "license_mismatch"),
+        ("expected_source", " test-only", "invalid_source_selection"),
+        ("expected_license_ref", "test-only-not-a-license\\n", "invalid_source_selection"),
+        ("expected_source", True, "invalid_source_selection"),
+    ):
+        result = build_pilot_history_view(
+            [BAR], expected_sessions=["2026-11-06"], now=NOW,
+            rights_reviewed=True, **{field: value},
+        )
+        assert result == {"status": "unavailable", "history": None, "reason": reason}
+        assert "latestBar" not in result
