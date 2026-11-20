@@ -48,6 +48,8 @@ def validate_pilot_observation(observation: dict, *, as_of: datetime) -> dict:
     if not (timestamps["observation_at"] <= timestamps["available_at"] <=
             timestamps["retrieved_at"] <= as_of.astimezone(timezone.utc)):
         raise UnverifiedMarketObservation("future or inconsistent PIT timestamps")
+    if isinstance(observation["close"], bool) or isinstance(observation["volume"], bool):
+        raise UnverifiedMarketObservation("boolean close or volume is not financial evidence")
     try:
         close = Decimal(str(observation["close"]))
         volume = Decimal(str(observation["volume"]))
