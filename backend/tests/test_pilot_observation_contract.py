@@ -36,6 +36,8 @@ def test_accepts_structurally_complete_bar_without_claiming_live_data():
     ("bar_status", "partial"),
     ("close", "NaN"),
     ("volume", "-1"),
+    ("volume", "1.5"),
+    ("volume", 1.25),
     ("adjustment_status", "unknown"),
     ("license_reference", ""),
 ])
