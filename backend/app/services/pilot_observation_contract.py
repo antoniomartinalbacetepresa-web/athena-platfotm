@@ -27,7 +27,12 @@ def validate_pilot_observation(observation: dict, *, as_of: datetime) -> dict:
         for key in required if key not in ("close", "volume", "currency")
     ) or any(key not in observation for key in required):
         raise UnverifiedMarketObservation("missing mandatory provenance or financial fields")
-    # Provider metadata is displayed and audited; reject embedded control characters.\n    for key in ("instrument_id", "symbol", "source", "license_reference", "adjustment_status"):\n        value = observation[key]\n        if any(ord(char) < 32 or ord(char) == 127 for char in value):\n            raise UnverifiedMarketObservation(f"invalid control character in {key}")\n    currency = observation["currency"]
+    # Provider metadata is displayed and audited; reject embedded control characters.
+    for key in ("instrument_id", "symbol", "source", "license_reference", "adjustment_status"):
+        value = observation[key]
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise UnverifiedMarketObservation(f"invalid control character in {key}")
+    currency = observation["currency"]
     if (not isinstance(currency, str) or len(currency) != 3 or
             not currency.isascii() or not currency.isalpha() or currency != currency.upper()):
         raise UnverifiedMarketObservation("currency must be an uppercase ISO 4217 code")
