@@ -365,7 +365,7 @@ def test_history_source_and_license_must_match_independent_selection():
         ("expected_source", "other-provider", "source_mismatch"),
         ("expected_license_ref", "other-license", "license_mismatch"),
         ("expected_source", " test-only", "invalid_source_selection"),
-        ("expected_license_ref", "test-only-not-a-license\\n", "invalid_source_selection"),
+        ("expected_license_ref", "test-only-not-a-license\n", "invalid_source_selection"),
         ("expected_source", True, "invalid_source_selection"),
     ):
         result = build_pilot_history_view(
