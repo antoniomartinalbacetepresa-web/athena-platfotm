@@ -454,6 +454,8 @@ def test_audit_exposes_specific_missing_dependencies_without_claiming_acceptance
     report, _ = _audit(responses)
     assert report["status"] == "incomplete_evidence"
     assert report["blockingReasons"] == [
+        "provider_usage_rights_unverified",
+        "historical_pit_unverified",
         "history_volume_incomplete_or_illiquid",
         "history_adjustments_missing",
         "news_feed_empty",
@@ -467,7 +469,10 @@ def test_partial_evidence_keeps_operational_gates_unverified():
     responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
     report, _ = _audit(responses)
     assert report["status"] == "partial_research_evidence"
-    assert report["blockingReasons"] == []
+    assert report["blockingReasons"] == [
+        "provider_usage_rights_unverified",
+        "historical_pit_unverified",
+    ]
     assert report["completeResearchVerified"] is False
 
 
