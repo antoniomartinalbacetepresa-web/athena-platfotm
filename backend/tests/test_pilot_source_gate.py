@@ -151,3 +151,11 @@ def test_control_characters_cannot_enter_pilot_provenance():
         original = getattr(evidence(), field)
         for suffix in ("\nforged-source", "\r", "\x00", "\x7f"):
             assert not usable_for_research(evidence(**{field: original + suffix}), now=NOW)
+
+
+def test_padded_provider_identity_is_not_canonical_provenance():
+    # Whitespace variants must not silently become distinct provider/license IDs.
+    for field in ("provider", "instrument_id", "license_reference"):
+        original = getattr(evidence(), field)
+        for padded in (" " + original, original + " ", "\t" + original):
+            assert not usable_for_research(evidence(**{field: padded}), now=NOW)
