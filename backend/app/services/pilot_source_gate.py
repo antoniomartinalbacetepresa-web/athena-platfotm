@@ -50,8 +50,9 @@ def usable_for_research(
     if any(any(ord(char) < 32 or ord(char) == 127 for char in field)
            for field in metadata):
         return False
-    if not all((evidence.provider.strip(), evidence.instrument_id.strip(),
-                evidence.license_reference.strip())):
+    if any(field != field.strip() or not field for field in (
+        evidence.provider, evidence.instrument_id, evidence.license_reference,
+    )):
         return False
     if evidence.permitted_use != "internal_research" or evidence.reviewed is not True:
         return False
