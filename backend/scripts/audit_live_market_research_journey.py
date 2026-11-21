@@ -141,8 +141,8 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
     retrieval = provenance.get("retrievedAt")
     if rows and retrieval is None:
         raise AuditBlocked("History retrieval provenance missing")
-    if retrieval is not None:
-        _timestamp(retrieval, now=now)
+    history_retrieved = _timestamp(retrieval, now=now) if retrieval is not None else None
+    if history_retrieved is not None:
         if any(item.get("retrievedAt") != retrieval for item in rows):
             raise AuditBlocked("History retrieval provenance mismatch")
     ordered = sorted(dates)
@@ -172,6 +172,8 @@ def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
         "observedCalendarDepthDays": depth,
         "has365CalendarDaySpan": depth >= 365,
         "latestObservationAgeCalendarDays": latest_age_days,
+        "retrievalAgeHours": round((now - history_retrieved).total_seconds() / 3600, 2) if history_retrieved else None,
+        "retrievalStaleOver24Hours": (now - history_retrieved > timedelta(hours=24)) if history_retrieved else None,
         "current365DayCoverageCandidate": current_depth_candidate,
         "candidateWeekdayGapCount": len(gaps),
         "candidateWeekdayGapDatesFirst20": gaps[:20],
@@ -290,6 +292,8 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
 
     # Diagnostic reasons are descriptive only; they never grant research authority.
     blocking_reasons = ["provider_usage_rights_unverified", "historical_pit_unverified"]
+    if history["retrievalStaleOver24Hours"] is True:
+        blocking_reasons.append("history_retrieval_stale")
     if not history["current365DayCoverageCandidate"]:
         blocking_reasons.append("history_depth_or_recency_unverified")
     if not history["volumeCoverageComplete"] or history["zeroVolumeSessionCount"]:
@@ -304,6 +308,7 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         blocking_reasons.append("dossier_evidence_missing")
     if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24)
             or now - news_retrieved > timedelta(hours=24)
+            or history["retrievalStaleOver24Hours"] is True
             or (newest_published is not None and now - newest_published > timedelta(days=7))
             or now - as_of > timedelta(hours=24)
             or (history["latestObservationAgeCalendarDays"] is not None
@@ -311,8 +316,8 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
         blocking_reasons.append("research_evidence_stale")
     return {
         "blockingReasons": blocking_reasons,
-        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or (newest_published is not None and now - newest_published > timedelta(days=7)) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
-                   else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"] and history["volumeCoverageComplete"] and history["adjustedCloseMissingCount"] == 0 and history["zeroVolumeSessionCount"] == 0 and provider in history["sourceProvidersDeclared"]) else "incomplete_evidence"),
+        "status": ("stale_research_evidence" if (now - retrieved > timedelta(hours=24) or now - observed > timedelta(hours=24) or now - news_retrieved > timedelta(hours=24) or history["retrievalStaleOver24Hours"] is True or (newest_published is not None and now - newest_published > timedelta(days=7)) or now - as_of > timedelta(hours=24) or (history["latestObservationAgeCalendarDays"] is not None and history["latestObservationAgeCalendarDays"] > 7))
+                   else "partial_research_evidence" if (attached and items and history["current365DayCoverageCandidate"] and history["volumeCoverageComplete"] and history["retrievalStaleOver24Hours"] is False and history["adjustedCloseMissingCount"] == 0 and history["zeroVolumeSessionCount"] == 0 and provider in history["sourceProvidersDeclared"]) else "incomplete_evidence"),
         "symbol": symbol,
         "auditClockUtc": now.isoformat(),
         "quote": {"providerDeclared": provider, "mode": mode,
