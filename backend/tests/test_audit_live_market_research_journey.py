@@ -562,3 +562,17 @@ def test_duplicate_news_article_url_fails_closed():
     responses["/api/v1/news/feed"]["items"].append(dict(article))
     with pytest.raises(AuditBlocked, match="Duplicate news article URL"):
         _audit(responses)
+
+
+@pytest.mark.parametrize("variant", [
+    lambda url: url + "#headline",
+    lambda url: url.replace("https://", "https://", 1).replace("news.", "NEWS.", 1),
+])
+def test_same_publisher_article_with_url_variant_fails_closed(variant):
+    responses = _responses()
+    article = responses["/api/v1/news/feed"]["items"][0]
+    duplicate = dict(article)
+    duplicate["articleUrl"] = variant(article["articleUrl"])
+    responses["/api/v1/news/feed"]["items"].append(duplicate)
+    with pytest.raises(AuditBlocked, match="Duplicate news article URL"):
+        _audit(responses)
