@@ -554,3 +554,11 @@ def test_fresh_history_retrieval_does_not_claim_operational_authority():
     assert report["history"]["retrievalAgeHours"] == 0.17
     assert report["history"]["historicalPointInTimeEligible"] is False
     assert report["completeResearchVerified"] is False
+
+
+def test_duplicate_news_article_url_fails_closed():
+    responses = _responses()
+    article = responses["/api/v1/news/feed"]["items"][0]
+    responses["/api/v1/news/feed"]["items"].append(dict(article))
+    with pytest.raises(AuditBlocked, match="Duplicate news article URL"):
+        _audit(responses)
