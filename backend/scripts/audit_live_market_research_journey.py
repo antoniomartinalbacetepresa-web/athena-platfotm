@@ -249,12 +249,17 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
     if not isinstance(items, list):
         raise AuditBlocked("News items missing")
     newest_published = None
+    seen_article_urls = set()
     for item in items:
         article = _object(item)
         if (not _text(article.get("publisher"))
                 or _text(article.get("sourceProvider")) != _text(news.get("sourceProvider"))
                 or not _https_article_url(article.get("articleUrl"))):
             raise AuditBlocked("News article provenance missing or invalid")
+        article_url = article["articleUrl"]
+        if article_url in seen_article_urls:
+            raise AuditBlocked("Duplicate news article URL")
+        seen_article_urls.add(article_url)
         published = _timestamp(article.get("publishedAt"), now=now)
         article_retrieved = _timestamp(article.get("retrievedAt"), now=now)
         if published > article_retrieved + timedelta(minutes=5) or article_retrieved > news_retrieved + timedelta(minutes=5):
