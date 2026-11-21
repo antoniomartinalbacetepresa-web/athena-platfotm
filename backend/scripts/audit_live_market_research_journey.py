@@ -70,7 +70,7 @@ def _https_article_url(value: object) -> bool:
     labels = host.rstrip(".").lower().split(".")
     return (parsed.scheme == "https" and "." in host and not host.endswith(".")
             and labels[-1] not in reserved
-            and all(part and part != "localhost" for part in labels)
+            and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) and part != "localhost" for part in labels)
             and parsed.username is None and parsed.password is None
             and (port is None or 1 <= port <= 65535))
 
