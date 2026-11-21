@@ -487,3 +487,17 @@ def test_live_journey_never_implies_source_license_from_provider_metadata():
         "redistributionPermittedVerified": False,
     }
     assert report["completeResearchVerified"] is False
+
+
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1/article",
+    "https://192.168.1.4/article",
+    "https://[::1]/article",
+    "https://localhost.example.localhost/article",
+    "https://news.example.org./article",
+])
+def test_article_citation_rejects_ip_or_local_host(url):
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
+    with pytest.raises(AuditBlocked, match="provenance"):
+        _audit(responses)
