@@ -529,3 +529,28 @@ def test_live_journey_rejects_reserved_nonpublic_publisher_domains(url):
     responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
     with pytest.raises(AuditBlocked, match="provenance"):
         _audit(responses)
+
+
+def test_stale_history_retrieval_blocks_current_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    old = (NOW - timedelta(hours=30)).isoformat()
+    history = responses["/api/v1/market/history"]
+    history["provenance"]["retrievedAt"] = old
+    for row in history["data"]:
+        row["retrievedAt"] = old
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is True
+    assert report["history"]["retrievalStaleOver24Hours"] is True
+    assert report["history"]["retrievalAgeHours"] == 30.0
+    assert "history_retrieval_stale" in report["blockingReasons"]
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_history_retrieval_does_not_claim_operational_authority():
+    report, _ = _audit(_responses())
+    assert report["history"]["retrievalStaleOver24Hours"] is False
+    assert report["history"]["retrievalAgeHours"] == 0.17
+    assert report["history"]["historicalPointInTimeEligible"] is False
+    assert report["completeResearchVerified"] is False
