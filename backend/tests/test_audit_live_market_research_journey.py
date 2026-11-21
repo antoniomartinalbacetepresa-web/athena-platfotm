@@ -501,3 +501,18 @@ def test_article_citation_rejects_ip_or_local_host(url):
     responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
     with pytest.raises(AuditBlocked, match="provenance"):
         _audit(responses)
+
+
+@pytest.mark.parametrize("url", [
+    "https://intranet.local/article",
+    "https://publisher.internal/story",
+    "https://news.test/story",
+    "https://news.invalid/story",
+    "https://news.example/story",
+    "https://hidden.onion/story",
+])
+def test_live_journey_rejects_reserved_nonpublic_publisher_domains(url):
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
+    with pytest.raises(AuditBlocked, match="provenance"):
+        _audit(responses)
