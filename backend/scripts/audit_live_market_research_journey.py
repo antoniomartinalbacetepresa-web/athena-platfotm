@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
+import ipaddress
 import math
 import re
 from urllib.parse import urlencode, urlsplit
@@ -57,9 +58,16 @@ def _https_article_url(value: object) -> bool:
         port = parsed.port
     except ValueError:
         return False
-    return (parsed.scheme == "https" and bool(parsed.hostname)
-            and "." in parsed.hostname and parsed.username is None
-            and parsed.password is None and (port is None or 1 <= port <= 65535))
+    host = parsed.hostname or ""
+    try:
+        ipaddress.ip_address(host)
+        return False  # An article citation must identify a public publisher domain.
+    except ValueError:
+        pass
+    return (parsed.scheme == "https" and "." in host and not host.endswith(".")
+            and all(part and part != "localhost" for part in host.split("."))
+            and parsed.username is None and parsed.password is None
+            and (port is None or 1 <= port <= 65535))
 
 
 def _history_audit(fetch, *, symbol: str, now: datetime) -> dict:
