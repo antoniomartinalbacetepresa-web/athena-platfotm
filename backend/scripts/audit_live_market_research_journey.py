@@ -64,8 +64,13 @@ def _https_article_url(value: object) -> bool:
         return False  # An article citation must identify a public publisher domain.
     except ValueError:
         pass
+    # Reserved/internal DNS names cannot establish a public publisher identity.
+    # A syntactically valid HTTPS URL is not evidence of an authorized source.
+    reserved = ("localhost", "local", "internal", "test", "example", "invalid", "onion")
+    labels = host.rstrip(".").lower().split(".")
     return (parsed.scheme == "https" and "." in host and not host.endswith(".")
-            and all(part and part != "localhost" for part in host.split("."))
+            and labels[-1] not in reserved
+            and all(part and part != "localhost" for part in labels)
             and parsed.username is None and parsed.password is None
             and (port is None or 1 <= port <= 65535))
 
