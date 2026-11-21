@@ -127,6 +127,19 @@ def test_mismatched_or_unsafe_responses_fail_closed(path, mutate):
         _audit(responses)
 
 
+
+@pytest.mark.parametrize("url", [
+    "https://bad_host.publisher.org/article",
+    "https://-bad.publisher.org/article",
+    "https://bad-.publisher.org/article",
+    "https://a..publisher.org/article",
+])
+def test_malformed_publisher_dns_labels_fail_closed(url):
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
+    with pytest.raises(AuditBlocked, match="provenance"):
+        _audit(responses)
+
 def test_future_timestamps_fail_closed():
     responses = _responses()
     responses["/api/v1/market/quote"]["data"]["retrievedAt"] = (NOW + timedelta(hours=1)).isoformat()
