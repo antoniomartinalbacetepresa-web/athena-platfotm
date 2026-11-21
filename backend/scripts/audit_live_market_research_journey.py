@@ -257,9 +257,15 @@ def audit_journey(fetch, *, symbol: str, now: datetime) -> dict:
                 or not _https_article_url(article.get("articleUrl"))):
             raise AuditBlocked("News article provenance missing or invalid")
         article_url = article["articleUrl"]
-        if article_url in seen_article_urls:
+        # Fragments are client-side anchors, not independent publisher articles.
+        # Normalize host casing and default HTTPS port without dereferencing URLs.
+        parsed_article = urlsplit(article_url)
+        article_identity = (parsed_article.hostname.lower(),
+                            parsed_article.port or 443,
+                            parsed_article.path or "/", parsed_article.query)
+        if article_identity in seen_article_urls:
             raise AuditBlocked("Duplicate news article URL")
-        seen_article_urls.add(article_url)
+        seen_article_urls.add(article_identity)
         published = _timestamp(article.get("publishedAt"), now=now)
         article_retrieved = _timestamp(article.get("retrievedAt"), now=now)
         if published > article_retrieved + timedelta(minutes=5) or article_retrieved > news_retrieved + timedelta(minutes=5):
