@@ -52,7 +52,7 @@ def test_python3_only_environment_is_detected(tmp_path: Path):
     def run(command, **kwargs):
         if command[1:] == ["branch", "--show-current"]:
             return subprocess.CompletedProcess(command, 0, "dev/real-market-backend\n", "")
-        return subprocess.CompletedProcess(command, 0, "version 1\n", "")
+        return subprocess.CompletedProcess(command, 0, "Python 3.12.8\n" if command[0].endswith("/python3") else "version 1\n", "")
     with patch("scripts.environment_preflight.shutil.which", side_effect=which), patch("scripts.environment_preflight.subprocess.run", side_effect=run) as called:
         result = probe(tmp_path)
     assert result["ready"] is True
