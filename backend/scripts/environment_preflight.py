@@ -17,7 +17,8 @@ def probe(root: Path) -> dict:
               "git": None, "backend_requirements": False,
               "flutter_manifest": False, "ready": False}
     for name in ("python", "flutter", "git"):
-        binary = shutil.which(name)
+        # Linux Codespaces and CI commonly expose python3, not python.
+        binary = (shutil.which("python3") or shutil.which("python")) if name == "python" else shutil.which(name)
         if not binary:
             continue
         try:
