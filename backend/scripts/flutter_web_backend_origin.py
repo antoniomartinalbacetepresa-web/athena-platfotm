@@ -32,7 +32,7 @@ def validate_backend_origin(value: str) -> str:
         except ValueError:
             pass
         else:
-            if address.is_loopback or address.is_unspecified:
+            if not address.is_global:
                 raise ValueError("Loopback backend origin is not deployable")
     except ValueError:
         raise ValueError("Public HTTPS backend origin required") from None
