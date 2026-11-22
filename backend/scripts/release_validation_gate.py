@@ -6,6 +6,7 @@ its independent deployed API isolation gate. PR checks do not imply deployment.
 from __future__ import annotations
 
 import os
+import re
 from typing import Mapping
 
 
@@ -43,6 +44,8 @@ def check_release_gate(environment: Mapping[str, str]) -> None:
         # GITHUB_REF is refs/pull/N/merge, not the destination branch.
         if environment.get("GITHUB_BASE_REF") != "dev/real-market-backend":
             raise ReleaseGateFailure("Release gate requires the authorized PR target branch")
+        if not re.fullmatch(r"refs/pull/[1-9][0-9]*/merge", environment.get("GITHUB_REF", "")):
+            raise ReleaseGateFailure("Release gate requires a GitHub pull request merge ref")
         # No deployed job is run for PR events. A PR success is not staging proof.
         return
     if environment.get("GITHUB_REF") != "refs/heads/dev/real-market-backend":
