@@ -5,6 +5,8 @@ on:
     branches:
       - dev/real-market-backend
   pull_request:
+    branches:
+      - dev/real-market-backend
 
 permissions:
   contents: read
