@@ -40,3 +40,21 @@ def test_wrong_branch_blocks_ready(tmp_path: Path):
         result = probe(tmp_path)
     assert result["ready"] is False
     assert result["branch"] == "main"
+
+
+def test_python3_only_environment_is_detected(tmp_path: Path):
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "requirements.txt").touch()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "pubspec.yaml").touch()
+    def which(name):
+        return None if name == "python" else "/usr/bin/" + name
+    def run(command, **kwargs):
+        if command[1:] == ["branch", "--show-current"]:
+            return subprocess.CompletedProcess(command, 0, "dev/real-market-backend\n", "")
+        return subprocess.CompletedProcess(command, 0, "version 1\n", "")
+    with patch("scripts.environment_preflight.shutil.which", side_effect=which), patch("scripts.environment_preflight.subprocess.run", side_effect=run) as called:
+        result = probe(tmp_path)
+    assert result["ready"] is True
+    assert result["python"] == "version 1"
+    assert any(call.args[0][0] == "/usr/bin/python3" for call in called.call_args_list)
