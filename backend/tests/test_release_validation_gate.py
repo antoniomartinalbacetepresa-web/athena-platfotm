@@ -108,3 +108,23 @@ def test_pr_release_gate_accepts_authorized_target_without_claiming_deployment()
         DEPLOYED_ENABLED="true", BROWSER_ENABLED="true",
         DEPLOYED_RESULT="skipped", BROWSER_RESULT="skipped",
     ))
+
+
+@pytest.mark.parametrize("ref", [
+    "", "refs/heads/dev/real-market-backend", "refs/pull/0/merge",
+    "refs/pull/-1/merge", "refs/pull/42/head", "refs/pull/42/merge/extra",
+])
+def test_pr_release_gate_rejects_non_merge_or_malformed_refs(ref):
+    with pytest.raises(ReleaseGateFailure, match="pull request merge ref"):
+        check_release_gate(config(
+            GITHUB_EVENT_NAME="pull_request", GITHUB_REF=ref,
+            GITHUB_BASE_REF="dev/real-market-backend",
+        ))
+
+
+def test_pr_release_gate_accepts_valid_numbered_merge_ref():
+    check_release_gate(config(
+        GITHUB_EVENT_NAME="pull_request",
+        GITHUB_REF="refs/pull/123/merge",
+        GITHUB_BASE_REF="dev/real-market-backend",
+    ))
