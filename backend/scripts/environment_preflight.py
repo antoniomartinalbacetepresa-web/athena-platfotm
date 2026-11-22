@@ -30,7 +30,7 @@ def probe(root: Path) -> dict:
                 lines = (completed.stdout or completed.stderr).strip().splitlines()
                 version = lines[0] if lines else None
                 # Fail closed: a Python 2 executable must never satisfy the Python 3 gate.
-                if name == "python" and (not version or not re.match(r"^Python 3(?:\\.|$)", version)):
+                if name == "python" and (not version or not re.match(r"^Python 3(?:\.|$)", version)):
                     continue
                 result[name] = version
         except (OSError, subprocess.TimeoutExpired):
