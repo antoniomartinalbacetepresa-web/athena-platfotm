@@ -39,6 +39,10 @@ def check_release_gate(environment: Mapping[str, str]) -> None:
     if event not in ("push", "pull_request"):
         raise ReleaseGateFailure("Unsupported release validation event")
     if event == "pull_request":
+        # A PR check is only authoritative for the approved target branch.
+        # GITHUB_REF is refs/pull/N/merge, not the destination branch.
+        if environment.get("GITHUB_BASE_REF") != "dev/real-market-backend":
+            raise ReleaseGateFailure("Release gate requires the authorized PR target branch")
         # No deployed job is run for PR events. A PR success is not staging proof.
         return
     if environment.get("GITHUB_REF") != "refs/heads/dev/real-market-backend":
