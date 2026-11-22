@@ -28,6 +28,8 @@ def test_valid_public_backend_origin(origin, expected):
     "https://172.16.0.1", "https://169.254.1.2",
     "https://[fc00::1]", "https://[fe80::1]",
     "https://0.0.0.0", "https://[::]",
+    "https://2130706433", "https://0x7f000001",
+    "https://0177.0.0.1", "https://0x7f.0.0.1",
 ])
 def test_unsafe_backend_origin_fails_closed(origin):
     with pytest.raises(ValueError, match="HTTPS backend origin"):
