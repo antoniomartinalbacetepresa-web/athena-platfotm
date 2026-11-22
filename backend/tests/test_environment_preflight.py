@@ -67,8 +67,8 @@ def test_python2_fails_closed_even_when_other_tools_exist(tmp_path: Path):
     (tmp_path / "app" / "pubspec.yaml").touch()
     def run(command, **kwargs):
         if command[1:] == ["branch", "--show-current"]:
-            return subprocess.CompletedProcess(command, 0, "dev/real-market-backend\\n", "")
-        return subprocess.CompletedProcess(command, 0, "Python 2.7.18\\n" if "python" in command[0] else "version 1\\n", "")
+            return subprocess.CompletedProcess(command, 0, "dev/real-market-backend\n", "")
+        return subprocess.CompletedProcess(command, 0, "Python 2.7.18\\n" if "python" in command[0] else "version 1\n", "")
     with patch("scripts.environment_preflight.shutil.which", side_effect=lambda n: "/usr/bin/" + n), patch("scripts.environment_preflight.subprocess.run", side_effect=run):
         result = probe(tmp_path)
     assert result["python"] is None
