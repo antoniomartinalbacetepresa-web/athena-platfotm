@@ -12,6 +12,7 @@ def config(**overrides):
         "DEPLOYED_ENABLED": "", "BROWSER_ENABLED": "",
         "OWNER_BROWSER_ENABLED": "", "GITHUB_EVENT_NAME": "push",
         "GITHUB_REF": "refs/heads/dev/real-market-backend",
+        "GITHUB_BASE_REF": "",
     }
     values.update(overrides)
     return values
@@ -79,6 +80,7 @@ def test_owner_browser_requires_both_actual_successes():
 def test_pr_green_is_not_deployed_evidence_and_wrong_push_branch_fails():
     check_release_gate(config(
         GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge",
+        GITHUB_BASE_REF="dev/real-market-backend",
         DEPLOYED_ENABLED="true", BROWSER_ENABLED="true",
     ))
     with pytest.raises(ReleaseGateFailure, match="authorized development branch"):
@@ -88,3 +90,21 @@ def test_pr_green_is_not_deployed_evidence_and_wrong_push_branch_fails():
 def test_unsupported_event_fails_closed():
     with pytest.raises(ReleaseGateFailure):
         check_release_gate(config(GITHUB_EVENT_NAME="schedule"))
+
+
+@pytest.mark.parametrize("base_ref", ["", "main", "dev/other-branch"])
+def test_pr_release_gate_rejects_missing_or_unauthorized_target(base_ref):
+    with pytest.raises(ReleaseGateFailure, match="authorized PR target branch"):
+        check_release_gate(config(
+            GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/42/merge",
+            GITHUB_BASE_REF=base_ref,
+        ))
+
+
+def test_pr_release_gate_accepts_authorized_target_without_claiming_deployment():
+    check_release_gate(config(
+        GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/42/merge",
+        GITHUB_BASE_REF="dev/real-market-backend",
+        DEPLOYED_ENABLED="true", BROWSER_ENABLED="true",
+        DEPLOYED_RESULT="skipped", BROWSER_RESULT="skipped",
+    ))
