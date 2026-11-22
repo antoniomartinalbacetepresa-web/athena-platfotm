@@ -24,6 +24,10 @@ def test_valid_public_backend_origin(origin, expected):
     "https://api.example.test/#fragment", "https://api.example.test:invalid",
     " https://api.example.test", "https://api.example.test\\path",
     "https://api.example.test\n",
+    "https://10.0.0.5", "https://192.168.1.1:8443",
+    "https://172.16.0.1", "https://169.254.1.2",
+    "https://[fc00::1]", "https://[fe80::1]",
+    "https://0.0.0.0", "https://[::]",
 ])
 def test_unsafe_backend_origin_fails_closed(origin):
     with pytest.raises(ValueError, match="HTTPS backend origin"):
