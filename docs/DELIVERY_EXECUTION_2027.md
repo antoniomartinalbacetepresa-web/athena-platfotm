@@ -35,3 +35,20 @@ All approved scope represented in the acceptance inventory; licensing/coverage a
 - Does the inventory fully cover all approved future modules and enhancements?
 
 Never overwrite this checkpoint with fabricated status. Keep concrete execution records in versioned changes or the automation run report.
+
+## Mandatory technical unblockers — execution order (2026-11-22)
+
+### Gate E: executable development environment (critical)
+Before claiming accelerated delivery, identify the **actual** execution host for the hourly automation, its persistent checkout/worktree, branch, runtime versions and writable scope. Demonstrate, with logs, a non-destructive checkout of `dev/real-market-backend`, backend dependency installation and focused pytest, Flutter analyze/test/build if Flutter is installed, and a repeatable restart of the same checkpoint. GitHub API file-write permission is **not** proof of a shell, a persistent computer, Python/Flutter runtimes or test execution. If absent, report `BLOCKED_ENVIRONMENT` and request authorization to connect a supported persistent execution environment; never pretend it exists or install on the user's Windows machine remotely.
+
+### Gate CI: actual GitHub Actions evidence (critical)
+Discover the **real workflow paths** in the repository before editing any YAML; do not guess a workflow filename or create a duplicate. Confirm that existing workflows trigger on push to `dev/real-market-backend` and PRs **targeting that branch**, run backend pytest and Flutter analyze/test/build where appropriate, and expose the mandatory release gate. Verify the exact commit SHA, trigger event, run URL, conclusion and whether the run belongs to push or PR; an empty status list or no PR run is `UNKNOWN`, not a pass or a failure. Change existing CI only after inspecting it and its repository conventions. Never change branch protections or secrets without authorization.
+
+### Gate DATA: legally usable real market inputs (critical)
+Select a liquid pilot instrument and document candidate primary and independent secondary data providers, free/paid tier, rights to storage/redistribution, adjustments, API limits, historical depth, intraday availability and cost. Verify source agreement and actual >=365-day OHLCV coverage with timestamps, volume, splits/dividends, currency/FX, gaps and PIT in an authorized running environment. If provider rights or credentials are absent, mark `BLOCKED_DATA_LICENSE`; implement honest fail-closed UI/API states and provider contracts without fabricating live coverage. Do not purchase plans or request secrets in chat.
+
+### 48-hour evidence-based trial
+At the next two-day checkpoint, record: (a) execution environment available yes/no and its test log, (b) exact-SHA push/PR CI status, (c) pilot data provider rights and measured coverage, (d) at least one demonstrable code-integrated vertical advance or its precise blocker. If no advance, recommend changing the execution environment, staffing or provider strategy. Never declare this trial passed because a document or prompt changed.
+
+### Reporting
+Separate VERIFIED, BLOCKED, UNKNOWN and NOT RUN. Preserve all previously approved modules and safety boundaries. Keep scope complete; sequence work according to critical path. These gates supersede narrative progress claims but do not authorize live trading.
