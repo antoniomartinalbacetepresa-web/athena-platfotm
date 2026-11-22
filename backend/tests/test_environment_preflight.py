@@ -22,7 +22,7 @@ def test_toolchain_and_branch_ready(tmp_path: Path):
     def run(command, **kwargs):
         if command[1:] == ["branch", "--show-current"]:
             return subprocess.CompletedProcess(command, 0, "dev/real-market-backend\n", "")
-        return subprocess.CompletedProcess(command, 0, "version 1\n", "")
+        return subprocess.CompletedProcess(command, 0, "Python 3.12.8\n" if command[1:] == ["--version"] else "version 1\n", "")
     with patch("scripts.environment_preflight.shutil.which", side_effect=lambda n: "/bin/" + n), patch("scripts.environment_preflight.subprocess.run", side_effect=run):
         result = probe(tmp_path)
     assert result["ready"] is True
@@ -35,7 +35,7 @@ def test_wrong_branch_blocks_ready(tmp_path: Path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "pubspec.yaml").touch()
     def run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, "main\n" if "branch" in command else "version\n", "")
+        return subprocess.CompletedProcess(command, 0, "main\n" if "branch" in command else "Python 3.12.8\n", "")
     with patch("scripts.environment_preflight.shutil.which", side_effect=lambda n: "/bin/" + n), patch("scripts.environment_preflight.subprocess.run", side_effect=run):
         result = probe(tmp_path)
     assert result["ready"] is False
@@ -56,5 +56,20 @@ def test_python3_only_environment_is_detected(tmp_path: Path):
     with patch("scripts.environment_preflight.shutil.which", side_effect=which), patch("scripts.environment_preflight.subprocess.run", side_effect=run) as called:
         result = probe(tmp_path)
     assert result["ready"] is True
-    assert result["python"] == "version 1"
+    assert result["python"] == "Python 3.12.8"
     assert any(call.args[0][0] == "/usr/bin/python3" for call in called.call_args_list)
+
+
+def test_python2_fails_closed_even_when_other_tools_exist(tmp_path: Path):
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "requirements.txt").touch()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "pubspec.yaml").touch()
+    def run(command, **kwargs):
+        if command[1:] == ["branch", "--show-current"]:
+            return subprocess.CompletedProcess(command, 0, "dev/real-market-backend\\n", "")
+        return subprocess.CompletedProcess(command, 0, "Python 2.7.18\\n" if "python" in command[0] else "version 1\\n", "")
+    with patch("scripts.environment_preflight.shutil.which", side_effect=lambda n: "/usr/bin/" + n), patch("scripts.environment_preflight.subprocess.run", side_effect=run):
+        result = probe(tmp_path)
+    assert result["python"] is None
+    assert result["ready"] is False
