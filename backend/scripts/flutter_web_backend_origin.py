@@ -28,7 +28,7 @@ def validate_backend_origin(value: str) -> str:
         host = parsed.hostname.lower()
         # Reject alternate numeric IPv4 spellings that DNS clients may resolve
         # to private or loopback addresses (e.g. 2130706433 -> 127.0.0.1).
-        if re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:\\.(?:0[xX][0-9a-fA-F]+|[0-9]+))*", host):
+        if re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:\.(?:0[xX][0-9a-fA-F]+|[0-9]+))*", host):
             raise ValueError("Numeric backend origin is not deployable")
         if host == "localhost" or host.endswith(".localhost"):
             raise ValueError("Loopback backend origin is not deployable")
