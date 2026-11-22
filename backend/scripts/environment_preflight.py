@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,7 +28,11 @@ def probe(root: Path) -> dict:
                                        timeout=25, check=False)
             if completed.returncode == 0:
                 lines = (completed.stdout or completed.stderr).strip().splitlines()
-                result[name] = lines[0] if lines else None
+                version = lines[0] if lines else None
+                # Fail closed: a Python 2 executable must never satisfy the Python 3 gate.
+                if name == "python" and (not version or not re.match(r"^Python 3(?:\\.|$)", version)):
+                    continue
+                result[name] = version
         except (OSError, subprocess.TimeoutExpired):
             pass
     if result["git"]:
