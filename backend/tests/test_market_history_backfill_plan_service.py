@@ -286,3 +286,47 @@ def test_backfill_policy_accepts_stricter_integral_limits(tmp_path: Path) -> Non
     assert plan.minimum_history_days == 400
     assert plan.requested_history_days == 400
     assert plan.maximum_source_gap_days == 5
+
+
+def test_backfill_plan_does_not_stitch_partial_sources_into_false_365_day_coverage(
+    tmp_path: Path,
+) -> None:
+    """Synthetic persisted histories must not be promoted by cross-provider union."""
+    database = _database(tmp_path)
+    instrument_id = _instrument(InstrumentRepository(database=database), "SPLIT")
+    observations = MarketObservationRepository(database=database)
+    base = AS_OF - timedelta(days=365)
+    first_half = [
+        {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 100.0}
+        for day in range(0, 181, 5)
+    ]
+    second_half = [
+        {"timestamp": (base + timedelta(days=day)).isoformat(), "close": 101.0}
+        for day in range(185, 366, 5)
+    ]
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=first_half,
+        source_provider="source_a",
+        retrieved_at=AS_OF,
+    )
+    observations.save_many(
+        instrument_id=instrument_id,
+        observations=second_half,
+        source_provider="source_b",
+        retrieved_at=AS_OF,
+    )
+
+    service = MarketHistoryBackfillPlanService(database=database)
+    first = service.get_plan(as_of=AS_OF)
+    second = service.get_plan(as_of=AS_OF)
+    assert first.to_api_dict() == second.to_api_dict()
+    assert first.total_blocking_count == 1
+    assert len(first.requests) == 1
+    request = first.requests[0]
+    assert request.instrument_id == instrument_id
+    assert request.reason == "insufficient_span"
+    assert request.source_provider == "yahoo"
+    assert request.requested_history_days == 400
+    assert first.to_api_dict()["policy"]["providerStitchingAllowed"] is False
+    assert first.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
