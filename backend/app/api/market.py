@@ -165,6 +165,13 @@ def get_history_backfill_plan(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        # An unavailable persistence layer is not an empty or complete plan.
+        # Fail closed without exposing database paths or internal exceptions.
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo verificar el plan de históricos persistidos.",
+        ) from exc
     return {"data": plan.to_api_dict()}
 
 
