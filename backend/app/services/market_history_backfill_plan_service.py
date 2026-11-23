@@ -96,12 +96,12 @@ class MarketHistoryBackfillPlanService:
         safety_margin_days: int = DEFAULT_SAFETY_MARGIN_DAYS,
         maximum_source_gap_days: int = DEFAULT_MAXIMUM_SOURCE_GAP_DAYS,
     ) -> None:
-        if minimum_history_days < 365:
+        if isinstance(minimum_history_days, bool) or not isinstance(minimum_history_days, int) or minimum_history_days < 365:
             raise ValueError("minimum_history_days no puede ser inferior a 365.")
-        if safety_margin_days < 0:
+        if isinstance(safety_margin_days, bool) or not isinstance(safety_margin_days, int) or safety_margin_days < 0:
             raise ValueError("safety_margin_days no puede ser negativo.")
-        if maximum_source_gap_days <= 0:
-            raise ValueError("maximum_source_gap_days debe ser mayor que 0.")
+        if isinstance(maximum_source_gap_days, bool) or not isinstance(maximum_source_gap_days, int) or not 0 < maximum_source_gap_days <= 7:
+            raise ValueError("maximum_source_gap_days debe estar entre 1 y 7.")
         self._database = database if database is not None else AthenaDatabase()
         self._minimum_history_days = int(minimum_history_days)
         self._safety_margin_days = int(safety_margin_days)
