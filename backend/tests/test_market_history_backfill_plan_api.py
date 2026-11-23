@@ -79,3 +79,51 @@ def test_market_backfill_plan_api_rejects_invalid_pit_and_pagination() -> None:
     ):
         response = client.get(url, params=params)
         assert response.status_code == expected_status, response.text
+
+
+def test_market_backfill_plan_api_empty_and_out_of_range_pages(
+    tmp_path, monkeypatch,
+) -> None:
+    """Empty or exhausted pages must not fabricate missing market history."""
+    database = AthenaDatabase(tmp_path / "synthetic-empty-market.db")
+    database.initialize()
+    monkeypatch.setattr(
+        market_api,
+        "MarketHistoryBackfillPlanService",
+        lambda: MarketHistoryBackfillPlanService(database=database),
+    )
+    app = FastAPI()
+    app.include_router(market_api.router)
+    client = TestClient(app)
+    url = "/api/v1/market/history/backfill-plan"
+    params = {"asOf": AS_OF.isoformat(), "limit": 1}
+
+    empty = client.get(url, params=params)
+    assert empty.status_code == 200, empty.text
+    payload = empty.json()["data"]
+    assert payload["totalBlockingCount"] == 0
+    assert payload["selectedCount"] == 0
+    assert payload["requests"] == []
+    assert payload["remainingCount"] == 0
+    assert payload["hasMore"] is False
+    assert payload["nextOffset"] is None
+    assert payload["policy"]["productionEvidenceClaimed"] is False
+
+    InstrumentRepository(database=database).upsert({
+        "symbol": "AAA",
+        "companyName": "AAA",
+        "country": "United States",
+        "regionKey": "america",
+        "exchangeShortName": "NASDAQ",
+        "instrumentType": "common_stock",
+    })
+    exhausted = client.get(url, params={**params, "offset": 10})
+    assert exhausted.status_code == 200, exhausted.text
+    payload = exhausted.json()["data"]
+    assert payload["totalBlockingCount"] == 1
+    assert payload["selectedCount"] == 0
+    assert payload["requests"] == []
+    assert payload["remainingCount"] == 0
+    assert payload["hasMore"] is False
+    assert payload["nextOffset"] is None
+    assert payload["policy"]["automaticReadinessPromotion"] is False
