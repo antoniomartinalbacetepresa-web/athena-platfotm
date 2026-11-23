@@ -92,6 +92,7 @@ def test_plan_turns_only_unresolved_gaps_into_400_day_yahoo_requests(tmp_path: P
         "stale_source": 0,
     }
     assert payload["hasMore"] is False
+    assert payload["nextOffset"] is None
     assert payload["minimumHistoryDays"] == 365
     assert payload["requestedHistoryDays"] == 400
     assert payload["policy"] == {
@@ -123,6 +124,14 @@ def test_plan_preserves_gap_pagination_and_reports_remaining_work(tmp_path: Path
     assert payload["selectedCount"] == 1
     assert payload["hasMore"] is True
     assert payload["offset"] == 1
+    assert payload["nextOffset"] == 2
+
+    last_page = MarketHistoryBackfillPlanService(database=database).get_plan(
+        as_of=AS_OF, limit=1, offset=2,
+    ).to_api_dict()
+    assert last_page["hasMore"] is False
+    assert last_page["nextOffset"] is None
+    assert last_page["selectedCount"] == 1
 
 
 def test_plan_refuses_weaker_than_required_history_and_naive_cutoffs(tmp_path: Path) -> None:
