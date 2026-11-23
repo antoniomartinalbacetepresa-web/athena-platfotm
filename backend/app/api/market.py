@@ -16,6 +16,7 @@ from app.services.persisted_market_universe_service import (
 from app.services.yahoo_market_service import YahooMarketService
 from app.services.pilot_evidence import EvidenceRejected, validate_pilot_history
 from app.services.market_quote_identity_service import MarketQuoteIdentityService
+from app.services.market_history_backfill_plan_service import MarketHistoryBackfillPlanService
 
 
 router = APIRouter(
@@ -149,6 +150,22 @@ def get_historical_fx_quote(
         ) from exc
 
     return {"data": payload}
+
+
+@router.get("/history/backfill-plan")
+def get_history_backfill_plan(
+    as_of: datetime = Query(..., alias="asOf"),
+    limit: int = Query(100, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict[str, object]:
+    """Read-only PIT backfill plan; never fetches or certifies market history."""
+    try:
+        plan = MarketHistoryBackfillPlanService().get_plan(
+            as_of=as_of, limit=limit, offset=offset
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"data": plan.to_api_dict()}
 
 
 @router.get("/history")
