@@ -127,3 +127,27 @@ def test_market_backfill_plan_api_empty_and_out_of_range_pages(
     assert payload["hasMore"] is False
     assert payload["nextOffset"] is None
     assert payload["policy"]["automaticReadinessPromotion"] is False
+
+
+def test_market_backfill_plan_api_fails_closed_when_persistence_unavailable(
+    monkeypatch,
+) -> None:
+    """A database outage must not look like an empty, successful plan."""
+    class UnavailablePlanService:
+        def get_plan(self, **kwargs):
+            raise RuntimeError("sensitive internal database path")
+
+    monkeypatch.setattr(
+        market_api,
+        "MarketHistoryBackfillPlanService",
+        UnavailablePlanService,
+    )
+    app = FastAPI()
+    app.include_router(market_api.router)
+    response = TestClient(app).get(
+        "/api/v1/market/history/backfill-plan",
+        params={"asOf": AS_OF.isoformat()},
+    )
+    assert response.status_code == 503
+    assert "sensitive internal database path" not in response.text
+    assert "data" not in response.json()
