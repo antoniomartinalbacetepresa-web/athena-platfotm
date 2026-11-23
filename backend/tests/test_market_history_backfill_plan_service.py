@@ -341,3 +341,55 @@ def test_backfill_plan_does_not_stitch_partial_sources_into_false_365_day_covera
     assert request.requested_history_days == 400
     assert first.to_api_dict()["policy"]["providerStitchingAllowed"] is False
     assert first.to_api_dict()["policy"]["productionEvidenceClaimed"] is False
+
+
+def test_backfill_plan_pages_are_stable_and_do_not_mutate_persisted_history(tmp_path: Path) -> None:
+    """Synthetic PIT fixture: paginating a plan must not write or reorder history."""
+    database = _database(tmp_path)
+    instruments = InstrumentRepository(database=database)
+    ids = [_instrument(instruments, symbol) for symbol in ("AAA", "BBB", "CCC")]
+    observations = MarketObservationRepository(database=database)
+    observed_at = AS_OF - timedelta(days=20)
+    observations.save_many(
+        instrument_id=ids[1],
+        observations=[{"timestamp": observed_at.isoformat(), "close": 101.0}],
+        source_provider="synthetic_fixture",
+        retrieved_at=AS_OF - timedelta(days=1),
+    )
+
+    service = MarketHistoryBackfillPlanService(database=database)
+
+    def collect_pages() -> list[tuple[int, str, str]]:
+        offset = 0
+        collected: list[tuple[int, str, str]] = []
+        while True:
+            payload = service.get_plan(as_of=AS_OF, limit=1, offset=offset).to_api_dict()
+            assert payload["status"] == "backfill_plan_only"
+            assert payload["totalBlockingCount"] == 3
+            assert payload["remainingCount"] == 3 - offset - payload["selectedCount"]
+            assert payload["policy"]["productionEvidenceClaimed"] is False
+            collected.extend(
+                (request["instrumentId"], request["symbol"], request["reason"])
+                for request in payload["requests"]
+            )
+            if not payload["hasMore"]:
+                assert payload["nextOffset"] is None
+                break
+            assert payload["nextOffset"] == offset + payload["selectedCount"]
+            assert payload["nextOffset"] > offset
+            offset = payload["nextOffset"]
+        return collected
+
+    first = collect_pages()
+    second = collect_pages()
+    assert first == second
+    assert len(first) == len(set(instrument_id for instrument_id, _, _ in first)) == 3
+    assert {symbol for _, symbol, _ in first} == {"AAA", "BBB", "CCC"}
+    assert next(reason for _, symbol, reason in first if symbol == "BBB") == "insufficient_span"
+
+    # A read-only plan must not fabricate additional observations or promote
+    # synthetic data to a completed 365-day history.
+    after = service.get_plan(as_of=AS_OF).to_api_dict()
+    assert after["totalBlockingCount"] == 3
+    assert after["blockingByReason"]["insufficient_span"] == 1
+    assert after["policy"]["automaticReadinessPromotion"] is False
