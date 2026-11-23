@@ -125,12 +125,14 @@ def test_plan_preserves_gap_pagination_and_reports_remaining_work(tmp_path: Path
     assert payload["hasMore"] is True
     assert payload["offset"] == 1
     assert payload["nextOffset"] == 2
+    assert payload["remainingCount"] == 1
 
     last_page = MarketHistoryBackfillPlanService(database=database).get_plan(
         as_of=AS_OF, limit=1, offset=2,
     ).to_api_dict()
     assert last_page["hasMore"] is False
     assert last_page["nextOffset"] is None
+    assert last_page["remainingCount"] == 0
     assert last_page["selectedCount"] == 1
 
 
