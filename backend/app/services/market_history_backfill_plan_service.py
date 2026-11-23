@@ -57,6 +57,7 @@ class MarketHistoryBackfillPlan:
             "blockingByReason": dict(self.blocking_by_reason),
             "selectedCount": selected,
             "hasMore": self.offset + selected < self.total_blocking_count,
+            "nextOffset": (self.offset + selected) if self.offset + selected < self.total_blocking_count else None,
             "minimumHistoryDays": self.minimum_history_days,
             "safetyMarginDays": self.safety_margin_days,
             "requestedHistoryDays": self.requested_history_days,
