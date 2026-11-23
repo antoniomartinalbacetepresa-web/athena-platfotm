@@ -243,3 +243,46 @@ def test_backfill_plan_rejects_future_pit_cutoff_without_creating_requests(
     service = MarketHistoryBackfillPlanService(database=database)
     with pytest.raises(ValueError, match="fecha futura"):
         service.get_plan(as_of=datetime.now(timezone.utc) + timedelta(days=1))
+
+
+@pytest.mark.parametrize(
+    "parameter,value",
+    [
+        ("minimum_history_days", True),
+        ("minimum_history_days", 365.5),
+        ("minimum_history_days", "365"),
+        ("minimum_history_days", None),
+        ("safety_margin_days", True),
+        ("safety_margin_days", 0.5),
+        ("safety_margin_days", "35"),
+        ("safety_margin_days", None),
+        ("maximum_source_gap_days", True),
+        ("maximum_source_gap_days", 0.5),
+        ("maximum_source_gap_days", 8),
+        ("maximum_source_gap_days", "7"),
+        ("maximum_source_gap_days", None),
+    ],
+)
+def test_backfill_policy_rejects_invalid_day_counts_before_database_access(
+    tmp_path: Path, parameter: str, value: object,
+) -> None:
+    database_path = tmp_path / "must-not-create.db"
+    with pytest.raises(ValueError, match=parameter):
+        MarketHistoryBackfillPlanService(
+            database=AthenaDatabase(database_path), **{parameter: value}
+        )
+    assert not database_path.exists()
+
+
+def test_backfill_policy_accepts_stricter_integral_limits(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    service = MarketHistoryBackfillPlanService(
+        database=database,
+        minimum_history_days=400,
+        safety_margin_days=0,
+        maximum_source_gap_days=5,
+    )
+    plan = service.get_plan(as_of=AS_OF)
+    assert plan.minimum_history_days == 400
+    assert plan.requested_history_days == 400
+    assert plan.maximum_source_gap_days == 5
