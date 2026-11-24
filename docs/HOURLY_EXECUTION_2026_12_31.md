@@ -59,5 +59,19 @@ Estas cinco reglas son complementarias, no amplían el producto ni sustituyen co
 
 **Control de eficacia:** una vez al día comparar IDs efectivamente aceptados, pruebas ejecutadas, defectos cerrados y tiempo de bloqueo frente al día anterior; si no hay avance tras 48 h cambiar método o subtarea según reglas previas, no añadir otra capa de instrucciones. Los hitos del calendario son objetivos de control, no garantía del 100 % al 31-12-2026.
 
+## Ejecución cuantificada y continuidad (2026-11-24)
+
+Consolidar los controles anteriores, sin duplicar tareas ni reducir alcance. Los hitos anteriores conservan su función de control y escalado; las siguientes ventanas son prioridades de trabajo, no garantías.
+
+- **Ruta crítica cuantificada:** en la revisión diaria estimar esfuerzo restante por ID y dependencias, con intervalos y supuestos explícitos; priorizar el camino crítico y los desbloqueos de mayor impacto. Si faltan datos, marcar UNKNOWN.
+- **Continuidad:** al finalizar cada ciclo conservar checkpoint recuperable con SHA, ID, archivos, pruebas, estado, bloqueo y siguiente acción exacta. Al iniciar, contrastarlo con HEAD y retomar trabajo pendiente antes de abrir otro. No guardar secretos ni crear commits de mero seguimiento.
+- **CI remota:** aprovechar validate.yml y sus runs reales dentro de cuotas autorizadas; recuperar resultados y logs disponibles de Python/Flutter por SHA/evento/URL. No relanzar sin motivo una validación idéntica; distinguir pendiente, fallo y UNKNOWN. No alterar gates para obtener verde.
+- **Concurrencia segura:** comprobar HEAD y blobs antes de escribir; si cambiaron, releer y reconciliar, nunca sobrescribir cambios ajenos ni forzar push. Solo paralelizar tareas con ejecutores y archivos independientes.
+- **Reutilización:** localizar implementaciones, contratos, servicios y tests existentes antes de crear otros; extenderlos de forma compatible y probar regresiones. No eliminar módulos históricos.
+- **Previsión dinámica:** cada 24 h registrar IDs aceptados/pendientes, ciclos productivos/ejecutados, esfuerzo restante estimado, tiempo bloqueado observado, ritmo efectivo y requerido y desviación. Estimar fecha mediante esfuerzo y capacidad demostrada, con incertidumbre; no tratar ciclos como horas efectivas ni extrapolar porcentajes de inventario parcial. Si el ritmo no basta, cambiar método o priorización dentro del alcance y aplicar escalado 48/72 h.
+- **Estabilización anticipada:** comenzar pruebas integrales y seguridad durante el desarrollo; desde el 17-12 priorizar integración y defectos, manteniendo el cierre de requisitos obligatorios; desde el 21-12 aplicar la regla de estabilización existente.
+
+Ventanas orientativas de aceleración: 24–26 noviembre, desbloqueo E/CI/DATA y auditoría; 27 noviembre–6 diciembre, núcleo Market/News/Investors/ATHENA/persistencia; 7–16 diciembre, estrategias/Radar/Portfolio/Flutter; 17–24 diciembre, integración integral, seguridad y rendimiento; 25–31 diciembre, pruebas completas, instalación Windows, correcciones y auditoría final. Los hitos verificables del 30-11, 07-12, 14-12 y 21-12 siguen vigentes. Revisar diariamente según evidencia, sin recortar alcance ni detener la ejecución al llegar al objetivo.
+
 ## Criterios de cierre
 100 % exige cobertura total del inventario y aceptación operativa real de datos/licencias, backend↔Flutter, pruebas y CI, seguridad/privacidad, Windows y todas las funciones aprobadas; no basta con commits ni fixtures. Al alcanzar 100 %, informar y pedir confirmación antes de detener o cambiar la tarea.
