@@ -73,5 +73,17 @@ Consolidar los controles anteriores, sin duplicar tareas ni reducir alcance. Los
 
 Ventanas orientativas de aceleración: 24–26 noviembre, desbloqueo E/CI/DATA y auditoría; 27 noviembre–6 diciembre, núcleo Market/News/Investors/ATHENA/persistencia; 7–16 diciembre, estrategias/Radar/Portfolio/Flutter; 17–24 diciembre, integración integral, seguridad y rendimiento; 25–31 diciembre, pruebas completas, instalación Windows, correcciones y auditoría final. Los hitos verificables del 30-11, 07-12, 14-12 y 21-12 siguen vigentes. Revisar diariamente según evidencia, sin recortar alcance ni detener la ejecución al llegar al objetivo.
 
+## Intensificación operativa (2026-11-25)
+
+Complementa los controles existentes sin duplicar tareas ni ampliar alcance. Aplicar las reglas de continuidad, dependencias, fixtures sintéticos, concurrencia segura y cierre por aceptación ya definidas.
+
+- Presupuesto de diagnóstico: dedicar como máximo el 20 % del tiempo efectivo disponible por ciclo a comprobaciones repetidas de bloqueos conocidos, salvo incidente crítico nuevo; dedicar el resto a implementación, integración y pruebas útiles. Si no hay acceso efectivo, informar y escalar sin simular trabajo.
+- Entregas atómicas: agrupar código funcional y regresiones relacionadas en un cambio coherente cuando sea viable, sin forzar commits ni omitir controles. Ejecutar primero pruebas focalizadas y después las integraciones afectadas; una vez cada 24 h intentar validación integral del estado actual, reutilizando CI exact-SHA válida cuando corresponda.
+- Caché: revisar y aprovechar cachés de dependencias Python/Flutter existentes en CI; si faltan, implementar solo tras verificar compatibilidad, claves por lockfile/versiones y seguridad, sin cachear secretos ni omitir instalación reproducible.
+- Productividad diaria: objetivo inicial >=80 % de ciclos con evidencia técnica útil (código integrado, regresión relevante, reparación reproducible o evidencia nueva de aceptación); 100 % de cambios funcionales con pruebas asociadas; cero fallos críticos sin atender, commits cosméticos, cambios en main o aceptaciones sin evidencia. Distinguir pruebas asociadas de ejecutadas. Medir sobre ciclos observados, UNKNOWN si faltan registros; revisar objetivos según capacidad demostrada y no manipular métricas.
+- Recursos: durante las próximas 24–48 h priorizar comprobar acceso efectivo a GitHub Actions y entorno persistente autorizado; Codespaces o Windows existente solo si se verifica conexión y permisos. No comprar ni contratar infraestructura. Mantener desarrollo independiente del proveedor y auditoría progresiva por ID según reglas anteriores.
+
+Ventanas de foco intensivo, solapables según dependencias y subordinadas a los hitos verificables ya vigentes: 25–30 noviembre entorno/CI; 1–7 diciembre Market/datos/persistencia/API; 8–14 diciembre ATHENA/estrategias/núcleo y recorrido Flutter piloto; 15–21 diciembre Flutter/Portfolio/Radar e integración y auditoría; 22–27 diciembre pruebas integrales, seguridad y correcciones; 28–31 diciembre estabilización y aceptación final. No posponer pruebas ni estabilización anticipada del 17-12, ni eliminar requisitos obligatorios. Son objetivos, no garantías.
+
 ## Criterios de cierre
 100 % exige cobertura total del inventario y aceptación operativa real de datos/licencias, backend↔Flutter, pruebas y CI, seguridad/privacidad, Windows y todas las funciones aprobadas; no basta con commits ni fixtures. Al alcanzar 100 %, informar y pedir confirmación antes de detener o cambiar la tarea.
