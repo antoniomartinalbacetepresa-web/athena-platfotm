@@ -85,5 +85,16 @@ Complementa los controles existentes sin duplicar tareas ni ampliar alcance. Apl
 
 Ventanas de foco intensivo, solapables según dependencias y subordinadas a los hitos verificables ya vigentes: 25–30 noviembre entorno/CI; 1–7 diciembre Market/datos/persistencia/API; 8–14 diciembre ATHENA/estrategias/núcleo y recorrido Flutter piloto; 15–21 diciembre Flutter/Portfolio/Radar e integración y auditoría; 22–27 diciembre pruebas integrales, seguridad y correcciones; 28–31 diciembre estabilización y aceptación final. No posponer pruebas ni estabilización anticipada del 17-12, ni eliminar requisitos obligatorios. Son objetivos, no garantías.
 
+## Recuperación crítica y reducción verificable del riesgo (2026-11-25)
+
+Prioridad inmediata sobre mejoras secundarias, sin recortar alcance, alterar seguridad ni detener la frecuencia horaria. No repetir diagnósticos ya registrados.
+
+- Antes del 26-11 intentar acreditar un ejecutor autorizado con checkout de la rama, Python/Flutter y pruebas reproducibles. Si no está conectado, solicitar al usuario una acción específica de conexión, no credenciales; mientras tanto usar escritura GitHub autorizada para cambios funcionales revisados y CI existente cuando sea accesible.
+- Antes del 27-11 obtener una entrega funcional con regresión y evidencia exact-SHA; si no se logra, identificar el impedimento real y cambiar el método de ejecución, no añadir instrucciones repetitivas. No esperar al proveedor para contratos y pruebas sintéticas.
+- Antes del 30-11 resolver o escalar E/CI/DATA con responsable, evidencia y alternativa viable. No adquirir recursos ni aceptar licencias sin autorización. Mantener los hitos 07-12, 14-12, 21-12 y 31-12.
+- Cada día reconciliar el alcance histórico con inventario, estimar esfuerzo restante por dependencias y comparar capacidad efectiva con esfuerzo requerido. Reservar margen para integración, defectos y aceptación; usar escenarios conservador y central solo con datos suficientes. Si no hay datos, previsión UNKNOWN.
+- Clasificar riesgo como muy alto mientras existan bloqueos críticos sin solución viable o no haya ritmo acreditado; alto si hay recuperación inicial pero insuficiente evidencia; moderado si existe ritmo sostenible y ruta crítica controlable con incertidumbres; bajo solo con gates críticos acreditados, inventario completo, ritmo demostrado suficiente y margen de estabilización; muy bajo solo con aceptación prácticamente completa y pruebas operativas satisfactorias. No reducir la etiqueta por cambiar el plan.
+- En cada ciclo bloqueado distinguir una intervención concreta del usuario de una tarea autónoma. Priorizar código y pruebas independientes de los bloqueos; conservar el seguimiento y no declarar avances ficticios. Si el escenario conservador supera la fecha, escalar capacidad o método sin compras automáticas ni recortar alcance.
+
 ## Criterios de cierre
 100 % exige cobertura total del inventario y aceptación operativa real de datos/licencias, backend↔Flutter, pruebas y CI, seguridad/privacidad, Windows y todas las funciones aprobadas; no basta con commits ni fixtures. Al alcanzar 100 %, informar y pedir confirmación antes de detener o cambiar la tarea.
