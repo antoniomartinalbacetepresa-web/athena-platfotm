@@ -233,3 +233,31 @@ def test_twelve_data_row_cannot_be_relabelled_as_synthetic_pit(tmp_path):
             source_provider="synthetic_relabel_fixture", retrieved_at=NOW,
         )
     assert repository.list_for_instrument(instrument_id) == []
+
+
+@pytest.mark.parametrize("source_field", ["sourceProvider", "source_provider"])
+@pytest.mark.parametrize("provider", ["twelve_data", "%74welve_data", "&#116;welve_data"])
+def test_imported_twelve_data_provenance_cannot_be_laundered_by_field_name(
+    tmp_path, source_field, provider
+):
+    """Both API and database-style provenance spellings must fail atomically."""
+    database = AthenaDatabase(tmp_path / "synthetic_imported_provenance.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "AAPL", "companyName": "Synthetic imported fixture",
+        "exchangeShortName": "NASDAQ", "instrumentType": "common_stock",
+        "currency": "USD",
+    })
+    repository = MarketObservationRepository(database=database)
+    with pytest.raises(ValueError, match="Twelve Data"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[
+                {"timestamp": "2026-11-20T21:00:00+00:00", "close": 100},
+                {"timestamp": "2026-11-23T21:00:00+00:00", "close": 102,
+                 source_field: provider},
+            ],
+            source_provider="synthetic_imported_fixture",
+            retrieved_at=NOW,
+        )
+    assert repository.list_for_instrument(instrument_id) == []
