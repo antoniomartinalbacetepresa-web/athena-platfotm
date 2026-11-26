@@ -26,6 +26,10 @@ def validated_market_source_provider(value: object) -> str:
     compact = "".join(ch for ch in decoded.casefold() if ch.isalnum())
     if "fmp" in compact or "financialmodelingprep" in compact:
         raise ValueError("source_provider no puede utilizar FMP.")
+    # Previews lack verified PIT/storage rights. Share this policy with read
+    # consumers so imported rows cannot bypass the write-time restriction.
+    if compact == "twelvedata":
+        raise ValueError("Twelve Data no está autorizado para almacenamiento PIT.")
     return normalized
 
 
@@ -55,9 +59,6 @@ class MarketObservationRepository:
             raise ValueError("instrument_id debe ser positivo.")
 
         provider = self._required_text(source_provider, "source_provider")
-        # Provider previews have no verified PIT/storage license. Fail closed.
-        if "".join(ch for ch in provider.casefold() if ch.isalnum()) == "twelvedata":
-            raise ValueError("Twelve Data no está autorizado para almacenamiento PIT.")
         retrieved = self._utc_iso(retrieved_at, "retrieved_at")
         retrieved_dt = datetime.fromisoformat(retrieved)
         buffered = list(observations)
@@ -83,12 +84,8 @@ class MarketObservationRepository:
                     or any(current[field] != expected_identity.get(field) for field in fields)):
                     raise ValueError("La identidad del instrumento cambió durante el backfill.")
             for observation in buffered:
-                if (
-                    isinstance(observation, dict)
-                    and isinstance(observation.get("sourceProvider"), str)
-                    and "".join(ch for ch in observation["sourceProvider"].casefold() if ch.isalnum()) == "twelvedata"
-                ):
-                    raise ValueError("Twelve Data no está autorizado para almacenamiento PIT.")
+                if "sourceProvider" in observation:
+                    validated_market_source_provider(observation["sourceProvider"])
                 normalized = self._normalize_observation(observation)
                 observed_dt = datetime.fromisoformat(normalized["observed_at"])
                 if retrieved_dt < observed_dt:
