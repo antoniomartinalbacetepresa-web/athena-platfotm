@@ -1,6 +1,7 @@
 name: Validate ATHENA TYCHE
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - dev/real-market-backend
