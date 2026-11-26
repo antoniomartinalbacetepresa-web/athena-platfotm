@@ -3,6 +3,9 @@ from datetime import date, datetime, timezone
 import httpx
 import pytest
 
+from app.database.athena_database import AthenaDatabase
+from app.repositories.instrument_repository import InstrumentRepository
+from app.repositories.market_observation_repository import MarketObservationRepository
 from app.services.twelve_data_history_service import (
     TwelveDataHistoryError,
     TwelveDataHistoryService,
@@ -124,3 +127,40 @@ def test_missing_credentials_fail_before_network_access():
         service = TwelveDataHistoryService(client, api_key="")
         with pytest.raises(TwelveDataHistoryError, match="key is missing"):
             service.get_history(**SELECTION)
+
+
+def test_synthetic_twelve_data_preview_cannot_enter_pit_storage(tmp_path):
+    database = AthenaDatabase(tmp_path / "synthetic_market.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "AAPL",
+        "companyName": "Synthetic pilot fixture",
+        "exchangeShortName": "NASDAQ",
+        "instrumentType": "common_stock",
+        "currency": "USD",
+    })
+    repository = MarketObservationRepository(database=database)
+    rows = history(lambda _: httpx.Response(200, json=synthetic_payload()))
+    # Simulate a future bridge that maps session dates to timestamps. Even
+    # with compatible timestamps the provider refuses PIT eligibility.
+    rows = [
+        {**row, "timestamp": f"{row['sessionDate']}T21:00:00+00:00"}
+        for row in rows
+    ]
+    synthetic_control = {"timestamp": "2026-11-20T21:00:00+00:00", "close": 100}
+
+    def save(observations):
+        return repository.save_many(
+            instrument_id=instrument_id,
+            observations=observations,
+            source_provider="synthetic_twelve_data_fixture",
+            retrieved_at=NOW,
+        )
+
+    with pytest.raises(ValueError, match="almacenamiento PIT"):
+        save([synthetic_control, *rows])
+    assert repository.list_for_instrument(instrument_id) == []
+
+    assert save([synthetic_control]).inserted == 1
+    assert save([synthetic_control]).unchanged == 1
+    assert len(repository.list_for_instrument(instrument_id)) == 1

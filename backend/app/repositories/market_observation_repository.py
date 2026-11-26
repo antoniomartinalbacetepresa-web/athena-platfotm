@@ -216,6 +216,11 @@ class MarketObservationRepository:
         return result
 
     def _normalize_observation(self, value: dict[str, Any]) -> dict[str, Any]:
+        # Legacy providers omit this field. Preserve an explicit refusal from
+        # read-only adapters even when a caller supplies an observation time.
+        if value.get("historicalPointInTimeEligible", True) is not True:
+            raise ValueError("La observación no es apta para el almacenamiento PIT.")
+
         observed_at_raw = value.get("observed_at", value.get("timestamp"))
         if isinstance(observed_at_raw, datetime):
             observed_at = self._utc_iso(observed_at_raw, "observed_at")
