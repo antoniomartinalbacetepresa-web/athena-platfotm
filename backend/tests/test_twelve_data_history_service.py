@@ -164,3 +164,31 @@ def test_synthetic_twelve_data_preview_cannot_enter_pit_storage(tmp_path):
     assert save([synthetic_control]).inserted == 1
     assert save([synthetic_control]).unchanged == 1
     assert len(repository.list_for_instrument(instrument_id)) == 1
+
+
+@pytest.mark.parametrize("eligibility", [False, None, 0, "true", 1])
+def test_explicit_non_boolean_pit_eligibility_rolls_back_batch(tmp_path, eligibility):
+    database = AthenaDatabase(tmp_path / "synthetic_eligibility.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "AAPL",
+        "companyName": "Synthetic eligibility fixture",
+        "exchangeShortName": "NASDAQ",
+        "instrumentType": "common_stock",
+        "currency": "USD",
+    })
+    repository = MarketObservationRepository(database=database)
+    control = {"timestamp": "2026-11-20T21:00:00+00:00", "close": 100}
+    rejected = {
+        "timestamp": "2026-11-23T21:00:00+00:00",
+        "close": 102,
+        "historicalPointInTimeEligible": eligibility,
+    }
+    with pytest.raises(ValueError, match="almacenamiento PIT"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[control, rejected],
+            source_provider="synthetic_eligibility_fixture",
+            retrieved_at=NOW,
+        )
+    assert repository.list_for_instrument(instrument_id) == []
