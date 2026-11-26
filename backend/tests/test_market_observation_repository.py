@@ -414,3 +414,34 @@ def test_expected_listing_identity_is_checked_under_the_sqlite_writer_lock(
             expected_identity=selected,
         )
     assert MarketObservationRepository(database=database).list_for_instrument(instrument_id) == []
+
+
+@pytest.mark.parametrize("legacy_provider", [
+    "twelve_data", "Twelve-Data", "TWELVE DATA",
+    "%74welve_data", "&#116;welve_data", "%2574welve_data",
+])
+def test_market_observation_repository_hides_legacy_twelve_data_pit_rows(
+    tmp_path: Path, legacy_provider: str
+) -> None:
+    """Imported legacy rows must not become PIT research merely by being present."""
+    database = _database(tmp_path)
+    instrument_id = _instrument_id(database)
+    repository = MarketObservationRepository(database=database)
+    observed = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    retrieved = observed + timedelta(days=1)
+    repository.save_many(
+        instrument_id=instrument_id,
+        observations=[{"timestamp": observed.isoformat(), "close": 100.0}],
+        source_provider="synthetic_legacy_fixture",
+        retrieved_at=retrieved,
+    )
+    # Simulate a historical import bypassing the repository's write policy.
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE market_observations SET source_provider = ? WHERE instrument_id = ?",
+            (legacy_provider, instrument_id),
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+    assert repository.list_for_instrument(
+        instrument_id, knowledge_cutoff=retrieved + timedelta(days=1)
+    ) == []
