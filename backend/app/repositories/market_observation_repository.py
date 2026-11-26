@@ -84,8 +84,12 @@ class MarketObservationRepository:
                     or any(current[field] != expected_identity.get(field) for field in fields)):
                     raise ValueError("La identidad del instrumento cambió durante el backfill.")
             for observation in buffered:
-                if "sourceProvider" in observation:
-                    validated_market_source_provider(observation["sourceProvider"])
+                # Imported feeds may use camelCase or snake_case provenance.
+                # Check both before normalization so neither spelling can
+                # launder a read-only provider into PIT storage.
+                for source_field in ("sourceProvider", "source_provider"):
+                    if source_field in observation:
+                        validated_market_source_provider(observation[source_field])
                 normalized = self._normalize_observation(observation)
                 observed_dt = datetime.fromisoformat(normalized["observed_at"])
                 if retrieved_dt < observed_dt:
