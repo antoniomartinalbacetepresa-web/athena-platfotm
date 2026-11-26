@@ -192,3 +192,44 @@ def test_explicit_non_boolean_pit_eligibility_rolls_back_batch(tmp_path, eligibi
             retrieved_at=NOW,
         )
     assert repository.list_for_instrument(instrument_id) == []
+
+
+@pytest.mark.parametrize("provider", ["twelve_data", "Twelve-Data", "TWELVE DATA"])
+def test_twelve_data_source_cannot_be_saved_without_pit_flag(tmp_path, provider):
+    database = AthenaDatabase(tmp_path / "synthetic_provider_guard.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "AAPL", "companyName": "Synthetic source fixture",
+        "exchangeShortName": "NASDAQ", "instrumentType": "common_stock",
+        "currency": "USD",
+    })
+    repository = MarketObservationRepository(database=database)
+    with pytest.raises(ValueError, match="Twelve Data"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[{"timestamp": "2026-11-23T21:00:00+00:00", "close": 102}],
+            source_provider=provider, retrieved_at=NOW,
+        )
+    assert repository.list_for_instrument(instrument_id) == []
+
+
+def test_twelve_data_row_cannot_be_relabelled_as_synthetic_pit(tmp_path):
+    database = AthenaDatabase(tmp_path / "synthetic_relabel_guard.db")
+    database.initialize()
+    instrument_id = InstrumentRepository(database=database).upsert({
+        "symbol": "AAPL", "companyName": "Synthetic relabel fixture",
+        "exchangeShortName": "NASDAQ", "instrumentType": "common_stock",
+        "currency": "USD",
+    })
+    repository = MarketObservationRepository(database=database)
+    with pytest.raises(ValueError, match="Twelve Data"):
+        repository.save_many(
+            instrument_id=instrument_id,
+            observations=[
+                {"timestamp": "2026-11-20T21:00:00+00:00", "close": 100},
+                {"timestamp": "2026-11-23T21:00:00+00:00", "close": 102,
+                 "sourceProvider": "twelve_data", "historicalPointInTimeEligible": True},
+            ],
+            source_provider="synthetic_relabel_fixture", retrieved_at=NOW,
+        )
+    assert repository.list_for_instrument(instrument_id) == []
