@@ -17,6 +17,7 @@ from app.services.yahoo_market_service import YahooMarketService
 from app.services.pilot_evidence import EvidenceRejected, validate_pilot_history
 from app.services.market_quote_identity_service import MarketQuoteIdentityService
 from app.services.market_history_backfill_plan_service import MarketHistoryBackfillPlanService
+from app.services.persisted_market_history_service import PersistedMarketHistoryService
 
 
 router = APIRouter(
@@ -173,6 +174,29 @@ def get_history_backfill_plan(
             detail="No se pudo verificar el plan de históricos persistidos.",
         ) from exc
     return {"data": plan.to_api_dict()}
+
+
+@router.get("/history/persisted")
+def get_persisted_history(
+    instrument_id: int = Query(..., alias="instrumentId", ge=1),
+    source_provider: str = Query(..., alias="sourceProvider", min_length=1, max_length=128),
+    observed_from: datetime = Query(..., alias="observedFrom"),
+    observed_to: datetime = Query(..., alias="observedTo"),
+    as_of: datetime = Query(..., alias="asOf"),
+    limit: int = Query(400, ge=1, le=400),
+) -> dict[str, object]:
+    """Read immutable local evidence; never fetch or authorize provider data."""
+    try:
+        return PersistedMarketHistoryService().get_history(
+            instrument_id=instrument_id, source_provider=source_provider,
+            observed_from=observed_from, observed_to=observed_to, as_of=as_of, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Instrumento no encontrado.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Histórico persistido no disponible.") from exc
 
 
 @router.get("/history")

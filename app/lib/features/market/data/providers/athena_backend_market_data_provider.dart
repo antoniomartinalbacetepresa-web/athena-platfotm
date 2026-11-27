@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/market_data_point.dart';
+import '../models/persisted_market_history.dart';
 import 'market_data_provider.dart';
 
 /// Proveedor de datos de mercado procedentes del backend de ATHENA TYCHE.
@@ -184,12 +185,93 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     return result;
   }
 
+  /// Explicit local replay. Never falls back to current provider history.
+  Future<PersistedMarketHistory> getPersistedHistoricalData({
+    required int instrumentId,
+    required String symbol,
+    required String sourceProvider,
+    required DateTime observedFrom,
+    required DateTime observedTo,
+    required DateTime asOf,
+    int limit = 400,
+  }) async {
+    final normalizedSymbol = _normalizeSymbol(symbol);
+    if (instrumentId <= 0 || sourceProvider.trim().isEmpty ||
+        sourceProvider != sourceProvider.trim() || limit < 1 || limit > 400 ||
+        observedFrom.isAfter(observedTo) || observedTo.isAfter(asOf) ||
+        observedTo.difference(observedFrom) > const Duration(days: 366)) {
+      throw ArgumentError('Selección de histórico persistido inválida.');
+    }
+    final uri = Uri.parse('$baseUrl/api/v1/market/history/persisted').replace(
+      queryParameters: {
+        'instrumentId': '$instrumentId', 'sourceProvider': sourceProvider,
+        'observedFrom': observedFrom.toUtc().toIso8601String(),
+        'observedTo': observedTo.toUtc().toIso8601String(),
+        'asOf': asOf.toUtc().toIso8601String(), 'limit': '$limit',
+      },
+    );
+    final response = await client.get(uri).timeout(requestTimeout);
+    _validateResponse(response);
+    final decoded = _decodeObject(response.body);
+    final metadata = decoded['provenance'];
+    final data = decoded['data'];
+    if (metadata is! Map || data is! List || data.length > limit ||
+        metadata['retrievalMode'] != 'persisted_local_history' ||
+        metadata['instrumentId'] != instrumentId ||
+        metadata['sourceProvider'] != sourceProvider ||
+        metadata['licenceVerified'] != false ||
+        metadata['historicalPointInTimeEligible'] != false ||
+        metadata['productionCoverageClaimed'] != false ||
+        metadata['orderExecutionAllowed'] != false ||
+        metadata['researchOnly'] != true || metadata['truncated'] is! bool ||
+        _parseTimestamp(metadata['asOf']) != asOf.toUtc() ||
+        _parseTimestamp(metadata['observedFrom']) != observedFrom.toUtc() ||
+        _parseTimestamp(metadata['observedTo']) != observedTo.toUtc()) {
+      throw const FormatException('Procedencia del histórico persistido inválida.');
+    }
+    final points = <MarketDataPoint>[];
+    final observationIds = <int>{};
+    DateTime? previous;
+    for (final row in data) {
+      if (row is! Map) {
+        throw const FormatException('Observación persistida inválida.');
+      }
+      final point = _mapPoint(
+        data: Map<String, dynamic>.from(row), fallbackSymbol: normalizedSymbol,
+      );
+      final id = point.observationId;
+      if (point.instrumentId != instrumentId ||
+          point.sourceProvider != sourceProvider ||
+          point.historicalPointInTimeEligible != false ||
+          point.realTimePriceVerified != false || point.close == null ||
+          id == null || !observationIds.add(id) || point.retrievedAt == null ||
+          point.availableAt != point.retrievedAt ||
+          point.retrievedAt!.isAfter(asOf) ||
+          point.timestamp.isBefore(observedFrom) ||
+          point.timestamp.isAfter(observedTo) ||
+          (point.sourceTimestamp != null &&
+              point.sourceTimestamp!.isAfter(point.retrievedAt!)) ||
+          (previous != null && !point.timestamp.isAfter(previous))) {
+        throw const FormatException('Identidad o corte temporal incompatible.');
+      }
+      previous = point.timestamp;
+      points.add(point);
+    }
+    return PersistedMarketHistory(
+      points: points, asOf: asOf.toUtc(), truncated: metadata['truncated'] as bool,
+    );
+  }
+
   MarketDataPoint _mapPoint({
     required Map<String, dynamic> data,
     required String fallbackSymbol,
   }) {
     final timestamp = _parseTimestamp(data['timestamp']);
     final retrievedAt = _parseOptionalTimestamp(data['retrievedAt']);
+    final observationId = data['observationId'];
+    if (observationId != null && (observationId is! int || observationId <= 0)) {
+      throw const FormatException('Identificador de observación inválido.');
+    }
     // A price cannot be observed after the backend says it was retrieved.
     // Reject inconsistent PIT evidence instead of showing a future quote.
     if (retrievedAt != null && timestamp.isAfter(retrievedAt)) {
@@ -297,6 +379,9 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
       providerId: providerId,
       sourceProvider: sourceProvider,
       retrievedAt: retrievedAt,
+      availableAt: _parseOptionalTimestamp(data['availableAt']),
+      sourceTimestamp: _parseOptionalTimestamp(data['sourceTimestamp']),
+      observationId: observationId as int?,
       quoteMode: _optionalText(data['quoteMode']),
       priceSessionDate: _optionalText(data['priceSessionDate']),
       realTimePriceVerified: data['realTimePriceVerified'] is bool

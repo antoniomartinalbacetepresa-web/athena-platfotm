@@ -35,6 +35,9 @@ class MarketDataPoint {
 
   /// Momento en que el backend recuperó la evidencia desde la fuente externa.
   final DateTime? retrievedAt;
+  final DateTime? availableAt;
+  final DateTime? sourceTimestamp;
+  final int? observationId;
 
   /// Contractual classification: fast-info or last available daily close.
   final String? quoteMode;
@@ -62,6 +65,9 @@ class MarketDataPoint {
     required this.providerId,
     this.sourceProvider,
     this.retrievedAt,
+    this.availableAt,
+    this.sourceTimestamp,
+    this.observationId,
     this.quoteMode,
     this.priceSessionDate,
     this.realTimePriceVerified,
