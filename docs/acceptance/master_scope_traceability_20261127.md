@@ -191,3 +191,31 @@ Actions antes de considerarlo probado. Recuperar SHA y conclusión desde la rama
 La siguiente tarea sigue siendo la creación autenticada del puente desde Flutter,
 con revisión humana y corte estable; después referencias News/Investors y la
 estrategia reproducible de 25 sesiones. No se cambia la programación horaria.
+
+### Ciclo de creación Flutter — 27/11/2026
+
+Base `8d755ae78e9162f75ec562e64cbb2dc17e5fc26f`, CI push46056780665 success
+confirmada antes de editar. Transporte publicado en
+`b113c1229ef58a7d3d1fe46adb418d0bbe7c9459`; recuperar CI exacta antes de aceptar.
+
+La vista del histórico sintético añade creación privada explícita: hipótesis,
+objeción humana y confirmación de revisión. El contexto se fecha al enviarlo,
+no se retrodata al antiguo corte del histórico. La ventana de observaciones
+permanece fija; el servidor selecciona como máximo200 filas. El borrador congela
+corte, Journal, revisión y cuerpo para reintentos idempotentes. Doble clic se
+bloquea y el transporte agrupa envíos simultáneos iguales. Tras POST se exige
+lectura privada del ciclo canónico y coincidencia de símbolo/corte/hash; cambios
+de cuenta limpian entradas/resultados y descartan respuestas tardías. No existe
+fallback público. El historial privado permite recuperar el ciclo posteriormente.
+
+Regresiones nuevas: servicio `persisted_market_research_service_test.dart` y
+widget `persisted_market_research_form_test.dart`, incluidos en Chrome obligatorio.
+La caché Flutter local sigue incompleta: ejecución y aceptación dependen de CI
+por SHA, sin anticipar resultados. CORE-002/PRODUCT-001 permanecen pendientes
+para datos reales y despliegue. No se habilitan datos reales, trading ni brokers.
+
+Cola24h: cerrar CI de estos commits; integrar referencias News/Investors sin
+anticipación; validar hipótesis25 y su API sintética; después revisión/visualización
+de resultados de estrategia y enlace al Journal/Portfolio simulado. Derechos
+Twelve Data, cobertura365/PIT y pruebas opcionales contra despliegue siguen
+bloqueados por evidencia externa. No se modifica la programación horaria.

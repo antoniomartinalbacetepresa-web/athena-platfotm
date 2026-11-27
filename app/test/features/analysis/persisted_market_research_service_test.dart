@@ -57,6 +57,8 @@ Map<String, dynamic> result(PersistedMarketResearchDraft request) => {
   'policy': {'automaticTrading': false, 'automaticProductionPromotion': false},
   'integrity': {'algorithm': 'sha256', 'cycleHash': 'a' * 64},
   'marketHistoryReference': {
+    'referenceHash': 'b' * 64,
+    'sourceRef': 'urn:athena:market-history:${'b' * 64}',
     'evidenceKind': 'synthetic_fixture',
     'metadataOnly': true,
     'licenceVerified': false,
@@ -66,28 +68,77 @@ Map<String, dynamic> result(PersistedMarketResearchDraft request) => {
   },
 };
 
-http.Response privateDetail(PersistedMarketResearchDraft request) =>
-    http.Response(
-      jsonEncode({
-        'data': {
-          'advisoryStatus': 'no_advice',
-          'productionEligible': false,
-          'automaticTrading': false,
-          'isWeightingReady': false,
-          'package': {
-            'cycle': {
-              'symbol': request.symbol,
-              'asOf': request.asOf.toIso8601String(),
-              'integrity': {'algorithm': 'sha256', 'cycleHash': 'a' * 64},
-            },
+http.Response privateDetail(
+  PersistedMarketResearchDraft request, {
+  String? defect,
+}) {
+  final journalId = '__athena_private_owner_1__:${request.journalId}';
+  final sourceRef = 'urn:athena:market-history:${'b' * 64}';
+  return http.Response(
+    jsonEncode({
+      'data': {
+        'advisoryStatus': 'no_advice',
+        'productionEligible': false,
+        'automaticTrading': false,
+        'isWeightingReady': false,
+        'package': {
+          'cycle': {
+            'instrumentId': defect == 'instrument' ? '8' : '7',
+            'symbol': request.symbol,
+            'asOf': request.asOf.toIso8601String(),
+            'journal': {'journalId': journalId, 'revisionId': 'r1'},
+            'integrity': {'algorithm': 'sha256', 'cycleHash': 'a' * 64},
           },
-          'persistence': {'cycleHash': 'a' * 64},
+          'journal': {
+            'journalId': defect == 'owner'
+                ? '__athena_private_owner_2__:other'
+                : journalId,
+            'revisionId': 'r1',
+            'thesis': defect == 'thesis' ? 'other' : request.thesis,
+            'references': [
+              {'sourceRef': sourceRef},
+            ],
+          },
+          'radar': {
+            'candidates': [
+              {
+                'evidence': [
+                  {
+                    'sourceRef': defect == 'reference'
+                        ? 'urn:other'
+                        : sourceRef,
+                  },
+                ],
+              },
+            ],
+          },
         },
-      }),
-      200,
-    );
+        'persistence': {'cycleHash': 'a' * 64},
+      },
+    }),
+    200,
+  );
+}
 
 void main() {
+  for (final defect in ['instrument', 'owner', 'thesis', 'reference']) {
+    test('creation rejects an unrelated private package: $defect', () async {
+      final session = AuthSession.forTesting(_Store());
+      signIn(session, 1);
+      final request = draft();
+      final client = MockClient(
+        (call) async => call.method == 'POST'
+            ? http.Response(jsonEncode({'data': result(request)}), 200)
+            : privateDetail(request, defect: defect),
+      );
+      final service = PersistedMarketResearchService(
+        client: client,
+        session: session,
+      );
+      await expectLater(service.create(request), throwsFormatException);
+      client.close();
+    });
+  }
   test('anonymous creation fails before any network request', () async {
     var calls = 0;
     final client = MockClient((_) async {
@@ -153,8 +204,9 @@ void main() {
       final client = MockClient((call) async {
         if (call.method == 'GET') return privateDetail(request);
         bodies.add(call.body);
-        if (bodies.length == 1)
+        if (bodies.length == 1) {
           throw http.ClientException('synthetic interruption');
+        }
         return http.Response(jsonEncode({'data': result(request)}), 200);
       });
       final service = PersistedMarketResearchService(
@@ -214,15 +266,18 @@ void main() {
       var calls = 0;
       if (defect == 'symbol') data['symbol'] = 'OTHER';
       if (defect == 'instrument') data['instrumentId'] = '8';
-      if (defect == 'cutoff')
+      if (defect == 'cutoff') {
         data['asOf'] = request.asOf
             .subtract(const Duration(days: 1))
             .toIso8601String();
+      }
       if (defect == 'hash') (data['integrity'] as Map)['cycleHash'] = 'invalid';
-      if (defect == 'license')
+      if (defect == 'license') {
         (data['marketHistoryReference'] as Map)['licenceVerified'] = true;
-      if (defect == 'trading')
+      }
+      if (defect == 'trading') {
         (data['policy'] as Map)['automaticTrading'] = true;
+      }
       final client = MockClient((_) async {
         calls++;
         return http.Response(jsonEncode({'data': data}), 200);

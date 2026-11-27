@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../analysis/presentation/widgets/persisted_market_research_form.dart';
+
 import '../../data/models/persisted_market_history.dart';
 import '../../data/providers/athena_backend_market_data_provider.dart';
 import '../../models/market_quote.dart';
@@ -179,6 +181,10 @@ class _PersistedMarketHistoryPanelState extends State<PersistedMarketHistoryPane
               key: Key('persisted-history-error')),
           ),
         if (history != null) ...[
+          PersistedMarketResearchForm(
+            key: ValueKey('research-${widget.quote.instrumentId}-${history.asOf.toIso8601String()}'),
+            quote: widget.quote, history: history,
+          ),
           Text('Corte de conocimiento: ${history.asOf.toUtc().toIso8601String()}. '
               'Ventana solicitada: últimos 365 días naturales. '
               '${history.points.length} observaciones recuperadas; no acredita sesiones completas.',

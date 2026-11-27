@@ -93,7 +93,15 @@ class PrivateResearchHistoryService {
   }
 
   /// Owner-authorized detail; never retries through a public endpoint.
-  Future<PrivateResearchCycleDetail> loadCycle(PrivateResearchEntry entry) async {
+  Future<PrivateResearchCycleDetail> loadCycle(PrivateResearchEntry entry) => _loadCycle(entry);
+
+  /// Verify a creation response against its frozen human draft in the same read.
+  Future<PrivateResearchCycleDetail> loadCycleWithBinding(PrivateResearchEntry entry,
+      {required void Function(Map<String, dynamic>) validatePackage}) =>
+      _loadCycle(entry, validatePackage: validatePackage);
+
+  Future<PrivateResearchCycleDetail> _loadCycle(PrivateResearchEntry entry,
+      {void Function(Map<String, dynamic>)? validatePackage}) async {
     // Reject impossible or malformed research selections before network access.
     // The index is not a substitute for validating an independently supplied entry.
     if (!entry.asOf.isUtc || entry.asOf.isAfter(DateTime.now().toUtc()) ||
@@ -160,6 +168,7 @@ class PrivateResearchHistoryService {
         !parsedAsOf.isAtSameMomentAs(entry.asOf)) {
       throw const FormatException('Identidad privada incoherente.');
     }
+    validatePackage?.call(package);
     return PrivateResearchCycleDetail(
       symbol: entry.symbol,
       cycleHash: entry.cycleHash,

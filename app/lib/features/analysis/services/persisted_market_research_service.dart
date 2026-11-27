@@ -34,6 +34,8 @@ class PersistedMarketResearchDraft {
         authoredAt.isAfter(DateTime.now().toUtc())) {
       throw const FormatException('Borrador de investigación inválido.');
     }
+    this.journalId = journalId;
+    this.thesis = thesis.trim();
     final timestamp = authoredAt.toIso8601String();
     encodedBody = jsonEncode({
       'instrumentId': instrumentId,
@@ -70,6 +72,8 @@ class PersistedMarketResearchDraft {
     });
   }
   final int instrumentId;
+  late final String journalId;
+  late final String thesis;
   final String symbol;
   final DateTime asOf;
   late final String encodedBody;
@@ -107,7 +111,7 @@ class PersistedMarketResearchService {
       (_) {
         _pending.remove(key);
       },
-      onError: (Object _, StackTrace __) {
+      onError: (Object _, StackTrace _) {
         _pending.remove(key);
       },
     );
@@ -192,17 +196,68 @@ class PersistedMarketResearchService {
         'Identidad o límites del ciclo incompatibles.',
       );
     }
+    final referenceHash = reference['referenceHash'];
+    if (referenceHash is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(referenceHash) ||
+        reference['sourceRef'] != 'urn:athena:market-history:$referenceHash') {
+      throw const FormatException('Referencia sintética inválida.');
+    }
+    final expectedJournal =
+        '__athena_private_owner_${_session.account!.id}__:${draft.journalId}';
     final reader = PrivateResearchHistoryService(
       baseUrl: _baseUrl,
       client: _client,
       session: _session,
     );
-    final detail = await reader.loadCycle(
+    final detail = await reader.loadCycleWithBinding(
       PrivateResearchEntry(
         cycleHash: hash,
         symbol: draft.symbol,
         asOf: draft.asOf,
       ),
+      validatePackage: (package) {
+        final cycle = package['cycle'] as Map<String, dynamic>;
+        final journal = package['journal'];
+        final radar = package['radar'];
+        final cycleJournal = cycle['journal'];
+        if (cycle['instrumentId'] != draft.instrumentId.toString() ||
+            cycleJournal is! Map ||
+            cycleJournal['journalId'] != expectedJournal ||
+            cycleJournal['revisionId'] != 'r1' ||
+            journal is! Map ||
+            journal['journalId'] != expectedJournal ||
+            journal['revisionId'] != 'r1' ||
+            journal['thesis'] != draft.thesis ||
+            radar is! Map) {
+          throw const FormatException(
+            'El ciclo privado no corresponde al borrador.',
+          );
+        }
+        final candidates = radar['candidates'];
+        if (candidates is! List ||
+            candidates.length != 1 ||
+            candidates.single is! Map) {
+          throw const FormatException('Radar privado incompatible.');
+        }
+        for (final refs in [
+          journal['references'],
+          (candidates.single as Map)['evidence'],
+        ]) {
+          if (refs is! List ||
+              refs
+                      .where(
+                        (item) =>
+                            item is Map &&
+                            item['sourceRef'] == reference['sourceRef'],
+                      )
+                      .length !=
+                  1) {
+            throw const FormatException(
+              'La referencia de mercado no está vinculada.',
+            );
+          }
+        }
+      },
     );
     checkSession();
     return detail;
