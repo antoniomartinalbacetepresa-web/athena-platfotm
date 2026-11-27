@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import unescape
 from typing import Annotated, Any
+from urllib.parse import unquote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import current_account
 from app.repositories.recommendation_investment_journal_repository import (
@@ -31,6 +33,10 @@ from app.services.recommendation_professional_research_cycle_service import (
     RecommendationProfessionalResearchCycleService,
 )
 from app.services.recommendation_news_evidence_service import RecommendationNewsEvidenceService
+from app.repositories.persisted_market_research_reference_repository import (
+    PersistedMarketResearchReferenceRepository, canonical_hash,
+)
+from app.services.persisted_market_history_service import PersistedMarketHistoryService
 
 
 router = APIRouter(
@@ -45,7 +51,22 @@ devils_advocate_service = RecommendationDevilsAdvocateService()
 cycle_service = RecommendationProfessionalResearchCycleService()
 cycle_repository = RecommendationProfessionalResearchCycleRepository()
 live_news_evidence_service = RecommendationNewsEvidenceService()
+persisted_history_service = PersistedMarketHistoryService()
+market_reference_repository = PersistedMarketResearchReferenceRepository()
 _PRIVATE_JOURNAL_PREFIX = "__athena_private_owner_"
+_MARKET_REFERENCE_PREFIX = "urn:athena:market-history:"
+
+
+def _reserved_market_reference(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    decoded = value
+    for _ in range(8):
+        normalized = unescape(unquote(decoded))
+        if normalized == decoded:
+            break
+        decoded = normalized
+    return decoded.strip().casefold().startswith(_MARKET_REFERENCE_PREFIX)
 
 
 def _owner_id(account: dict[str, Any]) -> int:
@@ -113,6 +134,26 @@ class LiveCompanyResearchCycleRequest(BaseModel):
     contradictoryEvidence: list[CycleContradictoryEvidenceRequest] = Field(min_length=1, max_length=200)
     priorSnapshotHash: str | None = None
     limit: int = Field(default=8, ge=1, le=25)
+
+
+class PersistedMarketResearchCycleRequest(BaseModel):
+    """Selection and human context only; no client bars, licence flags or hashes."""
+
+    model_config = ConfigDict(extra="forbid")
+    instrumentId: int = Field(ge=1, strict=True)
+    symbol: str = Field(min_length=1, max_length=24, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
+    sourceProvider: str = Field(min_length=1, max_length=128)
+    observedFrom: datetime
+    observedTo: datetime
+    asOf: datetime
+    recordedAt: datetime
+    journalId: str = Field(min_length=1)
+    revisionId: str = Field(min_length=1)
+    thesis: str = Field(min_length=1)
+    journalReferences: list[CycleJournalReferenceRequest] = Field(min_length=1, max_length=199)
+    contradictoryEvidence: list[CycleContradictoryEvidenceRequest] = Field(min_length=1, max_length=200)
+    priorSnapshotHash: str | None = None
+    limit: int = Field(default=200, ge=1, le=200, strict=True)
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -200,6 +241,7 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
 
 def _persist_professional_research_cycle(
     request: ProfessionalResearchCycleRequest, *, owner_id: int | None = None,
+    market_reference: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Validate and atomically persist one PIT Radar -> Journal -> Devil's Advocate cycle."""
     try:
@@ -287,6 +329,25 @@ def _persist_professional_research_cycle(
         journal_payload = journal.to_api_dict()
         devils_payload = devils_advocate.to_api_dict()
 
+        reserved_refs = [item.get("sourceRef", "") for item in
+                         [*radar_payload["candidates"][0]["evidence"], *journal_payload["references"],
+                          *devils_payload["evidence"]]
+                         if _reserved_market_reference(item.get("sourceRef"))]
+        if market_reference is None and reserved_refs:
+            raise ValueError("La referencia de histórico reservada requiere el puente server-side.")
+
+        if market_reference is not None:
+            expected_ref = f"urn:athena:market-history:{canonical_hash(market_reference)}"
+            radar_refs = radar_payload["candidates"][0]["evidence"]
+            journal_refs = journal_payload["references"]
+            if (str(market_reference["instrumentId"]) != request.instrumentId
+                    or market_reference["symbol"] != request.symbol
+                    or _aware_utc(datetime.fromisoformat(market_reference["asOf"]), "reference.asOf") != as_of
+                    or len(reserved_refs) != 2 or any(ref != expected_ref for ref in reserved_refs)
+                    or sum(item.get("sourceRef") == expected_ref for item in radar_refs) != 1
+                    or sum(item.get("sourceRef") == expected_ref for item in journal_refs) != 1):
+                raise ValueError("La referencia de histórico no está vinculada al Radar y Journal exactos.")
+
         cycle_repository.validate_package(
             cycle_payload=payload,
             radar_payload=radar_payload,
@@ -300,11 +361,20 @@ def _persist_professional_research_cycle(
         cycle_db = cycle_repository._database
         if journal_db.database_path.resolve() != cycle_db.database_path.resolve():
             raise ValueError("Journal y Research Cycle deben compartir la misma base SQLite.")
+        if market_reference is not None:
+            if (owner_id is None or market_reference_repository._database.database_path.resolve()
+                    != cycle_db.database_path.resolve()):
+                raise ValueError("La referencia privada y el ciclo deben compartir propietario y SQLite.")
+            market_reference_repository.initialize()
         # DDL/executescript must finish before BEGIN IMMEDIATE.
         journal_repository.initialize()
         cycle_repository.initialize()
         with journal_db.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if market_reference is not None:
+                reference_summary = market_reference_repository.append(
+                    market_reference, owner_id=owner_id, connection=connection,
+                )
             journal_repository.append(snapshot=journal, connection=connection)
             lineage = journal_repository.verify_lineage(
                 journal_id=journal.journal_id, connection=connection,
@@ -336,7 +406,87 @@ def _persist_professional_research_cycle(
         "headSnapshotHash": journal.snapshot_hash,
     }
     payload["cyclePersistence"] = _persistence_summary(cycle_record)
+    if market_reference is not None:
+        payload["marketHistoryReference"] = reference_summary
     return {"data": payload}
+
+
+@router.post("/research-cycle/from-persisted-market-history")
+def post_research_cycle_from_persisted_market_history(
+    request: PersistedMarketResearchCycleRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, object]:
+    """Bind server-selected synthetic history to an owner-bound research cycle.
+
+    Gate DATA remains closed: unverified real origins cannot be persisted by
+    this bridge. A fixture reference is not licensed historical/PIT acceptance.
+    """
+    owner_id = _owner_id(account)
+    if request.journalId.startswith(_PRIVATE_JOURNAL_PREFIX):
+        raise HTTPException(status_code=400, detail="journalId utiliza un prefijo reservado.")
+    if any(_reserved_market_reference(item.sourceRef) for item in
+           [*request.journalReferences, *request.contradictoryEvidence]):
+        raise HTTPException(status_code=400, detail="Las referencias de histórico se generan exclusivamente en el servidor.")
+    try:
+        stores = (persisted_history_service, market_reference_repository, journal_repository, cycle_repository)
+        if len({store._database.database_path.resolve() for store in stores}) != 1:
+            raise ValueError("El histórico y los artefactos de investigación deben compartir SQLite.")
+        history = persisted_history_service.get_history(
+            instrument_id=request.instrumentId, source_provider=request.sourceProvider,
+            observed_from=request.observedFrom, observed_to=request.observedTo,
+            as_of=request.asOf, limit=request.limit,
+        )
+        if history["provenance"].get("evidenceKind") != "synthetic_fixture":
+            raise HTTPException(status_code=409, detail="Origen sin derechos acreditados: puente sintético exclusivamente.")
+        if not history["data"]:
+            raise HTTPException(status_code=409, detail="No hay observaciones elegibles; no se fabricará evidencia.")
+        reference = market_reference_repository.build(history)
+        if reference["symbol"] != request.symbol.upper():
+            raise HTTPException(status_code=400, detail="El símbolo no coincide con el instrumento persistido.")
+        digest = canonical_hash(reference)
+        source_ref = f"urn:athena:market-history:{digest}"
+        available_at = max(datetime.fromisoformat(item["availableAt"]) for item in reference["observations"])
+        context = ProfessionalResearchCycleRequest(
+            instrumentId=str(request.instrumentId), symbol=reference["symbol"], asOf=request.asOf,
+            recordedAt=request.recordedAt,
+            journalId=f"{_PRIVATE_JOURNAL_PREFIX}{owner_id}__:{request.journalId}",
+            revisionId=request.revisionId, thesis=request.thesis,
+            priorSnapshotHash=request.priorSnapshotHash,
+            radarEvidence=[CycleRadarEvidenceRequest(
+                evidenceId=f"synthetic-market-history:{digest}", category="data_quality", urgency="routine",
+                summary=(f"SYNTHETIC FIXTURE: {len(reference['observations'])} local history references; "
+                         f"truncated={reference['truncated']}. No real-market, licence, historical PIT or trading claim."),
+                availableAt=available_at, source="synthetic_persisted_market_history", sourceRef=source_ref,
+            )],
+            journalReferences=[*request.journalReferences, CycleJournalReferenceRequest(
+                referenceId=f"synthetic-market-history:{digest}", kind="assumption",
+                availableAt=available_at, source="synthetic_persisted_market_history", sourceRef=source_ref,
+            )],
+            contradictoryEvidence=request.contradictoryEvidence,
+        )
+        return _persist_professional_research_cycle(context, owner_id=owner_id, market_reference=reference)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Instrumento persistido no encontrado.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="No se pudo verificar el histórico para investigación.") from exc
+
+
+@router.get("/market-history-reference/private/{reference_hash}")
+def get_private_market_history_reference(
+    reference_hash: str, account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, object]:
+    owner_id = _owner_id(account)
+    try:
+        result = market_reference_repository.get(reference_hash, owner_id=owner_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Referencia no encontrada.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="No se pudo verificar la referencia persistida.") from exc
+    return {"data": {**result, "readOnly": True, "automaticTrading": False, "productionEligible": False}}
 
 
 
@@ -542,6 +692,20 @@ def _read_professional_research_cycle(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo verificar el ciclo profesional persistido.") from exc
+
+    # Canonical hashes protect the reference URI, not the referenced rows.
+    # Revalidate private attachments too before reporting the package as intact.
+    try:
+        package = record["package"]
+        refs = [*package["journal"]["references"], *package["devilsAdvocate"]["evidence"],
+                *package["radar"]["candidates"][0]["evidence"]]
+        for source_ref in {item.get("sourceRef", "") for item in refs}:
+            if _reserved_market_reference(source_ref):
+                if owner_id is None:
+                    raise ValueError("Referencia privada sin propietario.")
+                market_reference_repository.get(source_ref[len(_MARKET_REFERENCE_PREFIX):], owner_id=owner_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="No se pudo verificar la evidencia de histórico del ciclo.") from exc
 
     return {
         "data": {
