@@ -80,7 +80,9 @@ class _MarketPageState extends State<MarketPage> {
 
   void _openPersistedHistory(MarketQuote quote) {
     if (quote.instrumentId == null ||
-        quote.symbol.trim().toUpperCase() != _symbolController.text.trim().toUpperCase()) return;
+        quote.symbol.trim().toUpperCase() != _symbolController.text.trim().toUpperCase()) {
+      return;
+    }
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(

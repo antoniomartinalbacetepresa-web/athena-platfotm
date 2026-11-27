@@ -94,6 +94,8 @@ jobs:
           chrome_tests=(
             test/features/dashboard/dashboard_athena_synthesis_wiring_test.dart
             test/features/market/market_page_integration_test.dart
+            test/features/market/persisted_market_history_panel_test.dart
+            test/features/market/market_professional_research_entry_test.dart
             test/features/news/news_page_full_feed_acceptance_test.dart
             test/features/dashboard/relevant_investors_panel_test.dart
             test/features/portfolio/dashboard_portfolio_cross_surface_e2e_test.dart

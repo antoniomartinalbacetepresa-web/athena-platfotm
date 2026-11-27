@@ -122,10 +122,10 @@ void main() {
   testWidgets('changing listing invalidates pending response without retaining prices', (tester) async {
     final pending = Completer<PersistedMarketHistory>();
     DateTime? requested;
-    PersistedHistoryLoader loader = (selection, cutoff) {
+    Future<PersistedMarketHistory> loader(MarketQuote selection, DateTime cutoff) {
       requested = cutoff;
       return pending.future;
-    };
+    }
     final first = quote();
     await tester.pumpWidget(surface(first, loader));
     await tester.tap(find.byKey(const Key('persisted-history-load')));
@@ -139,7 +139,7 @@ void main() {
 
   testWidgets('wrong currency cannot be displayed as the selected listing price', (tester) async {
     await tester.pumpWidget(surface(quote(), (selection, cutoff) async =>
-      history(selection, cutoff, currency: 'EUR'))));
+      history(selection, cutoff, currency: 'EUR')));
     await tester.tap(find.byKey(const Key('persisted-history-load')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('persisted-history-error')), findsOneWidget);
