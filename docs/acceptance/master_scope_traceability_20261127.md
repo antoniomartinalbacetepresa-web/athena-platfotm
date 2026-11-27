@@ -140,3 +140,32 @@ El siguiente checkpoint debe indicar HEAD inicial/final, archivos, comandos y
 resultados reales de pruebas, CI push/PR por evento/SHA/URL, criterios afectados,
 bloqueos, siguiente tarea y productividad observada. Las métricas 90 % de ciclos
 útiles o 1–3 commits son objetivos condicionados, nunca resultados inferidos.
+
+## Checkpoint de continuidad — separación sintética y puente de histórico
+
+Actualización aditiva durante la continuación del 27-11-2026. No cambia pesos,
+estados operativos ni requisitos históricos de las tablas anteriores.
+
+- Base reanudada: `7c6bfae1ac2a2fa50d9c90f0193fbf48fe92db3b`. Su
+  [CI push 45989546364](https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/45989546364)
+  pasó backend, Flutter, Chrome, build Web y release gate. API/Flutter distinguen
+  `synthetic_fixture` de `unverified`, sin acreditar origen real por nombre.
+- Puente publicado: `ab22ed9ff012208dbde03c0fd95bfc9dc0ecfeb0`; 71 pruebas
+  focalizadas de ciclo/noticias/persistencia superadas. Su
+  [CI push 46056042157](https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/46056042157)
+  estaba en curso al preparar este checkpoint: recuperar conclusión por SHA.
+  Contrato y cola de 24 h: `market_history_research_bridge.md`.
+- Contrato numérico Twelve Data: `twelve_data_numeric_contract.md`; 176 pruebas
+  focalizadas superadas. Conserva la negativa PIT/almacenamiento del adaptador.
+  Obtener el SHA de publicación y su CI desde el historial de la rama; este
+  documento no certifica anticipadamente un commit o run posterior.
+- IDs afectados: CORE-001/CORE-002/CORE-012 y PRODUCT-001 del inventario MD.
+  Son incrementos de implementación/regresión con fixtures, no aceptación con
+  datos reales. Permanecen abiertas licencia, cobertura, OOS y operación.
+- Siguiente lote: validar los SHA publicados, añadir transporte/revisión Flutter
+  autenticada para el puente con corte estable y contexto humano, y continuar
+  unión de referencias Market/News/Investors. Preparar después la hipótesis de
+  rebote de 25 sesiones; conservar el motor de ejecución deshabilitado.
+
+Las fuentes reales requieren derechos acreditados. La automatización horaria no
+se modifica ni duplica y su asociación a Work no se deduce de estos commits.

@@ -12,6 +12,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 
+_ASCII_DECIMAL = re.compile(
+    r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+)
+
+
 class TwelveDataHistoryError(ValueError):
     """A provider result could not be safely normalized."""
 
@@ -119,6 +124,18 @@ class TwelveDataHistoryService:
         return [bars[session] for session in sorted(bars)]
 
     @staticmethod
+    def _numeric_text(value: object) -> str:
+        # Provider JSON may contain a number or a decimal string. Validate its
+        # spelling before conversion: float()/Decimal() also accept Python-only
+        # underscores, Unicode digits and surrounding whitespace.
+        if type(value) not in (str, int, float):
+            raise TwelveDataHistoryError("invalid Twelve Data numeric representation")
+        text = value if type(value) is str else str(value)
+        if _ASCII_DECIMAL.fullmatch(text) is None:
+            raise TwelveDataHistoryError("invalid Twelve Data numeric representation")
+        return text
+
+    @staticmethod
     def _parse_row(row: object) -> tuple[date, dict[str, float | int]]:
         if not isinstance(row, dict):
             raise TwelveDataHistoryError("invalid Twelve Data history row")
@@ -126,8 +143,11 @@ class TwelveDataHistoryService:
             session = date.fromisoformat(row["datetime"])
             if session.isoformat() != row["datetime"]:
                 raise ValueError
-            prices = {field: float(row[field]) for field in ("open", "high", "low", "close")}
-            volume = Decimal(str(row["volume"]))
+            prices = {
+                field: float(TwelveDataHistoryService._numeric_text(row[field]))
+                for field in ("open", "high", "low", "close")
+            }
+            volume = Decimal(TwelveDataHistoryService._numeric_text(row["volume"]))
         except (KeyError, TypeError, ValueError, OverflowError, InvalidOperation):
             raise TwelveDataHistoryError("invalid Twelve Data OHLCV row") from None
         if any(

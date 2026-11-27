@@ -76,6 +76,72 @@ def test_rejects_invalid_or_duplicate_bars(field, value):
         history(lambda _: httpx.Response(200, json=payload), end=NOW.date())
 
 
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+@pytest.mark.parametrize("value", [
+    "1_0_1", "١٠١", "１０１", " 101", "101 ", "\t101", "101\n", "101\u00a0",
+])
+def test_ohlcv_rejects_python_only_numeric_spellings(field, value):
+    payload = synthetic_payload()
+    # Every spelling denotes 101 in Python's permissive conversion routines.
+    # Equal OHLC prices isolate lexical rejection from the range validator.
+    payload["values"][0].update({name: "101" for name in ("open", "high", "low", "close")})
+    payload["values"][0][field] = value
+    with pytest.raises(TwelveDataHistoryError, match="OHLCV"):
+        history(lambda _: httpx.Response(200, json=payload))
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+@pytest.mark.parametrize("value", [True, False, None, [], {}, "", "0x65", "1,01", "101\x00"])
+def test_ohlcv_requires_a_json_number_or_ascii_decimal_string(field, value):
+    payload = synthetic_payload()
+    payload["values"][0][field] = value
+    with pytest.raises(TwelveDataHistoryError):
+        history(lambda _: httpx.Response(200, json=payload))
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+def test_ohlcv_fields_are_required(field):
+    payload = synthetic_payload()
+    payload["values"][0].pop(field)
+    with pytest.raises(TwelveDataHistoryError, match="OHLCV"):
+        history(lambda _: httpx.Response(200, json=payload))
+
+
+@pytest.mark.parametrize("value,expected", [
+    (101, 101.0), (101.0, 101.0), ("101", 101.0), ("+101", 101.0),
+    ("00101.000", 101.0), ("101.", 101.0), ("1.01e2", 101.0),
+    ("1E+2", 100.0), (".101", .101), ("+.101", .101), ("1e-3", .001),
+])
+def test_prices_preserve_reasonable_ascii_decimal_and_exponent_formats(value, expected):
+    payload = synthetic_payload()
+    payload["values"][0].update({field: value for field in ("open", "high", "low", "close")})
+    rows = history(lambda _: httpx.Response(200, json=payload))
+    assert all(rows[-1][field] == expected for field in ("open", "high", "low", "close"))
+    assert rows[-1]["historicalPointInTimeEligible"] is False
+
+
+@pytest.mark.parametrize("value,expected", [
+    (200, 200), (200.0, 200), ("200", 200), ("200.0", 200),
+    ("+200", 200), ("00200", 200), ("200.", 200), ("2e2", 200),
+    (".0", 0), ("0E-8", 0), (-0.0, 0),
+    (str(2**63 - 1), 2**63 - 1), ("9223372036854775807.0", 2**63 - 1),
+])
+def test_integral_volume_preserves_ascii_formats_and_signed_64_bit_boundary(value, expected):
+    payload = synthetic_payload()
+    payload["values"][0]["volume"] = value
+    rows = history(lambda _: httpx.Response(200, json=payload))
+    assert rows[-1]["volume"] == expected
+    assert type(rows[-1]["volume"]) is int
+
+
+@pytest.mark.parametrize("value", ["200.5", "2e-1", "9223372036854775808", "9.223372036854775808e18"])
+def test_volume_still_rejects_fractional_or_overflow_values(value):
+    payload = synthetic_payload()
+    payload["values"][0]["volume"] = value
+    with pytest.raises(TwelveDataHistoryError, match="volume"):
+        history(lambda _: httpx.Response(200, json=payload))
+
+
 @pytest.mark.parametrize(("field", "value"), [
     ("mic_code", "XNYS"), ("currency", "EUR"), ("symbol", "MSFT"),
     ("exchange_timezone", "UTC"), ("interval", "1min"),
