@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.recommendation_news_synthesis import _radar_from_cycle_record
+from app.api.auth import current_account
+from app.api.recommendation_professional_research_cycle import _owner_id
 from app.repositories.recommendation_investors_synthesis_repository import RecommendationInvestorsSynthesisRepository
 from app.repositories.recommendation_professional_research_cycle_repository import RecommendationProfessionalResearchCycleRepository
 from app.services.recommendation_investors_synthesis_service import InvestorsModelAssessmentInput, RecommendationInvestorsSynthesisService
@@ -97,8 +99,20 @@ def _provenance(record: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/research-cycle/{cycle_hash}/investors-synthesis")
 def post_investors_synthesis(cycle_hash: str, request: InvestorsSynthesisRequest) -> dict[str, Any]:
+    return _post_investors_synthesis(cycle_hash, request)
+
+
+def _post_investors_synthesis(
+    cycle_hash: str, request: InvestorsSynthesisRequest, *, owner_id: int | None = None,
+) -> dict[str, Any]:
     try:
-        cycle_record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
+        # Authorize the cycle before touching the shared synthesis store. The
+        # artifact is keyed by this immutable cycle; it does not carry its own
+        # owner column and must never be read through a public fallback.
+        cycle_record = cycle_repository.get_by_hash(
+            cycle_hash=cycle_hash,
+            **({"owner_id": owner_id} if owner_id is not None else {}),
+        )
         radar = _radar_from_cycle_record(cycle_record)
         result = synthesis_service.build(
             radar_result=radar,
@@ -147,8 +161,15 @@ def post_investors_synthesis(cycle_hash: str, request: InvestorsSynthesisRequest
 
 @router.get("/research-cycle/{cycle_hash}/investors-synthesis")
 def get_investors_synthesis(cycle_hash: str) -> dict[str, Any]:
+    return _get_investors_synthesis(cycle_hash)
+
+
+def _get_investors_synthesis(cycle_hash: str, *, owner_id: int | None = None) -> dict[str, Any]:
     try:
-        cycle_record = cycle_repository.get_by_hash(cycle_hash=cycle_hash)
+        cycle_record = cycle_repository.get_by_hash(
+            cycle_hash=cycle_hash,
+            **({"owner_id": owner_id} if owner_id is not None else {}),
+        )
         _radar_from_cycle_record(cycle_record)
         record = synthesis_repository.get_by_cycle_hash(cycle_hash=cycle_hash)
         if record["radar_hash"] != cycle_record["radar_hash"]:
@@ -171,3 +192,33 @@ def get_investors_synthesis(cycle_hash: str) -> dict[str, Any]:
             "automaticTrading": False,
         }
     }
+
+
+def _private_owner(cycle_hash: str, account: dict[str, Any]) -> int:
+    """Hide missing and other-owner cycles before any artifact side effect."""
+    owner_id = _owner_id(account)
+    try:
+        cycle_repository.get_by_hash(cycle_hash=cycle_hash, owner_id=owner_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail="No existe un Professional Research Cycle con ese cycleHash."
+        ) from exc
+    return owner_id
+
+
+@router.post("/research-cycle/private/{cycle_hash}/investors-synthesis")
+def post_private_investors_synthesis(
+    cycle_hash: str,
+    request: InvestorsSynthesisRequest,
+    account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, Any]:
+    return _post_investors_synthesis(
+        cycle_hash, request, owner_id=_private_owner(cycle_hash, account),
+    )
+
+
+@router.get("/research-cycle/private/{cycle_hash}/investors-synthesis")
+def get_private_investors_synthesis(
+    cycle_hash: str, account: Annotated[dict[str, Any], Depends(current_account)],
+) -> dict[str, Any]:
+    return _get_investors_synthesis(cycle_hash, owner_id=_private_owner(cycle_hash, account))
