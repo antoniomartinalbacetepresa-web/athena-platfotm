@@ -281,12 +281,16 @@ class PrivateResearchHistoryService {
     if (investors) {
       final assessments = synthesis['assessments'];
       final provenance = data['provenance'];
-      if (data['cycleHash'] != entry.cycleHash || data['automaticScoring'] != false ||
+      if (synthesis['status'] != 'validated_external_investors_model_output' ||
+          synthesis['automaticScoring'] != false || synthesis['independentCorroborationClaimed'] != false ||
+          data['cycleHash'] != entry.cycleHash || data['automaticScoring'] != false ||
           synthesis['automaticTrading'] != false || synthesis['recommendationInfluence'] != false ||
           synthesis['productionTruthClaimed'] != false || synthesis['asOf'] is! String ||
           DateTime.tryParse(synthesis['asOf'] as String)?.isAtSameMomentAs(entry.asOf) != true ||
           assessments is! List || assessments.isEmpty || assessments.length > 200 ||
           synthesis['assessedCount'] != assessments.length || provenance is! Map ||
+          provenance['automaticTrading'] != false || provenance['automaticScoring'] != false ||
+          provenance['recommendationInfluence'] != false ||
           provenance['artifactType'] != 'canonical_investors_synthesis' ||
           persistence['synthesisHash'] is! String ||
           !RegExp(r'^[a-f0-9]{64}$').hasMatch(persistence['synthesisHash'] as String) ||

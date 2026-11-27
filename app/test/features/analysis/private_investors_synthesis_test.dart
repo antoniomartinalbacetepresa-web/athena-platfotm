@@ -26,6 +26,9 @@ void main() {
     'cycle',
     'model',
     'hash',
+    'inner-scoring',
+    'corroboration',
+    'provenance',
   ]) {
     test(
       'private Investors synthesis validates canonical assessment: $defect',
@@ -83,6 +86,9 @@ void main() {
                   'synthesisHash': defect == 'hash' ? null : 'd' * 64,
                 },
                 'provenance': {
+                  'automaticTrading': defect == 'provenance',
+                  'automaticScoring': false,
+                  'recommendationInfluence': false,
                   'artifactType': 'canonical_investors_synthesis',
                   'artifactHash': 'd' * 64,
                   'assessmentBindings': [
@@ -96,6 +102,9 @@ void main() {
                   ],
                 },
                 'synthesis': {
+                  'status': 'validated_external_investors_model_output',
+                  'automaticScoring': defect == 'inner-scoring',
+                  'independentCorroborationClaimed': defect == 'corroboration',
                   'asOf': cutoff.toIso8601String(),
                   'assessedCount': 1,
                   'assessments': [assessment],

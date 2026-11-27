@@ -44,9 +44,10 @@ Map<String, dynamic> _reference(DateTime cutoff, String category) => {
 };
 
 class _History extends PrivateResearchHistoryService {
-  _History(this.entry, this.detail);
+  _History(this.entry, this.detail, {this.investors});
   final PrivateResearchEntry entry;
   final PrivateResearchCycleDetail detail;
+  final PrivateResearchSynthesis? investors;
   @override
   Future<PrivateResearchPage> load({
     required String symbol,
@@ -57,7 +58,9 @@ class _History extends PrivateResearchHistoryService {
     PrivateResearchEntry entry,
   ) async => detail;
   @override
-  Future<PrivateResearchSynthesis?> loadInvestorsSynthesis(PrivateResearchEntry entry) async => null;
+  Future<PrivateResearchSynthesis?> loadInvestorsSynthesis(
+    PrivateResearchEntry entry,
+  ) async => investors;
   @override
   Future<PrivateResearchSynthesis?> loadSynthesis(
     PrivateResearchEntry entry, {
@@ -179,7 +182,16 @@ void main() {
           ),
         ],
       );
-      final service = _History(entry, detail);
+      final service = _History(
+        entry,
+        detail,
+        investors: PrivateResearchSynthesis(
+          kind: 'Investors',
+          summary: 'Synthetic Investors interpretation, not source truth',
+          cycleHash: entry.cycleHash,
+          asOf: cutoff,
+        ),
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -205,6 +217,14 @@ void main() {
       );
       expect(find.textContaining('Publicación:'), findsOneWidget);
       expect(find.textContaining('posiciones históricas'), findsOneWidget);
+      expect(
+        find.text('Síntesis Investors persistida (solo lectura)'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Synthetic Investors interpretation, not source truth'),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
       AuthSession.instance.clear();
       service.dispose();
