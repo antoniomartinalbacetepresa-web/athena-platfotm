@@ -230,3 +230,33 @@ de fechas posteriores al corte. Los textos externos se muestran como texto sin
 ejecutarlos ni solicitar sus URLs. La publicación no acredita veracidad,
 corroboración, operaciones en tiempo real ni aceptación en despliegue. Nuevas
 regresiones de lectura y widget se incluyen en Chrome obligatorio.
+
+
+### Hipótesis25 y Investors privado — 27/11/2026
+
+Investors privado publicado en `98836c653d50725eebd9a4730a1dd32fad104b24`:
+POST/GET autenticados comprueban propietario del ciclo antes del almacén de
+síntesis; 15 regresiones focalizadas cubren dos propietarios, idempotencia,
+tampering y contrato público. No se atribuye ejecución real de un modelo.
+
+La API nueva autenticada `POST /api/v1/research/strategies/rebound25/synthetic-backtest`
+solo acepta fixtures explícitos. Motor versionado separado del patrón20 existente:
+cierre por debajo de los LOW de25sesiones anteriores (sin incluir señal),
+confirmación POSTERIOR de rebote y entrada en apertura posterior a su disponibilidad.
+Supuestos configurables, no rentabilidad aprobada: rebote >1% por defecto y espera
+máxima3sesiones; stop, objetivo, tamaño, RVOL, costes y participación se suministran
+explícitamente. Incluye comisiones por lado, medio spread por lado, slippage,
+gaps, stop primero si OHLC ambiguo, vencimiento temporal, abstenciones y posición
+abierta separada del beneficio realizado. Huellas de parámetros/entrada/resultado
+permiten reproducir el artefacto. Calendario y precommit son declarados, no
+atestación independiente; OOS, PIT histórico y órdenes permanecen false.
+
+Validación cloud combinada Investors/estrategia/patrón20:82 pruebas superadas.
+No equivale a estrategia completa: faltan benchmark, universo sin supervivencia,
+walk-forward/OOS, integración Journal/Portfolio/Flutter y validación real autorizada.
+La API no persiste precios ni conecta proveedores/brokers. CORE-004/005/007/012 y
+PRODUCT-024 siguen pendientes de aceptación operacional. Recuperar SHA/CI exactos.
+
+Cola24h: cerrar CI de creación/referencias Flutter; añadir lectura de síntesis
+Investors privada y benchmark reproducible; conservar cola de derechos/cobertura
+TwelveData y despliegue. No hay porcentaje global certificado ni cambio horario.
