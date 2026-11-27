@@ -44,7 +44,24 @@ JSON shape using a mocked HTTP transport. They do not establish a deployed
 end-to-end journey or rights to real data. `licenceVerified`, production
 coverage, historical PIT eligibility and order authority remain false.
 
-Next: connect this explicit replay transport to the selected-instrument history
-surface, validate its loading/empty/truncated/error states, and obtain separate
-provider licensing/availability and deployed integration evidence. A manual
-Work commit does not prove hourly automation/environment binding.
+## Selected-instrument surface increment
+
+Market now offers `VER HISTÓRICO GUARDADO` after a traceable quote with an
+internal listing ID. It opens `PersistedMarketHistoryPanel` with the exact
+symbol, listing, declared source and currency. Loading is explicit and uses
+the existing backend transport; no current-provider fallback is introduced.
+The panel displays local knowledge cutoff, row IDs/timestamps, close, currency,
+volume and truncation, with distinct loading/empty/error/retry states. Refresh
+clears the old prices immediately and selection changes invalidate late results.
+
+Tests added: `app/test/features/market/persisted_market_history_panel_test.dart`
+exercises the HTTP transport's synthetic schema through the widget and failure,
+retry, currency and late-response handling. The existing
+`market_professional_research_entry_test.dart` exercises the Market dialog,
+exact selection and invalidation when the symbol changes. Test execution and
+exact-SHA CI are recorded separately; fixtures are not deployment acceptance.
+
+Next: obtain separate provider licensing/availability and deployed integration
+evidence, then bind accepted history to the canonical research cycle. The scope
+audit/next queue is in `master_scope_traceability_20261127.md`. A manual Work
+commit does not prove hourly automation/environment binding.

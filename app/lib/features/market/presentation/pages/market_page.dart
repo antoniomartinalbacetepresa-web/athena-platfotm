@@ -11,14 +11,17 @@ import '../widgets/global_market_panel.dart';
 import '../widgets/market_research_preview.dart';
 import '../widgets/verified_market_quote_panel.dart';
 import '../widgets/market_pattern_readiness_panel.dart';
+import '../widgets/persisted_market_history_panel.dart';
+import '../../models/market_quote.dart';
 
 class MarketPage extends StatefulWidget {
   final GlobalMarketContextController? controller;
   final MarketRepository? quoteRepository;
   final Future<VerifiedNewsFeed> Function(int limit)? newsFeedLoader;
   final Future<ProfessionalDossier> Function(String symbol, int? instrumentId)? researchLoader;
+  final PersistedHistoryLoader? persistedHistoryLoader;
 
-  const MarketPage({super.key, this.controller, this.quoteRepository, this.newsFeedLoader, this.researchLoader});
+  const MarketPage({super.key, this.controller, this.quoteRepository, this.newsFeedLoader, this.researchLoader, this.persistedHistoryLoader});
 
   @override
   State<MarketPage> createState() => _MarketPageState();
@@ -74,6 +77,28 @@ class _MarketPageState extends State<MarketPage> {
   }
 
   void _openResearch() => _openResearchForSymbol(_symbolController.text);
+
+  void _openPersistedHistory(MarketQuote quote) {
+    if (quote.instrumentId == null ||
+        quote.symbol.trim().toUpperCase() != _symbolController.text.trim().toUpperCase()) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        content: SizedBox(
+          width: 640,
+          child: SingleChildScrollView(
+            child: PersistedMarketHistoryPanel(
+              quote: quote, loadHistory: widget.persistedHistoryLoader,
+            ),
+          ),
+        ),
+        actions: [TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('CERRAR'),
+        )],
+      ),
+    );
+  }
 
   void _openResearchForSymbol(String requestedSymbol, {int? instrumentId}) {
     final symbol = requestedSymbol.trim().toUpperCase();
@@ -174,6 +199,7 @@ class _MarketPageState extends State<MarketPage> {
                       onQuoteValidated: _onQuoteValidated,
                       onCompanyQuoteValidated: _onCompanyQuoteValidated,
                       onQuoteRequestStarted: _clearQuoteContext,
+                      onOpenHistory: _openPersistedHistory,
                     ),
                   ),
                 ),

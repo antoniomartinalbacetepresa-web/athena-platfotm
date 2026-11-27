@@ -5,6 +5,7 @@ import 'package:app/features/market/controllers/global_market_context_controller
 import 'package:app/features/market/models/global_market_context.dart';
 import 'package:app/features/market/presentation/pages/market_page.dart';
 import 'package:app/features/market/presentation/widgets/market_research_preview.dart';
+import 'package:app/features/market/data/models/persisted_market_history.dart';
 import 'package:app/features/market/di/market_dependencies.dart';
 import 'package:app/features/market/models/market_quote.dart';
 import 'package:app/features/news/models/verified_news_feed.dart';
@@ -94,6 +95,43 @@ ProfessionalDossier _dossier(String symbol, {int? instrumentId, bool stale = fal
 }
 
 void main() {
+  testWidgets('Market opens persisted history for the validated listing and source only', (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    final selections = <MarketQuote>[];
+    await tester.pumpWidget(MaterialApp(home: MarketPage(
+      controller: controller,
+      quoteRepository: _QuoteRepository((symbol) async =>
+        _quote(symbol, instrumentId: 17, source: 'synthetic_fixture')),
+      persistedHistoryLoader: (selection, cutoff) async {
+        selections.add(selection);
+        return PersistedMarketHistory(points: [], asOf: cutoff, truncated: false);
+      },
+    )));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'SYNTH');
+    await tester.pump();
+    expect(find.byKey(const Key('market-quote-open-persisted-history')), findsNothing);
+    await tester.tap(find.byKey(const Key('market-quote-request')));
+    await tester.pumpAndSettle();
+    final open = find.byKey(const Key('market-quote-open-persisted-history'));
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+    expect(selections, isEmpty);
+    await tester.tap(find.byKey(const Key('persisted-history-load')));
+    await tester.pumpAndSettle();
+    expect(selections.single.instrumentId, 17);
+    expect(selections.single.symbol, 'SYNTH');
+    expect(selections.single.sourceProvider, 'synthetic_fixture');
+    expect(find.byKey(const Key('persisted-history-empty')), findsOneWidget);
+    await tester.tap(find.text('CERRAR'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'OTHER');
+    await tester.pump();
+    expect(find.byKey(const Key('market-quote-open-persisted-history')), findsNothing);
+  });
+
   testWidgets('Market research reveals all module states without asserting verification',
       (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: MarketResearchPreview(

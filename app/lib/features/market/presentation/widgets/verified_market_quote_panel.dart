@@ -20,6 +20,7 @@ class VerifiedMarketQuotePanel extends StatefulWidget {
   final void Function(String symbol, int? instrumentId)? onQuoteValidated;
   final void Function(String symbol, String companyName)? onCompanyQuoteValidated;
   final VoidCallback? onQuoteRequestStarted;
+  final void Function(MarketQuote quote)? onOpenHistory;
 
   const VerifiedMarketQuotePanel({
     super.key,
@@ -30,6 +31,7 @@ class VerifiedMarketQuotePanel extends StatefulWidget {
     this.onQuoteValidated,
     this.onCompanyQuoteValidated,
     this.onQuoteRequestStarted,
+    this.onOpenHistory,
   });
 
   @override
@@ -300,6 +302,15 @@ class _VerifiedMarketQuotePanelState extends State<VerifiedMarketQuotePanel> {
             key: Key('market-quote-research-boundary'),
             style: TextStyle(color: AthenaColors.textSecondary, fontSize: 11),
           ),
+          if (widget.onOpenHistory != null && quote.instrumentId != null)
+            OutlinedButton(
+              key: const Key('market-quote-open-persisted-history'),
+              onPressed: () {
+                if (widget.symbol.trim().toUpperCase() != quote.symbol.trim().toUpperCase()) return;
+                widget.onOpenHistory!(quote);
+              },
+              child: const Text('VER HISTÓRICO GUARDADO'),
+            ),
           if (widget.onOpenResearch != null)
             OutlinedButton(
               key: const Key('market-quote-open-research'),
