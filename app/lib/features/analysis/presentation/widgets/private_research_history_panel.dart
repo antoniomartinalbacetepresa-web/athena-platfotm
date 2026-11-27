@@ -254,6 +254,16 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
                       Text('Empresa: ${detail.symbol}'),
                       Text('Corte PIT: ${detail.asOf.toUtc().toIso8601String()}'),
                       Text('Ciclo: ${detail.cycleHash}'),
+                      for (final evidence in detail.evidence)
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('Referencia ${evidence.category}: ${evidence.summary}',
+                            key: ValueKey('private-evidence-${evidence.id}')),
+                          SelectableText('Fuente declarada: ${evidence.source} · ${evidence.sourceRef}'),
+                          Text('Disponible: ${evidence.availableAt.toIso8601String()} · '
+                            'Publicación: ${evidence.publishedAt?.toIso8601String() ?? "no declarada"}'),
+                          const Text('Referencia documental, no hecho corroborado ni señal operativa. '
+                            'Los informes de inversores pueden describir posiciones históricas.'),
+                        ]),
                       if (_news != null) _synthesisPanel(_news!, 'News'),
                       if (_athena != null) _synthesisPanel(_athena!, 'ATHENA'),
                       const Text('Este detalle no verifica cotizaciones, noticias, licencias ni ejecución Ollama.'),

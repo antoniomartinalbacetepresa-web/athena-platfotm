@@ -46,7 +46,7 @@ void owner(int id) {
   );
 }
 
-Widget surface(_Creator service, {bool synthetic = true}) {
+Widget _surface(_Creator service, {bool synthetic = true}) {
   final cutoff = DateTime.now().toUtc().subtract(const Duration(minutes: 1));
   return MaterialApp(
     home: Scaffold(
@@ -113,7 +113,7 @@ void main() {
 
   testWidgets('guest cannot submit private research', (tester) async {
     final creator = _Creator();
-    await tester.pumpWidget(surface(creator));
+    await tester.pumpWidget(_surface(creator));
     expect(find.byKey(const Key('market-cycle-auth-required')), findsOneWidget);
     expect(find.byKey(const Key('market-cycle-submit')), findsNothing);
     expect(creator.drafts, isEmpty);
@@ -122,7 +122,7 @@ void main() {
   testWidgets('unverified history never offers creation', (tester) async {
     owner(1);
     final creator = _Creator();
-    await tester.pumpWidget(surface(creator, synthetic: false));
+    await tester.pumpWidget(_surface(creator, synthetic: false));
     expect(find.byKey(const Key('market-cycle-submit')), findsNothing);
     expect(creator.drafts, isEmpty);
     creator.dispose();
@@ -132,7 +132,7 @@ void main() {
   ) async {
     owner(1);
     final creator = _Creator();
-    await tester.pumpWidget(surface(creator));
+    await tester.pumpWidget(_surface(creator));
     await tester.ensureVisible(find.byKey(const Key('market-cycle-submit')));
     await tester.tap(find.byKey(const Key('market-cycle-submit')));
     await tester.pump();
@@ -147,7 +147,7 @@ void main() {
       final creator = _Creator();
       final pending = Completer<PrivateResearchCycleDetail>();
       creator.respond = (_) => pending.future;
-      await tester.pumpWidget(surface(creator));
+      await tester.pumpWidget(_surface(creator));
       await prepare(tester);
       await tester.tap(find.byKey(const Key('market-cycle-submit')));
       await tester.pump();
@@ -181,7 +181,7 @@ void main() {
     owner(1);
     final creator = _Creator();
     creator.respond = (_) async => throw StateError('synthetic interruption');
-    await tester.pumpWidget(surface(creator));
+    await tester.pumpWidget(_surface(creator));
     await prepare(tester);
     await tester.tap(find.byKey(const Key('market-cycle-submit')));
     await tester.pumpAndSettle();
@@ -200,7 +200,7 @@ void main() {
     final creator = _Creator();
     final pending = Completer<PrivateResearchCycleDetail>();
     creator.respond = (_) => pending.future;
-    await tester.pumpWidget(surface(creator));
+    await tester.pumpWidget(_surface(creator));
     await prepare(tester);
     await tester.tap(find.byKey(const Key('market-cycle-submit')));
     await tester.pump();

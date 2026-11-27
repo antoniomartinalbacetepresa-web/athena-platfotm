@@ -104,6 +104,11 @@ http.Response privateDetail(
               {
                 'evidence': [
                   {
+                    'evidenceId': 'synthetic-history',
+                    'category': 'data_quality',
+                    'summary': 'Synthetic history',
+                    'source': 'synthetic_fixture',
+                    'availableAt': request.asOf.toIso8601String(),
                     'sourceRef': defect == 'reference'
                         ? 'urn:other'
                         : sourceRef,

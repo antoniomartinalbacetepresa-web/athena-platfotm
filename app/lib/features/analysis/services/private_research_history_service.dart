@@ -173,7 +173,47 @@ class PrivateResearchHistoryService {
       symbol: entry.symbol,
       cycleHash: entry.cycleHash,
       asOf: entry.asOf,
+      evidence: _evidence(package, entry.asOf),
     );
+  }
+
+  List<PrivateResearchEvidence> _evidence(Map<String, dynamic> package, DateTime cutoff) {
+    final radar = package['radar'];
+    if (radar == null) return const []; // Older minimal detail contracts.
+    if (radar is! Map || radar['candidates'] is! List) {
+      throw const FormatException('Radar privado inválido.');
+    }
+    final candidates = radar['candidates'] as List;
+    if (candidates.length != 1 || candidates.single is! Map) {
+      throw const FormatException('Candidatos privados incompatibles.');
+    }
+    final rows = (candidates.single as Map)['evidence'];
+    if (rows is! List || rows.length > 200) {
+      throw const FormatException('Evidencias privadas incompatibles.');
+    }
+    final result = <PrivateResearchEvidence>[];
+    final seen = <String>{};
+    for (final row in rows) {
+      if (row is! Map) throw const FormatException('Referencia privada inválida.');
+      final id = row['evidenceId'];
+      final category = row['category'];
+      final summary = row['summary'];
+      final source = row['source'];
+      final ref = row['sourceRef'];
+      final available = row['availableAt'] is String ? DateTime.tryParse(row['availableAt'] as String) : null;
+      final publication = row['publishedAt'] == null ? null :
+          (row['publishedAt'] is String ? DateTime.tryParse(row['publishedAt'] as String) : null);
+      if (id is! String || id.isEmpty || !seen.add(id) || category is! String ||
+          summary is! String || summary.trim().isEmpty || summary.length > 12000 ||
+          source is! String || source.trim().isEmpty || ref is! String || ref.isEmpty ||
+          available == null || !available.isUtc || available.isAfter(cutoff) ||
+          (row['publishedAt'] != null && (publication == null || !publication.isUtc || publication.isAfter(available)))) {
+        throw const FormatException('Identidad o temporalidad de evidencia privada inválida.');
+      }
+      result.add(PrivateResearchEvidence(id: id, category: category, summary: summary,
+        source: source, sourceRef: ref, availableAt: available, publishedAt: publication));
+    }
+    return List.unmodifiable(result);
   }
 
   /// Retrieve one canonical synthesis without a public fallback. A missing
@@ -260,10 +300,25 @@ class PrivateResearchPage {
 
 /// Minimal verified display model; raw private thesis is not exposed in UI.
 class PrivateResearchCycleDetail {
-  const PrivateResearchCycleDetail({required this.symbol, required this.cycleHash, required this.asOf});
+  const PrivateResearchCycleDetail({required this.symbol, required this.cycleHash, required this.asOf, this.evidence = const []});
   final String symbol;
   final String cycleHash;
   final DateTime asOf;
+  final List<PrivateResearchEvidence> evidence;
+}
+
+/// Immutable display of a canonical reference; source truth is not attested.
+class PrivateResearchEvidence {
+  const PrivateResearchEvidence({required this.id, required this.category,
+    required this.summary, required this.source, required this.sourceRef,
+    required this.availableAt, this.publishedAt});
+  final String id;
+  final String category;
+  final String summary;
+  final String source;
+  final String sourceRef;
+  final DateTime availableAt;
+  final DateTime? publishedAt;
 }
 
 /// Verified canonical binding, not verified execution of the language model.

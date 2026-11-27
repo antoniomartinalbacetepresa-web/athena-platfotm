@@ -219,3 +219,14 @@ anticipación; validar hipótesis25 y su API sintética; después revisión/visu
 de resultados de estrategia y enlace al Journal/Portfolio simulado. Derechos
 Twelve Data, cobertura365/PIT y pruebas opcionales contra despliegue siguen
 bloqueados por evidencia externa. No se modifica la programación horaria.
+
+
+Ampliación de revisión: `96577b82ac8f65802ed8c4d3bfb3a04abbcf490c` incorpora el
+formulario y vínculo completo del borrador al paquete GET. Su CI detectó una
+infracción de análisis en el nombre público de un helper de pruebas; se corrige
+junto con la visualización de referencias privadas. News/Investors exponen ahora
+fuente, publicación y disponibilidad por separado, deduplicación de IDs y rechazo
+de fechas posteriores al corte. Los textos externos se muestran como texto sin
+ejecutarlos ni solicitar sus URLs. La publicación no acredita veracidad,
+corroboración, operaciones en tiempo real ni aceptación en despliegue. Nuevas
+regresiones de lectura y widget se incluyen en Chrome obligatorio.
