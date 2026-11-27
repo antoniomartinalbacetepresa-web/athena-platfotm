@@ -57,11 +57,43 @@ def test_restarted_repository_is_exposed_with_stable_provenance_and_no_authority
     assert all(row["availableAt"] == row["retrievedAt"] == params["asOf"] for row in body["data"])
     assert all(row["sourceTimestamp"] is None for row in body["data"])
     provenance = body["provenance"]
+    assert provenance["evidenceKind"] == "synthetic_fixture"
+    assert provenance["evidenceClassificationBasis"] == "declared_source_name_not_independent_attestation"
+    assert all(row["evidenceKind"] == "synthetic_fixture" for row in body["data"])
     assert provenance["historyStatus"] == "persisted_unverified"
     for flag in ("licenceVerified", "historicalPointInTimeEligible",
                  "productionCoverageClaimed", "orderExecutionAllowed", "truncated"):
         assert provenance[flag] is False
     assert TestClient(app).get("/api/v1/market/history/persisted", params=params).json() == body
+
+
+@pytest.mark.parametrize("provider,kind", [
+    ("SYNTHETIC-fixture", "synthetic_fixture"),
+    ("mock_feed", "synthetic_fixture"),
+    ("simulated_history", "synthetic_fixture"),
+    ("%73ynthetic_fixture", "synthetic_fixture"),
+    ("&#115;ynthetic_fixture", "synthetic_fixture"),
+    ("yahoo", "unverified"),
+    ("real_verified_licensed", "unverified"),
+    ("production", "unverified"),
+    ("contest_data", "unverified"),
+])
+def test_source_names_only_identify_fixture_markers_never_real_origin(stored, provider, kind):
+    database, params = stored
+    # These are still synthetic prices. Renaming cannot prove real provenance.
+    with database.connect() as connection:
+        connection.execute("UPDATE market_observations SET source_provider = ?", (provider,))
+    response = TestClient(app).get("/api/v1/market/history/persisted",
+                                   params=params | {"sourceProvider": provider})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provenance"]["evidenceKind"] == kind
+    assert len(body["data"]) == 2
+    assert all(row["evidenceKind"] == kind for row in body["data"])
+    assert body["provenance"]["licenceVerified"] is False
+    assert body["provenance"]["historicalPointInTimeEligible"] is False
+    assert body["provenance"]["productionCoverageClaimed"] is False
+    assert body["provenance"]["orderExecutionAllowed"] is False
 
 
 def test_cutoff_is_exact_to_microsecond_and_never_backdates_retrieval(stored):
@@ -72,6 +104,7 @@ def test_cutoff_is_exact_to_microsecond_and_never_backdates_retrieval(stored):
     assert response.status_code == 200
     assert response.json()["data"] == []
     assert response.json()["provenance"]["historyStatus"] == "empty"
+    assert response.json()["provenance"]["evidenceKind"] == "synthetic_fixture"
 
 
 def test_limit_returns_latest_rows_with_explicit_truncation(stored):

@@ -11,18 +11,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-MarketQuote quote({String symbol = 'SYNTH', int id = 7}) => MarketQuote(
+MarketQuote quote({String symbol = 'SYNTH', int id = 7,
+  String source = 'synthetic_fixture'}) => MarketQuote(
   symbol: symbol, instrumentId: id, companyName: 'Synthetic fixture',
   canonicalIdentityStatus: 'matched_internal_listing',
   currentPrice: 101, change: 0, changePercentage: 0,
-  currency: 'USD', sourceProvider: 'synthetic_fixture',
+  currency: 'USD', sourceProvider: source,
   updatedAt: DateTime.now().toUtc(),
 );
 
 PersistedMarketHistory history(MarketQuote selection, DateTime asOf, {
   bool empty = false, bool truncated = false, String currency = 'USD',
+  PersistedMarketEvidenceKind evidenceKind = PersistedMarketEvidenceKind.unverified,
 }) => PersistedMarketHistory(
-  asOf: asOf, truncated: truncated,
+  asOf: asOf, truncated: truncated, evidenceKind: evidenceKind,
   points: empty ? [] : [MarketDataPoint(
     symbol: selection.symbol, instrumentId: selection.instrumentId,
     canonicalIdentityStatus: 'matched_internal_listing',
@@ -30,7 +32,7 @@ PersistedMarketHistory history(MarketQuote selection, DateTime asOf, {
     retrievedAt: asOf.subtract(const Duration(days: 1)),
     availableAt: asOf.subtract(const Duration(days: 1)), observationId: 17,
     close: 101, volume: 200, currency: currency,
-    providerId: 'athena_backend', sourceProvider: 'synthetic_fixture',
+    providerId: 'athena_backend', sourceProvider: selection.sourceProvider,
     historicalPointInTimeEligible: false, realTimePriceVerified: false,
   )],
 );
@@ -83,6 +85,7 @@ void main() {
       observedTo: cutoff, asOf: cutoff,
     )));
     expect(calls, 0);
+    expect(find.byKey(const Key('persisted-history-synthetic-warning')), findsOneWidget);
     await tester.tap(find.byKey(const Key('persisted-history-load')));
     await tester.pumpAndSettle();
     expect(calls, 1);
@@ -92,6 +95,31 @@ void main() {
     expect(find.byKey(const Key('persisted-history-truncated')), findsOneWidget);
     expect(find.textContaining('no acredita sesiones completas'), findsOneWidget);
     expect(find.byKey(const Key('persisted-history-boundary')), findsOneWidget);
+    expect(find.textContaining('DATOS SINTÉTICOS DE PRUEBA'), findsOneWidget);
+  });
+
+  testWidgets('unknown provider never appears as certified real provenance', (tester) async {
+    await tester.pumpWidget(surface(quote(source: 'real_verified_licensed'),
+      (selection, cutoff) async => history(selection, cutoff)));
+    await tester.tap(find.byKey(const Key('persisted-history-load')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('persisted-history-unverified-origin')), findsOneWidget);
+    expect(find.byKey(const Key('persisted-history-synthetic-warning')), findsNothing);
+    expect(find.byKey(const Key('persisted-history-row-17')), findsOneWidget);
+    expect(find.textContaining('no acredita que sean datos reales'), findsOneWidget);
+  });
+
+  testWidgets('synthetic row metadata labels unknown-source prices and empty result', (tester) async {
+    for (final empty in [false, true]) {
+      await tester.pumpWidget(surface(quote(source: 'unverified_provider'),
+        (selection, cutoff) async => history(selection, cutoff, empty: empty,
+          evidenceKind: PersistedMarketEvidenceKind.syntheticFixture)));
+      await tester.tap(find.byKey(const Key('persisted-history-load')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('persisted-history-synthetic-warning')), findsOneWidget);
+      expect(find.byKey(const Key('persisted-history-unverified-origin')), findsNothing);
+      expect(find.textContaining('No representan precios reales'), findsOneWidget);
+    }
   });
 
   testWidgets('refresh clears old prices and failure is sanitized; retry can be empty', (tester) async {

@@ -229,12 +229,21 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
         _parseTimestamp(metadata['observedTo']) != observedTo.toUtc()) {
       throw const FormatException('Procedencia del histórico persistido inválida.');
     }
+    var evidenceKind = PersistedMarketHistory.parseEvidenceKind(metadata['evidenceKind']);
+    if (PersistedMarketHistory.classifySource(sourceProvider) ==
+        PersistedMarketEvidenceKind.syntheticFixture) {
+      evidenceKind = PersistedMarketEvidenceKind.syntheticFixture;
+    }
     final points = <MarketDataPoint>[];
     final observationIds = <int>{};
     DateTime? previous;
     for (final row in data) {
       if (row is! Map) {
         throw const FormatException('Observación persistida inválida.');
+      }
+      if (PersistedMarketHistory.parseEvidenceKind(row['evidenceKind']) ==
+          PersistedMarketEvidenceKind.syntheticFixture) {
+        evidenceKind = PersistedMarketEvidenceKind.syntheticFixture;
       }
       final point = _mapPoint(
         data: Map<String, dynamic>.from(row), fallbackSymbol: normalizedSymbol,
@@ -259,6 +268,7 @@ class AthenaBackendMarketDataProvider implements MarketDataProvider {
     }
     return PersistedMarketHistory(
       points: points, asOf: asOf.toUtc(), truncated: metadata['truncated'] as bool,
+      evidenceKind: evidenceKind,
     );
   }
 

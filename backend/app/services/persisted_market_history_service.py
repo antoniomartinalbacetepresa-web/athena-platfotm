@@ -2,10 +2,27 @@
 from datetime import datetime, timedelta, timezone
 import heapq
 import math
+import re
+from html import unescape
+from urllib.parse import unquote
 
 from app.database.athena_database import AthenaDatabase
 from app.repositories.market_observation_repository import validated_market_source_provider
 from app.services.market_pit_price_selection_service import _stored_utc
+
+
+def classify_persisted_market_evidence(source_provider: str) -> str:
+    """Detect declared fixture markers; never attest a real or licensed origin."""
+    decoded = source_provider
+    for _ in range(8):
+        normalized = unescape(unquote(decoded))
+        if normalized == decoded:
+            break
+        decoded = normalized
+    markers = set(re.split(r"[^a-z0-9]+", decoded.casefold()))
+    return ("synthetic_fixture" if markers.intersection(
+        {"synthetic", "fixture", "mock", "simulated"}
+    ) else "unverified")
 
 
 class PersistedMarketHistoryService:
@@ -18,6 +35,7 @@ class PersistedMarketHistoryService:
         if type(instrument_id) is not int or instrument_id <= 0:
             raise ValueError("instrumentId debe ser positivo.")
         provider = validated_market_source_provider(source_provider)
+        evidence_kind = classify_persisted_market_evidence(provider)
         for value in (observed_from, observed_to, as_of):
             if not isinstance(value, datetime) or value.utcoffset() is None:
                 raise ValueError("Las fechas deben incluir zona horaria.")
@@ -83,6 +101,7 @@ class PersistedMarketHistoryService:
                     "availableAt": retrieved.isoformat(),
                     "sourceTimestamp": source.isoformat() if source else None,
                     "sourceProvider": provider,
+                    "evidenceKind": evidence_kind,
                     **{name: numbers[name] for name in ("open", "high", "low", "close", "volume")},
                     "adjustedClose": numbers["adjusted_close"],
                     "historicalPointInTimeEligible": False, "realTimePriceVerified": False,
@@ -99,6 +118,8 @@ class PersistedMarketHistoryService:
         return {"data": [item[2] for item in selected], "provenance": {
             "retrievalMode": "persisted_local_history", "asOf": cutoff.isoformat(),
             "instrumentId": instrument_id, "sourceProvider": provider,
+            "evidenceKind": evidence_kind,
+            "evidenceClassificationBasis": "declared_source_name_not_independent_attestation",
             "observedFrom": start.isoformat(), "observedTo": end.isoformat(),
             "limit": limit, "truncated": truncated,
             "historyStatus": "persisted_unverified" if points else "empty",

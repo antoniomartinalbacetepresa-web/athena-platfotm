@@ -126,6 +126,9 @@ class _PersistedMarketHistoryPanelState extends State<PersistedMarketHistoryPane
   @override
   Widget build(BuildContext context) {
     final history = _history;
+    final isSynthetic = (history?.containsSyntheticEvidence ?? false) ||
+        PersistedMarketHistory.classifySource(widget.quote.sourceProvider ?? '') ==
+            PersistedMarketEvidenceKind.syntheticFixture;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -135,6 +138,21 @@ class _PersistedMarketHistoryPanelState extends State<PersistedMarketHistoryPane
         ),
         Text('Proveedor: ${widget.quote.sourceProvider ?? "no identificado"} · '
             'instrumento #${widget.quote.instrumentId ?? "sin identificar"}'),
+        if (isSynthetic)
+          Semantics(
+            liveRegion: true,
+            child: const Text(
+              'DATOS SINTÉTICOS DE PRUEBA. No representan precios reales '
+              'ni acreditan funcionamiento con datos de mercado.',
+              key: Key('persisted-history-synthetic-warning'),
+            ),
+          )
+        else
+          const Text(
+            'Origen de los datos no verificado; el nombre del proveedor '
+            'no acredita que sean datos reales.',
+            key: Key('persisted-history-unverified-origin'),
+          ),
         const Text(
           'Solo lectura. No es una cotización actual ni una señal de inversión. '
           'Licencia, cobertura de 365 días y disponibilidad PIT histórica no acreditadas. '

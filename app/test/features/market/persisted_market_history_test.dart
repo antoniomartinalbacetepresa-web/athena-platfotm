@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:app/features/market/data/models/persisted_market_history.dart';
 import 'package:app/features/market/data/providers/athena_backend_market_data_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -34,10 +35,12 @@ Map<String, dynamic> payload() => {
 };
 
 void main() {
-  Future<dynamic> fetch(http.Client client) => AthenaBackendMarketDataProvider(
+  Future<PersistedMarketHistory> fetch(http.Client client, {
+    String source = 'synthetic_fixture',
+  }) => AthenaBackendMarketDataProvider(
     baseUrl: 'https://api.athena.test', client: client,
   ).getPersistedHistoricalData(
-    instrumentId: 7, symbol: 'SYNTH', sourceProvider: 'synthetic_fixture',
+    instrumentId: 7, symbol: 'SYNTH', sourceProvider: source,
     observedFrom: observed, observedTo: observed, asOf: retrieved,
   );
 
@@ -59,8 +62,54 @@ void main() {
     expect(result.points.single.sourceTimestamp, isNull);
     expect(result.points.single.historicalPointInTimeEligible, isFalse);
     expect(result.truncated, isFalse);
+    expect(result.evidenceKind, PersistedMarketEvidenceKind.syntheticFixture);
+    expect(result.containsSyntheticEvidence, isTrue);
     expect(() => result.points.clear(), throwsUnsupportedError);
   });
+
+  test('unknown legacy provider remains unverified without claiming real data', () async {
+    final body = payload();
+    body['data'][0]['sourceProvider'] = 'real_verified_licensed';
+    body['provenance']['sourceProvider'] = 'real_verified_licensed';
+    final result = await fetch(MockClient((_) async =>
+      http.Response(jsonEncode(body), 200)), source: 'real_verified_licensed');
+    expect(result.evidenceKind, PersistedMarketEvidenceKind.unverified);
+    expect(result.containsSyntheticEvidence, isFalse);
+  });
+
+  test('explicit synthetic row labels the whole history even with unknown provider', () async {
+    final body = payload();
+    body['data'][0]['sourceProvider'] = 'unverified_provider';
+    body['provenance']['sourceProvider'] = 'unverified_provider';
+    body['data'][0]['evidenceKind'] = 'synthetic_fixture';
+    final result = await fetch(MockClient((_) async =>
+      http.Response(jsonEncode(body), 200)), source: 'unverified_provider');
+    expect(result.evidenceKind, PersistedMarketEvidenceKind.syntheticFixture);
+    expect(result.containsSyntheticEvidence, isTrue);
+  });
+
+  test('synthetic envelope is retained for an empty history', () async {
+    final body = payload();
+    body['data'] = [];
+    body['provenance']['evidenceKind'] = 'synthetic_fixture';
+    final result = await fetch(MockClient((_) async => http.Response(jsonEncode(body), 200)));
+    expect(result.containsSyntheticEvidence, isTrue);
+  });
+
+  for (final kind in ['real', 'licensed', true, 1]) {
+    for (final location in ['provenance', 'row']) {
+      test('rejects unsupported evidence classification $kind at $location', () async {
+        final body = payload();
+        if (location == 'row') {
+          body['data'][0]['evidenceKind'] = kind;
+        } else {
+          body['provenance']['evidenceKind'] = kind;
+        }
+        await expectLater(fetch(MockClient((_) async =>
+          http.Response(jsonEncode(body), 200))), throwsFormatException);
+      });
+    }
+  }
 
   for (final field in ['licenceVerified', 'historicalPointInTimeEligible',
     'productionCoverageClaimed', 'orderExecutionAllowed']) {

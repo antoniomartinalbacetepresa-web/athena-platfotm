@@ -61,6 +61,34 @@ retry, currency and late-response handling. The existing
 exact selection and invalidation when the symbol changes. Test execution and
 exact-SHA CI are recorded separately; fixtures are not deployment acceptance.
 
+## Synthetic evidence classification
+
+The API now includes `evidenceKind` on each row and its provenance envelope.
+The only values are `synthetic_fixture` and `unverified`. Declared source names
+containing explicit tokens `synthetic`, `fixture`, `mock` or `simulated`
+(case-insensitive, after bounded URL/HTML decoding) trigger the fixture warning.
+The envelope states
+`evidenceClassificationBasis=declared_source_name_not_independent_attestation`.
+This is a conservative presentation classification: a name cannot authenticate
+origin, certify real prices, establish a licence or upgrade PIT eligibility.
+Unknown and legacy sources remain readable as unverified; names such as
+`real_verified_licensed` confer no authority. No migration or data mutation is
+introduced. Existing false licence/PIT/production/order flags remain false.
+
+Flutter preserves this classification in `PersistedMarketEvidenceKind` and
+rejects unsupported classifications such as `real` or `licensed`. Missing legacy
+metadata defaults to unverified; explicit synthetic row/envelope labels or
+recognizable fixture source names produce a visible, accessible
+`DATOS SINTÉTICOS DE PRUEBA` warning. That warning also survives an empty
+synthetic-source result. Unknown-source results explicitly state that their
+origin is not verified, rather than implying authentic market operation.
+Injected test loaders cannot suppress the warning merely by omitting the new
+field when the selected source or returned points already identify fixtures.
+
+Regressions in the existing dedicated API, transport and panel test files cover
+fixture/encoded-source labels, unknown legacy sources, unsupported authority
+claims and the visible distinction between synthetic and unverified history.
+
 Next: obtain separate provider licensing/availability and deployed integration
 evidence, then bind accepted history to the canonical research cycle. The scope
 audit/next queue is in `master_scope_traceability_20261127.md`. A manual Work
