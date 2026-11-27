@@ -1,0 +1,261 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:app/features/analysis/services/persisted_market_research_service.dart';
+import 'package:app/features/auth/services/auth_session.dart';
+import 'package:app/features/auth/models/auth_account.dart';
+import 'package:app/features/auth/services/auth_token_store.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+class _Store implements AuthTokenStore {
+  @override
+  Future<String?> readAccessToken() async => null;
+  @override
+  Future<void> writeAccessToken(String token) async {}
+  @override
+  Future<void> deleteAccessToken() async {}
+}
+
+void signIn(AuthSession session, int owner) {
+  final now = DateTime.now().toUtc();
+  session.establish(
+    accessToken: 'owner-$owner',
+    account: AuthAccount(
+      id: owner,
+      email: '$owner@example.invalid',
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    ),
+  );
+}
+
+PersistedMarketResearchDraft draft() {
+  final now = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
+  return PersistedMarketResearchDraft(
+    instrumentId: 7,
+    symbol: 'SYNTH',
+    sourceProvider: 'synthetic_fixture',
+    observedFrom: now.subtract(const Duration(days: 365)),
+    observedTo: now,
+    authoredAt: now,
+    journalId: 'test-synthetic-review',
+    thesis: 'Human research question',
+    contradiction: 'These are only fixtures',
+  );
+}
+
+Map<String, dynamic> result(PersistedMarketResearchDraft request) => {
+  'instrumentId': '7',
+  'symbol': request.symbol,
+  'asOf': request.asOf.toIso8601String(),
+  'advisoryStatus': 'no_advice',
+  'productionEligible': false,
+  'isWeightingReady': false,
+  'policy': {'automaticTrading': false, 'automaticProductionPromotion': false},
+  'integrity': {'algorithm': 'sha256', 'cycleHash': 'a' * 64},
+  'marketHistoryReference': {
+    'evidenceKind': 'synthetic_fixture',
+    'metadataOnly': true,
+    'licenceVerified': false,
+    'historicalPointInTimeEligible': false,
+    'productionEligible': false,
+    'automaticTrading': false,
+  },
+};
+
+http.Response privateDetail(PersistedMarketResearchDraft request) =>
+    http.Response(
+      jsonEncode({
+        'data': {
+          'advisoryStatus': 'no_advice',
+          'productionEligible': false,
+          'automaticTrading': false,
+          'isWeightingReady': false,
+          'package': {
+            'cycle': {
+              'symbol': request.symbol,
+              'asOf': request.asOf.toIso8601String(),
+              'integrity': {'algorithm': 'sha256', 'cycleHash': 'a' * 64},
+            },
+          },
+          'persistence': {'cycleHash': 'a' * 64},
+        },
+      }),
+      200,
+    );
+
+void main() {
+  test('anonymous creation fails before any network request', () async {
+    var calls = 0;
+    final client = MockClient((_) async {
+      calls++;
+      return http.Response('{}', 200);
+    });
+    final service = PersistedMarketResearchService(
+      client: client,
+      session: AuthSession.forTesting(_Store()),
+    );
+    await expectLater(service.create(draft()), throwsStateError);
+    expect(calls, 0);
+    client.close();
+  });
+
+  test(
+    'simultaneous submits share POST then owner-private verified retrieval',
+    () async {
+      final session = AuthSession.forTesting(_Store());
+      signIn(session, 1);
+      final request = draft();
+      final methods = <String>[];
+      final pending = Completer<http.Response>();
+      final client = MockClient((call) async {
+        methods.add(call.method);
+        expect(call.headers['Authorization'], 'Bearer owner-1');
+        if (call.method == 'POST') {
+          expect(call.url.path, endsWith('/from-persisted-market-history'));
+          expect(call.body, request.encodedBody);
+          final body = jsonDecode(call.body) as Map<String, dynamic>;
+          expect(body.containsKey('ownerId'), false);
+          expect(body.containsKey('radarEvidence'), false);
+          expect(body['asOf'], body['recordedAt']);
+          return pending.future;
+        }
+        expect(call.url.path, endsWith('/research-cycle/private/${'a' * 64}'));
+        return privateDetail(request);
+      });
+      final service = PersistedMarketResearchService(
+        client: client,
+        session: session,
+      );
+      final first = service.create(request);
+      final second = service.create(request);
+      expect(identical(first, second), true);
+      pending.complete(
+        http.Response(jsonEncode({'data': result(request)}), 200),
+      );
+      expect((await first).symbol, 'SYNTH');
+      await second;
+      expect(methods, ['POST', 'GET']);
+      client.close();
+    },
+  );
+
+  test(
+    'uncertain write retry preserves exact cutoff and journal identity',
+    () async {
+      final session = AuthSession.forTesting(_Store());
+      signIn(session, 1);
+      final request = draft();
+      final bodies = <String>[];
+      final client = MockClient((call) async {
+        if (call.method == 'GET') return privateDetail(request);
+        bodies.add(call.body);
+        if (bodies.length == 1)
+          throw http.ClientException('synthetic interruption');
+        return http.Response(jsonEncode({'data': result(request)}), 200);
+      });
+      final service = PersistedMarketResearchService(
+        client: client,
+        session: session,
+      );
+      await expectLater(
+        service.create(request),
+        throwsA(isA<http.ClientException>()),
+      );
+      await service.create(request);
+      expect(bodies, [request.encodedBody, request.encodedBody]);
+      client.close();
+    },
+  );
+
+  test(
+    'switching owner during POST rejects response before private retrieval',
+    () async {
+      final session = AuthSession.forTesting(_Store());
+      signIn(session, 1);
+      final request = draft();
+      final pending = Completer<http.Response>();
+      var calls = 0;
+      final client = MockClient((_) async {
+        calls++;
+        return pending.future;
+      });
+      final service = PersistedMarketResearchService(
+        client: client,
+        session: session,
+      );
+      final future = service.create(request);
+      signIn(session, 2);
+      pending.complete(
+        http.Response(jsonEncode({'data': result(request)}), 200),
+      );
+      await expectLater(future, throwsStateError);
+      expect(calls, 1);
+      client.close();
+    },
+  );
+
+  for (final defect in [
+    'symbol',
+    'instrument',
+    'cutoff',
+    'hash',
+    'license',
+    'trading',
+  ]) {
+    test('rejects incompatible creation result: $defect', () async {
+      final session = AuthSession.forTesting(_Store());
+      signIn(session, 1);
+      final request = draft();
+      final data = result(request);
+      var calls = 0;
+      if (defect == 'symbol') data['symbol'] = 'OTHER';
+      if (defect == 'instrument') data['instrumentId'] = '8';
+      if (defect == 'cutoff')
+        data['asOf'] = request.asOf
+            .subtract(const Duration(days: 1))
+            .toIso8601String();
+      if (defect == 'hash') (data['integrity'] as Map)['cycleHash'] = 'invalid';
+      if (defect == 'license')
+        (data['marketHistoryReference'] as Map)['licenceVerified'] = true;
+      if (defect == 'trading')
+        (data['policy'] as Map)['automaticTrading'] = true;
+      final client = MockClient((_) async {
+        calls++;
+        return http.Response(jsonEncode({'data': data}), 200);
+      });
+      final service = PersistedMarketResearchService(
+        client: client,
+        session: session,
+      );
+      await expectLater(service.create(request), throwsFormatException);
+      expect(calls, 1);
+      client.close();
+    });
+  }
+
+  for (final status in [401, 403, 404, 409, 503]) {
+    test(
+      'HTTP $status never falls back to public creation or retrieval',
+      () async {
+        final session = AuthSession.forTesting(_Store());
+        signIn(session, 1);
+        var calls = 0;
+        final client = MockClient((_) async {
+          calls++;
+          return http.Response('{}', status);
+        });
+        final service = PersistedMarketResearchService(
+          client: client,
+          session: session,
+        );
+        await expectLater(service.create(draft()), throwsStateError);
+        expect(calls, 1);
+        client.close();
+      },
+    );
+  }
+}
