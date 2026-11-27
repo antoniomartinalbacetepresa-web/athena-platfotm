@@ -141,10 +141,20 @@ class PrivateResearchHistoryService {
     }
     final package = data['package'] as Map<String, dynamic>;
     final persistence = data['persistence'] as Map<String, dynamic>;
-    final packageAsOf = package['asOf'];
+    // FastAPI returns a canonical module bundle, not a flattened cycle.
+    // Outer metadata must never substitute for the hash-bound cycle identity.
+    final cycle = package['cycle'];
+    if (cycle is! Map<String, dynamic> ||
+        cycle['integrity'] is! Map<String, dynamic>) {
+      throw const FormatException('Paquete canónico privado inválido.');
+    }
+    final integrity = cycle['integrity'] as Map<String, dynamic>;
+    final packageAsOf = cycle['asOf'];
     final parsedAsOf = packageAsOf is String ? DateTime.tryParse(packageAsOf) : null;
     if (persistence['cycleHash'] != entry.cycleHash ||
-        package['symbol'] != entry.symbol ||
+        integrity['algorithm'] != 'sha256' ||
+        integrity['cycleHash'] != entry.cycleHash ||
+        cycle['symbol'] != entry.symbol ||
         parsedAsOf == null || !parsedAsOf.isUtc ||
         parsedAsOf.isAfter(DateTime.now().toUtc()) ||
         !parsedAsOf.isAtSameMomentAs(entry.asOf)) {

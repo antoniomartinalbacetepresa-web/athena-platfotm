@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:app/features/analysis/services/private_research_history_service.dart';
 import 'package:app/features/auth/services/auth_session.dart';
@@ -132,7 +133,7 @@ void main() {
       return http.Response(
         '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
         '"automaticTrading":false,"isWeightingReady":false,'
-        '"package":{"symbol":"AAPL","asOf":"${now.toIso8601String()}"},"persistence":{"cycleHash":"$hash"}}}',
+        '"package":{"cycle":{"symbol":"AAPL","asOf":"${now.toIso8601String()}","integrity":{"algorithm":"sha256","cycleHash":"$hash"}}},"persistence":{"cycleHash":"$hash"}}}',
         200,
       );
     });
@@ -146,6 +147,72 @@ void main() {
     service.dispose();
     client.close();
   });
+
+  for (final defect in [
+    'flat',
+    'missing-cycle',
+    'wrong-type',
+    'symbol',
+    'hash',
+    'algorithm',
+  ]) {
+    test('private detail rejects canonical bundle defect: $defect', () async {
+      final session = AuthSession.forTesting(_TokenStore());
+      final now = DateTime.now().toUtc();
+      session.establish(
+        accessToken: 'test-token',
+        account: AuthAccount(
+          id: 1,
+          email: 'test@example.invalid',
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      final hash = 'a' * 64;
+      final cycle = <String, dynamic>{
+        'symbol': defect == 'symbol' ? 'MSFT' : 'AAPL',
+        'asOf': now.toIso8601String(),
+        'integrity': {
+          'algorithm': defect == 'algorithm' ? 'md5' : 'sha256',
+          'cycleHash': defect == 'hash' ? 'b' * 64 : hash,
+        },
+      };
+      final package = <String, dynamic>{
+        // Matching flattened metadata must not hide an invalid nested cycle.
+        'symbol': 'AAPL', 'asOf': now.toIso8601String(),
+        if (defect != 'flat' && defect != 'missing-cycle')
+          'cycle': defect == 'wrong-type' ? <dynamic>[] : cycle,
+      };
+      final client = MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'data': {
+              'advisoryStatus': 'no_advice',
+              'productionEligible': false,
+              'automaticTrading': false,
+              'isWeightingReady': false,
+              'package': package,
+              'persistence': {'cycleHash': hash},
+            },
+          }),
+          200,
+        ),
+      );
+      final service = PrivateResearchHistoryService(
+        client: client,
+        session: session,
+      );
+      await expectLater(
+        service.loadCycle(
+          PrivateResearchEntry(cycleHash: hash, symbol: 'AAPL', asOf: now),
+        ),
+        throwsFormatException,
+      );
+      service.dispose();
+      client.close();
+    });
+  }
 
   test('private detail rejects a mismatched PIT timestamp', () async {
     final session = AuthSession.forTesting(_TokenStore());
@@ -165,7 +232,7 @@ void main() {
     final client = MockClient((request) async => http.Response(
       '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
       '"automaticTrading":false,"isWeightingReady":false,'
-      '"package":{"symbol":"AAPL","asOf":"$wrongAsOf"},'
+      '"package":{"cycle":{"symbol":"AAPL","asOf":"$wrongAsOf","integrity":{"algorithm":"sha256","cycleHash":"$hash"}}},'
       '"persistence":{"cycleHash":"$hash"}}}',
       200,
     ));
@@ -196,7 +263,7 @@ void main() {
     final client = MockClient((request) async => http.Response(
       '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
       '"automaticTrading":false,"isWeightingReady":false,'
-      '"package":{"symbol":"AAPL","asOf":"${futureAsOf.toIso8601String()}"},'
+      '"package":{"cycle":{"symbol":"AAPL","asOf":"${futureAsOf.toIso8601String()}","integrity":{"algorithm":"sha256","cycleHash":"$hash"}}},'
       '"persistence":{"cycleHash":"$hash"}}}',
       200,
     ));
@@ -247,7 +314,7 @@ void main() {
     pendingResponse.complete(http.Response(
       '{"data":{"advisoryStatus":"no_advice","productionEligible":false,'
       '"automaticTrading":false,"isWeightingReady":false,'
-      '"package":{"symbol":"AAPL","asOf":"${now.toIso8601String()}"},"persistence":{"cycleHash":"$hash"}}}',
+      '"package":{"cycle":{"symbol":"AAPL","asOf":"${now.toIso8601String()}","integrity":{"algorithm":"sha256","cycleHash":"$hash"}}},"persistence":{"cycleHash":"$hash"}}}',
       200,
     ));
     await expectLater(pending, throwsStateError);

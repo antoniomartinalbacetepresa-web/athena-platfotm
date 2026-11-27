@@ -169,3 +169,25 @@ estados operativos ni requisitos históricos de las tablas anteriores.
 
 Las fuentes reales requieren derechos acreditados. La automatización horaria no
 se modifica ni duplica y su asociación a Work no se deduce de estos commits.
+
+### Continuación de integración Flutter — 27/11/2026
+
+El puente `ab22ed9ff012208dbde03c0fd95bfc9dc0ecfeb0` ya tiene CI push
+46056042157 **success**, comprobada por SHA. El contrato numérico se publicó en
+`1c1fd67d4cc782947a48e8faffa627559b8e6cab` (CI 46056342692 pendiente al
+preparar esta ampliación).
+
+Se corrige un desajuste real: el lector Flutter de detalle privado esperaba
+`package.symbol/asOf`, mientras FastAPI entrega `package.cycle.symbol/asOf`.
+Se valida también `cycle.integrity.algorithm/cycleHash` frente a la selección
+privada; campos planos no sustituyen al ciclo canónico. Se actualizan fixtures y
+se añaden regresiones de paquete plano, ciclo ausente/tipo inválido, símbolo,
+hash y algoritmo contradictorios. Servicio y panel privados se incluyen en la
+aceptación Chrome obligatoria. Esto no ejecuta modelos ni acredita datos reales.
+
+El SDK local puede analizar sintaxis mediante Dart format, pero su caché de
+paquetes está incompleta: las pruebas Flutter de este lote deben verificarse en
+Actions antes de considerarlo probado. Recuperar SHA y conclusión desde la rama.
+La siguiente tarea sigue siendo la creación autenticada del puente desde Flutter,
+con revisión humana y corte estable; después referencias News/Investors y la
+estrategia reproducible de 25 sesiones. No se cambia la programación horaria.

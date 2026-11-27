@@ -92,6 +92,8 @@ jobs:
           # bootstrap timeout may be retried once. A failing assertion, or a
           # timeout after test execution begins, always fails the gate.
           chrome_tests=(
+            test/features/analysis/private_research_history_service_test.dart
+            test/features/analysis/private_research_history_panel_test.dart
             test/features/dashboard/dashboard_athena_synthesis_wiring_test.dart
             test/features/market/market_page_integration_test.dart
             test/features/market/persisted_market_history_panel_test.dart
