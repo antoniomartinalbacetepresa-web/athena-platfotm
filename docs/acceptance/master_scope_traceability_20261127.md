@@ -260,3 +260,13 @@ PRODUCT-024 siguen pendientes de aceptación operacional. Recuperar SHA/CI exact
 Cola24h: cerrar CI de creación/referencias Flutter; añadir lectura de síntesis
 Investors privada y benchmark reproducible; conservar cola de derechos/cobertura
 TwelveData y despliegue. No hay porcentaje global certificado ni cambio horario.
+
+
+Flutter incorpora lector privado Investors sobre las rutas de98836c6: exige
+cycleHash/corte, fingerprint y binding por assessment, timestamps publicación <=
+disponibilidad <= generación <= corte y flags sin autoridad. Muestra resúmenes y
+fuentes como salida externa no corroborada, sin confundir informes retrasados con
+órdenes actuales. La vista inicia la consulta solo tras verificar el ciclo y
+limpia la síntesis al cambiar cuenta/selección; error/ausencia/reintento explícitos.
+Regresiones de transporte e integración de evidencias se añaden a Chrome.
+Recuperar conclusión CI por SHA: no se acredita aceptación antes de superarla.

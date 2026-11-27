@@ -57,6 +57,8 @@ class _History extends PrivateResearchHistoryService {
     PrivateResearchEntry entry,
   ) async => detail;
   @override
+  Future<PrivateResearchSynthesis?> loadInvestorsSynthesis(PrivateResearchEntry entry) async => null;
+  @override
   Future<PrivateResearchSynthesis?> loadSynthesis(
     PrivateResearchEntry entry, {
     required bool athena,

@@ -22,6 +22,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
   PrivateResearchEntry? _selectedEntry;
   Future<PrivateResearchSynthesis?>? _news;
   Future<PrivateResearchSynthesis?>? _athena;
+  Future<PrivateResearchSynthesis?>? _investors;
   int _sessionVersion = AuthSession.instance.authorityVersion;
 
   PrivateResearchHistoryService get _service =>
@@ -49,6 +50,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     _selectedEntry = null;
     _news = null;
     _athena = null;
+    _investors = null;
     if (!AuthSession.instance.isAuthenticated) {
       _pending = null;
       return;
@@ -68,6 +70,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
       _selectedDetail = null;
       _news = null;
       _athena = null;
+    _investors = null;
     });
   }
 
@@ -79,6 +82,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
       _selectedEntry = entry;
       _news = null;
       _athena = null;
+    _investors = null;
       // Never fetch or display synthesis before verifying the private cycle.
       _selectedDetail = _service.loadCycle(entry).then((detail) {
         if (generation != _generation ||
@@ -90,6 +94,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
           setState(() {
             _news = _service.loadSynthesis(entry, athena: false);
             _athena = _service.loadSynthesis(entry, athena: true);
+            _investors = _service.loadInvestorsSynthesis(entry);
           });
         }
         return detail;
@@ -123,11 +128,13 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     super.dispose();
   }
 
-  void _retrySynthesis(bool athena) {
+  void _retrySynthesis(String kind) {
     final entry = _selectedEntry;
     if (entry == null || !AuthSession.instance.isAuthenticated) return;
     setState(() {
-      if (athena) {
+      if (kind == 'Investors') {
+        _investors = _service.loadInvestorsSynthesis(entry);
+      } else if (kind == 'ATHENA') {
         _athena = _service.loadSynthesis(entry, athena: true);
       } else {
         _news = _service.loadSynthesis(entry, athena: false);
@@ -148,7 +155,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
             children: [
               Text('No se pudo verificar la síntesis $kind.'),
               TextButton(
-                onPressed: () => _retrySynthesis(kind == 'ATHENA'),
+                onPressed: () => _retrySynthesis(kind),
                 child: Text('Reintentar síntesis $kind'),
               ),
             ],
@@ -266,6 +273,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
                         ]),
                       if (_news != null) _synthesisPanel(_news!, 'News'),
                       if (_athena != null) _synthesisPanel(_athena!, 'ATHENA'),
+                      if (_investors != null) _synthesisPanel(_investors!, 'Investors'),
                       const Text('Este detalle no verifica cotizaciones, noticias, licencias ni ejecución Ollama.'),
                     ],
                   );

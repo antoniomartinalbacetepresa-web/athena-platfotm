@@ -219,7 +219,13 @@ class PrivateResearchHistoryService {
   /// Retrieve one canonical synthesis without a public fallback. A missing
   /// synthesis is an explicit absence, not a verified model execution.
   Future<PrivateResearchSynthesis?> loadSynthesis(
-      PrivateResearchEntry entry, {required bool athena}) async {
+      PrivateResearchEntry entry, {required bool athena}) => _loadSynthesis(entry, athena: athena);
+
+  Future<PrivateResearchSynthesis?> loadInvestorsSynthesis(PrivateResearchEntry entry) =>
+      _loadSynthesis(entry, athena: false, investors: true);
+
+  Future<PrivateResearchSynthesis?> _loadSynthesis(PrivateResearchEntry entry,
+      {required bool athena, bool investors = false}) async {
     // A synthesis must never inherit an impossible future PIT timestamp,
     // even if its canonical cycle hash and owner binding are otherwise valid.
     if (!entry.asOf.isUtc || entry.asOf.isAfter(DateTime.now().toUtc())) {
@@ -234,7 +240,7 @@ class PrivateResearchHistoryService {
       throw StateError('Se requiere autenticación.');
     }
     final version = _session.authorityVersion;
-    final kind = athena ? 'athena-synthesis' : 'news-synthesis';
+    final kind = investors ? 'investors-synthesis' : athena ? 'athena-synthesis' : 'news-synthesis';
     final uri = Uri.parse(
         '$_baseUrl/api/v1/recommendations/professional-research/research-cycle/private/${entry.cycleHash}/$kind');
     final response = await _client.get(
@@ -271,12 +277,64 @@ class PrivateResearchHistoryService {
             data['automaticTrading'] != false || data['recommendationInfluence'] != false)) {
       throw const FormatException('Vinculación o seguridad de síntesis no verificable.');
     }
-    final summary = synthesis['summary'];
+    final Object? summary;
+    if (investors) {
+      final assessments = synthesis['assessments'];
+      final provenance = data['provenance'];
+      if (data['cycleHash'] != entry.cycleHash || data['automaticScoring'] != false ||
+          synthesis['automaticTrading'] != false || synthesis['recommendationInfluence'] != false ||
+          synthesis['productionTruthClaimed'] != false || synthesis['asOf'] is! String ||
+          DateTime.tryParse(synthesis['asOf'] as String)?.isAtSameMomentAs(entry.asOf) != true ||
+          assessments is! List || assessments.isEmpty || assessments.length > 200 ||
+          synthesis['assessedCount'] != assessments.length || provenance is! Map ||
+          provenance['artifactType'] != 'canonical_investors_synthesis' ||
+          persistence['synthesisHash'] is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(persistence['synthesisHash'] as String) ||
+          provenance['artifactHash'] != persistence['synthesisHash'] ||
+          provenance['assessmentBindings'] is! List) {
+        throw const FormatException('Síntesis Investors no vinculada.');
+      }
+      final bindings = provenance['assessmentBindings'] as List;
+      final ids = <String>{};
+      final summaries = <String>[];
+      for (final assessment in assessments) {
+        if (assessment is! Map || assessment['symbol'] != entry.symbol ||
+            assessment['evidenceId'] is! String || !ids.add(assessment['evidenceId'] as String) ||
+            assessment['summary'] is! String || (assessment['summary'] as String).trim().isEmpty ||
+            assessment['assessmentFingerprint'] is! String ||
+            !RegExp(r'^[a-f0-9]{64}$').hasMatch(assessment['assessmentFingerprint'] as String) ||
+            assessment['sourceRef'] is! String ||
+            !(Uri.tryParse(assessment['sourceRef'] as String)?.scheme == 'https' &&
+              (Uri.tryParse(assessment['sourceRef'] as String)?.host.isNotEmpty ?? false))) {
+          throw const FormatException('Referencia Investors inválida.');
+        }
+        final published = assessment['publishedAt'] is String ? DateTime.tryParse(assessment['publishedAt'] as String) : null;
+        final available = assessment['availableAt'] is String ? DateTime.tryParse(assessment['availableAt'] as String) : null;
+        final generated = assessment['generatedAt'] is String ? DateTime.tryParse(assessment['generatedAt'] as String) : null;
+        if (published == null || available == null || generated == null ||
+            !published.isUtc || !available.isUtc || !generated.isUtc ||
+            published.isAfter(available) || available.isAfter(generated) || generated.isAfter(entry.asOf) ||
+            bindings.where((binding) => binding is Map &&
+              binding['evidenceId'] == assessment['evidenceId'] &&
+              binding['sourceRef'] == assessment['sourceRef'] &&
+              binding['assessmentFingerprint'] == assessment['assessmentFingerprint']).length != 1) {
+          throw const FormatException('Temporalidad o vínculo Investors inválido.');
+        }
+        summaries.add('${assessment['summary']}\nFuente: ${assessment['sourceRef']} · '
+          'Publicación: ${published.toIso8601String()} · Disponible: ${available.toIso8601String()}');
+      }
+      if (bindings.length != assessments.length) {
+        throw const FormatException('Bindings Investors incompatibles.');
+      }
+      summary = summaries.join('\n\n');
+    } else {
+      summary = synthesis['summary'];
+    }
     if (summary is! String || summary.trim().isEmpty || summary.length > 12000) {
       throw const FormatException('Resumen de síntesis inválido.');
     }
     return PrivateResearchSynthesis(
-      kind: athena ? 'ATHENA' : 'News', summary: summary,
+      kind: investors ? 'Investors' : athena ? 'ATHENA' : 'News', summary: summary,
       cycleHash: entry.cycleHash, asOf: entry.asOf,
     );
   }
