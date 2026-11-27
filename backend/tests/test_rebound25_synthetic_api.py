@@ -72,6 +72,10 @@ def test_authenticated_synthetic_payload_is_reproducible_with_no_authority():
         assert body[key] is False
     assert body["precommitBasis"] == "caller_declared_not_immutable_attestation"
     assert body["advisoryStatus"] == "no_advice"
+    assert body["outputRevision"] == "1.1-buy-and-hold-reporting"
+    assert body["benchmark"]["schema"] == "athena.synthetic-buy-and-hold-benchmark.v1"
+    assert body["benchmark"]["performanceValidated"] is False
+    assert body["benchmarkComparison"]["outperformanceClaimed"] is False
     assert len(body["parameterFingerprint"]) == 64
 
 

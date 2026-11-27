@@ -90,6 +90,109 @@ def _hash(value: object) -> str:
     ).encode()).hexdigest()
 
 
+def _buy_and_hold_reporting(
+    canonical: list[dict], protocol: dict, lookback: int,
+    trades: list[dict], position: dict | None,
+) -> dict:
+    """Fixed-unit baseline; descriptive PnL is not capital-normalized alpha.
+
+    The benchmark buys unconditionally at the predeclared evaluation start.
+    Its last close is a mark, not an observed sale. A separate hypothetical
+    liquidation estimate applies the same adverse price and fee assumptions.
+    """
+    first, last = canonical[lookback], canonical[-1]
+    units = protocol["order_units"]
+    price_cost = (protocol["spread_bps"] / 2 + protocol["slippage_bps"]) / 10000
+    fee_rate = protocol["commission_bps"] / 10000
+
+    def terminal_position(entry_base: float, entry_price: float) -> dict:
+        entry_commission = entry_price * units * fee_rate
+        exit_price = last["close"] * (1 - price_cost)
+        exit_commission = exit_price * units * fee_rate
+        gross_pnl = (last["close"] - entry_base) * units
+        entry_price_cost = (entry_price - entry_base) * units
+        exit_price_cost = (last["close"] - exit_price) * units
+        mark_pnl = (last["close"] - entry_price) * units - entry_commission
+        liquidation_pnl = (exit_price - entry_price) * units - entry_commission - exit_commission
+        return {
+            "entryBasePrice": entry_base, "entryPrice": entry_price,
+            "entryCapitalRequired": entry_price * units + entry_commission,
+            "grossMarkToMarketPnl": gross_pnl,
+            "entrySpreadAndSlippageCost": entry_price_cost,
+            "entryCommissionCost": entry_commission,
+            "netMarkToMarketPnlBeforeExitCosts": mark_pnl,
+            "hypotheticalLiquidation": {
+                "exitPrice": exit_price, "exitCommissionCost": exit_commission,
+                "exitSpreadAndSlippageCost": exit_price_cost,
+                "totalCommissionCost": entry_commission + exit_commission,
+                "totalSpreadAndSlippageCost": entry_price_cost + exit_price_cost,
+                "netPnlAfterAllCosts": liquidation_pnl, "isRealized": False,
+            },
+        }
+
+    benchmark_values = terminal_position(first["open"], first["open"] * (1 + price_cost))
+    evaluation_sessions = len(canonical) - lookback
+    realized = sum(trade["netPnl"] for trade in trades)
+    closed_commissions = sum(trade["commissionCost"] for trade in trades)
+    closed_price_costs = sum(trade["spreadAndSlippageCost"] for trade in trades)
+    held_sessions = sum(trade["holdingSessions"] for trade in trades)
+    open_values = (terminal_position(position["entryBase"], position["entryPrice"])
+                   if position is not None else None)
+    if position is not None:
+        held_sessions += len(canonical) - position["entryIndex"]
+    open_mtm = open_values["netMarkToMarketPnlBeforeExitCosts"] if open_values else 0.0
+    open_liquidation = (open_values["hypotheticalLiquidation"]["netPnlAfterAllCosts"]
+                        if open_values else 0.0)
+    strategy_values = {
+        "realizedNetPnl": realized,
+        "openNetMarkToMarketPnlBeforeExitCosts": open_mtm,
+        "combinedPnlBeforeOpenExitCosts": realized + open_mtm,
+        "hypotheticalEndLiquidationNetPnlAfterAllCosts": realized + open_liquidation,
+        "closedTradeCommissionCost": closed_commissions,
+        "closedTradeSpreadAndSlippageCost": closed_price_costs,
+        "openEntryCommissionCost": open_values["entryCommissionCost"] if open_values else 0.0,
+        "openEntrySpreadAndSlippageCost": open_values["entrySpreadAndSlippageCost"] if open_values else 0.0,
+        "openHypotheticalLiquidation": open_values["hypotheticalLiquidation"] if open_values else None,
+        "exposedSessionCount": held_sessions, "exposureUnitSessions": held_sessions * units,
+    }
+    return {
+        "benchmark": {
+            "schema": "athena.synthetic-buy-and-hold-benchmark.v1",
+            "policy": "unconditional_first_evaluation_open_to_last_observed_close_mark",
+            "evaluationStartSession": first["session"], "entryAt": first["openAt"],
+            "evaluationEndSession": last["session"], "lastMarkAt": last["observedAt"],
+            "lastMarkAvailableAt": last["availableAt"], "lastMarkPrice": last["close"],
+            "units": units, "evaluationSessionCount": evaluation_sessions,
+            "exposedSessionCount": evaluation_sessions,
+            "exposureUnitSessions": evaluation_sessions * units,
+            "costParameters": {key: protocol[key] for key in
+                               ("commission_bps", "spread_bps", "slippage_bps")},
+            "realizedNetPnl": 0.0, "positionClosed": False,
+            "evidenceKind": "synthetic_fixture", "performanceValidated": False,
+            **benchmark_values,
+        },
+        "strategyAccounting": strategy_values,
+        "benchmarkComparison": {
+            "basis": "fixed_units_descriptive_pnl_not_common_capital_or_exposure_normalized",
+            "identicalConfiguredUnits": True, "identicalPerSideCostParameters": True,
+            "comparableByInitialCapital": False, "comparableByExposure": False,
+            "outperformanceClaimed": False,
+            "markToMarketPnlDifferenceBeforeOpenExitCosts": (
+                realized + open_mtm - benchmark_values["netMarkToMarketPnlBeforeExitCosts"]),
+            "hypotheticalLiquidationPnlDifferenceAfterAllCosts": (
+                realized + open_liquidation
+                - benchmark_values["hypotheticalLiquidation"]["netPnlAfterAllCosts"]),
+            "exposureBasis": "count_of_sessions_with_position_not_intraday_duration",
+            "warnings": [
+                "Identical units and cost rules do not imply identical funding or market exposure.",
+                "Benchmark mark-to-market is unrealized; terminal liquidation is hypothetical.",
+                "PnL differences are not excess returns, alpha or validated investment performance.",
+                "Buy-and-hold is an unconditional price baseline, not a liquidity-eligible strategy signal.",
+            ],
+        },
+    }
+
+
 def run_rebound25_synthetic_backtest(
     bars: list[SyntheticReboundBar], *, parameters: Rebound25Parameters,
     expected_sessions: list[date], as_of: datetime, precommitted_at: datetime,
@@ -271,6 +374,9 @@ def run_rebound25_synthetic_backtest(
                              - position["entryPrice"] * units * fee_rate)}
     result = {
         "schema": "athena.synthetic-rebound-backtest.v1", "parameters": protocol,
+        # Additive reporting revision: trading rules and parameter/input hashes
+        # retain v1 semantics. The result fingerprint includes the new benchmark.
+        "outputRevision": "1.1-buy-and-hold-reporting",
         "parameterFingerprint": _hash(protocol), "inputFingerprint": _hash(canonical),
         "instrumentId": instrument_id, "currency": currency,
         "asOf": cutoff.isoformat(), "precommittedAt": precommit.isoformat(),
@@ -293,6 +399,7 @@ def run_rebound25_synthetic_backtest(
                      "Daily OHLC does not establish intraday path, actual fills or exit liquidity.",
                      "No survivorship-safe universe, independent calendar or OOS acceptance is established.",
                      "Open positions are not silently closed or counted as realized profits."],
+        **_buy_and_hold_reporting(canonical, protocol, lookback, trades, position),
     }
     # Finite inputs can still overflow derived arithmetic. Fail the whole
     # simulation rather than returning NaN/Infinity or a non-replayable artifact.

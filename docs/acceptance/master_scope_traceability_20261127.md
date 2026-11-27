@@ -270,3 +270,34 @@ fuentes como salida externa no corroborada, sin confundir informes retrasados co
 limpia la síntesis al cambiar cuenta/selección; error/ausencia/reintento explícitos.
 Regresiones de transporte e integración de evidencias se añaden a Chrome.
 Recuperar conclusión CI por SHA: no se acredita aceptación antes de superarla.
+
+
+### Cierre de lotes intensivos — 27/11/2026
+
+CI push exacta ya superada: referenciasFlutter `2bb53f3325b9b523d6170612b95d41296dec7112`
+(run46059351218), Investors privado `98836c653d50725eebd9a4730a1dd32fad104b24`
+(run46059440703) y estrategia `36d0d7bc5b0f29688d0726f8085a427c476a39ae`
+(run46059553098). Este último:5057backend,1135Flutter,188Chrome, análisis/build/gate
+superados. Los commits intermedios b113c12/96577b8 fallaron análisis estático;
+las correcciones están en descendientes, no se borran sus resultados históricos.
+
+Benchmark sintético añadido con revisión de salida1.1: buy&hold incondicional desde
+primera apertura evaluable al último cierre; mismos tamaños/costes pero capital y
+exposición NO normalizados. Separa realizado, valoración abierta y liquidación
+terminal hipotética, incluyendo comisiones/spread/slippage y unidades-sesión.
+No declara alpha, rentabilidad aceptada ni cierres ficticios.76 pruebas focales
+API/estrategia/patrón20 superadas; combinado con Investors:82 superadas.
+
+Flutter Investors refuerza flags internos/externos de scoring, corroboración y
+provenance; exige corte UTC explícito y rechaza URLs con credenciales. Regresiones
+incluyen estas contradicciones y presentación efectiva de síntesis Investors.
+Los SHA032f3e y7af83fb y esta publicación requieren consultar su propia CI; no se
+anticipa aceptación de pruebas pendientes.
+
+Próximas24h por prioridad: comprobar HEAD yCI final; completar el recorrido contra
+staging con dos cuentas cuando existan URL/secretos/variables autorizadas (losjobs
+opt-in siguen skipped); unir referencias Market+News+Investors en un mismo ciclo
+servidor sin permitir referencias cliente falsas; enlazar el backtest con Journal
+y Portfolio simulado y evaluar walk-forward/OOS. Derechos/PIT/cobertura365 de
+TwelveData, despliegue real y motor de ejecución completo siguen pendientes.
+No se altera la programación horaria, main ni los cinco documentos canónicos.

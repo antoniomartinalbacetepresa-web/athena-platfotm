@@ -286,6 +286,7 @@ class PrivateResearchHistoryService {
           data['cycleHash'] != entry.cycleHash || data['automaticScoring'] != false ||
           synthesis['automaticTrading'] != false || synthesis['recommendationInfluence'] != false ||
           synthesis['productionTruthClaimed'] != false || synthesis['asOf'] is! String ||
+          DateTime.tryParse(synthesis['asOf'] as String)?.isUtc != true ||
           DateTime.tryParse(synthesis['asOf'] as String)?.isAtSameMomentAs(entry.asOf) != true ||
           assessments is! List || assessments.isEmpty || assessments.length > 200 ||
           synthesis['assessedCount'] != assessments.length || provenance is! Map ||
@@ -309,7 +310,8 @@ class PrivateResearchHistoryService {
             !RegExp(r'^[a-f0-9]{64}$').hasMatch(assessment['assessmentFingerprint'] as String) ||
             assessment['sourceRef'] is! String ||
             !(Uri.tryParse(assessment['sourceRef'] as String)?.scheme == 'https' &&
-              (Uri.tryParse(assessment['sourceRef'] as String)?.host.isNotEmpty ?? false))) {
+              (Uri.tryParse(assessment['sourceRef'] as String)?.host.isNotEmpty ?? false) &&
+              Uri.tryParse(assessment['sourceRef'] as String)?.userInfo.isEmpty == true)) {
           throw const FormatException('Referencia Investors inválida.');
         }
         final published = assessment['publishedAt'] is String ? DateTime.tryParse(assessment['publishedAt'] as String) : null;

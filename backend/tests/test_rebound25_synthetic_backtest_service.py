@@ -1,6 +1,8 @@
 """Synthetic-only prior-25-session rebound research, never actual orders."""
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 
 import pytest
 
@@ -272,3 +274,114 @@ def test_overflow_in_derived_trade_costs_is_not_serialized_as_nan_or_infinity():
     with pytest.raises(ValueError):
         run(bars, protocol=parameters(order_units=1e308, max_volume_participation=1,
                                       min_relative_volume=0))
+
+
+def test_buy_and_hold_uses_fixed_evaluation_window_and_identical_units_and_costs():
+    result = run()
+    baseline = result["benchmark"]
+    assert result["schema"] == "athena.synthetic-rebound-backtest.v1"
+    assert result["outputRevision"] == "1.1-buy-and-hold-reporting"
+    assert baseline["schema"] == "athena.synthetic-buy-and-hold-benchmark.v1"
+    assert baseline["evaluationStartSession"] == "2026-01-26"
+    assert baseline["evaluationEndSession"] == "2026-01-28"
+    assert baseline["evaluationSessionCount"] == 3
+    assert baseline["entryBasePrice"] == 100
+    assert baseline["entryPrice"] == pytest.approx(100 * 1.001)
+    assert baseline["lastMarkPrice"] == 102
+    assert baseline["units"] == result["parameters"]["order_units"] == 10
+    assert baseline["costParameters"] == {
+        "commission_bps": 5, "spread_bps": 10, "slippage_bps": 5,
+    }
+    assert baseline["grossMarkToMarketPnl"] == 20
+    assert baseline["entryCommissionCost"] == pytest.approx(.5005)
+    assert baseline["entrySpreadAndSlippageCost"] == pytest.approx(1)
+    assert baseline["netMarkToMarketPnlBeforeExitCosts"] == pytest.approx(18.4995)
+    terminal = baseline["hypotheticalLiquidation"]
+    assert terminal["exitPrice"] == pytest.approx(101.898)
+    assert terminal["totalCommissionCost"] == pytest.approx(1.00999)
+    assert terminal["totalSpreadAndSlippageCost"] == pytest.approx(2.02)
+    assert terminal["netPnlAfterAllCosts"] == pytest.approx(16.97001)
+    assert terminal["isRealized"] is False
+    assert baseline["realizedNetPnl"] == 0
+    assert baseline["positionClosed"] is False
+    assert baseline["performanceValidated"] is False
+    assert datetime.fromisoformat(result["precommittedAt"]) <= datetime.fromisoformat(baseline["entryAt"])
+    assert datetime.fromisoformat(baseline["lastMarkAvailableAt"]) <= datetime.fromisoformat(result["asOf"])
+
+
+def test_comparison_never_implies_equal_capital_or_exposure_from_equal_units():
+    result = run()
+    strategy, baseline = result["strategyAccounting"], result["benchmark"]
+    assert strategy["exposedSessionCount"] == 1
+    assert strategy["exposureUnitSessions"] == 10
+    assert baseline["exposureUnitSessions"] == 30
+    assert strategy["realizedNetPnl"] == result["totalNetPnl"]
+    assert strategy["openNetMarkToMarketPnlBeforeExitCosts"] == 0
+    comparison = result["benchmarkComparison"]
+    assert comparison["identicalConfiguredUnits"] is True
+    assert comparison["identicalPerSideCostParameters"] is True
+    assert comparison["comparableByInitialCapital"] is False
+    assert comparison["comparableByExposure"] is False
+    assert comparison["outperformanceClaimed"] is False
+    assert comparison["hypotheticalLiquidationPnlDifferenceAfterAllCosts"] == pytest.approx(
+        result["totalNetPnl"] - baseline["hypotheticalLiquidation"]["netPnlAfterAllCosts"])
+    assert comparison["warnings"]
+
+
+def test_no_strategy_trades_does_not_remove_or_relabel_the_benchmark_position():
+    result = run(protocol=parameters(min_relative_volume=3))
+    assert result["trades"] == []
+    assert result["openPosition"] is None
+    assert result["strategyAccounting"]["realizedNetPnl"] == 0
+    assert result["strategyAccounting"]["exposureUnitSessions"] == 0
+    assert result["benchmark"] == run()["benchmark"]
+    assert result["benchmark"]["hypotheticalLiquidation"]["netPnlAfterAllCosts"] != 0
+
+
+def test_zero_cost_baseline_has_no_hidden_fees_or_price_adjustments():
+    free = run(protocol=parameters(commission_bps=0, spread_bps=0, slippage_bps=0))["benchmark"]
+    assert free["grossMarkToMarketPnl"] == free["netMarkToMarketPnlBeforeExitCosts"] == 20
+    assert free["hypotheticalLiquidation"]["netPnlAfterAllCosts"] == 20
+    assert free["hypotheticalLiquidation"]["totalCommissionCost"] == 0
+    assert free["hypotheticalLiquidation"]["totalSpreadAndSlippageCost"] == 0
+    assert run()["benchmark"]["hypotheticalLiquidation"]["netPnlAfterAllCosts"] < 20
+
+
+def test_open_strategy_mtm_and_hypothetical_exit_costs_are_not_realized():
+    bars = synthetic_bars()
+    bars[27] = replace(bars[27], high=101, low=98, close=99.5)
+    result = run(bars)
+    accounting = result["strategyAccounting"]
+    assert result["totalNetPnl"] == accounting["realizedNetPnl"] == 0
+    assert accounting["closedTradeCommissionCost"] == 0
+    assert accounting["openEntryCommissionCost"] > 0
+    assert accounting["openNetMarkToMarketPnlBeforeExitCosts"] == result["openPosition"]["unrealizedPnlBeforeExitCosts"]
+    assert accounting["hypotheticalEndLiquidationNetPnlAfterAllCosts"] < accounting["combinedPnlBeforeOpenExitCosts"]
+    assert accounting["openHypotheticalLiquidation"]["isRealized"] is False
+    assert result["benchmark"]["positionClosed"] is False
+
+
+def test_benchmark_ignores_warmup_entry_prices_and_does_not_fit_entry_to_last_mark():
+    bars = synthetic_bars()
+    bars[0] = replace(bars[0], open=200, high=201)
+    initial = run(bars)
+    assert initial["benchmark"]["entryBasePrice"] == 100
+    bars[-1] = replace(bars[-1], close=103.5)
+    updated = run(bars)
+    assert updated["benchmark"]["entryAt"] == initial["benchmark"]["entryAt"]
+    assert updated["benchmark"]["entryPrice"] == initial["benchmark"]["entryPrice"]
+    assert updated["trades"] == initial["trades"]
+    assert updated["benchmark"]["lastMarkPrice"] != initial["benchmark"]["lastMarkPrice"]
+    assert updated["parameterFingerprint"] == initial["parameterFingerprint"]
+    assert updated["inputFingerprint"] != initial["inputFingerprint"]
+
+
+def test_result_fingerprint_covers_additive_benchmark_and_reporting_revision():
+    result = run()
+    fingerprint = result.pop("resultFingerprint")
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                         allow_nan=False).encode()).hexdigest()
+    assert digest(result) == fingerprint
+    result["benchmark"]["units"] = 11
+    assert digest(result) != fingerprint

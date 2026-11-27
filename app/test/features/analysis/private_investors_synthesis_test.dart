@@ -28,7 +28,7 @@ void main() {
     'hash',
     'inner-scoring',
     'corroboration',
-    'provenance',
+    'provenance', 'naive-cutoff', 'url-credentials',
   ]) {
     test(
       'private Investors synthesis validates canonical assessment: $defect',
@@ -50,7 +50,7 @@ void main() {
         final assessment = <String, dynamic>{
           'evidenceId': 'synthetic-filing',
           'symbol': 'SYNTH',
-          'sourceRef': 'https://source.invalid/filing',
+          'sourceRef': defect == 'url-credentials' ? 'https://user:secret@source.invalid/filing' : 'https://source.invalid/filing',
           'assessmentFingerprint': 'b' * 64,
           'summary': 'Synthetic historical filing assessment',
           'publishedAt':
@@ -105,7 +105,7 @@ void main() {
                   'status': 'validated_external_investors_model_output',
                   'automaticScoring': defect == 'inner-scoring',
                   'independentCorroborationClaimed': defect == 'corroboration',
-                  'asOf': cutoff.toIso8601String(),
+                  'asOf': defect == 'naive-cutoff' ? cutoff.toIso8601String().replaceAll('Z', '') : cutoff.toIso8601String(),
                   'assessedCount': 1,
                   'assessments': [assessment],
                   'modelExecutionVerified': defect == 'model',
