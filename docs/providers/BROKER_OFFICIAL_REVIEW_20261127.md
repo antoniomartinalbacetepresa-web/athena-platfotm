@@ -86,3 +86,13 @@ Limitaciones de la revisión: no es una auditoría contractual/regulatoria compl
 no se abrió ni aceptó contrato, no se accedió a cuentas y no se verificó ejecución
 real/demo/paper. No convierte las capacidades documentadas por el proveedor en
 funcionalidades implementadas o aceptadas de ATHENA.
+
+
+Reconsulta28-11-2026: se abrieron de nuevo S1 (https://open-api.capital.com/)
+y S11 (https://help.capital.com/hc/en-us/articles/4415165718290-Does-your-API-support-all-the-instruments).
+La ayuda inglesa sigue incluyendo acciones reales en UE; S1 sigue indicando que
+stop-loss/take-profit no se fijan en operaciones con acciones reales. La ayuda
+española anterior conserva el alcanceCFD. Esto no demuestra elegibilidad de esta
+cuenta/residente deEspaña ni derechos de datos. El laboratorio25 modela stops
+hipotéticos propios; no supone soporte de esas órdenes por Capital.com y no
+conecta API de bróker. Se conserva la conclusión provisional y el alcanceIBKR.

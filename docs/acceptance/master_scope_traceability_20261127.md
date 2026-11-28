@@ -345,3 +345,35 @@ fallos/races no dejan artefactos destino. Sin fetch, nuevas copias de precios ni
 licencias inferidas.96 regresiones focales cloud superadas (unión/histórico/news/
 persistencia/procedencia externa). El cliente previo sigue funcionando sin fuentes
 opcionales; falta selección de ciclos origen en Flutter para completar ese viaje.
+
+
+### Laboratorio25 Flutter — 28/11/2026
+
+f06f7a0 tiene CI push46102696060 **success**, incluido gate realChrome→FastAPI:
+creación, replay idempotente, owner404 y recuperación visual. El rechazo original
+de730cc7a se conserva como evidencia de la carrera corregida, no se oculta.
+fa5f612 añade selección explícita de hasta5hashesNews/Investors desde el formulario;
+el borrador congela/ordena fuentes y la lecturaGET exige el mismo conjunto de
+referencias Journal. La validación real sigue en servidor, no en nombres cliente.
+
+Market abre un laboratorio25 autenticado, conectado a la API estricta existente.
+Usa una plantilla de40sesiones artificiales consecutivas (NO calendario real ni
+preciosMarket), con brecha, confirmación y barra ambigua parastopprimero. Costes,
+objetivo/stop y plazo son ilustrativos/configurables. Cliente valida identidad,
+parámetros/corte, flags, formahash64, trades/PnL/costes/benchmark y límites de
+comparabilidad; no declara recomputación criptográfica de fingerprints servidor.
+Solicitudes congeladas, dedup, respuestas acotadas, errores/reintentos y descarte
+por cuenta/dependencia. Se añaden fixturesbackend exactos, regresionescliente,
+widget/navegaciónChrome y ejecución del laboratorio en el gateHTTP real.
+
+Estas nuevas pruebasFlutter están escritas y su sintaxis revisada; deben ejecutar
+CI porSHA antes deaceptación. La vía local no acreditó tests al rechazarse una
+recuperación deproceso por detección demetadatos169.254.169.254; no se reintentó ni
+se pidió ese acceso. Actions existente es la alternativa deejecución autorizada.
+La regresiónintegral backend28-11 está ejecutándose; recuperarresultado real.
+
+Cola24h: cerrar CI y fullstack delSHAfinal; mejorar selección/listado de fuentes
+sin pegado manual; persistencia/Journal/Portfolio simulado de artefactos25;
+walk-forward/OOS y datosautorizados. Derechos/PIT/cobertura365TwelveData ystaging
+con doscuentas siguen pendientes. Ejecución real permanece deshabilitada. No se
+modifica frecuencia horaria ni main ni los documentoscanónicos.

@@ -1,5 +1,7 @@
 // Mandatory in the dedicated ephemeral full-stack CI step. No external service.
 import 'dart:convert';
+import 'package:app/features/analysis/presentation/widgets/rebound25_research_panel.dart';
+import 'package:app/features/analysis/services/rebound25_research_service.dart';
 
 import 'package:app/features/analysis/presentation/widgets/persisted_market_research_form.dart';
 import 'package:app/features/analysis/presentation/widgets/private_research_history_panel.dart';
@@ -191,7 +193,16 @@ void main() {
           find.textContaining('Síntesis $kind no disponible:'),
         );
       }
+      final strategyService = Rebound25ResearchService(baseUrl: _base, client: client);
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+        child: Rebound25ResearchPanel(service: strategyService)))));
+      expect(find.byKey(const Key('rebound25-synthetic-warning')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('rebound25-run')));
+      await tester.tap(find.byKey(const Key('rebound25-run'))); await tester.pump();
+      await _until(tester, find.byKey(const Key('rebound25-result')));
+      expect(find.textContaining('liquidación hipotética'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
+      strategyService.dispose();
       creator.dispose();
       reader.dispose();
     },

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:app/features/auth/services/auth_session.dart';
 
 import 'package:app/core/routing/app_routes.dart';
 import 'package:app/features/dashboard/presentation/widgets/dashboard_header.dart';
@@ -99,6 +100,20 @@ Future<GlobalMarketContext> _context(String summary) async {
 }
 
 void main() {
+  testWidgets('Market opens the explicitly synthetic strategy laboratory', (tester) async {
+    AuthSession.instance.clear();
+    final controller = GlobalMarketContextController(service: _ControlledMarketService([_context('Synthetic navigation context')]));
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: MarketPage(controller: controller)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('market-open-rebound25-lab')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('rebound25-synthetic-warning')), findsOneWidget);
+    expect(find.byKey(const Key('rebound25-auth-required')), findsOneWidget);
+    expect(find.byKey(const Key('rebound25-run')), findsNothing);
+    await tester.tap(find.text('CERRAR')); await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('Market explicit refresh supersedes a stalled request and rejects late evidence',
       (tester) async {

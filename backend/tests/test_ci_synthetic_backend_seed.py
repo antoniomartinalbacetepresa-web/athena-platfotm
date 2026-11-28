@@ -57,6 +57,8 @@ def test_seed_never_reuses_existing_state(tmp_path, harness):
 
 @pytest.mark.parametrize("path,method,allowed", [
     ("/health", "GET", True),
+    ("/api/v1/research/strategies/rebound25/synthetic-backtest", "POST", True),
+    ("/api/v1/research/strategies/rebound25/synthetic-backtest", "GET", False),
     ("/api/v1/auth/register", "POST", True),
     ("/api/v1/auth/token", "POST", True),
     ("/api/v1/market/history/persisted", "GET", True),

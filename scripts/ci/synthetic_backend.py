@@ -117,6 +117,8 @@ class SyntheticRouteAllowlist:
             return method in permitted or method == "OPTIONS"
         if path == "/health" or path == "/api/v1/market/history/persisted":
             return method in {"GET", "OPTIONS"}
+        if path == "/api/v1/research/strategies/rebound25/synthetic-backtest":
+            return method in {"POST", "OPTIONS"}
         if path == cls.RESEARCH_PREFIX + "/research-cycle/from-persisted-market-history":
             return method in {"POST", "OPTIONS"}
         if method not in {"GET", "OPTIONS"}:

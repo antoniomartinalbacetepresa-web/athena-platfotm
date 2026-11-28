@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../analysis/presentation/widgets/rebound25_research_panel.dart';
 
 import '../../../../core/routing/app_routes.dart';
 import '../../../../core/theme/athena_colors.dart';
@@ -129,6 +130,14 @@ class _MarketPageState extends State<MarketPage> {
         backgroundColor: AthenaColors.background,
         foregroundColor: AthenaColors.text,
         elevation: 0,
+        actions: [IconButton(
+          key: const Key('market-open-rebound25-lab'),
+          tooltip: 'Laboratorio sintético de 25 sesiones', icon: const Icon(Icons.science_outlined),
+          onPressed: () => showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+            content: const SizedBox(width: 640, child: SingleChildScrollView(child: Rebound25ResearchPanel())),
+            actions: [TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('CERRAR'))],
+          )),
+        )],
         title: Semantics(
           header: true,
           child: const Text('MERCADO'),
