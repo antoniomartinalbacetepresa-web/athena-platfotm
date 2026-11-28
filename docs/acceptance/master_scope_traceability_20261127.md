@@ -377,3 +377,28 @@ sin pegado manual; persistencia/Journal/Portfolio simulado de artefactos25;
 walk-forward/OOS y datosautorizados. Derechos/PIT/cobertura365TwelveData ystaging
 con doscuentas siguen pendientes. Ejecución real permanece deshabilitada. No se
 modifica frecuencia horaria ni main ni los documentoscanónicos.
+
+
+### Selección privada y verificación final — 28/11/2026
+
+CI push superada de5018b1e (46102886676) yfa5f612 (46103066395). Regresión
+integral backend local:5105pruebas superadas en79.62s. 8ea9d1f ejecutó1197pruebas
+Flutter superadas +1skip del testfullstack reservado alstepHTTP, pero falló en
+tres guardas sinbloques exigidos poranálisis; 2c5d4864314002f3fb886f0597264db4e840fc17
+corrige esasguardas sin cambiarcondiciones ni desactivarcontroles. Verificar suCI.
+
+El formulario ahora consulta explícitamente el índiceprivado del símbolo para
+insertar ciclos candidatos, sin pegado manual ni fetchalabrir. No declara su
+categoría/elegibilidad: el servidor sigueexigiendoNews/Investors/mismolisting y
+corte. Límite5, estado carga/error/reintento, seleccióncongelada y limpieza de
+candidatos al cambiarcuenta. La carga usa await/catch y generación paraevitar
+respuestas tardías o erroreshuérfanos. Dos regresioneswidget nuevas cubren
+selección/aislamiento y fallo/reintento sincrear ciclos.
+
+Recuperación: partir delHEADremoto deestaentrega, comprobar susruns push y
+continuar lo pendiente. No atribuir los resultadosdeunSHA aotro. Cola24h:
+1)cerrarCI completa incluidolabHTTP;2)persistir artefactos25server-bound y enlazarlos
+conJournal/Portfolio simulado;3)validación walk-forward/OOS y falsa señales;
+4)resolver derechos/PIT/cobertura365 TwelveData y stagingautorizado. Todo incremento
+sintético sigue separado deaceptación real. Motor autónomo ybrókeres conservan
+alcance pero no están completados/activados. Sin cambio deprogramaciónhoraria.

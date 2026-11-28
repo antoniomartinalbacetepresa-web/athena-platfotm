@@ -32,6 +32,10 @@ class _PersistedMarketResearchFormState
   final _objection = TextEditingController();
   final _sources = TextEditingController();
   PersistedMarketResearchService? _owned;
+  PrivateResearchHistoryService? _ownedReader;
+  List<PrivateResearchEntry>? _sourceOptions;
+  bool _sourceBusy = false;
+  bool _sourceError = false;
   PersistedMarketResearchDraft? _draft;
   PrivateResearchCycleDetail? _result;
   bool _reviewed = false;
@@ -55,6 +59,9 @@ class _PersistedMarketResearchFormState
 
   void _reset() {
     ++_generation;
+    _sourceOptions = null;
+    _sourceBusy = false;
+    _sourceError = false;
     _draft = null;
     _result = null;
     _reviewed = false;
@@ -73,9 +80,61 @@ class _PersistedMarketResearchFormState
         oldWidget.quote.symbol != widget.quote.symbol ||
         oldWidget.quote.sourceProvider != widget.quote.sourceProvider ||
         oldWidget.history.asOf != widget.history.asOf ||
-        oldWidget.service != widget.service) {
+        oldWidget.service != widget.service ||
+        oldWidget.historyService != widget.historyService) {
       _reset();
     }
+  }
+
+  Future<void> _loadSources() async {
+    if (_sourceBusy ||
+        _busy ||
+        _draft != null ||
+        !AuthSession.instance.isAuthenticated) {
+      return;
+    }
+    final generation = _generation;
+    setState(() {
+      _sourceBusy = true;
+      _sourceError = false;
+      _sourceOptions = null;
+    });
+    try {
+      final reader =
+          widget.historyService ??
+          (_ownedReader ??= PrivateResearchHistoryService());
+      final page = await reader.load(symbol: widget.quote.symbol);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _sourceOptions = List.unmodifiable(page.items);
+        _sourceBusy = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _sourceError = true;
+        _sourceBusy = false;
+      });
+    }
+  }
+
+  void _useSource(String hash) {
+    if (_busy || _draft != null) return;
+    final values = _sources.text
+        .trim()
+        .split(RegExp(r'[\s,]+'))
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    values.add(hash);
+    if (values.length > 5) {
+      setState(() {
+        _validationFailed = true;
+      });
+      return;
+    }
+    setState(() {
+      _sources.text = (values.toList()..sort()).join(', ');
+    });
   }
 
   Future<void> _submit() async {
@@ -141,6 +200,7 @@ class _PersistedMarketResearchFormState
     ++_generation;
     AuthSession.instance.removeListener(_sessionChanged);
     _owned?.dispose();
+    _ownedReader?.dispose();
     _thesis.dispose();
     _objection.dispose();
     _sources.dispose();
@@ -189,6 +249,39 @@ class _PersistedMarketResearchFormState
             labelText: 'Objeción o explicación alternativa',
           ),
         ),
+        TextButton(
+          key: const Key('market-cycle-load-sources'),
+          onPressed: _busy || _draft != null || _sourceBusy
+              ? null
+              : _loadSources,
+          child: const Text('MOSTRAR MIS CICLOS PARA ESTE SÍMBOLO'),
+        ),
+        if (_sourceBusy)
+          const LinearProgressIndicator(
+            key: Key('market-cycle-sources-loading'),
+          ),
+        if (_sourceError)
+          const Text(
+            'No se pudo consultar el historial privado. Puedes reintentar.',
+            key: Key('market-cycle-sources-error'),
+          ),
+        if (_sourceOptions != null) ...[
+          const Text(
+            'Ciclos candidatos: la lista no acredita que contengan News/Investors ni el mismo listing. El servidor lo verificará.',
+          ),
+          if (_sourceOptions!.isEmpty)
+            const Text('No hay ciclos privados para este símbolo.'),
+          for (final entry in _sourceOptions!)
+            TextButton(
+              key: ValueKey('market-cycle-use-source-${entry.cycleHash}'),
+              onPressed: _busy || _draft != null
+                  ? null
+                  : () => _useSource(entry.cycleHash),
+              child: Text(
+                'USAR ${entry.cycleHash.substring(0, 12)} · ${entry.asOf.toIso8601String()}',
+              ),
+            ),
+        ],
         TextField(
           controller: _sources,
           enabled: !_busy && _draft == null,

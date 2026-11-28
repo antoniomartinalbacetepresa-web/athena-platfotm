@@ -25,11 +25,28 @@ class _Creator extends PersistedMarketResearchService {
 }
 
 class _History extends PrivateResearchHistoryService {
+  _History({this.items = const []});
+  final List<PrivateResearchEntry> items;
   @override
   Future<PrivateResearchPage> load({
     required String symbol,
     int limit = 20,
-  }) async => const PrivateResearchPage([]);
+  }) async => PrivateResearchPage(items);
+}
+
+class _FailHistory extends PrivateResearchHistoryService {
+  int calls = 0;
+  @override
+  Future<PrivateResearchPage> load({
+    required String symbol,
+    int limit = 20,
+  }) async {
+    calls++;
+    if (calls == 1) {
+      throw StateError('Synthetic read failure');
+    }
+    return const PrivateResearchPage([]);
+  }
 }
 
 void owner(int id) {
@@ -46,7 +63,11 @@ void owner(int id) {
   );
 }
 
-Widget _surface(_Creator service, {bool synthetic = true}) {
+Widget _surface(
+  _Creator service, {
+  bool synthetic = true,
+  PrivateResearchHistoryService? historyService,
+}) {
   final cutoff = DateTime.now().toUtc().subtract(const Duration(minutes: 1));
   return MaterialApp(
     home: Scaffold(
@@ -81,7 +102,7 @@ Widget _surface(_Creator service, {bool synthetic = true}) {
             ],
           ),
           service: service,
-          historyService: _History(),
+          historyService: historyService ?? _History(),
         ),
       ),
     ),
@@ -104,6 +125,82 @@ Future<void> prepare(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'source history failure is explicit and retry recovers without creating a cycle',
+    (tester) async {
+      owner(1);
+      final creator = _Creator();
+      final history = _FailHistory();
+      await tester.pumpWidget(_surface(creator, historyService: history));
+      final load = find.byKey(const Key('market-cycle-load-sources'));
+      await tester.ensureVisible(load);
+      await tester.tap(load);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('market-cycle-sources-error')),
+        findsOneWidget,
+      );
+      await tester.tap(load);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-cycle-sources-error')), findsNothing);
+      expect(
+        find.text('No hay ciclos privados para este símbolo.'),
+        findsOneWidget,
+      );
+      expect(history.calls, 2);
+      expect(creator.drafts, isEmpty);
+      creator.dispose();
+      history.dispose();
+    },
+  );
+  testWidgets(
+    'source candidates are owner-private and selectable without pasting a hash',
+    (tester) async {
+      owner(1);
+      final creator = _Creator();
+      final history = _History(
+        items: [
+          PrivateResearchEntry(
+            cycleHash: 'c' * 64,
+            symbol: 'SYNTH',
+            asOf: DateTime.now().toUtc().subtract(const Duration(days: 1)),
+          ),
+        ],
+      );
+      await tester.pumpWidget(_surface(creator, historyService: history));
+      await tester.ensureVisible(
+        find.byKey(const Key('market-cycle-load-sources')),
+      );
+      await tester.tap(find.byKey(const Key('market-cycle-load-sources')));
+      await tester.pumpAndSettle();
+      final option = find.byKey(
+        ValueKey('market-cycle-use-source-${'c' * 64}'),
+      );
+      await tester.ensureVisible(option);
+      await tester.tap(option);
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('market-cycle-sources')))
+            .controller!
+            .text,
+        'c' * 64,
+      );
+      expect(creator.drafts, isEmpty);
+      owner(2);
+      await tester.pump();
+      expect(option, findsNothing);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('market-cycle-sources')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      creator.dispose();
+      history.dispose();
+    },
+  );
   testWidgets('invalid source hash fails before submission', (tester) async {
     owner(1);
     final creator = _Creator();
