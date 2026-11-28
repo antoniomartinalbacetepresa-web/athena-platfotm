@@ -104,6 +104,39 @@ Future<void> prepare(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('invalid source hash fails before submission', (tester) async {
+    owner(1);
+    final creator = _Creator();
+    await tester.pumpWidget(_surface(creator));
+    await tester.enterText(
+      find.byKey(const Key('market-cycle-sources')),
+      'invalid',
+    );
+    await prepare(tester);
+    await tester.tap(find.byKey(const Key('market-cycle-submit')));
+    await tester.pump();
+    expect(find.byKey(const Key('market-cycle-validation')), findsOneWidget);
+    expect(creator.drafts, isEmpty);
+    creator.dispose();
+  });
+  testWidgets('explicit private source selection is frozen in the request', (
+    tester,
+  ) async {
+    owner(1);
+    final creator = _Creator();
+    creator.respond = (_) async => throw StateError('Synthetic unavailable');
+    await tester.pumpWidget(_surface(creator));
+    await tester.enterText(
+      find.byKey(const Key('market-cycle-sources')),
+      'c' * 64,
+    );
+    await prepare(tester);
+    await tester.tap(find.byKey(const Key('market-cycle-submit')));
+    await tester.pumpAndSettle();
+    expect(creator.drafts.single.sourceCycleHashes, ['c' * 64]);
+    creator.dispose();
+  });
+
   setUp(() {
     AuthSession.instance.clear();
   });

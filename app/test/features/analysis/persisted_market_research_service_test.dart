@@ -32,7 +32,7 @@ void signIn(AuthSession session, int owner) {
   );
 }
 
-PersistedMarketResearchDraft draft() {
+PersistedMarketResearchDraft draft({List<String> sources = const []}) {
   final now = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
   return PersistedMarketResearchDraft(
     instrumentId: 7,
@@ -42,6 +42,7 @@ PersistedMarketResearchDraft draft() {
     observedTo: now,
     authoredAt: now,
     journalId: 'test-synthetic-review',
+    sourceCycleHashes: sources,
     thesis: 'Human research question',
     contradiction: 'These are only fixtures',
   );
@@ -97,6 +98,9 @@ http.Response privateDetail(
             'thesis': defect == 'thesis' ? 'other' : request.thesis,
             'references': [
               {'sourceRef': sourceRef},
+              if (defect != 'source-cycle')
+                for (final hash in request.sourceCycleHashes)
+                  {'sourceRef': 'urn:athena:research-cycle:$hash'},
             ],
           },
           'radar': {
@@ -126,6 +130,54 @@ http.Response privateDetail(
 }
 
 void main() {
+  test(
+    'source cycle selections are immutable, strict and canonically ordered',
+    () {
+      final hashes = ['d' * 64, 'c' * 64, 'c' * 64];
+      final request = draft(sources: hashes);
+      hashes.clear();
+      expect((jsonDecode(request.encodedBody) as Map)['sourceCycleHashes'], [
+        'c' * 64,
+        'd' * 64,
+      ]);
+      expect(() => request.sourceCycleHashes.clear(), throwsUnsupportedError);
+      expect(() => draft(sources: ['bad']), throwsFormatException);
+      expect(
+        () => draft(sources: List.filled(6, 'c' * 64)),
+        throwsFormatException,
+      );
+    },
+  );
+  for (final replaced in [false, true]) {
+    test(
+      'selected source cycles must match the private Journal: replaced=$replaced',
+      () async {
+        final session = AuthSession.forTesting(_Store());
+        signIn(session, 1);
+        final request = draft(sources: ['c' * 64]);
+        final client = MockClient(
+          (call) async => call.method == 'POST'
+              ? http.Response(jsonEncode({'data': result(request)}), 200)
+              : privateDetail(
+                  request,
+                  defect: replaced ? 'source-cycle' : null,
+                ),
+        );
+        final service = PersistedMarketResearchService(
+          client: client,
+          session: session,
+        );
+        final future = service.create(request);
+        if (replaced) {
+          await expectLater(future, throwsFormatException);
+        } else {
+          expect((await future).symbol, 'SYNTH');
+        }
+        client.close();
+      },
+    );
+  }
+
   for (final defect in ['instrument', 'owner', 'thesis', 'reference']) {
     test('creation rejects an unrelated private package: $defect', () async {
       final session = AuthSession.forTesting(_Store());

@@ -17,6 +17,7 @@ class PersistedMarketResearchDraft {
     required String journalId,
     required String thesis,
     required String contradiction,
+    List<String> sourceCycleHashes = const [],
   }) : symbol = symbol,
        asOf = authoredAt {
     if (instrumentId <= 0 ||
@@ -34,10 +35,19 @@ class PersistedMarketResearchDraft {
         authoredAt.isAfter(DateTime.now().toUtc())) {
       throw const FormatException('Borrador de investigación inválido.');
     }
+    if (sourceCycleHashes.length > 5 ||
+        sourceCycleHashes.any(
+          (hash) => !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash),
+        )) {
+      throw const FormatException('Hashes de ciclos privados inválidos.');
+    }
+    final sources = sourceCycleHashes.toSet().toList()..sort();
+    this.sourceCycleHashes = List.unmodifiable(sources);
     this.journalId = journalId;
     this.thesis = thesis.trim();
     final timestamp = authoredAt.toIso8601String();
     encodedBody = jsonEncode({
+      if (sources.isNotEmpty) 'sourceCycleHashes': sources,
       'instrumentId': instrumentId,
       'symbol': symbol,
       'sourceProvider': sourceProvider,
@@ -72,6 +82,7 @@ class PersistedMarketResearchDraft {
     });
   }
   final int instrumentId;
+  late final List<String> sourceCycleHashes;
   late final String journalId;
   late final String thesis;
   final String symbol;
@@ -231,6 +242,30 @@ class PersistedMarketResearchService {
             radar is! Map) {
           throw const FormatException(
             'El ciclo privado no corresponde al borrador.',
+          );
+        }
+        final attachedSources =
+            (journal['references'] is List
+                    ? journal['references'] as List
+                    : const [])
+                .where(
+                  (item) =>
+                      item is Map &&
+                      item['sourceRef'] is String &&
+                      (item['sourceRef'] as String).startsWith(
+                        'urn:athena:research-cycle:',
+                      ),
+                )
+                .map((item) => (item as Map)['sourceRef'] as String)
+                .toList()
+              ..sort();
+        final expectedSources = draft.sourceCycleHashes
+            .map((hash) => 'urn:athena:research-cycle:$hash')
+            .toList();
+        if (attachedSources.length != expectedSources.length ||
+            attachedSources.join('|') != expectedSources.join('|')) {
+          throw const FormatException(
+            'Los ciclos origen no corresponden al borrador.',
           );
         }
         final candidates = radar['candidates'];

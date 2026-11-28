@@ -30,6 +30,7 @@ class _PersistedMarketResearchFormState
     extends State<PersistedMarketResearchForm> {
   final _thesis = TextEditingController();
   final _objection = TextEditingController();
+  final _sources = TextEditingController();
   PersistedMarketResearchService? _owned;
   PersistedMarketResearchDraft? _draft;
   PrivateResearchCycleDetail? _result;
@@ -62,6 +63,7 @@ class _PersistedMarketResearchFormState
     _validationFailed = false;
     _thesis.clear();
     _objection.clear();
+    _sources.clear();
   }
 
   @override
@@ -80,7 +82,14 @@ class _PersistedMarketResearchFormState
     if (_busy || _result != null || !AuthSession.instance.isAuthenticated) {
       return;
     }
-    if (!_reviewed ||
+    final sources = _sources.text
+        .trim()
+        .split(RegExp(r'[\s,]+'))
+        .where((hash) => hash.isNotEmpty)
+        .toList();
+    if (sources.length > 5 ||
+        sources.any((hash) => !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) ||
+        !_reviewed ||
         _thesis.text.trim().isEmpty ||
         _objection.text.trim().isEmpty) {
       setState(() {
@@ -108,6 +117,7 @@ class _PersistedMarketResearchFormState
             'market-${widget.quote.instrumentId}-${authoredAt.microsecondsSinceEpoch}',
         thesis: _thesis.text,
         contradiction: _objection.text,
+        sourceCycleHashes: sources,
       );
       final service =
           widget.service ?? (_owned ??= PersistedMarketResearchService());
@@ -133,6 +143,7 @@ class _PersistedMarketResearchFormState
     _owned?.dispose();
     _thesis.dispose();
     _objection.dispose();
+    _sources.dispose();
     super.dispose();
   }
 
@@ -178,6 +189,16 @@ class _PersistedMarketResearchFormState
             labelText: 'Objeción o explicación alternativa',
           ),
         ),
+        TextField(
+          controller: _sources,
+          enabled: !_busy && _draft == null,
+          key: const Key('market-cycle-sources'),
+          maxLength: 400,
+          decoration: const InputDecoration(
+            labelText: 'Hashes de ciclos News/Investors privados (opcional)',
+            helperText: 'Hasta 5 hashes del historial, separados por espacios o comas. El servidor verifica propietario, instrumento y fechas.',
+          ),
+        ),
         CheckboxListTile(
           key: const Key('market-cycle-review'),
           title: const Text(
@@ -203,7 +224,7 @@ class _PersistedMarketResearchFormState
           const LinearProgressIndicator(key: Key('market-cycle-loading')),
         if (_validationFailed)
           const Text(
-            'Completa la hipótesis y la objeción y confirma la revisión.',
+            'Revisa hipótesis, objeción, confirmación y hashes opcionales.',
             key: Key('market-cycle-validation'),
           ),
         if (_failed)
