@@ -43,6 +43,14 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     setState(_reload);
   }
 
+  // A session change can replace a Future before FutureBuilder first subscribes.
+  // Observe errors immediately, while returning the original future so an active
+  // view still renders its real error and retry state. Never expose stale data.
+  Future<T> _watch<T>(Future<T> future) {
+    future.ignore();
+    return future;
+  }
+
   void _reload() {
     final generation = ++_generation;
     ++_selectionVersion;
@@ -55,12 +63,12 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
       _pending = null;
       return;
     }
-    _pending = _service.load(symbol: widget.symbol).then((page) {
+    _pending = _watch(_service.load(symbol: widget.symbol).then((page) {
       if (generation != _generation) {
         throw StateError('La consulta privada ha quedado obsoleta.');
       }
       return page;
-    });
+    }));
   }
 
   void _closeCycle() {
@@ -70,7 +78,7 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
       _selectedDetail = null;
       _news = null;
       _athena = null;
-    _investors = null;
+      _investors = null;
     });
   }
 
@@ -82,9 +90,9 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
       _selectedEntry = entry;
       _news = null;
       _athena = null;
-    _investors = null;
+      _investors = null;
       // Never fetch or display synthesis before verifying the private cycle.
-      _selectedDetail = _service.loadCycle(entry).then((detail) {
+      _selectedDetail = _watch(_service.loadCycle(entry).then((detail) {
         if (generation != _generation ||
             selection != _selectionVersion ||
             !AuthSession.instance.isAuthenticated) {
@@ -92,13 +100,13 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
         }
         if (mounted) {
           setState(() {
-            _news = _service.loadSynthesis(entry, athena: false);
-            _athena = _service.loadSynthesis(entry, athena: true);
-            _investors = _service.loadInvestorsSynthesis(entry);
+            _news = _watch(_service.loadSynthesis(entry, athena: false));
+            _athena = _watch(_service.loadSynthesis(entry, athena: true));
+            _investors = _watch(_service.loadInvestorsSynthesis(entry));
           });
         }
         return detail;
-      });
+      }));
     });
   }
 
@@ -133,11 +141,11 @@ class _PrivateResearchHistoryPanelState extends State<PrivateResearchHistoryPane
     if (entry == null || !AuthSession.instance.isAuthenticated) return;
     setState(() {
       if (kind == 'Investors') {
-        _investors = _service.loadInvestorsSynthesis(entry);
+        _investors = _watch(_service.loadInvestorsSynthesis(entry));
       } else if (kind == 'ATHENA') {
-        _athena = _service.loadSynthesis(entry, athena: true);
+        _athena = _watch(_service.loadSynthesis(entry, athena: true));
       } else {
-        _news = _service.loadSynthesis(entry, athena: false);
+        _news = _watch(_service.loadSynthesis(entry, athena: false));
       }
     });
   }
