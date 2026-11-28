@@ -325,3 +325,23 @@ Siguiente lote: visualización/API del backtest sintético sin inferir calendari
 reales; unión servidor de Market/News/Investors; enlace Journal/Portfolio simulado.
 Licencia/PIT/cobertura365 TwelveData, OOS, despliegue y ejecución real siguen
 pendientes. La programación horaria, main y los canónicos se conservan.
+
+
+### Unión canónica de fuentes — 28/11/2026
+
+El gate real730cc7a detectó una carrera de error huérfano al cambiar cuenta y
+reemplazar la vista antes de suscribir FutureBuilder. f06f7a0ef686670d5d90797a1931c3be30b418cd
+observa errores desde el inicio manteniendo los futures originales, los guardas
+de sesión y los estados de error/reintento; añade regresión específica. Recuperar
+CI exacta: no se declara superado el gate real antes de su conclusión.
+
+El puente Market añade sourceCycleHashes opcional (máximo5SHA estrictos). Solo
+lee ciclos privados canónicos del propietario autenticado con el mismo instrumento
+y corte no posterior; copia evidencia News/Investors con publicación/disponibilidad,
+deduplica por contenido y enlaza hashes origen en Journal. El namespace de estas
+referencias es reservado al servidor, incluso con codificaciónURL/HTML/casefold.
+Revalida propietario y paquete origen bajo BEGIN IMMEDIATE antes de escribir;
+fallos/races no dejan artefactos destino. Sin fetch, nuevas copias de precios ni
+licencias inferidas.96 regresiones focales cloud superadas (unión/histórico/news/
+persistencia/procedencia externa). El cliente previo sigue funcionando sin fuentes
+opcionales; falta selección de ciclos origen en Flutter para completar ese viaje.

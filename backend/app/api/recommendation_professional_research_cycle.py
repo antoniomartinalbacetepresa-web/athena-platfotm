@@ -7,7 +7,7 @@ from urllib.parse import unquote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.api.auth import current_account
 from app.repositories.recommendation_investment_journal_repository import (
@@ -55,9 +55,10 @@ persisted_history_service = PersistedMarketHistoryService()
 market_reference_repository = PersistedMarketResearchReferenceRepository()
 _PRIVATE_JOURNAL_PREFIX = "__athena_private_owner_"
 _MARKET_REFERENCE_PREFIX = "urn:athena:market-history:"
+_SOURCE_CYCLE_PREFIX = "urn:athena:research-cycle:"
 
 
-def _reserved_market_reference(value: object) -> bool:
+def _reserved_reference(value: object, prefix: str) -> bool:
     if not isinstance(value, str):
         return False
     decoded = value
@@ -66,7 +67,11 @@ def _reserved_market_reference(value: object) -> bool:
         if normalized == decoded:
             break
         decoded = normalized
-    return decoded.strip().casefold().startswith(_MARKET_REFERENCE_PREFIX)
+    return decoded.strip().casefold().startswith(prefix)
+
+
+def _reserved_market_reference(value: object) -> bool:
+    return _reserved_reference(value, _MARKET_REFERENCE_PREFIX)
 
 
 def _owner_id(account: dict[str, Any]) -> int:
@@ -154,6 +159,67 @@ class PersistedMarketResearchCycleRequest(BaseModel):
     contradictoryEvidence: list[CycleContradictoryEvidenceRequest] = Field(min_length=1, max_length=200)
     priorSnapshotHash: str | None = None
     limit: int = Field(default=200, ge=1, le=200, strict=True)
+    sourceCycleHashes: list[Annotated[str, StringConstraints(strict=True, pattern=r"^[a-f0-9]{64}$")]] = Field(default_factory=list, max_length=5)
+
+
+def _read_source_cycle(connection, cycle_hash: str, owner_id: int) -> dict[str, Any]:
+    # Authorize before reading/deserializing any private package, including an
+    # existing public cycle. Never fall back to the legacy public namespace.
+    try:
+        cycle_repository._assert_owner_access(connection, cycle_hash, owner_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Ciclo origen privado no encontrado.") from exc
+    row = connection.execute(
+        "SELECT * FROM athena_professional_research_cycles WHERE cycle_hash = ?", (cycle_hash,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Ciclo origen privado no encontrado.")
+    return cycle_repository.validate_record(cycle_repository._row(row))
+
+
+def _source_attachments(request: PersistedMarketResearchCycleRequest, owner_id: int):
+    evidence = {}
+    references = []
+    records = {}
+    if not request.sourceCycleHashes:
+        return [], references, records
+    cycle_repository.initialize()
+    with cycle_repository._database.connect() as connection:
+        for digest in sorted(set(request.sourceCycleHashes)):
+            record = _read_source_cycle(connection, digest, owner_id)
+            if (record["instrument_id"] != str(request.instrumentId)
+                    or record["symbol"] != request.symbol.upper()
+                    or _aware_utc(datetime.fromisoformat(record["as_of"]), "source.asOf") > _aware_utc(request.asOf, "asOf")):
+                raise ValueError("El ciclo origen no coincide con el instrumento o corte de destino.")
+            _assert_cycle_contract(record["package"]["cycle"])
+            selected = []
+            for item in record["package"]["radar"]["candidates"][0]["evidence"]:
+                if item.get("category") not in {"news", "investors"}:
+                    continue
+                parsed = CycleRadarEvidenceRequest.model_validate(item)
+                if parsed.publishedAt is None or not parsed.provider or not parsed.publisher:
+                    raise ValueError("La evidencia origen carece de procedencia estructurada.")
+                published = _aware_utc(parsed.publishedAt, "source.publishedAt")
+                available = _aware_utc(parsed.availableAt, "source.availableAt")
+                if not published <= available <= _aware_utc(datetime.fromisoformat(record["as_of"]), "source.asOf"):
+                    raise ValueError("La evidencia origen incumple publishedAt <= availableAt <= asOf.")
+                # Preserve all content/provenance; replace only the local ID so
+                # unrelated source IDs cannot collide or defeat deduplication.
+                content = parsed.model_dump(mode="json", exclude={"evidenceId"})
+                key = canonical_hash(content)
+                evidence[key] = parsed.model_copy(update={"evidenceId": f"attached-evidence:{key}"})
+                selected.append(key)
+            if not selected:
+                raise ValueError("El ciclo origen no contiene evidencia News o Investors elegible.")
+            records[digest] = canonical_hash(record["package"])
+            references.append(CycleJournalReferenceRequest(
+                referenceId=f"source-cycle:{digest}", kind="assumption", availableAt=record["as_of"],
+                source="private_canonical_research_cycle_unverified_rights",
+                sourceRef=f"{_SOURCE_CYCLE_PREFIX}{digest}",
+            ))
+    if len(evidence) > 199 or len(request.journalReferences) + len(references) > 199:
+        raise ValueError("Las referencias y evidencias combinadas exceden el límite del ciclo.")
+    return [evidence[key] for key in sorted(evidence)], references, records
 
 
 def _aware_utc(value: datetime, field: str) -> datetime:
@@ -242,6 +308,7 @@ def post_professional_research_cycle(request: ProfessionalResearchCycleRequest) 
 def _persist_professional_research_cycle(
     request: ProfessionalResearchCycleRequest, *, owner_id: int | None = None,
     market_reference: dict[str, Any] | None = None,
+    source_cycles: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Validate and atomically persist one PIT Radar -> Journal -> Devil's Advocate cycle."""
     try:
@@ -329,6 +396,13 @@ def _persist_professional_research_cycle(
         journal_payload = journal.to_api_dict()
         devils_payload = devils_advocate.to_api_dict()
 
+        source_refs = [item.get("sourceRef", "") for item in
+                       [*radar_payload["candidates"][0]["evidence"], *journal_payload["references"], *devils_payload["evidence"]]
+                       if _reserved_reference(item.get("sourceRef"), _SOURCE_CYCLE_PREFIX)]
+        expected_source_refs = [f"{_SOURCE_CYCLE_PREFIX}{digest}" for digest in sorted(source_cycles or {})]
+        if sorted(source_refs) != expected_source_refs or (source_cycles and (owner_id is None or market_reference is None)):
+            raise ValueError("Las referencias a ciclos privados requieren el puente server-side exacto.")
+
         reserved_refs = [item.get("sourceRef", "") for item in
                          [*radar_payload["candidates"][0]["evidence"], *journal_payload["references"],
                           *devils_payload["evidence"]]
@@ -371,6 +445,10 @@ def _persist_professional_research_cycle(
         cycle_repository.initialize()
         with journal_db.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            for source_hash, package_hash in (source_cycles or {}).items():
+                source_record = _read_source_cycle(connection, source_hash, owner_id)
+                if canonical_hash(source_record["package"]) != package_hash:
+                    raise ValueError("El ciclo origen cambió antes de persistir la investigación.")
             if market_reference is not None:
                 reference_summary = market_reference_repository.append(
                     market_reference, owner_id=owner_id, connection=connection,
@@ -424,13 +502,14 @@ def post_research_cycle_from_persisted_market_history(
     owner_id = _owner_id(account)
     if request.journalId.startswith(_PRIVATE_JOURNAL_PREFIX):
         raise HTTPException(status_code=400, detail="journalId utiliza un prefijo reservado.")
-    if any(_reserved_market_reference(item.sourceRef) for item in
+    if any(_reserved_market_reference(item.sourceRef) or _reserved_reference(item.sourceRef, _SOURCE_CYCLE_PREFIX) for item in
            [*request.journalReferences, *request.contradictoryEvidence]):
         raise HTTPException(status_code=400, detail="Las referencias de histórico se generan exclusivamente en el servidor.")
     try:
         stores = (persisted_history_service, market_reference_repository, journal_repository, cycle_repository)
         if len({store._database.database_path.resolve() for store in stores}) != 1:
             raise ValueError("El histórico y los artefactos de investigación deben compartir SQLite.")
+        attached_evidence, attached_references, source_cycles = _source_attachments(request, owner_id)
         history = persisted_history_service.get_history(
             instrument_id=request.instrumentId, source_provider=request.sourceProvider,
             observed_from=request.observedFrom, observed_to=request.observedTo,
@@ -452,19 +531,19 @@ def post_research_cycle_from_persisted_market_history(
             journalId=f"{_PRIVATE_JOURNAL_PREFIX}{owner_id}__:{request.journalId}",
             revisionId=request.revisionId, thesis=request.thesis,
             priorSnapshotHash=request.priorSnapshotHash,
-            radarEvidence=[CycleRadarEvidenceRequest(
+            radarEvidence=[*attached_evidence, CycleRadarEvidenceRequest(
                 evidenceId=f"synthetic-market-history:{digest}", category="data_quality", urgency="routine",
                 summary=(f"SYNTHETIC FIXTURE: {len(reference['observations'])} local history references; "
                          f"truncated={reference['truncated']}. No real-market, licence, historical PIT or trading claim."),
                 availableAt=available_at, source="synthetic_persisted_market_history", sourceRef=source_ref,
             )],
-            journalReferences=[*request.journalReferences, CycleJournalReferenceRequest(
+            journalReferences=[*request.journalReferences, *attached_references, CycleJournalReferenceRequest(
                 referenceId=f"synthetic-market-history:{digest}", kind="assumption",
                 availableAt=available_at, source="synthetic_persisted_market_history", sourceRef=source_ref,
             )],
             contradictoryEvidence=request.contradictoryEvidence,
         )
-        return _persist_professional_research_cycle(context, owner_id=owner_id, market_reference=reference)
+        return _persist_professional_research_cycle(context, owner_id=owner_id, market_reference=reference, source_cycles=source_cycles)
     except HTTPException:
         raise
     except ValueError as exc:
