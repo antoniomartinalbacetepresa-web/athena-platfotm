@@ -7,6 +7,9 @@ The state directory must not already exist. No credentials or provider data are
 seeded. Tests register synthetic users through the real auth API. The process
 creates a fresh random JWT secret, installs its database environment BEFORE
 importing app.main, and allows only local auth/persisted-research routes.
+Two artificial private source cycles belong to futureOwnerFixtureId=1: only
+the first real test registration in this new isolated database receives them.
+No account, password, token, external news or investor filing is pre-created.
 """
 from __future__ import annotations
 
@@ -145,6 +148,69 @@ class SyntheticRouteAllowlist:
         await self.app(scope, receive, send)
 
 
+def seed_source_cycles(runtime: SyntheticRuntime) -> dict[str, str]:
+    """Trusted fresh-CI fixture, never an account bootstrap or ingestion API."""
+    from app.api import recommendation_professional_research_cycle as api
+    from app.database.athena_database import AthenaDatabase
+    from app.repositories.user_account_repository import UserAccountRepository
+
+    expected = runtime.database_path.resolve()
+    if (runtime.manifest.get("schema") != "athena.synthetic-ci.v1"
+            or runtime.manifest.get("syntheticOnly") is not True
+            or expected.parent != runtime.state_dir.resolve()
+            or any(store._database.database_path.resolve() != expected for store in (
+                api.journal_repository, api.cycle_repository, api.market_reference_repository,
+                api.persisted_history_service,
+            ))):
+        raise RuntimeError("Source fixtures require the exact isolated synthetic database.")
+    database = AthenaDatabase(expected)
+    UserAccountRepository(database)  # Schema only; no account or credential.
+    api.cycle_repository.initialize()
+    with database.connect() as connection:
+        if (connection.execute("SELECT COUNT(*) FROM athena_user_accounts").fetchone()[0]
+                or connection.execute("SELECT COUNT(*) FROM athena_professional_research_cycles").fetchone()[0]
+                or connection.execute("SELECT 1 FROM sqlite_sequence WHERE name = 'athena_user_accounts' AND seq > 0").fetchone()):
+            raise RuntimeError("Source fixtures require unused accounts and research stores.")
+        listing = connection.execute("SELECT symbol, source_provider FROM instruments WHERE id = 1").fetchone()
+        if listing is None or listing["symbol"] != "SYNTH" or listing["source_provider"] != "synthetic_fixture":
+            raise RuntimeError("Source fixtures require the synthetic listing identity.")
+    instant = datetime.fromisoformat(runtime.manifest["seededAt"])
+    as_of = instant - timedelta(seconds=10)
+    available = instant - timedelta(minutes=1)
+    published = instant - timedelta(minutes=2)
+    hashes = {}
+    for category in ("news", "investors"):
+        request = api.ProfessionalResearchCycleRequest(
+            instrumentId="1", symbol="SYNTH", asOf=as_of, recordedAt=as_of,
+            journalId=f"__athena_private_owner_1__:ci-synthetic-{category}", revisionId="r1",
+            thesis=f"SYNTHETIC CI {category} fixture; no real source or market claim.",
+            radarEvidence=[{
+                "evidenceId": f"ci-synthetic-{category}", "category": category, "urgency": "routine",
+                "summary": f"SYNTHETIC CI {category} fixture; invented metadata, no financial claim.",
+                "availableAt": available, "publishedAt": published,
+                "source": "synthetic_fixture", "provider": "synthetic_fixture",
+                "publisher": "SYNTHETIC CI artificial publisher",
+                "sourceRef": f"https://synthetic.invalid/ci/{category}",
+            }],
+            journalReferences=[{
+                "referenceId": f"ci-artificial-context-{category}", "kind": "assumption",
+                "availableAt": available, "source": "synthetic_fixture",
+                "sourceRef": f"urn:synthetic:ci:human-context:{category}",
+            }],
+            contradictoryEvidence=[{
+                "evidenceId": f"ci-artificial-objection-{category}", "kind": "alternative_explanation",
+                "claim": "SYNTHETIC: artificial evidence cannot establish market performance or data rights.",
+                "strength": "material", "availableAt": available, "source": "synthetic_fixture",
+                "sourceRef": f"urn:synthetic:ci:human-objection:{category}",
+            }],
+        )
+        result = api._persist_professional_research_cycle(request, owner_id=1)["data"]
+        hashes[category] = result["integrity"]["cycleHash"]
+    runtime.manifest.update({"futureOwnerFixtureId": 1, "sourceCycleHashes": hashes})
+    (runtime.state_dir / "manifest.json").write_text(json.dumps(runtime.manifest, sort_keys=True) + "\n", encoding="utf-8")
+    return hashes
+
+
 def create_application(runtime: SyntheticRuntime):
     if "app.main" in sys.modules:
         raise RuntimeError("Start the synthetic backend in a fresh process before importing app.main.")
@@ -154,6 +220,7 @@ def create_application(runtime: SyntheticRuntime):
     for key in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
         os.environ.pop(key, None)
     from app.main import app
+    seed_source_cycles(runtime)
     return SyntheticRouteAllowlist(app)
 
 

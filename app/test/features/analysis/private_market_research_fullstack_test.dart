@@ -1,5 +1,6 @@
 // Mandatory in the dedicated ephemeral full-stack CI step. No external service.
 import 'dart:convert';
+
 import 'package:app/features/analysis/presentation/widgets/rebound25_research_panel.dart';
 import 'package:app/features/analysis/services/rebound25_research_service.dart';
 
@@ -80,6 +81,8 @@ void main() {
 
       final first = (await tester.runAsync(() => register('a')))!;
       final second = (await tester.runAsync(() => register('b')))!;
+      expect(first.$1.id, 1);
+      expect(second.$1.id, 2);
       AuthSession.instance.establish(accessToken: first.$2, account: first.$1);
       final cutoff = DateTime.now().toUtc();
       final provider = AthenaBackendMarketDataProvider(baseUrl: _base);
@@ -101,6 +104,10 @@ void main() {
         baseUrl: _base,
         client: client,
       );
+      final sourceIndex = (await tester.runAsync(
+        () => reader.load(symbol: 'SYNTH'),
+      ))!;
+      expect(sourceIndex.items.length, 2);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -134,6 +141,20 @@ void main() {
         find.byKey(const Key('market-cycle-objection')),
         'Fixtures do not establish market performance',
       );
+      await tester.ensureVisible(
+        find.byKey(const Key('market-cycle-load-sources')),
+      );
+      await tester.tap(find.byKey(const Key('market-cycle-load-sources')));
+      await tester.pump();
+      for (final source in sourceIndex.items) {
+        final option = find.byKey(
+          ValueKey('market-cycle-use-source-${source.cycleHash}'),
+        );
+        await _until(tester, option);
+        await tester.ensureVisible(option);
+        await tester.tap(option);
+        await tester.pump();
+      }
       await tester.ensureVisible(find.byKey(const Key('market-cycle-review')));
       await tester.tap(find.byKey(const Key('market-cycle-review')));
       await tester.pump();
@@ -147,8 +168,17 @@ void main() {
       final index = (await tester.runAsync(
         () => reader.load(symbol: 'SYNTH'),
       ))!;
-      expect(index.items.length, 1);
-      expect(index.items.single.cycleHash, recovered.cycleHash);
+      expect(index.items.length, 3);
+      expect(
+        creator.draft!.sourceCycleHashes.toSet(),
+        sourceIndex.items.map((entry) => entry.cycleHash).toSet(),
+      );
+      expect(
+        index.items
+            .where((entry) => entry.cycleHash == recovered.cycleHash)
+            .length,
+        1,
+      );
       final denial = (await tester.runAsync(
         () => client.get(
           Uri.parse(
@@ -183,22 +213,45 @@ void main() {
         ),
       );
       await _until(tester, find.byKey(const Key('private-research-heading')));
-      await tester.ensureVisible(find.text('Abrir investigación'));
-      await tester.tap(find.text('Abrir investigación'));
+      final openDestination = find.descendant(
+        of: find.byKey(Key('private-research-${recovered.cycleHash}')),
+        matching: find.text('Abrir investigación'),
+      );
+      await tester.ensureVisible(openDestination);
+      await tester.tap(openDestination);
       await tester.pump();
       await _until(tester, find.byKey(const Key('private-research-detail')));
+      expect(find.textContaining('Referencia news: SYNTHETIC'), findsOneWidget);
+      expect(
+        find.textContaining('Referencia investors: SYNTHETIC'),
+        findsOneWidget,
+      );
       for (final kind in ['News', 'ATHENA', 'Investors']) {
         await _until(
           tester,
           find.textContaining('Síntesis $kind no disponible:'),
         );
       }
-      final strategyService = Rebound25ResearchService(baseUrl: _base, client: client);
-      await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
-        child: Rebound25ResearchPanel(service: strategyService)))));
-      expect(find.byKey(const Key('rebound25-synthetic-warning')), findsOneWidget);
+      final strategyService = Rebound25ResearchService(
+        baseUrl: _base,
+        client: client,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Rebound25ResearchPanel(service: strategyService),
+            ),
+          ),
+        ),
+      );
+      expect(
+        find.byKey(const Key('rebound25-synthetic-warning')),
+        findsOneWidget,
+      );
       await tester.ensureVisible(find.byKey(const Key('rebound25-run')));
-      await tester.tap(find.byKey(const Key('rebound25-run'))); await tester.pump();
+      await tester.tap(find.byKey(const Key('rebound25-run')));
+      await tester.pump();
       await _until(tester, find.byKey(const Key('rebound25-result')));
       expect(find.textContaining('liquidación hipotética'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());

@@ -410,3 +410,20 @@ exige nueva revisión humana y avisa deconsultar historial porposibles intentos
 previos. No cambia automáticamente Journal ni reenvía otroborrador. Red/5xx y
 fallos deverificación posterior conservan el draft congelado para replay. Se
 amplían pruebas deestadosHTTP y corrección, manteniendo reintento idempotente.
+
+
+### E2E combinado de fuentes — 28/11/2026
+
+El harness efímero siembra dosciclosartificiales News/Investors para el primer
+usuario futuroid1, sincrear cuentas/credenciales: exige DB/listingaislados y tablas
+cuentas/ciclos/secuencia vacías. Se ejecuta después de env+app.main y antes de
+uvicorn. Metadatos SYNTHETIC y URLs.invalid; no se consultanfuentes reales.
+17pruebasfocales superadas, incluido registroreal id1 y aislamiento deowner2.
+SmokeHTTPrealcloud superado: fuentesprivadas2, destino conNews+Investors+Market,
+replay sin duplicación (índice3), acceso ajeno404 y fuentes inaccesiblesaowner2.
+
+Chrome selecciona esasfuentes desde el formulario real, verifica incorporación,
+recupera el destino por suhash (sinabriraccidentalmente unpadre) y comprueba sus
+evidencias antes de ejecutar ellaboratorio25. La aceptación deesteSHA requiere
+suCI exacta, no hereda resultados delSHAanterior. No implica fuentesreales,
+modelos ejecutados, OOS, derechosdeuso ni aceptación endespliegue.
