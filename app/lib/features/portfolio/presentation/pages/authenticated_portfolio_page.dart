@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../../analysis/presentation/widgets/rebound25_artifact_history_panel.dart';
 
 import '../../../auth/services/auth_session.dart';
 import '../../../market/di/market_dependencies.dart';
@@ -277,6 +278,13 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     if (!controller.sessionRejected) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(controller.error ?? 'No se pudo eliminar la posición.')));
   }
 
+  void _openSyntheticResearch() {
+    showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+      content: const SizedBox(width: 640, child: SingleChildScrollView(child: Rebound25ArtifactHistoryPanel())),
+      actions: [TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('CERRAR'))],
+    ));
+  }
+
   Widget _buildAuthoritativeAuthenticatedPortfolio() {
     final controller = _authenticatedController, capitalController = _capitalController;
     if (controller == null || capitalController == null) return const Scaffold(body: SafeArea(child: Center(child: Text('No se pudo inicializar la cartera autenticada.'))));
@@ -289,6 +297,7 @@ class _AuthenticatedPortfolioPageState extends State<AuthenticatedPortfolioPage>
     child: Text('Vista informativa: no ejecuta órdenes ni modifica recomendaciones o pesos automáticamente.', style: TextStyle(fontSize: 12)),
   ),
 )])), IconButton(key: const Key('portfolio-authenticated-refresh'), tooltip: 'Actualizar cartera y preferencias', onPressed: _refreshingAuthenticated || controller.isLoading || capitalController.isLoading || controller.sessionRejected || capitalController.sessionRejected ? null : _refreshAuthenticatedPortfolio, icon: _refreshingAuthenticated ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh_rounded)), IconButton(key: const Key('portfolio-authenticated-history'), tooltip: 'Historial de cuenta', onPressed: controller.sessionRejected ? null : _openAuthenticatedHistory, icon: const Icon(Icons.history))]),
+      TextButton.icon(key: const Key('portfolio-synthetic-research'), onPressed: controller.sessionRejected ? null : _openSyntheticResearch, icon: const Icon(Icons.science_outlined), label: const Text('Simulaciones guardadas (separadas de cartera)')),
       const SizedBox(height: 20), AuthenticatedPortfolioCapitalView(controller: capitalController, onRetry: capitalController.load), const SizedBox(height: 12), AuthenticatedPortfolioView(controller: controller, fxValuationController: _fxValuationController, verifiedBaseCurrency: verifiedBaseCurrency, onRetry: controller.load, onAdd: _addAuthenticatedPosition, onRemove: _removeAuthenticatedPosition),
     ]))))));
   }

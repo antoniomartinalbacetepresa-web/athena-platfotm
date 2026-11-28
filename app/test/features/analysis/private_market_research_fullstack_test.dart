@@ -1,6 +1,11 @@
 // Mandatory in the dedicated ephemeral full-stack CI step. No external service.
 import 'dart:convert';
 
+import 'package:app/features/analysis/presentation/widgets/rebound25_artifact_history_panel.dart';
+import 'package:app/features/analysis/services/rebound25_artifact_review_service.dart';
+
+import 'package:app/features/analysis/services/rebound25_artifact_service.dart';
+
 import 'package:app/features/analysis/presentation/widgets/rebound25_research_panel.dart';
 import 'package:app/features/analysis/services/rebound25_research_service.dart';
 
@@ -236,11 +241,18 @@ void main() {
         baseUrl: _base,
         client: client,
       );
+      final artifacts = Rebound25ArtifactService(
+        baseUrl: _base,
+        client: client,
+      );
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: SingleChildScrollView(
-              child: Rebound25ResearchPanel(service: strategyService),
+              child: Rebound25ResearchPanel(
+                service: strategyService,
+                artifactService: artifacts,
+              ),
             ),
           ),
         ),
@@ -254,7 +266,79 @@ void main() {
       await tester.pump();
       await _until(tester, find.byKey(const Key('rebound25-result')));
       expect(find.textContaining('liquidación hipotética'), findsOneWidget);
+      final save = find.byKey(const Key('rebound25-artifact-save'));
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pump();
+      await _until(tester, find.byKey(const Key('rebound25-artifact-saved')));
+      final stored = (await tester.runAsync(() => artifacts.list()))!;
+      expect(stored.length, 1);
+      final artifact = (await tester.runAsync(
+        () => artifacts.get(stored.single.artifactHash),
+      ))!;
+      expect(artifact.result.instrumentId, 'SYNTHETIC-LAB-25');
+      final forbiddenArtifact = (await tester.runAsync(
+        () => client.get(
+          Uri.parse(
+            '$_base/api/v1/research/strategies/rebound25/artifacts/${artifact.artifactHash}',
+          ),
+          headers: {'Authorization': 'Bearer ${second.$2}'},
+        ),
+      ))!;
+      expect(forbiddenArtifact.statusCode, 404);
+      final reviews = Rebound25ArtifactReviewService(
+        baseUrl: _base,
+        client: client,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Rebound25ArtifactHistoryPanel(
+                service: artifacts,
+                reviewService: reviews,
+              ),
+            ),
+          ),
+        ),
+      );
+      final load = find.byKey(const Key('rebound25-artifact-history-load'));
+      await tester.ensureVisible(load);
+      await tester.tap(load);
+      await tester.pump();
+      final openArtifact = find.byKey(
+        Key('rebound25-artifact-open-${artifact.artifactHash}'),
+      );
+      await _until(tester, openArtifact);
+      await tester.ensureVisible(openArtifact);
+      await tester.tap(openArtifact);
+      await tester.pump();
+      await _until(tester, find.byKey(const Key('rebound25-artifact-detail')));
+      await tester.enterText(
+        find.byKey(const Key('rebound25-review-thesis')),
+        'Human question about an artificial rebound calculation',
+      );
+      await tester.enterText(
+        find.byKey(const Key('rebound25-review-objection')),
+        'Artificial fixtures cannot demonstrate market profitability.',
+      );
+      final confirm = find.byKey(const Key('rebound25-review-confirm'));
+      await tester.ensureVisible(confirm);
+      await tester.tap(confirm);
+      await tester.pump();
+      final submit = find.byKey(const Key('rebound25-review-submit'));
+      await tester.ensureVisible(submit);
+      await tester.tap(submit);
+      await tester.pump();
+      await _until(tester, find.byKey(const Key('rebound25-review-result')));
+      final reviewedIndex = (await tester.runAsync(
+        () => reader.load(symbol: 'SYNTH'),
+      ))!;
+      expect(reviewedIndex.items.length, 4);
+      expect((await tester.runAsync(() => artifacts.list()))!.length, 1);
       await tester.pumpWidget(const SizedBox.shrink());
+      reviews.dispose();
+      artifacts.dispose();
       strategyService.dispose();
       creator.dispose();
       reader.dispose();

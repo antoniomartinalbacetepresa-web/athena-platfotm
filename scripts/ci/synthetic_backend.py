@@ -122,6 +122,13 @@ class SyntheticRouteAllowlist:
             return method in {"GET", "OPTIONS"}
         if path == "/api/v1/research/strategies/rebound25/synthetic-backtest":
             return method in {"POST", "OPTIONS"}
+        artifacts = "/api/v1/research/strategies/rebound25/artifacts"
+        if path == artifacts:
+            return method in {"GET", "POST", "OPTIONS"}
+        if re.fullmatch(re.escape(artifacts) + r"/[a-f0-9]{64}", path):
+            return method in {"GET", "OPTIONS"}
+        if re.fullmatch(re.escape(artifacts) + r"/[a-f0-9]{64}/research-cycle", path):
+            return method in {"POST", "OPTIONS"}
         if path == cls.RESEARCH_PREFIX + "/research-cycle/from-persisted-market-history":
             return method in {"POST", "OPTIONS"}
         if method not in {"GET", "OPTIONS"}:

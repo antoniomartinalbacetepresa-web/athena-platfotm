@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../../auth/services/auth_session.dart';
 import '../../services/rebound25_research_service.dart';
+import '../../services/rebound25_artifact_service.dart';
+import 'rebound25_artifact_history_panel.dart';
 
 /// An explicit artificial laboratory; never adapts live quotes into backtests.
 class Rebound25ResearchPanel extends StatefulWidget {
-  const Rebound25ResearchPanel({super.key, this.service});
+  const Rebound25ResearchPanel({super.key, this.service, this.artifactService});
   final Rebound25ResearchService? service;
+  final Rebound25ArtifactService? artifactService;
   @override
   State<Rebound25ResearchPanel> createState() => _Rebound25ResearchPanelState();
 }
@@ -19,6 +22,10 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
   final _spread = TextEditingController(text: '10');
   final _slippage = TextEditingController(text: '5');
   Rebound25ResearchService? _owned;
+  Rebound25ArtifactService? _ownedArtifacts;
+  Rebound25Artifact? _saved;
+  bool _saving = false;
+  bool _saveFailed = false;
   Rebound25ResearchResult? _result;
   Map<String, dynamic>? _request;
   bool _busy = false;
@@ -53,6 +60,9 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
 
   void _clear() {
     ++_generation;
+    _saved = null;
+    _saving = false;
+    _saveFailed = false;
     _request = null;
     _result = null;
     _error = null;
@@ -188,12 +198,51 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
     }
   }
 
+  Future<void> _save() async {
+    final request = _request, result = _result;
+    if (_saving ||
+        _saved != null ||
+        request == null ||
+        result == null ||
+        !AuthSession.instance.isAuthenticated) {
+      return;
+    }
+    final generation = _generation;
+    setState(() {
+      _saving = true;
+      _saveFailed = false;
+    });
+    try {
+      final service =
+          widget.artifactService ??
+          (_ownedArtifacts ??= Rebound25ArtifactService());
+      final artifact = await service.save(
+        request,
+        expectedResultFingerprint: result.resultFingerprint,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _saved = artifact;
+        _saving = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _saveFailed = true;
+        _saving = false;
+      });
+    }
+  }
+
   @override
   void didUpdateWidget(covariant Rebound25ResearchPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.service != widget.service) {
+    if (oldWidget.service != widget.service ||
+        oldWidget.artifactService != widget.artifactService) {
       _owned?.dispose();
       _owned = null;
+      _ownedArtifacts?.dispose();
+      _ownedArtifacts = null;
       _clear();
     }
   }
@@ -203,6 +252,7 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
     ++_generation;
     AuthSession.instance.removeListener(_sessionChanged);
     _owned?.dispose();
+    _ownedArtifacts?.dispose();
     for (final controller in [
       _target,
       _stop,
@@ -235,7 +285,7 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
       const Text(
         'DATOS ARTIFICIALES. Plantilla de 40 sesiones consecutivas, no calendario bursátil real. '
         'Incluye una barra ambigua para comprobar el stop conservador. No usa cotizaciones de Market. '
-        'Parámetros ilustrativos, no límites aprobados para invertir. No persiste ni ejecuta órdenes.',
+        'Parámetros ilustrativos, no límites aprobados para invertir. Solo se guarda al solicitarlo; no ejecuta órdenes.',
         key: Key('rebound25-synthetic-warning'),
       ),
       if (!AuthSession.instance.isAuthenticated)
@@ -256,12 +306,12 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
         ),
         FilledButton(
           key: const Key('rebound25-run'),
-          onPressed: _busy ? null : _run,
+          onPressed: _busy || _saving ? null : _run,
           child: const Text('SIMULAR FIXTURES'),
         ),
         if (_busy) const LinearProgressIndicator(key: Key('rebound25-loading')),
         if (_error != null) Text(_error!, key: const Key('rebound25-error')),
-        if (_request != null && !_busy)
+        if (_request != null && !_busy && !_saving)
           TextButton(
             onPressed: () => setState(_clear),
             child: const Text('NUEVOS PARÁMETROS'),
@@ -279,6 +329,36 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
             'Parámetros: ${_result!.parametersFingerprint}\nResultado: ${_result!.resultFingerprint}',
           ),
           for (final warning in _result!.warnings) Text(warning),
+          FilledButton(
+            key: const Key('rebound25-artifact-save'),
+            onPressed: _saving || _saved != null ? null : _save,
+            child: Text(
+              _saveFailed
+                  ? 'REINTENTAR MISMO GUARDADO'
+                  : 'GUARDAR SIMULACIÓN PRIVADA',
+            ),
+          ),
+          if (_saving)
+            const LinearProgressIndicator(
+              key: Key('rebound25-artifact-saving'),
+            ),
+          if (_saveFailed)
+            const Text(
+              'No se pudo verificar el guardado. El servidor puede haberlo conservado; '
+              'reintenta los mismos parámetros sin duplicar el artefacto.',
+              key: Key('rebound25-artifact-save-error'),
+            ),
+          if (_saved != null) ...[
+            SelectableText(
+              'Guardado y recuperado: ${_saved!.artifactHash} · '
+              'Disponible desde ${_saved!.createdAt.toIso8601String()}',
+              key: const Key('rebound25-artifact-saved'),
+            ),
+            Rebound25ArtifactHistoryPanel(
+              key: ValueKey(_saved!.artifactHash),
+              service: widget.artifactService ?? _ownedArtifacts,
+            ),
+          ],
         ],
       ],
     ],

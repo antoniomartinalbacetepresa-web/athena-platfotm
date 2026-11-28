@@ -427,3 +427,43 @@ recupera el destino por suhash (sinabriraccidentalmente unpadre) y comprueba sus
 evidencias antes de ejecutar ellaboratorio25. La aceptación deesteSHA requiere
 suCI exacta, no hereda resultados delSHAanterior. No implica fuentesreales,
 modelos ejecutados, OOS, derechosdeuso ni aceptación endespliegue.
+
+
+### Artefactos25 privados y revisión humana — 28/11/2026
+
+Partida remota verificada10e7cb2f5ff08c814461c71b63c96a4dc916b229, CIpush
+46104460030 superada. Publicados1f5dc4d (artefactos sintéticos generados en servidor,
+CIpush46126642925 superada),5b7c369f (serialización ledger/purga),513beb32 (referencia
+privada Journal/Radar con disponibilidad createdAt real, nunca corte artificial).
+No se modifica programación horaria ni documentos canónicos ni main.
+
+Regresión integral backend cloud:5179 superadas en82.15s. Además23 del harness
+ampliado superadas; smokeHTTP real del nuevoflujo con dos cuentas artificiales:
+creación/replay idéntico, lectura privada, Journal atómico/idempotente y ajeno404.
+Los artefactos preservan primerhash/fecha y se recalculan al leer. Datos generados
+por servidor; la API no admite precios/identidad/fechas/derechos del cliente.
+El ledger ahora coordina procesos/instancias con OSlock estable y marker terminal
+no financiero para impedir recreación tras cierre. Windows nativo pendiente.
+
+Flutter incorpora guardado explícito, historial autenticado separado de posiciones
+y saldo, recuperación verificable y revisión humana con hipótesis/objeción; cambios
+de cuenta borran contexto y respuestas tardías. Reintento conserva draft. Añadidas
+regresiones Chrome y aceptaciónHTTP de guardado→historial→revisión→Journal privado.
+Pruebas Flutter escritas; no ejecutadas localmente por dependencias incompletas:
+requieren CI exacta de esta entrega. No atribuirles resultados de otro SHA.
+
+Cierre de cuenta conserva evidencia append-only según ACCOUNT_PRIVACY_LIFECYCLE,
+revoca acceso y conserva aislamiento. BackupSQLite incluye tabla dinámica y
+restauración revalida hash. Política legal de retención sigue pendiente.
+
+Aceptación limitada a fixtures y controles probados, nunca a datos reales/OOS,
+beneficio, broker, despliegue o sistema autónomo finalizado. TwelveData: derechos,
+procedencia/cobertura365 real siguen bloqueados. Capital.com: elegibilidad España,
+producto/API/contrato y derechos no acreditados; sin cuentas ni órdenes.
+
+Cola24h recuperable: verificar CI exacta de todos los nuevos SHA; corregir fallos
+sin desactivar controles; validar Windowsledger; walk-forward/OOS y comparación
+normalizada; resolver licencia/PIT365TwelveData y staging autorizado. Pendiente
+integrar simulaciónPortfolio con contabilidad separada, sin contaminar ledger
+observado. Porcentaje global y fecha central/conservadora no certificables con
+inventario actual. No hay evidencia para clasificar riesgo del31/12 como bajo.
