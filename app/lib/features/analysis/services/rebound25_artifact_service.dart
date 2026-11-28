@@ -171,7 +171,7 @@ class Rebound25ArtifactService {
         !explicit ||
         created.isAfter(DateTime.now().toUtc()) ||
         created.toIso8601String().substring(0, 19) !=
-            (createdText as String).substring(0, 19)) {
+            createdText.substring(0, 19)) {
       throw const FormatException('Identidad de simulación inválida.');
     }
     return Rebound25ArtifactEntry(artifactHash: hash, createdAt: created);

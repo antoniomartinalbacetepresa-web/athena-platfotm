@@ -467,3 +467,14 @@ normalizada; resolver licencia/PIT365TwelveData y staging autorizado. Pendiente
 integrar simulaciónPortfolio con contabilidad separada, sin contaminar ledger
 observado. Porcentaje global y fecha central/conservadora no certificables con
 inventario actual. No hay evidencia para clasificar riesgo del31/12 como bajo.
+
+
+Validación posterior del lote:513beb32 CIpush46127069309 superada.
+c9fe4b7d CIpush46127373838:1231pruebasFlutter superadas,1skip deltestHTTP
+reservado; análisis falló porun cast redundante enlector decreatedAt. No es una
+aceptaciónChrome: lossteps posteriores no se ejecutaron en eseSHA. Corregido
+cast conservando lascomprobacionesUTC. 61f28801 añadeWindows obligatorio y
+56regresionesLinux superadas; suaceptación nativa se comprobará enActions.
+Lifecycle/backup+harness ampliado:25pruebaslocales superadas. RecuperarSHAremoto
+antes decontinuar; comprobarCI exacta deestecommit y mantener fallos históricos
+visibles. No se promueve producción ni se declaran cerrados derechos/PIT/OOS.
