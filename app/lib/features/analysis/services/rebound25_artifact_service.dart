@@ -224,7 +224,9 @@ class Rebound25ArtifactService {
         'fixtureId': rebound25ServerFixtureId,
         'parameters': researchRequest['parameters'],
       });
-      if (utf8.encode(body).length > 16 * 1024) throw const FormatException();
+      if (utf8.encode(body).length > 16 * 1024) {
+        throw const FormatException();
+      }
     } catch (_) {
       return Future.error(
         const FormatException('Parámetros de guardado inválidos.'),
@@ -233,7 +235,9 @@ class Rebound25ArtifactService {
     final version = _session.authorityVersion;
     final key = '$version:$expectedResultFingerprint:$body';
     final existing = _pending[key];
-    if (existing != null) return existing;
+    if (existing != null) {
+      return existing;
+    }
     final future = _save(body, expectedResultFingerprint, version);
     _pending[key] = future;
     future.then(
@@ -308,6 +312,8 @@ class Rebound25ArtifactService {
 
   void dispose() {
     _disposed = true;
-    if (_ownsClient) _client.close();
+    if (_ownsClient) {
+      _client.close();
+    }
   }
 }

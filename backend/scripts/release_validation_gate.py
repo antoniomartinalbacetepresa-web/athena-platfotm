@@ -25,6 +25,8 @@ def check_release_gate(environment: Mapping[str, str]) -> None:
     """Require core CI and enforce complete opt-in deployment dependencies."""
     if environment.get("BACKEND_RESULT") != "success":
         raise ReleaseGateFailure("Backend tests did not pass")
+    if environment.get("WINDOWS_LEDGER_RESULT") != "success":
+        raise ReleaseGateFailure("Native Windows ledger validation did not pass")
     if environment.get("FLUTTER_RESULT") != "success":
         raise ReleaseGateFailure("Flutter validation did not pass")
 

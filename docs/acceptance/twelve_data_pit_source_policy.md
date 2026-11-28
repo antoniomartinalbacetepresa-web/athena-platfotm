@@ -41,3 +41,23 @@ provider requests or broker connections are needed for this regression. Next
 step: implement and test the licensed provenance-to-persistence bridge only
 after its rights and availability contract is established; continue synthetic
 integration while that evidence is pending.
+
+
+## Public terms rechecked — 28 November 2026
+
+Opened official [terms](https://twelvedata.com/terms) and
+[usage guide](https://support.twelvedata.com/en/articles/5332349-commercial-and-personal-usage).
+Sections2.2/2.3/16 condition internal storage, non-display use, caching duration,
+redistribution and retention on the actual subscription and third-party rules.
+The usage guide distinguishes individual/internal use from business/external
+use and flags hosted MCP and AI training as separate licensing considerations.
+Its business-display statements are not sufficiently consistent to infer this
+application's permissions from a plan name alone. Public pages do not identify
+this owner's subscription, instrument entitlements or retention window.
+
+Required before enabling real persistence: provider confirmation covering the
+specific account, instruments/exchanges, internal versus external audience,
+OHLCV retention/cache duration and deletion, analytics/non-display/AI use, plus
+capture availability and corporate-action policy. No purchase, provider API
+request, real-data import or change to the existing refusal was performed.
+The adapter and synthetic flow remain testable independently of this gate.

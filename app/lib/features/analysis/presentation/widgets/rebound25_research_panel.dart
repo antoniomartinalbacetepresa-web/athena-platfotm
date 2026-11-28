@@ -39,7 +39,9 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
   }
 
   void _sessionChanged() {
-    if (_authority == AuthSession.instance.authorityVersion) return;
+    if (_authority == AuthSession.instance.authorityVersion) {
+      return;
+    }
     _authority = AuthSession.instance.authorityVersion;
     if (mounted) {
       setState(() {
@@ -165,7 +167,9 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
   }
 
   Future<void> _run() async {
-    if (_busy || !AuthSession.instance.isAuthenticated) return;
+    if (_busy || !AuthSession.instance.isAuthenticated) {
+      return;
+    }
     final generation = _generation;
     try {
       final request = _request ??= _fixture();
@@ -176,7 +180,9 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
       });
       final service = widget.service ?? (_owned ??= Rebound25ResearchService());
       final result = await service.run(request);
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) {
+        return;
+      }
       setState(() {
         _result = result;
         _busy = false;
@@ -220,13 +226,17 @@ class _Rebound25ResearchPanelState extends State<Rebound25ResearchPanel> {
         request,
         expectedResultFingerprint: result.resultFingerprint,
       );
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) {
+        return;
+      }
       setState(() {
         _saved = artifact;
         _saving = false;
       });
     } catch (_) {
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) {
+        return;
+      }
       setState(() {
         _saveFailed = true;
         _saving = false;

@@ -8,6 +8,7 @@ from scripts.release_validation_gate import ReleaseGateFailure, check_release_ga
 def config(**overrides):
     values = {
         "BACKEND_RESULT": "success", "FLUTTER_RESULT": "success",
+        "WINDOWS_LEDGER_RESULT": "success",
         "DEPLOYED_RESULT": "skipped", "BROWSER_RESULT": "skipped",
         "DEPLOYED_ENABLED": "", "BROWSER_ENABLED": "",
         "OWNER_BROWSER_ENABLED": "", "GITHUB_EVENT_NAME": "push",
@@ -18,7 +19,7 @@ def config(**overrides):
     return values
 
 
-@pytest.mark.parametrize("field", ["BACKEND_RESULT", "FLUTTER_RESULT"])
+@pytest.mark.parametrize("field", ["BACKEND_RESULT", "FLUTTER_RESULT", "WINDOWS_LEDGER_RESULT"])
 def test_core_failures_block_even_with_deployed_jobs_disabled(field):
     with pytest.raises(ReleaseGateFailure):
         check_release_gate(config(**{field: "failure"}))
@@ -128,3 +129,14 @@ def test_pr_release_gate_accepts_valid_numbered_merge_ref():
         GITHUB_REF="refs/pull/123/merge",
         GITHUB_BASE_REF="dev/real-market-backend",
     ))
+
+
+@pytest.mark.parametrize("result", [None, "", "failure", "cancelled", "skipped", "timed_out"])
+def test_native_windows_ledger_gate_cannot_be_omitted_or_skipped(result):
+    values = config()
+    if result is None:
+        values.pop("WINDOWS_LEDGER_RESULT")
+    else:
+        values["WINDOWS_LEDGER_RESULT"] = result
+    with pytest.raises(ReleaseGateFailure, match="Native Windows ledger"):
+        check_release_gate(values)
