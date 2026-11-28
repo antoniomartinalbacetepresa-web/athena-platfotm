@@ -5,6 +5,12 @@ import 'package:http/http.dart' as http;
 import '../../auth/services/auth_session.dart';
 import 'private_research_history_service.dart';
 
+/// A confirmed rejection of this POST, distinct from an uncertain write failure.
+class PersistedMarketResearchRejected implements Exception {
+  const PersistedMarketResearchRejected(this.statusCode);
+  final int statusCode;
+}
+
 /// A frozen human-authored request. Retrying never advances its cutoff or IDs.
 class PersistedMarketResearchDraft {
   PersistedMarketResearchDraft({
@@ -159,6 +165,9 @@ class PersistedMarketResearchService {
         )
         .timeout(PrivateResearchHistoryService.requestTimeout);
     checkSession();
+    if (const {400, 404, 409, 422}.contains(response.statusCode)) {
+      throw PersistedMarketResearchRejected(response.statusCode);
+    }
     if (response.statusCode != 200) {
       throw StateError(
         'No se pudo crear o recuperar la investigación privada.',

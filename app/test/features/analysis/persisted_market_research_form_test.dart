@@ -126,6 +126,48 @@ Future<void> prepare(WidgetTester tester) async {
 
 void main() {
   testWidgets(
+    'confirmed rejection allows deliberate correction with fresh human review',
+    (tester) async {
+      owner(1);
+      final creator = _Creator();
+      creator.respond = (_) async =>
+          throw const PersistedMarketResearchRejected(400);
+      await tester.pumpWidget(_surface(creator));
+      await prepare(tester);
+      await tester.tap(find.byKey(const Key('market-cycle-submit')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('market-cycle-rejected')), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('market-cycle-correct-draft')),
+      );
+      await tester.tap(find.byKey(const Key('market-cycle-correct-draft')));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('market-cycle-thesis')))
+            .controller!
+            .text,
+        'Research question',
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const Key('market-cycle-review')),
+            )
+            .value,
+        false,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('market-cycle-sources')))
+            .enabled,
+        true,
+      );
+      expect(creator.drafts.length, 1);
+      creator.dispose();
+    },
+  );
+  testWidgets(
     'source history failure is explicit and retry recovers without creating a cycle',
     (tester) async {
       owner(1);

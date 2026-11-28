@@ -349,7 +349,7 @@ void main() {
     });
   }
 
-  for (final status in [401, 403, 404, 409, 503]) {
+  for (final status in [400, 401, 403, 404, 409, 422, 503]) {
     test(
       'HTTP $status never falls back to public creation or retrieval',
       () async {
@@ -364,7 +364,12 @@ void main() {
           client: client,
           session: session,
         );
-        await expectLater(service.create(draft()), throwsStateError);
+        await expectLater(
+          service.create(draft()),
+          const {400, 404, 409, 422}.contains(status)
+              ? throwsA(isA<PersistedMarketResearchRejected>())
+              : throwsStateError,
+        );
         expect(calls, 1);
         client.close();
       },

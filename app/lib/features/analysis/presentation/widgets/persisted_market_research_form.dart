@@ -41,6 +41,7 @@ class _PersistedMarketResearchFormState
   bool _reviewed = false;
   bool _busy = false;
   bool _failed = false;
+  bool _rejected = false;
   bool _validationFailed = false;
   int _generation = 0;
   int _authority = AuthSession.instance.authorityVersion;
@@ -67,6 +68,7 @@ class _PersistedMarketResearchFormState
     _reviewed = false;
     _busy = false;
     _failed = false;
+    _rejected = false;
     _validationFailed = false;
     _thesis.clear();
     _objection.clear();
@@ -184,6 +186,12 @@ class _PersistedMarketResearchFormState
       if (!mounted || generation != _generation) return;
       setState(() {
         _result = result;
+        _busy = false;
+      });
+    } on PersistedMarketResearchRejected {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _rejected = true;
         _busy = false;
       });
     } catch (_) {
@@ -306,7 +314,7 @@ class _PersistedMarketResearchFormState
         ),
         FilledButton(
           key: const Key('market-cycle-submit'),
-          onPressed: _busy || _result != null ? null : _submit,
+          onPressed: _busy || _result != null || _rejected ? null : _submit,
           child: Text(
             _failed
                 ? 'REINTENTAR MISMA SOLICITUD'
@@ -320,6 +328,25 @@ class _PersistedMarketResearchFormState
             'Revisa hipótesis, objeción, confirmación y hashes opcionales.',
             key: Key('market-cycle-validation'),
           ),
+        if (_rejected) ...[
+          const Text(
+            'El servidor rechazó esta solicitud. Consulta el historial antes de crear otra revisión; '
+            'puede existir un resultado de un intento anterior.',
+            key: Key('market-cycle-rejected'),
+          ),
+          TextButton(
+            key: const Key('market-cycle-correct-draft'),
+            onPressed: () => setState(() {
+              ++_generation;
+              _draft = null;
+              _rejected = false;
+              _failed = false;
+              _reviewed = false;
+              _validationFailed = false;
+            }),
+            child: const Text('CORREGIR Y VOLVER A REVISAR'),
+          ),
+        ],
         if (_failed)
           const Text(
             'No se pudo verificar el resultado. Reintenta la misma solicitud; '

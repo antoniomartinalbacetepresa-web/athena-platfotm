@@ -402,3 +402,11 @@ conJournal/Portfolio simulado;3)validación walk-forward/OOS y falsa señales;
 4)resolver derechos/PIT/cobertura365 TwelveData y stagingautorizado. Todo incremento
 sintético sigue separado deaceptación real. Motor autónomo ybrókeres conservan
 alcance pero no están completados/activados. Sin cambio deprogramaciónhoraria.
+
+
+Recuperación de borrador: rechazos POST400/404/409/422 se distinguen de errores de
+escritura incierta. La vista permite corrección explícita conservando contexto,
+exige nueva revisión humana y avisa deconsultar historial porposibles intentos
+previos. No cambia automáticamente Journal ni reenvía otroborrador. Red/5xx y
+fallos deverificación posterior conservan el draft congelado para replay. Se
+amplían pruebas deestadosHTTP y corrección, manteniendo reintento idempotente.
