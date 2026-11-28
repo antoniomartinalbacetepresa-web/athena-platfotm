@@ -301,3 +301,27 @@ servidor sin permitir referencias cliente falsas; enlazar el backtest con Journa
 y Portfolio simulado y evaluar walk-forward/OOS. Derechos/PIT/cobertura365 de
 TwelveData, despliegue real y motor de ejecución completo siguen pendientes.
 No se altera la programación horaria, main ni los cinco documentos canónicos.
+
+### Reanudación 28/11/2026 — aceptación efímera full-stack
+
+HEAD inicial remoto confirmado `d8aad05009b24862563b551d0472877aa5b6cdd6`, CI
+push46060325621 success; checkout conserva el harness pendiente sin sobrescribir.
+Regresión backend del lote previo:5064 aprobadas. Nuevas pruebas del seed:14
+aprobadas. Smoke HTTP REAL en cloud, uvicorn y cliente en el mismo entorno de red:
+registro/login de dos cuentas sintéticas, POST idempotente, GET propietario200,
+propietario ajeno404, índice1 y bloqueo de quote vivo, todo superado.
+
+Se añade gate obligatorio Chrome→FastAPI real en CI sobre SQLite efímera. La
+semilla crea SYNTH/id1 y32 sesiones sintéticas, con secretoJWT aleatorio solo en
+memoria, antes de importar repositorios globales. El harness exige directorio
+nuevo y solo escucha127.0.0.1; allowlist excluye proveedores/órdenes/modelos.
+El E2E usa HTTP real, creación desde formulario, reintento del mismo draft,
+ausencia de acceso cruzado y recuperación posterior desde interfaz privada.
+Comprueba ausencia explícita de las tres síntesis: no acredita ejecución de IA.
+No usa credenciales reales ni datos externos. Su SHA/CI deberán recuperarse tras
+publicación; pruebas contra staging siguen separadas, omitidas y no aceptadas.
+
+Siguiente lote: visualización/API del backtest sintético sin inferir calendarios
+reales; unión servidor de Market/News/Investors; enlace Journal/Portfolio simulado.
+Licencia/PIT/cobertura365 TwelveData, OOS, despliegue y ejecución real siguen
+pendientes. La programación horaria, main y los canónicos se conservan.

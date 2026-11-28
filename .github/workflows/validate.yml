@@ -130,6 +130,41 @@ jobs:
             exit "$first_status"
           fi
 
+      - name: Set up Python for ephemeral full-stack acceptance
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install ephemeral full-stack backend dependencies
+        run: python -m pip install -r ../backend/requirements.txt
+
+      - name: Real HTTP private research acceptance (synthetic loopback only)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python ../scripts/ci/synthetic_backend.py \
+            --state-dir "$RUNNER_TEMP/athena-fullstack-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --port 8011 > flutter-fullstack-backend.log 2>&1 &
+          ATHENA_FULLSTACK_PID=$!
+          trap 'kill "$ATHENA_FULLSTACK_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:8011/health > /dev/null; then
+              break
+            fi
+            if ! kill -0 "$ATHENA_FULLSTACK_PID" 2>/dev/null; then
+              cat flutter-fullstack-backend.log
+              exit 1
+            fi
+            sleep 0.25
+          done
+          curl --silent --fail http://127.0.0.1:8011/health
+          timeout 180s flutter test --platform chrome --reporter expanded \
+            --dart-define=ATHENA_SYNTHETIC_E2E_URL=http://127.0.0.1:8011 \
+            test/features/analysis/private_market_research_fullstack_test.dart \
+            2>&1 | tee flutter-fullstack-acceptance.log
+
       - name: Build release web bundle
         if: success()
         env:
@@ -185,6 +220,8 @@ jobs:
             app/flutter-test.log
             app/flutter-chrome-acceptance.log
             app/flutter-chrome-bootstrap-timeout.log
+            app/flutter-fullstack-acceptance.log
+            app/flutter-fullstack-backend.log
             app/pubspec.lock
           if-no-files-found: warn
           retention-days: 7
