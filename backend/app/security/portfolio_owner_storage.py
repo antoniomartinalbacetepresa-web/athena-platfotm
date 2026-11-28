@@ -27,16 +27,13 @@ def owner_scoped_ledger_path(base_path: Path, *, owner_user_id: int | None = Non
 def purge_owner_scoped_ledger(base_path: Path, *, owner_user_id: int) -> bool:
     """Delete one closed owner's ledger without touching any other owner.
 
-    Returns True when a ledger existed and was removed. Empty owner directories
-    are removed best-effort; the shared owners directory is never removed here.
+    Returns True when a ledger existed and was removed. A nonfinancial terminal
+    lock marker is retained so already authenticated delayed requests cannot
+    recreate private history after successful cleanup. Owner IDs are not reused.
     """
+    from app.services.recommendation_portfolio_event_ledger_service import (
+        RecommendationPortfolioEventLedgerService,
+    )
+
     ledger_path = owner_scoped_ledger_path(base_path, owner_user_id=owner_user_id)
-    try:
-        ledger_path.unlink()
-    except FileNotFoundError:
-        return False
-    try:
-        ledger_path.parent.rmdir()
-    except OSError:
-        pass
-    return True
+    return RecommendationPortfolioEventLedgerService(ledger_path).purge_and_close()

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import errno
 import hashlib
 from html import unescape as html_unescape
 import json
 import math
+import os
 import unicodedata
 from urllib.parse import unquote
 from pathlib import Path
 import re
 from threading import Lock
+from time import monotonic, sleep
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -141,9 +145,104 @@ class RecommendationPortfolioEventLedgerService:
 
     GENESIS_HASH = "0" * 64
 
-    def __init__(self, path: str | Path):
-        self._path = Path(path)
+    def __init__(self, path: str | Path, *, lock_timeout: float = 10.0):
+        if (type(lock_timeout) not in (int, float) or not math.isfinite(lock_timeout)
+                or not 0 <= lock_timeout <= 60):
+            raise ValueError("lock_timeout must be finite and between 0 and 60 seconds")
+        # Resolve relative paths/symlink aliases once so independent instances
+        # coordinate the same physical ledger rather than a spelling of its path.
+        self._path = Path(path).resolve()
+        self._lock_path = self._path.with_name(self._path.name + ".lock")
+        self._lock_timeout = float(lock_timeout)
         self._lock = Lock()
+
+    @staticmethod
+    def _try_file_lock(handle) -> None:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        elif os.name == "posix":
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            raise RuntimeError("Portfolio ledger locking is unsupported on this platform")
+
+    @staticmethod
+    def _unlock_file(handle) -> None:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def _exclusive(self):
+        """Serialize cooperating readers/writers across instances and processes.
+
+        Keep the sibling lock inode stable: unlinking it on release could let a
+        waiter and a new opener hold different locks. OS handle closure releases
+        locks after process failure; the marker contains no financial data.
+        External file mutations must use the same protocol.
+        """
+        deadline = monotonic() + self._lock_timeout
+        if not self._lock.acquire(timeout=self._lock_timeout):
+            raise TimeoutError("Portfolio ledger is busy")
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            with os.fdopen(descriptor, "r+b", buffering=0) as handle:
+                while True:
+                    try:
+                        self._try_file_lock(handle)
+                        break
+                    except OSError as exc:
+                        if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                            raise
+                        remaining = deadline - monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("Portfolio ledger is busy") from exc
+                        sleep(min(0.01, remaining))
+                try:
+                    # Windows byte-range locks may extend past EOF; initialize
+                    # only after locking, so a stale opener cannot clear closure.
+                    if os.name == "nt" and os.fstat(handle.fileno()).st_size == 0:
+                        handle.write(b"\0")
+                    yield handle
+                finally:
+                    self._unlock_file(handle)
+        finally:
+            self._lock.release()
+
+    @staticmethod
+    def _assert_open(handle) -> None:
+        handle.seek(0)
+        marker = handle.read(1)
+        if marker == b"\1":
+            raise ValueError("Portfolio ledger is closed")
+        if marker not in (b"", b"\0"):
+            raise ValueError("Portfolio ledger lock marker is invalid")
+
+    def purge_and_close(self) -> bool:
+        """Erase financial history and reject delayed writes for this owner path.
+
+        Retain a single nonfinancial terminal byte on the stable lock inode.
+        Deleting that inode would permit old waiters to recreate a closed ledger.
+        This operation does not make database account closure transactional.
+        """
+        with self._exclusive() as handle:
+            handle.seek(0)
+            handle.write(b"\1")
+            handle.truncate(1)
+            handle.flush()
+            os.fsync(handle.fileno())
+            try:
+                self._path.unlink()
+            except FileNotFoundError:
+                return False
+            return True
 
     @staticmethod
     def _aware_utc(value: datetime, field: str) -> datetime:
@@ -357,12 +456,18 @@ class RecommendationPortfolioEventLedgerService:
         return tuple(records)
 
     def load(self) -> tuple[PortfolioLedgerRecord, ...]:
-        with self._lock:
+        # An absent ledger is a valid empty snapshot before a concurrent first
+        # append. Avoid creating owner directories merely for an empty read.
+        if not self._path.exists():
+            return ()
+        with self._exclusive() as handle:
+            self._assert_open(handle)
             return self._load_unlocked()
 
     def append(self, *, as_of: datetime, item: PortfolioLedgerEventInput) -> PortfolioLedgerRecord:
         event = self.normalize(as_of=as_of, item=item)
-        with self._lock:
+        with self._exclusive() as handle:
+            self._assert_open(handle)
             records = self._load_unlocked()
             for existing in records:
                 if existing.event.event_key == event.event_key:
@@ -382,6 +487,7 @@ class RecommendationPortfolioEventLedgerService:
                 handle.write(json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True))
                 handle.write("\n")
                 handle.flush()
+                os.fsync(handle.fileno())
             return record
 
     def external_cash_flows(
