@@ -51,6 +51,10 @@ def _aware_utc(value: datetime, field: str) -> datetime:
 
 
 def _freeze_request(request: InvestmentJournalSnapshotRequest):
+    # Server-generated artifacts cannot be asserted through the public Journal.
+    from app.api.recommendation_professional_research_cycle import _reserved_reference, _BACKTEST_REFERENCE_PREFIX
+    if any(_reserved_reference(item.sourceRef, _BACKTEST_REFERENCE_PREFIX) for item in request.references):
+        raise HTTPException(status_code=400, detail="La referencia de backtest requiere el puente privado del servidor.")
     references = tuple(
         InvestmentJournalReferenceInput(
             reference_id=item.referenceId,

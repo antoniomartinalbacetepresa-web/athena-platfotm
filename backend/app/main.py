@@ -12,6 +12,7 @@ from app.api.portfolio_allocation_policy import router as portfolio_allocation_p
 from app.api.readiness import router as readiness_router
 from app.api.rebound25_synthetic import router as rebound25_synthetic_router
 from app.api.rebound25_artifacts import router as rebound25_artifacts_router
+from app.api.rebound25_artifacts_journal import router as rebound25_artifacts_journal_router
 from app.api.recommendation_athena_radar import router as recommendation_athena_radar_router
 from app.api.recommendation_athena_synthesis import router as recommendation_athena_synthesis_router
 from app.api.recommendation_latest_athena_synthesis import router as recommendation_latest_athena_synthesis_router
@@ -55,6 +56,7 @@ app.add_middleware(CORSMiddleware, allow_origin_regex=r"^https?://(localhost|127
 app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(rebound25_synthetic_router)
 app.include_router(rebound25_artifacts_router)
+app.include_router(rebound25_artifacts_journal_router)
 
 app.include_router(build_identity_router); app.include_router(auth_router); app.include_router(user_portfolio_router); app.include_router(user_profile_router)
 app.include_router(market_router); app.include_router(sec_router); app.include_router(sec_fundamental_pit_router); app.include_router(macro_router); app.include_router(news_router); app.include_router(sources_router); app.include_router(readiness_router); app.include_router(portfolio_router)

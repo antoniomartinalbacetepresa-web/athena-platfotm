@@ -56,6 +56,14 @@ market_reference_repository = PersistedMarketResearchReferenceRepository()
 _PRIVATE_JOURNAL_PREFIX = "__athena_private_owner_"
 _MARKET_REFERENCE_PREFIX = "urn:athena:market-history:"
 _SOURCE_CYCLE_PREFIX = "urn:athena:research-cycle:"
+_BACKTEST_REFERENCE_PREFIX = "urn:athena:synthetic-backtest:"
+
+
+def _backtest_service():
+    # Delayed to avoid a router import cycle; both routes use one configured
+    # repository and the existing SQLite transaction, never a client payload.
+    from app.api.rebound25_artifacts import artifact_service
+    return artifact_service
 
 
 def _reserved_reference(value: object, prefix: str) -> bool:
@@ -309,6 +317,7 @@ def _persist_professional_research_cycle(
     request: ProfessionalResearchCycleRequest, *, owner_id: int | None = None,
     market_reference: dict[str, Any] | None = None,
     source_cycles: dict[str, str] | None = None,
+    synthetic_backtest: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Validate and atomically persist one PIT Radar -> Journal -> Devil's Advocate cycle."""
     try:
@@ -396,6 +405,25 @@ def _persist_professional_research_cycle(
         journal_payload = journal.to_api_dict()
         devils_payload = devils_advocate.to_api_dict()
 
+        backtest_refs = [item for item in
+                        [*radar_payload["candidates"][0]["evidence"], *journal_payload["references"], *devils_payload["evidence"]]
+                        if _reserved_reference(item.get("sourceRef"), _BACKTEST_REFERENCE_PREFIX)]
+        if synthetic_backtest is None and backtest_refs:
+            raise ValueError("La referencia de backtest reservada requiere el puente server-side.")
+        if synthetic_backtest is not None:
+            expected_ref = f"{_BACKTEST_REFERENCE_PREFIX}{synthetic_backtest['artifactHash']}"
+            if (owner_id is None or market_reference is not None or source_cycles
+                    or request.symbol != "SYNTH"
+                    or request.instrumentId != synthetic_backtest["result"]["instrumentId"]
+                    or len(backtest_refs) != 2
+                    or any(item.get("sourceRef") != expected_ref or
+                           _aware_utc(datetime.fromisoformat(item["availableAt"]), "backtest.availableAt") !=
+                           _aware_utc(datetime.fromisoformat(synthetic_backtest["createdAt"]), "artifact.createdAt")
+                           for item in backtest_refs)
+                    or sum(item.get("sourceRef") == expected_ref for item in radar_payload["candidates"][0]["evidence"]) != 1
+                    or sum(item.get("sourceRef") == expected_ref for item in journal_payload["references"]) != 1):
+                raise ValueError("El backtest no está vinculado al Radar y Journal exactos.")
+
         source_refs = [item.get("sourceRef", "") for item in
                        [*radar_payload["candidates"][0]["evidence"], *journal_payload["references"], *devils_payload["evidence"]]
                        if _reserved_reference(item.get("sourceRef"), _SOURCE_CYCLE_PREFIX)]
@@ -435,6 +463,8 @@ def _persist_professional_research_cycle(
         cycle_db = cycle_repository._database
         if journal_db.database_path.resolve() != cycle_db.database_path.resolve():
             raise ValueError("Journal y Research Cycle deben compartir la misma base SQLite.")
+        if synthetic_backtest is not None and _backtest_service().repository._database.database_path.resolve() != cycle_db.database_path.resolve():
+            raise ValueError("Backtest, Journal y Research Cycle deben compartir SQLite.")
         if market_reference is not None:
             if (owner_id is None or market_reference_repository._database.database_path.resolve()
                     != cycle_db.database_path.resolve()):
@@ -445,6 +475,12 @@ def _persist_professional_research_cycle(
         cycle_repository.initialize()
         with journal_db.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if synthetic_backtest is not None:
+                current_artifact = _backtest_service().get(
+                    artifact_hash=synthetic_backtest["artifactHash"], owner_id=owner_id, connection=connection,
+                )
+                if canonical_hash(current_artifact) != canonical_hash(synthetic_backtest):
+                    raise ValueError("El artefacto de backtest cambió antes de persistir el ciclo.")
             for source_hash, package_hash in (source_cycles or {}).items():
                 source_record = _read_source_cycle(connection, source_hash, owner_id)
                 if canonical_hash(source_record["package"]) != package_hash:
@@ -502,7 +538,8 @@ def post_research_cycle_from_persisted_market_history(
     owner_id = _owner_id(account)
     if request.journalId.startswith(_PRIVATE_JOURNAL_PREFIX):
         raise HTTPException(status_code=400, detail="journalId utiliza un prefijo reservado.")
-    if any(_reserved_market_reference(item.sourceRef) or _reserved_reference(item.sourceRef, _SOURCE_CYCLE_PREFIX) for item in
+    if any(_reserved_market_reference(item.sourceRef) or _reserved_reference(item.sourceRef, _SOURCE_CYCLE_PREFIX)
+           or _reserved_reference(item.sourceRef, _BACKTEST_REFERENCE_PREFIX) for item in
            [*request.journalReferences, *request.contradictoryEvidence]):
         raise HTTPException(status_code=400, detail="Las referencias de histórico se generan exclusivamente en el servidor.")
     try:
@@ -783,6 +820,10 @@ def _read_professional_research_cycle(
                 if owner_id is None:
                     raise ValueError("Referencia privada sin propietario.")
                 market_reference_repository.get(source_ref[len(_MARKET_REFERENCE_PREFIX):], owner_id=owner_id)
+            if _reserved_reference(source_ref, _BACKTEST_REFERENCE_PREFIX):
+                if owner_id is None:
+                    raise ValueError("Backtest privado sin propietario.")
+                _backtest_service().get(artifact_hash=source_ref[len(_BACKTEST_REFERENCE_PREFIX):], owner_id=owner_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="No se pudo verificar la evidencia de histórico del ciclo.") from exc
 
