@@ -31,6 +31,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 32419200.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
             {
                 "symbol": "AAPL",
@@ -43,6 +45,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 38609800.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
         ]
 
@@ -62,7 +66,10 @@ def test_market_history_returns_normalized_data(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert isinstance(payload["provenance"]["latestObservationAgeDays"], int)
+    assert payload["provenance"]["latestObservationAgeDays"] >= 0
+    assert payload == {
         "data": [
             {
                 "symbol": "AAPL",
@@ -75,6 +82,8 @@ def test_market_history_returns_normalized_data(
                 "volume": 32419200.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
             {
                 "symbol": "AAPL",
@@ -87,8 +96,29 @@ def test_market_history_returns_normalized_data(
                 "volume": 38609800.0,
                 "change": None,
                 "changePercentage": None,
+                "sourceProvider": "yahoo",
+                "retrievedAt": "2026-10-05T21:40:00+00:00",
             },
-        ]
+        ],
+        "provenance": {
+            "retrievalMode": "current_provider_history",
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "licenceVerified": False,
+            "corporateActionsIndependentlyVerified": False,
+            "availableAt": None,
+            "historicalPointInTimeStatus": "not_verified",
+            "historyStatus": "available_unverified",
+            "observationCount": 2,
+            "firstObservedAt": "2026-08-27T04:00:00+00:00",
+            "lastObservedAt": "2026-08-28T04:00:00+00:00",
+            "missingVolumeCount": 0,
+            "missingRetrievalCount": 0,
+            "observationSpanDays": 1,
+            "latestObservationAgeDays": payload["provenance"]["latestObservationAgeDays"],
+            "sourceProviders": ["yahoo"],
+            "retrievedAt": "2026-10-05T21:40:00+00:00",
+        },
     }
 
 
@@ -116,6 +146,25 @@ def test_market_history_can_return_empty_list(
     assert response.status_code == 200
     assert response.json() == {
         "data": [],
+        "provenance": {
+            "retrievalMode": "current_provider_history",
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "licenceVerified": False,
+            "corporateActionsIndependentlyVerified": False,
+            "availableAt": None,
+            "historicalPointInTimeStatus": "not_verified",
+            "historyStatus": "empty",
+            "observationCount": 0,
+            "firstObservedAt": None,
+            "lastObservedAt": None,
+            "missingVolumeCount": 0,
+            "missingRetrievalCount": 0,
+            "observationSpanDays": None,
+            "latestObservationAgeDays": None,
+            "sourceProviders": [],
+            "retrievedAt": None,
+        },
     }
 
 
@@ -189,3 +238,77 @@ def test_market_history_requires_symbol() -> None:
     )
 
     assert response.status_code == 422
+
+
+import pytest
+
+
+@pytest.mark.parametrize("bad_history", [
+    [{"symbol": "MSFT", "close": 200, "sourceProvider": "yahoo"}],
+    [{"symbol": "AAPL"}, {"symbol": "MSFT"}],
+    [{"close": 200}],
+    [None],
+    None,
+    {"symbol": "AAPL"},
+])
+def test_market_history_rejects_untrusted_provider_identity(monkeypatch, bad_history) -> None:
+    """Never display a mismatched or malformed history under a selected ticker."""
+    monkeypatch.setattr(market.market_service, "get_history", lambda **_: bad_history)
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert "incompatibles" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("invalid_close", [None, True, float("nan"), float("inf"), 0, -1, "120.5"])
+def test_market_history_rejects_invalid_close_before_chart(monkeypatch, invalid_close) -> None:
+    """No invalid closing price may be presented as usable chart history."""
+    monkeypatch.setattr(
+        market.market_service,
+        "get_history",
+        lambda **_: [{
+            "symbol": "AAPL",
+            "timestamp": "2026-11-12T21:00:00+00:00",
+            "close": invalid_close,
+            "sourceProvider": "yahoo",
+        }],
+    )
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "El histórico contiene precios de cierre inválidos."
+
+
+@pytest.mark.parametrize("bad_timestamp", [None, "", "2026-11-12T21:00:00", "not-a-date", "2999-01-01T00:00:00+00:00"])
+def test_market_history_rejects_invalid_observation_time(monkeypatch, bad_timestamp) -> None:
+    """A malformed, timezone-naive or future bar cannot enter a chart."""
+    monkeypatch.setattr(
+        market.market_service,
+        "get_history",
+        lambda **_: [{
+            "symbol": "AAPL",
+            "timestamp": bad_timestamp,
+            "close": 120.5,
+            "sourceProvider": "yahoo",
+        }],
+    )
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "El histórico contiene fechas de observación inválidas."
+
+
+@pytest.mark.parametrize("invalid_volume", [True, -1, float("nan"), float("inf"), "1000"])
+def test_market_history_rejects_invalid_traded_volume(monkeypatch, invalid_volume) -> None:
+    """Malformed liquidity evidence must not enter the Market chart."""
+    monkeypatch.setattr(
+        market.market_service,
+        "get_history",
+        lambda **_: [{
+            "symbol": "AAPL",
+            "timestamp": "2026-11-12T21:00:00+00:00",
+            "close": 120.5,
+            "volume": invalid_volume,
+            "sourceProvider": "yahoo",
+        }],
+    )
+    response = client.get("/api/v1/market/history", params={"symbol": "AAPL"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "El histórico contiene volúmenes negociados inválidos."

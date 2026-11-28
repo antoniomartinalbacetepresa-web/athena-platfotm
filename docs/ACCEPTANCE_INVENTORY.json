@@ -1,0 +1,1165 @@
+{
+  "schema": "athena.acceptance-inventory.v1",
+  "baselineAt": "2026-11-02",
+  "baselineCommit": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+  "sources": [
+    "docs/MASTER_PROJECT.md",
+    "docs/ROADMAP.md"
+  ],
+  "scopeMappingReviewed": {
+    "core": false,
+    "product": false
+  },
+  "mandatoryGates": [
+    {
+      "id": "exact_sha_ci",
+      "verified": true,
+      "evidence": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+    },
+    {
+      "id": "deployed_end_to_end",
+      "verified": false,
+      "evidence": null
+    },
+    {
+      "id": "market_history_365",
+      "verified": false,
+      "evidence": null
+    },
+    {
+      "id": "independent_corporate_actions",
+      "verified": false,
+      "evidence": null
+    },
+    {
+      "id": "prospective_oos",
+      "verified": false,
+      "evidence": null
+    },
+    {
+      "id": "security_recovery_operations",
+      "verified": false,
+      "evidence": null
+    },
+    {
+      "id": "required_branch_checks",
+      "verified": false,
+      "evidence": null
+    }
+  ],
+  "criteria": [
+    {
+      "id": "ARCH-API",
+      "module": "architecture_backend",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "API y contratos de backend probados sin rutas de órdenes",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_auth_api.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "ARCH-PERSIST",
+      "module": "architecture_backend",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Persistencia canónica de síntesis y relectura",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_recommendation_athena_synthesis_repository.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "NAV-ROUTES",
+      "module": "welcome_navigation",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Navegación principal accesible desde Dashboard",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "app/test/features/dashboard/dashboard_header_navigation_test.dart",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "NAV-A11Y",
+      "module": "welcome_navigation",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Aceptación accesible de bienvenida, rutas y teclado",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "DASH-SYNTH",
+      "module": "dashboard",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Dashboard representa síntesis canónica sin autoridad",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "app/test/features/dashboard/dashboard_athena_synthesis_wiring_test.dart",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "DASH-REAL",
+      "module": "dashboard",
+      "scopes": [
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Dashboard desplegado refleja Market, News y ATHENA auténticos",
+      "dependencies": [
+        "DASH-SYNTH",
+        "MARKET-LIVE",
+        "NEWS-REAL"
+      ],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "MARKET-QUOTE",
+      "module": "market",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Market selecciona símbolo, muestra precio y procedencia declarada",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": true,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "app/test/features/market/market_professional_research_entry_test.dart",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: VerifiedMarketQuotePanel comprueba símbolo, precio finito positivo, proveedor, marcas temporales, identidad interna y rechaza respuestas contradictorias; market_professional_research_entry_test.dart cubre identidad, error, carga, cambio de símbolo y cotización antigua. Evidencia de CI previa para este contrato: SHA d5305a23f82308c46f840075043dbf1ef1f2dc48. Esta revisión NO acredita proveedor real, licencia, mercado desplegado, precio en tiempo real ni PIT de dosier; quedan en MARKET-LIVE, DATA-LICENSE y AI-REAL."
+    },
+    {
+      "id": "MARKET-ASSETS",
+      "module": "market",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Cobertura funcional acciones, ETF, índices, materias primas, divisas y cripto",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "MARKET-LIVE",
+      "module": "market",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Cotizaciones auténticas con permiso de uso y reloj real",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "NEWS-FEED",
+      "module": "news",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Contrato API de noticias y procedencia declarada",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": true,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_news_api.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_google_news_service.py",
+          "sha": "d9890b99e26054090c52ea845e81c044e23a526c",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41450778642"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_public_latest_private_cycle_isolation.py",
+          "sha": "67f042de3793959ac7c0f254541b5c9eed600f2f",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41549234901"
+        }
+      ],
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: GoogleNewsService conserva consulta, proveedor, fechas UTC, editor y enlace HTTPS; backend/tests/test_google_news_service.py y app/test/features/news/verified_news_backend_contract_test.dart verifican contratos de lectura y ausencia de autoridad. CI push/PR del SHA d9890b99e26054090c52ea845e81c044e23a526c superadas. Esta revisión acredita exclusivamente implemented_ci; las nuevas barreras contra timestamps futuros de esta sesión necesitan su propia CI. NO acredita licencia de redistribución, identidad real del emisor, cobertura/actualidad en despliegue ni fuente PIT histórica. Mantener NEWS-REAL y deployed_end_to_end bloqueados."
+    },
+    {
+      "id": "NEWS-SYNTH",
+      "module": "news",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Síntesis de noticias separada del feed y con límites",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_news_synthesis_service.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "NEWS-REAL",
+      "module": "news",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Noticias reales con atribución y relación de emisor contrastada",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "PORT-OWNER",
+      "module": "portfolio",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Aislamiento y limpieza de cartera por propietario",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_auth_portfolio_ledger_cleanup_e2e.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "PORT-FX",
+      "module": "portfolio",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Valoración FX con errores explícitos en Flutter",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "app/test/features/portfolio/authenticated_portfolio_fx_valuation_view_test.dart",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "PORT-DEPLOY",
+      "module": "portfolio",
+      "scopes": [
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Dos propietarios reales de prueba y cierre de sesión en staging",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "PROFILE-AUTH",
+      "module": "profile_auth",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Ciclo de autenticación y sesiones probado",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_auth_account_lifecycle_e2e.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "PROFILE-RECOVERY",
+      "module": "profile_auth",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Recuperación de cuenta segura en tests",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_auth_password_recovery_lifecycle_e2e.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "PROFILE-SMTP",
+      "module": "profile_auth",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Entrega SMTP y recuperación verificadas en staging",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "AI-CYCLE",
+      "module": "athena_ai",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Ciclo Radar-Noticias-ATHENA ligado por hashes",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": true,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_recommendation_athena_synthesis_cycle_api.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_live_company_news_research_cycle_api.py",
+          "sha": "96fa70aecee79a62210513b113401b477b420501",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41516207568"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_live_company_news_research_cycle_api.py",
+          "sha": "42c9593a64b31b4a2d12f17d3309fef5585b7336",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41524576864"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_private_research_synthesis_cycle_api.py",
+          "sha": "58dc0379351375cac3aacef1a44e2960b8eaaead",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41541865842"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_public_latest_private_cycle_isolation.py",
+          "sha": "67f042de3793959ac7c0f254541b5c9eed600f2f",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41549234901"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_live_company_news_research_cycle_api.py",
+          "sha": "70604dc28b631a9a55bb456390423f9f49cd59de",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41557589539"
+        }
+      ],
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: test_recommendation_athena_synthesis_cycle_api.py prueba con TestClient y SQLite temporal el ciclo Radar→News→ATHENA, hashes canónicos, persistencia/relectura, cobertura completa de evidencia, rechazo de huellas falsas, ausencia de promoción automática y modelExecutionVerified=false. Contraste con servicios/repositories de síntesis y CI push/PR previamente verdes para SHA fa2c5a109d18a66792842f37b41f410341da0c2a. Solo acredita implemented_ci con entradas sintéticas; NO acredita proveedor real, ejecución Ollama en producción, fuentes licenciadas, ciclo desplegado ni PIT operacional. Mantener AI-REAL y deployed_end_to_end bloqueados. Incremento 2026-11-02 (SHA 96fa70aecee79a62210513b113401b477b420501): test HTTP+SQLite de noticias empresariales obtenidas en backend -> ciclo persistido/releído, sin fabricar tesis ni evidencia contradictoria. La CI push/PR del SHA superó backend, Flutter y release gate. Sin subida de nivel: el proveedor se simuló en test; NO hay evidencia de licencia, identidad externa, despliegue ni inferencia Ollama real. Incremento 2026-11-02 (SHA 42c9593a64b31b4a2d12f17d3309fef5585b7336): la ruta POST desde noticias vivas exige cuenta JWT autenticada antes de acceder al RSS o escribir; seis casos nuevos rechazan ausencia de bearer y contexto de propietario inválido sin efectos. Backend 4284 pruebas y CI PR verde. La ruta POST directa y la lectura por hash permanecen sin aislamiento por propietario: NO acreditar privacidad multiusuario ni despliegue. Sin ascenso de nivel. Incremento de aislamiento 2026-11-02 (SHAs b8eb96132775e92a7f35586a356103ec5eb4ad90 y 4f8c792aff36c0a975f025051a5a12d5ea7678d0): el puente de noticias en vivo vincula atómicamente cycleHash a owner_id, usa namespace de Journal por propietario y permite recuperación mediante GET autenticado /research-cycle/private/{cycle_hash}. Las rutas públicas de ciclo y lineage rechazan el namespace privado y se igualan los errores 404 de ciclo ajeno e inexistente. Pruebas de dos propietarios añadidas; la CI del SHA final se verificará separadamente. No se declara aislamiento global: endpoints heredados, síntesis privadas, cierre de cuenta y despliegue multiusuario requieren auditoría y aceptación. No hay elevación de nivel ni datos reales acreditados. Incremento de continuación privada 2026-11-03 (SHA 58dc0379351375cac3aacef1a44e2960b8eaaead): rutas autenticadas por propietario para POST/GET News synthesis y POST/GET/contrato ATHENA synthesis; tests HTTP+SQLite con ciclo privado y dos propietarios, persistencia y relectura canónica, rechazo anónimo/ajeno/público y modelExecutionVerified=false. CI push 41541865842 y PR 41541873196 verdes, backend 4288 pruebas. Mantener implemented_ci: entradas sintéticas, sin evidencia de proveedor autorizado, ejecución Ollama real, aislamiento integral de rutas heredadas o despliegue. Incremento 2026-11-03 (SHA 70604dc28b631a9a55bb456390423f9f49cd59de): índice GET autenticado /research-cycle/private con paginación keyset, filtro por símbolo y revalidación de paquetes canónicos. Tests HTTP/SQLite verifican separación de dos propietarios, 401 anónimo, filtros inválidos, ausencia de llamadas RSS y error 500 fail-closed ante package_json alterado. CI push 41557589539 y PR 41557595571 verdes; 4298 backend tests. No se acredita aislamiento de rutas heredadas, integración Flutter, licencias, datos reales ni despliegue. Nivel implemented_ci sin cambios."
+    },
+    {
+      "id": "AI-OLLAMA",
+      "module": "athena_ai",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Adaptador Ollama JSON opt-in sin autoridad",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_ollama_athena_research_adapter.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "AI-REAL",
+      "module": "athena_ai",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Síntesis real de ciclo persistido con fuentes verificadas",
+      "dependencies": [
+        "AI-CYCLE",
+        "MARKET-LIVE",
+        "NEWS-REAL"
+      ],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "HIST-PIT",
+      "module": "market_history",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Observaciones históricas y límites PIT comprobados",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_market_history_pit_current_depth.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "HIST-365",
+      "module": "market_history",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "365 días y continuidad del 100% del universo elegible real",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "HIST-CORP",
+      "module": "market_history",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Splits y dividendos reconciliados con segunda fuente independiente",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "LEARN-ENGINE",
+      "module": "continuous_learning",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Calibración y drift reproducibles con políticas de promoción",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "LEARN-OOS",
+      "module": "continuous_learning",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Predicciones precomprometidas, maduradas y evaluadas OOS real",
+      "dependencies": [
+        "PREDICT",
+        "HIST-365"
+      ],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "PERS-ENCRYPT",
+      "module": "personalization",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Preferencias cifradas por propietario y sin autoridad de recomendación",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "PERS-OPS",
+      "module": "personalization",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Rotación de claves y aislamiento operativos acreditados",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "SEC-BOUND",
+      "module": "security",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "JWT y minimización de datos sensibles probados",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_auth_token_privacy.py",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "SEC-OPS",
+      "module": "security",
+      "scopes": [
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Custodia de secretos, backup externo y recuperación real",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "CI-VALIDATE",
+      "module": "testing_ci",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "CI backend, Flutter, Chrome y build release del SHA",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": false,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": ".github/workflows/validate.yml",
+          "sha": "d5305a23f82308c46f840075043dbf1ef1f2dc48",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41419030942"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "CI-PROTECT",
+      "module": "testing_ci",
+      "scopes": [
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Protección de rama y checks obligatorios",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "INVEST-13F",
+      "module": "investors",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Investigación de gestores SEC 13F con identidad y procedencia",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "RISK-FACTOR",
+      "module": "factor_risk",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Riesgo factorial y explicaciones contrastadas",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "VAL-REVERSE",
+      "module": "reverse_valuation",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "Valoración inversa PIT reproducible y explicable",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "GAP-EXPECT",
+      "module": "expectations_gap",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Expectations Gap con evidencia de expectativas",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "ASYM-SCEN",
+      "module": "scenario_asymmetry",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Asimetría de escenarios con incertidumbre",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "CAT-EVID",
+      "module": "catalysts",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Catalizadores y fechas de disponibilidad verificadas",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "THESIS-INV",
+      "module": "thesis_invalidation",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Invalidación de tesis trazable",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "ATTR-PERF",
+      "module": "performance_attribution",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Atribución de rendimiento reconciliada",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "JOURNAL",
+      "module": "investment_journal",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Diario append-only y revisión humana",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "DEVILS",
+      "module": "devils_advocate",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Contradicciones y Devil's Advocate auditables",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "RADAR",
+      "module": "athena_radar",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Radar de evidencias y urgencias con PIT",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "DATA-LICENSE",
+      "module": "data_provenance",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Licencias, proveedores y atribución independientes verificadas",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "DATA-FX",
+      "module": "data_provenance",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "FX, moneda y resolución de identidad canónica",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "MACRO-ENGINE",
+      "module": "analysis_engines",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Macro, fundamental, técnico, noticias y sentimiento integrados",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "ALERTS",
+      "module": "alerts_predictions",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Alertas informativas sin automatización de órdenes",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "PREDICT",
+      "module": "alerts_predictions",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Probabilidades calibradas con evidencia OOS real",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "MULTILANG",
+      "module": "languages",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Español y futura localización de idiomas del plan",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "COMMUNITY",
+      "module": "community",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Comunidad y comparación de inversores con privacidad",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "ML-OWN",
+      "module": "future_ml",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Integración esencial o control transversal",
+      "acceptance": "ML propio y aprendizaje continuo con validación prospectiva",
+      "dependencies": [],
+      "requiredLevel": "real_data",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "OPS-DEPLOY",
+      "module": "deployment",
+      "scopes": [
+        "product"
+      ],
+      "weight": 5,
+      "weightRationale": "Bloqueo de seguridad, datos reales o recorrido crítico",
+      "acceptance": "Staging y entrega operativa reproducibles, accesibles y seguras",
+      "dependencies": [],
+      "requiredLevel": "deployed",
+      "status": "blocked",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": [
+        "Falta evidencia operacional autorizada; no sustituir por fixtures o CI."
+      ]
+    },
+    {
+      "id": "UX-ACCESS",
+      "module": "ux_accessibility",
+      "scopes": [
+        "product"
+      ],
+      "weight": 3,
+      "weightRationale": "Capacidad necesaria del alcance, menor dependencia inmediata",
+      "acceptance": "Aceptación UX, accesibilidad y estados de error completos",
+      "dependencies": [],
+      "requiredLevel": "implemented_ci",
+      "status": "pending",
+      "reviewed": false,
+      "evidence": [],
+      "blockers": []
+    },
+    {
+      "id": "DIV-ID-PIT",
+      "module": "dividend_total_return",
+      "scopes": [
+        "core",
+        "product"
+      ],
+      "weight": 4,
+      "weightRationale": "Identidad del emisor y corte PIT son condiciones de seguridad para métricas económicas visibles en Market",
+      "acceptance": "La evidencia diagnóstica de dividendos se vincula al símbolo solicitado y al dosier, rechazando sustituciones entre emisores sin elevar autoridad",
+      "dependencies": [
+        "MARKET-QUOTE",
+        "HIST-PIT"
+      ],
+      "requiredLevel": "implemented_ci",
+      "status": "implemented_ci",
+      "reviewed": true,
+      "evidence": [
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_recommendation_dividend_evidence_contract_service.py",
+          "sha": "bb92c749afc59d17d734e080fea7ea0fde3c4e47",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41449926761"
+        },
+        {
+          "kind": "ci",
+          "path": "backend/tests/test_recommendation_professional_dossier_service.py",
+          "sha": "bb92c749afc59d17d734e080fea7ea0fde3c4e47",
+          "url": "https://github.com/antoniomartinalbacetepresa-web/athena-platfotm/actions/runs/41449926761"
+        }
+      ],
+      "blockers": [],
+      "reviewNote": "Revisión técnica 2026-11-02: contrato canónico y dosier rechazan dividendos de otro símbolo; casos con emisor distinto, ausente y normalización de mayúsculas. CI push/PR del SHA bb92c749afc59d17d734e080fea7ea0fde3c4e47 completadas correctamente. Solo implemented_ci con fixtures; sin evidencia de licencia, fuentes reales, despliegue o calidad económica de dividendos."
+    }
+  ]
+}

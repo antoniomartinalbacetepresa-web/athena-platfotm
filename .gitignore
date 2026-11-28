@@ -117,3 +117,6 @@ Desktop.ini
 app_v1/
 
 **/*.tmp
+
+# Owner-specific runtime ledgers and stable OS lock/tombstone files
+/backend/var/athena/owners/

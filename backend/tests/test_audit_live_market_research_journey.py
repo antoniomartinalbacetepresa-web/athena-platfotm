@@ -1,0 +1,578 @@
+"""Offline contract tests: fixtures never constitute live-market evidence."""
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from scripts.audit_live_market_research_journey import (
+    AuditBlocked, MODULES, audit_journey, make_fetch,
+)
+
+NOW = datetime(2026, 11, 2, 6, 0, tzinfo=timezone.utc)
+
+
+def _responses():
+    stamp = (NOW - timedelta(minutes=10)).isoformat()
+    return {
+        "/api/v1/market/quote": {"data": {
+            "symbol": "AAPL", "close": 123.45, "sourceProvider": "yahoo",
+            "retrievedAt": stamp, "timestamp": stamp,
+            "quoteMode": "provider_fast_info", "realTimePriceVerified": False,
+            "historicalPointInTimeEligible": False,
+            "canonicalIdentityStatus": "matched_internal_listing", "instrumentId": 17,
+        }},
+        "/api/v1/market/history": {
+            "data": [
+                {"symbol": "AAPL", "close": 101.0, "adjustedClose": 101.0, "volume": 1000000,
+                 "sourceProvider": "yahoo", "timestamp": (NOW - timedelta(days=380)).isoformat(),
+                 "retrievedAt": stamp, "dividend": None, "stockSplit": None},
+                {"symbol": "AAPL", "close": 123.0, "adjustedClose": 122.0, "volume": 1100000,
+                 "sourceProvider": "yahoo", "timestamp": (NOW - timedelta(days=3)).isoformat(),
+                 "retrievedAt": stamp, "dividend": 0.2, "stockSplit": None},
+            ],
+            "provenance": {"retrievalMode": "current_provider_history",
+                           "historicalPointInTimeEligible": False,
+                           "productionCoverageClaimed": False,
+                           "sourceProviders": ["yahoo"], "retrievedAt": stamp},
+        },
+        "/api/v1/news/feed": {
+            "query": '"AAPL" stock earnings', "advisoryStatus": "no_advice",
+            "productionEligible": False, "sourceProvider": "google_news_rss",
+            "retrievedAt": stamp,
+            "policy": {"automaticTrading": False, "athenaRecommendationInfluence": False},
+            "items": [{"publisher": "Example", "sourceProvider": "google_news_rss",
+                       "publishedAt": stamp, "retrievedAt": stamp,
+                       "articleUrl": "https://news.example.org/article"}],
+        },
+        "/api/v1/recommendations/production/professional-dossier": {"data": {
+            "symbol": "AAPL", "instrumentId": 17, "asOf": stamp,
+            "advisoryStatus": "no_advice", "readOnly": True,
+            "productionEligible": False, "allocationEligible": False,
+            "executionEligible": False, "orderRoutingEligible": False,
+            "automaticTrading": False,
+            "professionalModules": {
+                name: {"productionEligible": False, "status": "pending", "evidence": None}
+                for name in MODULES
+            },
+        }},
+    }
+
+
+def _audit(responses):
+    seen = []
+
+    def fetch(path, params):
+        seen.append((path, params))
+        return responses[path]
+
+    return audit_journey(fetch, symbol="aapl", now=NOW), seen
+
+
+def test_audit_reports_gaps_without_fabricating_evidence():
+    report, seen = _audit(_responses())
+    assert report["status"] == "incomplete_evidence"
+    assert report["dossier"]["evidenceAttachedCount"] == 0
+    assert len(report["dossier"]["modulesWithoutEvidence"]) == 11
+    assert seen[-1][1] == {"symbol": "AAPL", "instrumentId": "17"}
+    assert report["history"]["has365CalendarDaySpan"] is True
+    assert report["history"]["latestObservationAgeCalendarDays"] == 3
+    assert report["history"]["current365DayCoverageCandidate"] is True
+    assert report["history"]["continuityVerified"] is False
+    assert report["history"]["candidateWeekdayGapCount"] > 0
+    assert report["history"]["dividendEventRows"] == 1
+    assert report["completeResearchVerified"] is False
+    assert report["quote"]["realTimeVerified"] is False
+    assert report["news"]["issuerIdentityIndependentlyVerified"] is False
+
+
+def test_missing_volume_blocks_partial_research_even_with_fresh_price_news_and_modules():
+    responses = _responses()
+    modules = responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]
+    modules["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/history"]["data"][0].pop("volume")
+    report, _ = _audit(responses)
+    assert report["history"]["volumeMissingCount"] == 1
+    assert report["history"]["volumeCoverageComplete"] is False
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_partial_evidence_is_not_claimed_as_full_coverage():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    report, _ = _audit(responses)
+    assert report["status"] == "partial_research_evidence"
+    assert report["dossier"]["modulesWithEvidence"] == ["factorRisk"]
+    assert report["dossier"]["evidenceAttachedCount"] == 1
+
+
+@pytest.mark.parametrize("path,mutate", [
+    ("/api/v1/market/quote", lambda x: x["data"].update(symbol="MSFT")),
+    ("/api/v1/market/quote", lambda x: x["data"].update(close=float("nan"))),
+    ("/api/v1/market/quote", lambda x: x["data"].update(instrumentId=18, canonicalIdentityStatus="unresolved")),
+    ("/api/v1/market/history", lambda x: x["data"][0].update(symbol="MSFT")),
+    ("/api/v1/market/history", lambda x: x["data"][0].update(close=-1.0)),
+    ("/api/v1/market/history", lambda x: x["provenance"].update(historicalPointInTimeEligible=True)),
+    ("/api/v1/news/feed", lambda x: x.update(query="stock market")),
+    ("/api/v1/news/feed", lambda x: x["items"][0].update(articleUrl="http://insecure.example.org/a")),
+    ("/api/v1/news/feed", lambda x: x["items"][0].update(sourceProvider="another_provider")),
+    ("/api/v1/news/feed", lambda x: x["policy"].update(automaticTrading=True)),
+    ("/api/v1/recommendations/production/professional-dossier", lambda x: x["data"].update(instrumentId=18)),
+    ("/api/v1/recommendations/production/professional-dossier", lambda x: x["data"].update(readOnly=False)),
+    ("/api/v1/recommendations/production/professional-dossier", lambda x: x["data"]["professionalModules"].pop("factorRisk")),
+])
+def test_mismatched_or_unsafe_responses_fail_closed(path, mutate):
+    responses = _responses()
+    mutate(responses[path])
+    with pytest.raises(AuditBlocked):
+        _audit(responses)
+
+
+
+@pytest.mark.parametrize("url", [
+    "https://bad_host.publisher.org/article",
+    "https://-bad.publisher.org/article",
+    "https://bad-.publisher.org/article",
+    "https://a..publisher.org/article",
+])
+def test_malformed_publisher_dns_labels_fail_closed(url):
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
+    with pytest.raises(AuditBlocked, match="provenance"):
+        _audit(responses)
+
+def test_future_timestamps_fail_closed():
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"]["retrievedAt"] = (NOW + timedelta(hours=1)).isoformat()
+    with pytest.raises(AuditBlocked, match="Future timestamp"):
+        _audit(responses)
+
+
+def test_only_https_or_local_loopback_http_allowed():
+    for origin in ("http://example.com", "https://user:pass@example.com",
+                   "https://example.com/path", "https://example.com?x=1"):
+        with pytest.raises(AuditBlocked):
+            make_fetch(origin)
+    assert callable(make_fetch("http://127.0.0.1:8000"))
+
+
+@pytest.mark.parametrize("symbol", ["AAPL\\\\", "AAPL/US", "", "A" * 22])
+def test_invalid_symbol_never_reaches_live_transport(symbol):
+    def fetch(_path, _params):
+        raise AssertionError("invalid symbol must not reach network")
+    with pytest.raises(AuditBlocked, match="Invalid symbol"):
+        audit_journey(fetch, symbol=symbol, now=NOW)
+
+
+def test_history_without_observations_reports_explicit_gap_not_coverage():
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"] = []
+    responses["/api/v1/market/history"]["provenance"]["sourceProviders"] = []
+    responses["/api/v1/market/history"]["provenance"]["retrievedAt"] = None
+    report, _ = _audit(responses)
+    assert report["history"]["rows"] == 0
+    assert report["history"]["has365CalendarDaySpan"] is False
+    assert report["history"]["firstObservationUtcDate"] is None
+
+
+def test_duplicate_daily_history_observation_fails_closed():
+    responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    rows.append(dict(rows[0]))
+    with pytest.raises(AuditBlocked, match="Duplicate"):
+        _audit(responses)
+
+
+def test_history_corporate_actions_must_be_finite_positive():
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["stockSplit"] = float("nan")
+    with pytest.raises(AuditBlocked, match="corporate action"):
+        _audit(responses)
+
+
+def test_news_published_after_retrieval_is_rejected():
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["publishedAt"] = (NOW + timedelta(minutes=4)).isoformat()
+    with pytest.raises(AuditBlocked, match="temporal provenance"):
+        _audit(responses)
+
+
+def test_year_long_but_stale_history_is_not_current_coverage():
+    responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["timestamp"] = (NOW - timedelta(days=395)).isoformat()
+    rows[1]["timestamp"] = (NOW - timedelta(days=20)).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["has365CalendarDaySpan"] is True
+    assert report["history"]["latestObservationAgeCalendarDays"] == 20
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["history"]["continuityVerified"] is False
+
+
+@pytest.mark.parametrize("age,expected", [(7, True), (8, False)])
+def test_current_history_candidate_requires_recent_last_observation(age, expected):
+    responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["timestamp"] = (NOW - timedelta(days=395)).isoformat()
+    rows[1]["timestamp"] = (NOW - timedelta(days=age)).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is expected
+    assert report["history"]["productionCoverageClaimed"] is False
+
+
+def test_recent_history_with_less_than_one_year_is_not_coverage_candidate():
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["timestamp"] = (
+        NOW - timedelta(days=300)
+    ).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is False
+
+
+def test_quote_and_news_feed_freshness_are_reported_separately():
+    responses = _responses()
+    old = (NOW - timedelta(hours=30)).isoformat()
+    responses["/api/v1/market/quote"]["data"].update(retrievedAt=old, timestamp=old)
+    report, _ = _audit(responses)
+    assert report["quote"]["staleOver24Hours"] is True
+    assert report["news"]["feedStaleOver24Hours"] is False
+    responses["/api/v1/news/feed"]["retrievedAt"] = old
+    responses["/api/v1/news/feed"]["items"][0].update(retrievedAt=old, publishedAt=old)
+    report, _ = _audit(responses)
+    assert report["news"]["feedStaleOver24Hours"] is True
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_quote_and_news_feed_have_explicit_nonstale_flags():
+    report, _ = _audit(_responses())
+    assert report["quote"]["staleOver24Hours"] is False
+    assert report["news"]["feedStaleOver24Hours"] is False
+
+
+def test_stale_quote_or_news_cannot_be_reported_as_partial_current_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    assert _audit(responses)[0]["status"] == "partial_research_evidence"
+    old = (NOW - timedelta(hours=30)).isoformat()
+    responses["/api/v1/market/quote"]["data"].update(retrievedAt=old, timestamp=old)
+    assert _audit(responses)[0]["status"] == "stale_research_evidence"
+    responses["/api/v1/market/quote"]["data"].update(retrievedAt=(NOW - timedelta(minutes=10)).isoformat(), timestamp=(NOW - timedelta(minutes=10)).isoformat())
+    responses["/api/v1/news/feed"]["retrievedAt"] = old
+    responses["/api/v1/news/feed"]["items"][0].update(retrievedAt=old, publishedAt=old)
+    assert _audit(responses)[0]["status"] == "stale_research_evidence"
+
+
+def test_stale_history_cannot_masquerade_as_current_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    rows = responses["/api/v1/market/history"]["data"]
+    rows[0]["timestamp"] = (NOW - timedelta(days=395)).isoformat()
+    rows[1]["timestamp"] = (NOW - timedelta(days=20)).isoformat()
+    report, _ = _audit(responses)
+    assert report["quote"]["staleOver24Hours"] is False
+    assert report["news"]["feedStaleOver24Hours"] is False
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_missing_history_cannot_be_reported_as_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/history"]["data"] = []
+    responses["/api/v1/market/history"]["provenance"]["sourceProviders"] = []
+    responses["/api/v1/market/history"]["provenance"]["retrievedAt"] = None
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["dossier"]["evidenceAttachedCount"] == 1
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_short_history_cannot_be_reported_as_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/history"]["data"][0]["timestamp"] = (NOW - timedelta(days=300)).isoformat()
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is False
+    assert report["status"] == "incomplete_evidence"
+
+
+def test_stale_dossier_cannot_masquerade_as_current_partial_research():
+    responses = _responses()
+    dossier = responses["/api/v1/recommendations/production/professional-dossier"]["data"]
+    dossier["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    assert _audit(responses)[0]["status"] == "partial_research_evidence"
+    dossier["asOf"] = (NOW - timedelta(hours=30)).isoformat()
+    report, _ = _audit(responses)
+    assert report["status"] == "stale_research_evidence"
+    assert report["dossier"]["staleOver24Hours"] is True
+    assert report["dossier"]["ageHours"] == 30.0
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_dossier_exposes_age_without_claiming_production():
+    report, _ = _audit(_responses())
+    assert report["dossier"]["staleOver24Hours"] is False
+    assert report["dossier"]["ageHours"] == 0.17
+    assert report["completeResearchVerified"] is False
+
+
+def test_old_quote_observation_is_stale_even_when_just_retrieved():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/quote"]["data"]["timestamp"] = (
+        NOW - timedelta(days=3)
+    ).isoformat()
+    report, _ = _audit(responses)
+    assert report["quote"]["staleOver24Hours"] is False
+    assert report["quote"]["observationStaleOver24Hours"] is True
+    assert report["quote"]["observationAgeHours"] == 72.0
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_quote_observation_and_retrieval_are_distinct():
+    report, _ = _audit(_responses())
+    assert report["quote"]["observationStaleOver24Hours"] is False
+    assert report["quote"]["observedAt"] == report["quote"]["retrievedAt"]
+
+
+def test_old_news_article_is_not_refreshed_by_a_new_feed_retrieval():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    article = responses["/api/v1/news/feed"]["items"][0]
+    article["publishedAt"] = (NOW - timedelta(days=9)).isoformat()
+    report, _ = _audit(responses)
+    assert report["news"]["feedStaleOver24Hours"] is False
+    assert report["news"]["newestArticleStaleOver7Days"] is True
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_recent_article_and_empty_feed_have_explicit_recency_states():
+    report, _ = _audit(_responses())
+    assert report["news"]["newestArticleStaleOver7Days"] is False
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"] = []
+    report, _ = _audit(responses)
+    assert report["news"]["newestArticleStaleOver7Days"] is None
+    assert report["news"]["newestArticleAgeHours"] is None
+    assert report["status"] == "incomplete_evidence"
+
+
+def test_history_volume_coverage_is_explicit_not_inferred_from_prices():
+    responses = _responses()
+    rows = responses["/api/v1/market/history"]["data"]
+    for row in rows:
+        row.pop("volume")
+    report, _ = _audit(responses)
+    assert report["history"]["volumeMissingCount"] == 2
+    assert report["history"]["volumeCoverageComplete"] is False
+    rows[0]["volume"] = 1000000
+    rows[1]["volume"] = 0
+    report, _ = _audit(responses)
+    assert report["history"]["volumeMissingCount"] == 0
+    assert report["history"]["zeroVolumeSessionCount"] == 1
+    assert report["history"]["volumeCoverageComplete"] is True
+    assert report["completeResearchVerified"] is False
+
+
+@pytest.mark.parametrize("invalid", [-1, 1.5, float("nan"), True, "1000"])
+def test_invalid_historical_volume_fails_closed(invalid):
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["volume"] = invalid
+    with pytest.raises(AuditBlocked, match="invalid traded volume"):
+        _audit(responses)
+
+
+@pytest.mark.parametrize("session_date", ["not-a-date", "2026-11-03", "2026-11-02"])
+def test_fallback_quote_rejects_invalid_future_or_post_observation_session(session_date):
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"].update(
+        quoteMode="historical_daily_close_fallback",
+        priceSessionDate=session_date,
+        timestamp=(NOW - timedelta(days=1)).isoformat(),
+    )
+    with pytest.raises(AuditBlocked, match="session date"):
+        _audit(responses)
+
+
+def test_fallback_quote_accepts_valid_prior_session_without_claiming_realtime():
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"].update(
+        quoteMode="historical_daily_close_fallback",
+        priceSessionDate="2026-10-30",
+        timestamp=(NOW - timedelta(days=1)).isoformat(),
+    )
+    report, _ = _audit(responses)
+    assert report["quote"]["mode"] == "historical_daily_close_fallback"
+    assert report["quote"]["realTimeVerified"] is False
+    assert report["completeResearchVerified"] is False
+
+
+def test_populated_history_requires_batch_retrieval_provenance():
+    responses = _responses()
+    responses["/api/v1/market/history"]["provenance"]["retrievedAt"] = None
+    with pytest.raises(AuditBlocked, match="retrieval provenance missing"):
+        _audit(responses)
+
+
+def test_quote_and_history_provider_disagreement_is_visible_not_silently_reconciled():
+    responses = _responses()
+    responses["/api/v1/market/quote"]["data"]["sourceProvider"] = "independent_quote"
+    report, _ = _audit(responses)
+    assert report["history"]["quoteProviderIncludedInHistory"] is False
+    assert report["history"]["crossSourceContinuityVerified"] is False
+    assert report["completeResearchVerified"] is False
+    assert report["status"] == "incomplete_evidence"
+
+
+def test_matching_provider_does_not_prove_cross_source_continuity():
+    report, _ = _audit(_responses())
+    assert report["history"]["quoteProviderIncludedInHistory"] is True
+    assert report["history"]["crossSourceContinuityVerified"] is False
+
+
+def test_quote_provider_absent_from_history_does_not_claim_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    responses["/api/v1/market/quote"]["data"]["sourceProvider"] = "independent_quote_provider"
+    report, _ = _audit(responses)
+    assert report["history"]["quoteProviderIncludedInHistory"] is False
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("adjustedClose", None),
+    ("volume", 0),
+])
+def test_unadjusted_or_zero_liquidity_history_cannot_be_partial_research(field, value):
+    responses = _responses()
+    modules = responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]
+    modules["factorRisk"]["evidence"] = {"source": "example"}
+    assert _audit(responses)[0]["status"] == "partial_research_evidence"
+    responses["/api/v1/market/history"]["data"][0][field] = value
+    report, _ = _audit(responses)
+    assert report["status"] == "incomplete_evidence"
+    assert report["completeResearchVerified"] is False
+    assert report["dossier"]["evidenceAttachedCount"] == 1
+
+
+def test_audit_exposes_specific_missing_dependencies_without_claiming_acceptance():
+    responses = _responses()
+    responses["/api/v1/market/history"]["data"][0]["adjustedClose"] = None
+    responses["/api/v1/market/history"]["data"][1]["volume"] = 0
+    responses["/api/v1/news/feed"]["items"] = []
+    report, _ = _audit(responses)
+    assert report["status"] == "incomplete_evidence"
+    assert report["blockingReasons"] == [
+        "provider_usage_rights_unverified",
+        "historical_pit_unverified",
+        "history_volume_incomplete_or_illiquid",
+        "history_adjustments_missing",
+        "news_feed_empty",
+        "dossier_evidence_missing",
+    ]
+    assert report["completeResearchVerified"] is False
+
+
+def test_partial_evidence_keeps_operational_gates_unverified():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    report, _ = _audit(responses)
+    assert report["status"] == "partial_research_evidence"
+    assert report["blockingReasons"] == [
+        "provider_usage_rights_unverified",
+        "historical_pit_unverified",
+    ]
+    assert report["completeResearchVerified"] is False
+
+
+def test_live_journey_never_implies_source_license_from_provider_metadata():
+    report, _ = _audit(_responses())
+    assert "provider_usage_rights_unverified" in report["blockingReasons"]
+    assert "historical_pit_unverified" in report["blockingReasons"]
+    assert report["sourceRights"] == {
+        "quoteLicensedForResearchVerified": False,
+        "historyLicensedForResearchVerified": False,
+        "newsLicensedForResearchVerified": False,
+        "redistributionPermittedVerified": False,
+    }
+    assert report["completeResearchVerified"] is False
+
+
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1/article",
+    "https://192.168.1.4/article",
+    "https://[::1]/article",
+    "https://localhost.example.localhost/article",
+    "https://news.example.org./article",
+])
+def test_article_citation_rejects_ip_or_local_host(url):
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
+    with pytest.raises(AuditBlocked, match="provenance"):
+        _audit(responses)
+
+
+@pytest.mark.parametrize("url", [
+    "https://intranet.local/article",
+    "https://publisher.internal/story",
+    "https://news.test/story",
+    "https://news.invalid/story",
+    "https://news.example/story",
+    "https://hidden.onion/story",
+])
+def test_live_journey_rejects_reserved_nonpublic_publisher_domains(url):
+    responses = _responses()
+    responses["/api/v1/news/feed"]["items"][0]["articleUrl"] = url
+    with pytest.raises(AuditBlocked, match="provenance"):
+        _audit(responses)
+
+
+def test_stale_history_retrieval_blocks_current_partial_research():
+    responses = _responses()
+    responses["/api/v1/recommendations/production/professional-dossier"]["data"]["professionalModules"]["factorRisk"]["evidence"] = {"source": "example"}
+    old = (NOW - timedelta(hours=30)).isoformat()
+    history = responses["/api/v1/market/history"]
+    history["provenance"]["retrievedAt"] = old
+    for row in history["data"]:
+        row["retrievedAt"] = old
+    report, _ = _audit(responses)
+    assert report["history"]["current365DayCoverageCandidate"] is True
+    assert report["history"]["retrievalStaleOver24Hours"] is True
+    assert report["history"]["retrievalAgeHours"] == 30.0
+    assert "history_retrieval_stale" in report["blockingReasons"]
+    assert report["status"] == "stale_research_evidence"
+    assert report["completeResearchVerified"] is False
+
+
+def test_fresh_history_retrieval_does_not_claim_operational_authority():
+    report, _ = _audit(_responses())
+    assert report["history"]["retrievalStaleOver24Hours"] is False
+    assert report["history"]["retrievalAgeHours"] == 0.17
+    assert report["history"]["historicalPointInTimeEligible"] is False
+    assert report["completeResearchVerified"] is False
+
+
+def test_duplicate_news_article_url_fails_closed():
+    responses = _responses()
+    article = responses["/api/v1/news/feed"]["items"][0]
+    responses["/api/v1/news/feed"]["items"].append(dict(article))
+    with pytest.raises(AuditBlocked, match="Duplicate news article URL"):
+        _audit(responses)
+
+
+@pytest.mark.parametrize("variant", [
+    lambda url: url + "#headline",
+    lambda url: url.replace("https://", "https://", 1).replace("news.", "NEWS.", 1),
+])
+def test_same_publisher_article_with_url_variant_fails_closed(variant):
+    responses = _responses()
+    article = responses["/api/v1/news/feed"]["items"][0]
+    duplicate = dict(article)
+    duplicate["articleUrl"] = variant(article["articleUrl"])
+    responses["/api/v1/news/feed"]["items"].append(duplicate)
+    with pytest.raises(AuditBlocked, match="Duplicate news article URL"):
+        _audit(responses)

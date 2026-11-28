@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,10 +9,9 @@ import 'package:app/features/market/data/providers/athena_backend_market_data_pr
 
 void main() {
   group('AthenaBackendMarketDataProvider', () {
-    test('obtiene una cotización normalizada desde el backend', () async {
+    test('obtiene una cotización normalizada con provenance e identidad básica', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/market/quote');
-
         expect(request.url.queryParameters['symbol'], 'AAPL');
 
         return http.Response(
@@ -19,6 +19,17 @@ void main() {
             'data': {
               'symbol': 'AAPL',
               'timestamp': '2026-08-29T15:30:00Z',
+              'retrievedAt': '2026-08-29T15:30:02Z',
+              'sourceProvider': 'yahoo',
+              'quoteMode': 'provider_fast_info',
+              'realTimePriceVerified': false,
+              'historicalPointInTimeEligible': false,
+              'currency': 'usd',
+              'exchange': 'NMS',
+              'quoteType': 'EQUITY',
+              'instrumentId': 17,
+              'canonicalIdentityStatus': 'matched_internal_listing',
+              'exchangeTimezone': 'America/New_York',
               'open': 230.0,
               'high': 235.0,
               'low': 228.0,
@@ -51,17 +62,28 @@ void main() {
       expect(quote.volume, 50000000);
       expect(quote.change, 4.5);
       expect(quote.changePercentage, 1.96);
+      expect(quote.currency, 'USD');
+      expect(quote.exchange, 'NMS');
+      expect(quote.quoteType, 'EQUITY');
+      expect(quote.instrumentId, 17);
+      expect(quote.canonicalIdentityStatus, 'matched_internal_listing');
+      expect(quote.exchangeTimezone, 'America/New_York');
       expect(quote.providerId, 'athena_backend');
+      expect(quote.sourceProvider, 'yahoo');
+      expect(quote.quoteMode, 'provider_fast_info');
+      expect(quote.realTimePriceVerified, isFalse);
+      expect(quote.historicalPointInTimeEligible, isFalse);
+      expect(
+        quote.retrievedAt,
+        DateTime.parse('2026-08-29T15:30:02Z'),
+      );
     });
 
-    test('obtiene histórico y envía correctamente el periodo', () async {
+    test('obtiene histórico y conserva provenance', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/market/history');
-
         expect(request.url.queryParameters['symbol'], 'MSFT');
-
         expect(request.url.queryParameters['from'], '2026-01-01');
-
         expect(request.url.queryParameters['to'], '2026-08-29');
 
         return http.Response(
@@ -70,6 +92,8 @@ void main() {
               {
                 'symbol': 'MSFT',
                 'timestamp': '2026-08-28T00:00:00Z',
+                'retrievedAt': '2026-08-30T10:00:00Z',
+                'sourceProvider': 'yahoo',
                 'open': 500.0,
                 'high': 510.0,
                 'low': 495.0,
@@ -80,6 +104,8 @@ void main() {
               {
                 'symbol': 'MSFT',
                 'timestamp': '2026-08-29T00:00:00Z',
+                'retrievedAt': '2026-08-30T10:00:00Z',
+                'sourceProvider': 'yahoo',
                 'open': 508.0,
                 'high': 515.0,
                 'low': 505.0,
@@ -105,14 +131,104 @@ void main() {
       );
 
       expect(history.length, 2);
-
       expect(history.first.symbol, 'MSFT');
-
       expect(history.first.close, 508.0);
-
       expect(history.last.close, 512.0);
-
       expect(history.last.providerId, 'athena_backend');
+      expect(history.last.sourceProvider, 'yahoo');
+      expect(
+        history.last.retrievedAt,
+        DateTime.parse('2026-08-30T10:00:00Z'),
+      );
+    });
+
+    test('mantiene compatibilidad si provenance no está disponible', () async {
+      final client = MockClient((_) async {
+        return http.Response(
+          jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-08-29T15:30:00Z',
+              'close': 234.5,
+            },
+          }),
+          200,
+        );
+      });
+
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: client,
+      );
+
+      final quote = await provider.getQuote('AAPL');
+
+      expect(quote, isNotNull);
+      expect(quote!.sourceProvider, isNull);
+      expect(quote.retrievedAt, isNull);
+      expect(quote.currency, isNull);
+    });
+
+    test('rechaza retrievedAt inválido cuando el backend lo declara', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': {
+                'symbol': 'AAPL',
+                'timestamp': '2026-08-29T15:30:00Z',
+                'retrievedAt': 'no-es-fecha',
+                'sourceProvider': 'yahoo',
+                'close': 234.5,
+              },
+            }),
+            200,
+          ),
+        ),
+      );
+
+      expect(() => provider.getQuote('AAPL'), throwsFormatException);
+    });
+
+    test('rechaza cotización sin campo data, pero acepta ausencia explícita', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(
+            calls == 1 ? jsonEncode({'status': 'ok'}) : jsonEncode({'data': null}),
+            200,
+          );
+        }),
+      );
+      await expectLater(provider.getQuote('MSFT'), throwsFormatException);
+      expect(await provider.getQuote('MSFT'), isNull);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
+    test('rechaza cotización sin precio de cierre y recupera después', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode({
+            'data': {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-13T18:00:00Z',
+              if (calls == 2) 'close': 500.0,
+              'volume': 1200000,
+            },
+          }), 200);
+        }),
+      );
+      await expectLater(provider.getQuote('MSFT'), throwsFormatException);
+      expect((await provider.getQuote('MSFT'))?.close, 500.0);
+      expect(calls, 2);
+      provider.dispose();
     });
 
     test('devuelve null cuando el backend no dispone de cotización', () async {
@@ -128,6 +244,147 @@ void main() {
       final quote = await provider.getQuote('UNKNOWN');
 
       expect(quote, isNull);
+    });
+
+    test('rechaza histórico parcialmente malformado sin omitir observaciones', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [
+            {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-11T21:00:00Z',
+              'close': 500.0,
+            },
+            null,
+          ],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'MSFT'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
+
+    test('rechaza histórico con cierre ausente y permite recuperación', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode({
+            'data': [
+              {
+                'symbol': 'MSFT',
+                'timestamp': '2026-11-11T21:00:00Z',
+                'close': 500.0,
+              },
+              {
+                'symbol': 'MSFT',
+                'timestamp': '2026-11-12T21:00:00Z',
+                if (calls == 2) 'close': 502.0,
+                'volume': 1200000,
+              },
+            ],
+          }), 200);
+        }),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'MSFT'),
+        throwsFormatException,
+      );
+      final recovered = await provider.getHistoricalData(symbol: 'MSFT');
+      expect(recovered.length, 2);
+      expect(recovered.last.close, 502.0);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
+    test('rechaza histórico desordenado y recupera orden cronológico', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          final bars = [
+            {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-12T21:00:00Z',
+              'close': 502.0,
+            },
+            {
+              'symbol': 'MSFT',
+              'timestamp': '2026-11-11T21:00:00Z',
+              'close': 500.0,
+            },
+          ];
+          return http.Response(jsonEncode({
+            'data': calls == 1 ? bars : bars.reversed.toList(),
+          }), 200);
+        }),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'MSFT'),
+        throwsFormatException,
+      );
+      final recovered = await provider.getHistoricalData(symbol: 'MSFT');
+      expect(recovered.map((point) => point.close).toList(), [500.0, 502.0]);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
+    test('rechaza sesiones fuera del rango solicitado y permite recuperar', () async {
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode({
+            'data': [
+              {
+                'symbol': 'MSFT',
+                'timestamp': calls == 1
+                    ? '2026-11-10T21:00:00Z'
+                    : '2026-11-11T21:00:00Z',
+                'close': 500.0,
+              },
+            ],
+          }), 200);
+        }),
+      );
+      Future<List<dynamic>> load() async => provider.getHistoricalData(
+        symbol: 'MSFT',
+        from: DateTime.utc(2026, 11, 11),
+        to: DateTime.utc(2026, 11, 12),
+      );
+      await expectLater(load(), throwsFormatException);
+      final recovered = await load();
+      expect(recovered.length, 1);
+      expect(recovered.single.close, 500.0);
+      expect(calls, 2);
+      provider.dispose();
+    });
+
+    test('rechaza intervalo histórico invertido antes de llamar al backend', () async {
+      var requests = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async {
+          requests++;
+          return http.Response(jsonEncode({'data': []}), 200);
+        }),
+      );
+      await expectLater(
+        provider.getHistoricalData(
+          symbol: 'MSFT',
+          from: DateTime.utc(2026, 11, 13),
+          to: DateTime.utc(2026, 11, 12),
+        ),
+        throwsArgumentError,
+      );
+      expect(requests, 0);
+      provider.dispose();
     });
 
     test('devuelve histórico vacío cuando no existen datos', () async {
@@ -179,6 +436,215 @@ void main() {
       );
 
       expect(() => provider.getQuote('AAPL'), throwsFormatException);
+    });
+    test('quote timeout fails closed and a later request recovers', () async {
+      final stalled = Completer<http.Response>();
+      var calls = 0;
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        requestTimeout: const Duration(milliseconds: 20),
+        client: MockClient((_) {
+          calls++;
+          if (calls == 1) return stalled.future;
+          return Future.value(http.Response(jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-10-27T11:00:00Z',
+              'sourceProvider': 'yahoo',
+              'close': 250.0,
+            },
+          }), 200));
+        }),
+      );
+      await expectLater(provider.getQuote('AAPL'), throwsA(isA<TimeoutException>()));
+      final recovered = await provider.getQuote('AAPL');
+      expect(calls, 2);
+      expect(recovered?.close, 250.0);
+      expect(recovered?.sourceProvider, 'yahoo');
+      stalled.complete(http.Response('{"data":null}', 200));
+      provider.dispose();
+    });
+
+    test('historical request times out instead of hanging indefinitely', () async {
+      final stalled = Completer<http.Response>();
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        requestTimeout: const Duration(milliseconds: 20),
+        client: MockClient((_) => stalled.future),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsA(isA<TimeoutException>()),
+      );
+      stalled.complete(http.Response('{"data":[]}', 200));
+      provider.dispose();
+    });
+
+
+    test('preserves daily-close fallback session identity', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': {
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-01T23:00:00Z',
+            'retrievedAt': '2026-11-01T23:00:00Z',
+            'sourceProvider': 'yahoo',
+            'close': 250.0,
+            'quoteMode': 'historical_daily_close_fallback',
+            'priceSessionDate': '2026-10-30',
+            'realTimePriceVerified': false,
+            'historicalPointInTimeEligible': false,
+          },
+        }), 200)),
+      );
+      final point = await provider.getQuote('AAPL');
+      expect(point?.quoteMode, 'historical_daily_close_fallback');
+      expect(point?.priceSessionDate, '2026-10-30');
+      expect(point?.realTimePriceVerified, isFalse);
+      expect(point?.historicalPointInTimeEligible, isFalse);
+      provider.dispose();
+    });
+
+
+    for (final invalid in <String, Object>{
+      'close': 'NaN',
+      'adjustedClose': '-1',
+      'open': 'Infinity',
+      'volume': '-2',
+      'changePercentage': 'Infinity',
+    }.entries) {
+      test('rechaza dato financiero inválido: ${invalid.key}', () async {
+        final provider = AthenaBackendMarketDataProvider(
+          baseUrl: 'https://api.athena.test',
+          client: MockClient((_) async => http.Response(jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-11-09T16:00:00Z',
+              'close': 250.0,
+              invalid.key: invalid.value,
+            },
+          }), 200)),
+        );
+        await expectLater(provider.getQuote('AAPL'), throwsFormatException);
+        provider.dispose();
+      });
+    }
+
+    test('rechaza volumen inválido en histórico antes de llegar al Radar', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [{
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-09T16:00:00Z',
+            'close': 250.0,
+            'volume': 'NaN',
+          }],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
+
+    for (final invalidBar in <Map<String, Object>>[
+      {'open': 100.0, 'high': 99.0, 'low': 95.0, 'close': 98.0},
+      {'open': 96.0, 'high': 101.0, 'low': 97.0, 'close': 100.0},
+      {'open': 98.0, 'high': 101.0, 'low': 95.0, 'close': 102.0},
+      {'open': 98.0, 'high': 94.0, 'low': 95.0, 'close': 96.0},
+    ]) {
+      test('rechaza cotización OHLC contradictoria: $invalidBar', () async {
+        final provider = AthenaBackendMarketDataProvider(
+          baseUrl: 'https://api.athena.test',
+          client: MockClient((_) async => http.Response(jsonEncode({
+            'data': {
+              'symbol': 'AAPL',
+              'timestamp': '2026-11-09T16:00:00Z',
+              ...invalidBar,
+            },
+          }), 200)),
+        );
+        await expectLater(provider.getQuote('AAPL'), throwsFormatException);
+        provider.dispose();
+      });
+    }
+
+    test('rechaza vela OHLC contradictoria en histórico', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [{
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-09T16:00:00Z',
+            'open': 100.0,
+            'high': 105.0,
+            'low': 101.0,
+            'close': 103.0,
+          }],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsFormatException,
+      );
+      provider.dispose();
+    });
+
+    test('permite cierre ajustado fuera del rango bruto por corporate actions', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': {
+            'symbol': 'AAPL',
+            'timestamp': '2026-11-09T16:00:00Z',
+            'open': 100.0,
+            'high': 105.0,
+            'low': 95.0,
+            'close': 103.0,
+            'adjustedClose': 80.0,
+          },
+        }), 200)),
+      );
+      final quote = await provider.getQuote('AAPL');
+      expect(quote?.adjustedClose, 80.0);
+      provider.dispose();
+    });
+
+    test('rechaza cotización sin símbolo en lugar de inventar identidad', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': {
+            'timestamp': '2026-10-30T20:00:00Z',
+            'sourceProvider': 'yahoo',
+            'close': 250.0,
+          },
+        }), 200)),
+      );
+      await expectLater(provider.getQuote('AAPL'), throwsFormatException);
+      provider.dispose();
+    });
+
+    test('rechaza histórico de otra empresa aunque el endpoint responda 200', () async {
+      final provider = AthenaBackendMarketDataProvider(
+        baseUrl: 'https://api.athena.test',
+        client: MockClient((_) async => http.Response(jsonEncode({
+          'data': [{
+            'symbol': 'MSFT',
+            'timestamp': '2026-10-30T20:00:00Z',
+            'sourceProvider': 'yahoo',
+            'close': 250.0,
+          }],
+        }), 200)),
+      );
+      await expectLater(
+        provider.getHistoricalData(symbol: 'AAPL'),
+        throwsFormatException,
+      );
+      provider.dispose();
     });
   });
 }

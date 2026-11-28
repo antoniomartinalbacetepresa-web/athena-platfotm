@@ -1,9 +1,23 @@
-﻿from fastapi import APIRouter, HTTPException, Query
+from datetime import date, datetime, timezone
 
-from app.services.yahoo_market_service import YahooMarketService
-from app.services.yahoo_market_universe_service import (
-    YahooMarketUniverseService,
+from fastapi import APIRouter, Body, HTTPException, Query
+
+from app.repositories.fx_rate_repository import FxRateRepository
+from app.services.canonical_weighting_governance_service import (
+    CanonicalWeightingGovernanceService,
 )
+from app.services.fx_quote_service import FxQuoteService
+from app.services.market_weighting_readiness_service import (
+    MarketWeightingReadinessService,
+)
+from app.services.persisted_market_universe_service import (
+    PersistedMarketUniverseService,
+)
+from app.services.yahoo_market_service import YahooMarketService
+from app.services.pilot_evidence import EvidenceRejected, validate_pilot_history
+from app.services.market_quote_identity_service import MarketQuoteIdentityService
+from app.services.market_history_backfill_plan_service import MarketHistoryBackfillPlanService
+from app.services.persisted_market_history_service import PersistedMarketHistoryService
 
 
 router = APIRouter(
@@ -12,7 +26,15 @@ router = APIRouter(
 )
 
 market_service = YahooMarketService()
-market_universe_service = YahooMarketUniverseService()
+quote_identity_service = MarketQuoteIdentityService()
+fx_rate_repository = FxRateRepository()
+fx_quote_service = FxQuoteService(
+    market_service=market_service,
+    repository=fx_rate_repository,
+)
+market_universe_service = PersistedMarketUniverseService()
+market_weighting_readiness_service = MarketWeightingReadinessService()
+canonical_weighting_governance_service = CanonicalWeightingGovernanceService()
 
 
 @router.get("/quote")
@@ -38,9 +60,143 @@ def get_quote(
             ),
         ) from exc
 
+    # A provider quote must belong to the instrument actually requested.
+    # Never let provider-supplied identity fields bypass our internal resolver.
+    if quote is not None:
+        if (
+            not isinstance(quote, dict)
+            or not isinstance(quote.get("symbol"), str)
+            or quote["symbol"].strip().upper() != symbol.strip().upper()
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail="La fuente devolvió una cotización de identidad incompatible.",
+            )
+        quote = {
+            key: value
+            for key, value in quote.items()
+            if key not in {"instrumentId", "canonicalIdentityStatus"}
+        }
+
+    # Identity enrichment is optional. A repository outage cannot fabricate a
+    # match and must not turn a quote into historical PIT evidence.
+    if isinstance(quote, dict) and quote.get("exchange") and quote.get("currency"):
+        try:
+            identity = quote_identity_service.resolve(quote)
+        except Exception:
+            identity = {"canonicalIdentityStatus": "unresolved"}
+        quote = {**quote, **identity}
+
     return {
         "data": quote,
     }
+
+
+@router.get("/fx/quote")
+def get_fx_quote(
+    base_currency: str = Query(..., min_length=3, max_length=3, alias="base"),
+    quote_currency: str = Query(..., min_length=3, max_length=3, alias="quote"),
+) -> dict[str, object]:
+    """Return a current FX rate with source and temporal provenance.
+
+    This endpoint is intentionally current-only. Its result must not be
+    backdated for historical portfolio or recommendation evaluation.
+    """
+
+    try:
+        payload = fx_quote_service.get_current_rate(
+            base_currency=base_currency,
+            quote_currency=quote_currency,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo obtener una conversión FX trazable.",
+        ) from exc
+
+    return {"data": payload}
+
+
+@router.get("/fx/historical")
+def get_historical_fx_quote(
+    base_currency: str = Query(..., min_length=3, max_length=3, alias="base"),
+    quote_currency: str = Query(..., min_length=3, max_length=3, alias="quote"),
+    observed_on: date = Query(..., alias="observedOn"),
+    knowledge_cutoff: datetime | None = Query(None, alias="knowledgeCutoff"),
+) -> dict[str, object]:
+    """Return an exact-date FX observation with PIT provenance.
+
+    When ``knowledgeCutoff`` is supplied, the service may only replay or obtain
+    evidence that was already knowable by that timestamp. Without a cutoff the
+    endpoint is intended for current portfolio accounting: it may retrieve the
+    historical observation now and persist that immutable retrieval for future
+    reproducibility.
+    """
+
+    try:
+        payload = fx_quote_service.get_historical_rate(
+            base_currency=base_currency,
+            quote_currency=quote_currency,
+            observed_on=observed_on,
+            knowledge_cutoff=knowledge_cutoff,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo obtener una conversión FX histórica verificable.",
+        ) from exc
+
+    return {"data": payload}
+
+
+@router.get("/history/backfill-plan")
+def get_history_backfill_plan(
+    as_of: datetime = Query(..., alias="asOf"),
+    limit: int = Query(100, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict[str, object]:
+    """Read-only PIT backfill plan; never fetches or certifies market history."""
+    try:
+        plan = MarketHistoryBackfillPlanService().get_plan(
+            as_of=as_of, limit=limit, offset=offset
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        # An unavailable persistence layer is not an empty or complete plan.
+        # Fail closed without exposing database paths or internal exceptions.
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo verificar el plan de históricos persistidos.",
+        ) from exc
+    return {"data": plan.to_api_dict()}
+
+
+@router.get("/history/persisted")
+def get_persisted_history(
+    instrument_id: int = Query(..., alias="instrumentId", ge=1),
+    source_provider: str = Query(..., alias="sourceProvider", min_length=1, max_length=128),
+    observed_from: datetime = Query(..., alias="observedFrom"),
+    observed_to: datetime = Query(..., alias="observedTo"),
+    as_of: datetime = Query(..., alias="asOf"),
+    limit: int = Query(400, ge=1, le=400),
+) -> dict[str, object]:
+    """Read immutable local evidence; never fetch or authorize provider data."""
+    try:
+        return PersistedMarketHistoryService().get_history(
+            instrument_id=instrument_id, source_provider=source_provider,
+            observed_from=observed_from, observed_to=observed_to, as_of=as_of, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Instrumento no encontrado.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Histórico persistido no disponible.") from exc
 
 
 @router.get("/history")
@@ -78,8 +234,197 @@ def get_history(
             ),
         ) from exc
 
+    # A current-provider history is not PIT-certified, but it must still be
+    # tied to the requested ticker. Reject mixed or malformed batches rather
+    # than displaying another company's bars under the selected instrument.
+    if not isinstance(history, list) or any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("symbol"), str)
+        or row["symbol"].strip().upper() != symbol.strip().upper()
+        for row in history
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene instrumentos incompatibles o datos inválidos.",
+        )
+
+    # Never expose missing, non-finite or non-positive closes to a chart.
+    # This gate does not certify PIT eligibility or licensed coverage.
+    from math import isfinite
+
+    if any(
+        isinstance(row.get("close"), bool)
+        or not isinstance(row.get("close"), (int, float))
+        or not isfinite(row["close"])
+        or row["close"] <= 0
+        for row in history
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene precios de cierre inválidos.",
+        )
+
+    # A daily candle with contradictory OHLC bounds is not usable chart
+    # evidence. Optional fields may be absent; never synthesize them.
+    for row in history:
+        prices = [row.get(key) for key in ("open", "high", "low", "adjustedClose")]
+        if any(value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not isfinite(value) or value <= 0
+        ) for value in prices):
+            raise HTTPException(status_code=502, detail="El histórico contiene precios OHLC inválidos.")
+        high, low = row.get("high"), row.get("low")
+        if high is not None and low is not None and high < low:
+            raise HTTPException(status_code=502, detail="El histórico contiene rangos OHLC contradictorios.")
+        if high is not None and any(
+            row.get(key) is not None and row[key] > high
+            for key in ("open", "close")
+        ):
+            raise HTTPException(status_code=502, detail="El histórico contiene rangos OHLC contradictorios.")
+        if low is not None and any(
+            row.get(key) is not None and row[key] < low
+            for key in ("open", "close")
+        ):
+            raise HTTPException(status_code=502, detail="El histórico contiene rangos OHLC contradictorios.")
+
+    # A supplied volume is part of the chart evidence. Reject negative,
+    # non-finite and non-numeric values rather than displaying misleading
+    # liquidity. Missing volume remains explicitly missing, never zero-filled.
+    if any(
+        row.get("volume") is not None and (
+            isinstance(row["volume"], bool)
+            or not isinstance(row["volume"], (int, float))
+            or not isfinite(row["volume"])
+            or row["volume"] < 0
+        )
+        for row in history
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene volúmenes negociados inválidos.",
+        )
+
+    # A chart must not silently accept missing, naive or future observation
+    # timestamps as valid historical sessions. This is a safety check only,
+    # not a claim that the provider supplied licensed PIT observations.
+    for row in history:
+        try:
+            observed = datetime.fromisoformat(str(row["timestamp"]))
+            if (observed.tzinfo is None or observed.utcoffset() is None
+                    or observed > datetime.now(timezone.utc)):
+                raise ValueError("invalid observation time")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=502,
+                detail="El histórico contiene fechas de observación inválidas.",
+            ) from None
+
+    # Duplicate observations make a historical chart ambiguous even when each
+    # row is individually well formed. Reject instead of silently drawing one.
+    observed_sessions = [
+        datetime.fromisoformat(str(row["timestamp"])).astimezone(timezone.utc)
+        for row in history
+    ]
+    # The provider endpoint supplies daily bars, not intraday ticks. Different
+    # instants on the same UTC session are still conflicting daily evidence.
+    # This is a conservative UTC-day gate, not an exchange-calendar validation.
+    observed_days = [instant.date() for instant in observed_sessions]
+    if len(observed_days) != len(set(observed_days)):
+        raise HTTPException(
+            status_code=502,
+            detail="El histórico contiene observaciones temporales duplicadas.",
+        )
+
+    providers = sorted({
+        str(item.get("sourceProvider")).strip()
+        for item in history
+        if isinstance(item, dict) and item.get("sourceProvider")
+    })
+    # A retrieval timestamp cannot precede its observation or lie in the future.
+    # Unparseable/missing retrieval provenance is never silently promoted to PIT.
+    now_utc = datetime.now(timezone.utc)
+    for row, observed in zip(history, observed_sessions):
+        retrieved_raw = row.get("retrievedAt")
+        if retrieved_raw is None:
+            continue
+        try:
+            retrieved = datetime.fromisoformat(str(retrieved_raw))
+            if (retrieved.tzinfo is None or retrieved.utcoffset() is None
+                    or retrieved.astimezone(timezone.utc) < observed
+                    or retrieved.astimezone(timezone.utc) > now_utc):
+                raise ValueError("invalid retrieval timestamp")
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=502,
+                detail="El histórico contiene fechas de recuperación inválidas.",
+            ) from None
+
+    retrieval_times = sorted({
+        str(item.get("retrievedAt")).strip()
+        for item in history
+        if isinstance(item, dict) and item.get("retrievedAt")
+    })
+
     return {
         "data": history,
+        "provenance": {
+            "retrievalMode": "current_provider_history",
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "licenceVerified": False,
+            "corporateActionsIndependentlyVerified": False,
+            "availableAt": None,
+            "historicalPointInTimeStatus": "not_verified",
+            "historyStatus": "available_unverified" if history else "empty",
+            "observationCount": len(history),
+            "firstObservedAt": min(observed_sessions).isoformat() if observed_sessions else None,
+            "lastObservedAt": max(observed_sessions).isoformat() if observed_sessions else None,
+            "missingVolumeCount": sum(row.get("volume") is None for row in history),
+            "missingRetrievalCount": sum(row.get("retrievedAt") is None for row in history),
+            "observationSpanDays": (
+                (max(observed_days) - min(observed_days)).days
+                if observed_days else None
+            ),
+            "latestObservationAgeDays": (
+                (now_utc.date() - max(observed_days)).days
+                if observed_days else None
+            ),
+            "sourceProviders": providers,
+            "retrievedAt": retrieval_times[0] if len(retrieval_times) == 1 else None,
+        },
+    }
+
+
+@router.post("/history/pilot-validation")
+def validate_pilot_history_api(payload: object = Body(...)) -> dict[str, object]:
+    """Validate supplied historical bars for a read-only research preview.
+
+    This endpoint does not retrieve data, verify provider contracts, or persist
+    research. Client-supplied usageAuthorized is never independent proof.
+    Limit input size to avoid expensive untrusted historical submissions.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Pilot history must be a JSON object")
+    observations = payload.get("observations")
+    sessions = payload.get("expectedSessions")
+    if (not isinstance(observations, list) or not isinstance(sessions, list)
+            or len(observations) > 400 or len(sessions) > 400):
+        raise HTTPException(status_code=422, detail="Invalid or oversized pilot history")
+    try:
+        report = validate_pilot_history(
+            observations, expected_sessions=sessions, now=datetime.now(timezone.utc),
+        )
+    except (EvidenceRejected, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "data": report,
+        "provenance": {
+            "status": "unverified_client_supplied",
+            "providerRightsIndependentlyVerified": False,
+            "historicalPointInTimeEligible": False,
+            "productionCoverageClaimed": False,
+            "orderExecutionAllowed": False,
+        },
     }
 
 
@@ -98,4 +443,210 @@ def get_universe() -> dict[str, object]:
 
     return {
         "data": universe,
+    }
+
+
+@router.get("/universe/status")
+def get_universe_status() -> dict[str, object]:
+    try:
+        report = market_universe_service.get_quality_report()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "No se pudo evaluar la calidad "
+                "del universo de mercado."
+            ),
+        ) from exc
+
+    return {
+        "data": report.to_api_dict(),
+    }
+
+
+@router.get("/universe/weighting-readiness")
+def get_universe_weighting_readiness() -> dict[str, object]:
+    try:
+        report = market_weighting_readiness_service.get_report()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "No se pudo evaluar la preparación de los pesos regionales."
+            ),
+        ) from exc
+
+    return {
+        "data": report.to_api_dict(),
+    }
+
+
+@router.get("/universe/active-regional-weights")
+def get_active_regional_weights() -> dict[str, object]:
+    """Return regional weights only through the human-approval governance gate.
+
+    Diagnostic market-cap weights are deliberately not treated as active.  The
+    governance service returns no weights unless the latest approved proposal
+    has explicit human approval, intact evidence and an evidence snapshot that
+    still matches the current canonical market state.
+    """
+
+    try:
+        payload = canonical_weighting_governance_service.get_approved_weights()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo verificar la gobernanza de los pesos regionales.",
+        ) from exc
+
+    return {"data": payload}
+
+
+@router.get("/opportunity-pattern-readiness")
+def get_opportunity_pattern_readiness(
+    symbol: str = Query(..., min_length=1),
+) -> dict[str, object]:
+    """Inspect live-provider history for pattern readiness; never certify its licence.
+
+    Provider retrieval now connects Market to the Opportunity & Exit Radar's
+    evidence requirements. Yahoo history is current-retrieved, not PIT replay;
+    this endpoint must not promote it to licensed, split-verified research.
+    """
+    try:
+        history = market_service.get_history(symbol=symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo consultar la cobertura del proveedor de mercado.",
+        ) from exc
+
+    # A malformed provider response is an upstream failure, not empty coverage.
+    if not isinstance(history, list):
+        raise HTTPException(
+            status_code=502,
+            detail="La fuente devolvió un histórico con formato inválido.",
+        )
+
+    # Only count records with a matching instrument identity and valid daily
+    # close/volume; malformed or mismatched provider records fail closed.
+    from datetime import timezone
+    from math import isfinite
+
+    normalized = symbol.strip().upper()
+    valid_days: set[str] = set()
+    ambiguous_days: set[str] = set()
+    eligible_lows: dict[str, float] = {}
+    checked_at = datetime.now(timezone.utc)
+    provider_names: set[str] = set()
+    retrieval_times: set[str] = set()
+    invalid_rows = 0
+    for row in history:
+        if not isinstance(row, dict) or str(row.get("symbol", "")).upper() != normalized:
+            invalid_rows += 1
+            continue
+        try:
+            observed = datetime.fromisoformat(str(row["timestamp"]))
+            # Reject booleans and numeric strings: provider coercion would
+            # fabricate seemingly valid price/volume evidence for the Radar.
+            if (isinstance(row["close"], bool)
+                    or not isinstance(row["close"], (int, float))
+                    or isinstance(row["volume"], bool)
+                    or not isinstance(row["volume"], (int, float))):
+                raise ValueError("invalid numeric bar")
+            close = float(row["close"])
+            volume = float(row["volume"])
+            if (observed.tzinfo is None or observed.utcoffset() is None
+                    or observed > checked_at
+                    or not isfinite(close) or close <= 0
+                    or not isfinite(volume) or volume < 0):
+                raise ValueError("invalid daily bar")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            invalid_rows += 1
+            continue
+        day = observed.astimezone(timezone.utc).date().isoformat()
+        if day in valid_days or day in ambiguous_days:
+            # Conflicting same-session bars must not determine the 25-session
+            # reference by arbitrary provider ordering.
+            valid_days.discard(day)
+            eligible_lows.pop(day, None)
+            ambiguous_days.add(day)
+            invalid_rows += 1
+            continue
+        valid_days.add(day)
+        # Diagnostic only: require an actual low, never substitute the close.
+        # A later observation must not enter its own 25-session reference.
+        low_value = row.get("low")
+        if (isinstance(low_value, (int, float)) and not isinstance(low_value, bool)
+                and isfinite(low_value) and 0 < low_value <= close):
+            eligible_lows[day] = float(low_value)
+        if row.get("sourceProvider"):
+            provider_names.add(str(row["sourceProvider"]))
+        if row.get("retrievedAt"):
+            retrieval_times.add(str(row["retrievedAt"]))
+
+    first_day = min(valid_days) if valid_days else None
+    last_day = max(valid_days) if valid_days else None
+    calendar_span_days = ((date.fromisoformat(last_day) - date.fromisoformat(first_day)).days + 1) if first_day and last_day else 0
+    latest_age_days = (checked_at.date() - date.fromisoformat(last_day)).days if last_day else None
+    # Calendar gaps are diagnostic only: weekends/holidays are not missing
+    # exchange sessions, and exchange-specific calendars are not certified.
+    ordered_days = sorted(date.fromisoformat(day) for day in valid_days)
+    largest_gap_days = max(
+        ((right - left).days - 1 for left, right in zip(ordered_days, ordered_days[1:])),
+        default=0,
+    )
+    gap_intervals = sum(
+        (right - left).days > 1 for left, right in zip(ordered_days, ordered_days[1:])
+    )
+
+    # Use the preceding 25 distinct daily sessions; never include the
+    # evaluation session in the reference minimum (look-ahead prevention).
+    last_26 = sorted(valid_days)[-26:]
+    reference_complete = (
+        len(last_26) == 26 and all(day in eligible_lows for day in last_26)
+    )
+    previous_25_low = (
+        min(eligible_lows[day] for day in last_26[:-1])
+        if reference_complete else None
+    )
+
+    return {
+        "data": {
+            "symbol": normalized,
+            "previous25SessionLowDiagnostic": previous_25_low,
+            "previous25SessionReferenceComplete": reference_complete,
+            "previous25SessionEvaluationDate": last_26[-1] if reference_complete else None,
+            "previous25SessionReferenceEndsOn": last_26[-2] if reference_complete else None,
+            "previous25SessionSignalEligible": False,
+            "status": "blocked_unverified_market_evidence",
+            "mode": "read_only_research",
+            "validDailySessions": len(valid_days),
+            "invalidOrDuplicateRows": invalid_rows,
+            "minimum20SessionReferenceAvailable": len(valid_days) >= 21,
+            "firstObservedDate": first_day,
+            "lastObservedDate": last_day,
+            "calendarSpanDays": calendar_span_days,
+            "latestObservationAgeCalendarDays": latest_age_days,
+            "largestUnobservedCalendarGapDays": largest_gap_days,
+            "unobservedCalendarGapIntervals": gap_intervals,
+            "exchangeSessionCalendarVerified": False,
+            "history365CalendarSpanAvailable": calendar_span_days >= 365,
+            "history365SessionCompletenessVerified": False,
+            "checkedAt": checked_at.isoformat(),
+            "sourceProviders": sorted(provider_names),
+            "retrievedAt": sorted(retrieval_times),
+            "licenceVerified": False,
+            "corporateActionsIndependentlyVerified": False,
+            "historicalPointInTimeEligible": False,
+            "patternComputed": False,
+            "advisoryStatus": "no_advice",
+            "automaticTrading": False,
+            "blockers": [
+                "Provider licence and redistribution rights not independently verified.",
+                "Split/dividend adjustments lack independent reconciliation.",
+                "Current-retrieved history cannot be replayed as historical PIT evidence.",
+            ],
+        }
     }

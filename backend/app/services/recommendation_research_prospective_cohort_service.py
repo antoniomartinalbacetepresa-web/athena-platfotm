@@ -1,0 +1,337 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
+import re
+from typing import Any, Callable
+
+from app.services.recommendation_research_executed_forecast_store_service import RecommendationResearchExecutedForecastStoreService
+from app.database.athena_database import AthenaDatabase
+from app.repositories.recommendation_research_evaluation_specification_repository import RecommendationResearchEvaluationSpecificationRepository
+from app.repositories.recommendation_research_model_execution_receipt_repository import RecommendationResearchModelExecutionReceiptRepository
+
+
+class RecommendationResearchProspectiveCohortService:
+    """Internal preselection ledger, not another forecast/outcome store.
+
+    References existing observed v3 forecasts. The fixed denominator includes
+    missing evaluations; it never infers approval or predictive skill.
+    """
+
+    def __init__(self, *, store: RecommendationResearchExecutedForecastStoreService | None = None,
+                 now_provider: Callable[[], datetime] | None = None) -> None:
+        self._store = store
+        self._database = store._database if store is not None else AthenaDatabase()
+        self._specifications = store.specifications if store is not None else RecommendationResearchEvaluationSpecificationRepository(self._database)
+        self._receipts = store.receipts if store is not None else RecommendationResearchModelExecutionReceiptRepository(self._database)
+        self._now = now_provider or (lambda: datetime.now(timezone.utc))
+
+    @staticmethod
+    def _hash(value: Any) -> str:
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+    @staticmethod
+    def _time(value: str | datetime) -> datetime:
+        result = datetime.fromisoformat(value) if isinstance(value, str) else value
+        if not isinstance(result, datetime) or result.tzinfo is None or result.utcoffset() is None:
+            raise ValueError("La cohorte requiere timestamps con zona horaria.")
+        return result.astimezone(timezone.utc)
+
+    @staticmethod
+    def _refs(values: list[str]) -> list[str]:
+        if not isinstance(values, list) or not 1 <= len(values) <= 5000:
+            raise ValueError("La selección requiere entre 1 y 5000 specification hashes.")
+        if any(not isinstance(x, str) or not re.fullmatch(r"[0-9a-f]{64}", x) for x in values):
+            raise ValueError("Specification hash inválido.")
+        if len(set(values)) != len(values):
+            raise ValueError("La selección contiene duplicados.")
+        return sorted(values)
+
+    @classmethod
+    def _strictly_ex_ante(cls, record: dict[str, Any], sealed: datetime) -> bool:
+        observed_at = max(cls._time(record["created_at"]), cls._time(record["receipt_created_at"]))
+        period_start = cls._time(record["artifact"]["periodStart"])
+        return observed_at <= sealed < period_start
+
+    def _initialize(self) -> None:
+        with self._database.connect() as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS athena_research_prospective_cohorts (
+                cohort_id TEXT PRIMARY KEY, cohort_hash TEXT NOT NULL UNIQUE,
+                artifact_json TEXT NOT NULL, created_at TEXT NOT NULL
+            )""")
+
+    def _forecasts(self, refs: list[str]) -> list[dict[str, Any]]:
+        records = []
+        models = set()
+        for ref in refs:
+            record = self._specifications.get_by_hash(specification_hash=ref)
+            if record["artifact"]["artifactVersion"] != "research-evaluation-specification-v3":
+                raise ValueError("La preselección requiere forecasts v3 observados.")
+            receipt = self._receipts.get_by_specification_hash(
+                specification_hash=ref, specification_record=record)
+            if receipt["artifact"]["artifactVersion"] != "research-model-execution-receipt-v2":
+                raise ValueError("La preselección no acepta recibos declarativos.")
+            model = receipt["artifact"].get("model")
+            if not isinstance(model, dict):
+                raise ValueError("La cohorte requiere identidad de modelo explícita.")
+            identity = tuple(model.get(field) for field in ("name", "version", "artifactHash"))
+            if any(not isinstance(value, str) or not value.strip() for value in identity):
+                raise ValueError("La cohorte requiere identidad de modelo explícita.")
+            if not re.fullmatch(r"[0-9a-f]{64}", identity[2]):
+                raise ValueError("La cohorte requiere un SHA-256 de modelo válido.")
+            models.add(identity)
+            record["observed_model_identity"] = dict(zip(("name", "version", "artifactHash"), identity))
+            record["receipt_created_at"] = receipt["created_at"]
+            records.append(record)
+        methods = {r["artifact"]["forecastEvidence"]["method"] for r in records}
+        horizons = {r["artifact"]["horizonSeconds"] for r in records}
+        if len(methods) != 1 or len(horizons) != 1:
+            raise ValueError("La cohorte requiere un único método y horizonte.")
+        if len(models) != 1:
+            raise ValueError("La cohorte requiere un único nombre, versión y artefacto de modelo.")
+        return records
+
+    def register(self, *, cohort_id: str, specification_hashes: list[str]) -> dict[str, Any]:
+        if not isinstance(cohort_id, str) or not cohort_id.strip():
+            raise ValueError("cohort_id obligatorio.")
+        refs = self._refs(specification_hashes)
+        self._initialize()
+        with self._database.connect() as connection:
+            existing = connection.execute("SELECT 1 FROM athena_research_prospective_cohorts WHERE cohort_id = ?",
+                                          (cohort_id,)).fetchone()
+        if existing:
+            original = self.get(cohort_id=cohort_id)
+            if original["specificationHashes"] != refs:
+                raise ValueError("No se puede cambiar la selección precomprometida.")
+            return original
+        records = self._forecasts(refs)  # Revalidation precedes the SQLite write lock.
+        with self._database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            sealed = self._time(self._now())
+            if any(not self._strictly_ex_ante(r, sealed) for r in records):
+                raise ValueError("La selección debe sellarse estrictamente antes del inicio de todos los periodos.")
+            artifact = {
+                "artifactVersion": "research-prospective-cohort-v2", "cohortId": cohort_id,
+                "specificationHashes": refs, "sealedAt": sealed.isoformat(),
+                "method": records[0]["artifact"]["forecastEvidence"]["method"],
+                "horizonSeconds": records[0]["artifact"]["horizonSeconds"],
+                "modelIdentity": records[0]["observed_model_identity"],
+                "productionEligible": False, "productionLearningEligible": False,
+                "automaticTrading": False,
+            }
+            artifact["cohortHash"] = self._hash(artifact)
+            connection.execute("INSERT INTO athena_research_prospective_cohorts VALUES (?, ?, ?, ?)",
+                               (cohort_id, artifact["cohortHash"], json.dumps(artifact), sealed.isoformat()))
+        return artifact
+
+    def get(self, *, cohort_id: str) -> dict[str, Any]:
+        self._initialize()
+        with self._database.connect() as connection:
+            row = connection.execute("SELECT * FROM athena_research_prospective_cohorts WHERE cohort_id = ?",
+                                     (cohort_id,)).fetchone()
+        if row is None:
+            raise ValueError("No existe la cohorte preseleccionada.")
+        artifact = json.loads(row["artifact_json"])
+        core = {k: v for k, v in artifact.items() if k != "cohortHash"}
+        if (artifact.get("cohortHash") != self._hash(core) or artifact["cohortHash"] != row["cohort_hash"]
+                or artifact.get("cohortId") != row["cohort_id"] or artifact.get("sealedAt") != row["created_at"]
+                or artifact.get("artifactVersion") not in ("research-prospective-cohort-v1", "research-prospective-cohort-v2")):
+            raise ValueError("La cohorte preseleccionada fue modificada.")
+        if any(artifact.get(flag) is not False for flag in
+               ("productionEligible", "productionLearningEligible", "automaticTrading")):
+            raise ValueError("La cohorte intentó activar autoridad productiva.")
+        refs = self._refs(artifact["specificationHashes"])
+        if refs != artifact["specificationHashes"]:
+            raise ValueError("La selección perdió su orden canónico.")
+        records = self._forecasts(refs)
+        if artifact["artifactVersion"] == "research-prospective-cohort-v2":
+            if artifact.get("modelIdentity") != records[0]["observed_model_identity"]:
+                raise ValueError("La cohorte perdió su identidad de modelo sellada.")
+        sealed = self._time(artifact["sealedAt"])
+        if any(not self._strictly_ex_ante(r, sealed) for r in records):
+            raise ValueError("La cohorte no tiene selección estrictamente ex ante válida.")
+        if (artifact["method"] != records[0]["artifact"]["forecastEvidence"]["method"] or
+                artifact["horizonSeconds"] != records[0]["artifact"]["horizonSeconds"]):
+            raise ValueError("La cohorte perdió su método/horizonte.")
+        return artifact
+
+
+    @staticmethod
+    def _observed_error_statistics(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Descriptive errors from validated persisted chains, never a skill claim.
+
+        Divide before summation to avoid overflowing intermediate totals when
+        finite errors are large. Empty cohorts have no invented zero error.
+        """
+        if not artifacts:
+            return None
+        samples: dict[str, list[float]] = {
+            "signedError": [], "absoluteError": [], "squaredError": [],
+        }
+        for artifact in artifacts:
+            for field, values in samples.items():
+                value = artifact.get(field)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise ValueError(f"Error persistido no finito: {field}.")
+                if field != "signedError" and value < 0:
+                    raise ValueError(f"Error persistido negativo: {field}.")
+                values.append(float(value))
+        count = len(artifacts)
+        return {
+            "metric": "total_return",
+            "sampleCount": count,
+            "meanSignedError": math.fsum(value / count for value in samples["signedError"]),
+            "meanAbsoluteError": math.fsum(value / count for value in samples["absoluteError"]),
+            "rootMeanSquaredError": math.sqrt(math.fsum(
+                value / count for value in samples["squaredError"]
+            )),
+            "maximumAbsoluteError": max(samples["absoluteError"]),
+            "descriptiveOnly": True,
+        }
+
+    @staticmethod
+    def _measurement_times_consistent(
+        *, period_end: datetime, outcome_as_of: datetime,
+        outcome_created: datetime, error_created: datetime, cutoff: datetime,
+    ) -> bool:
+        """Require a physically possible, non-retroactive OOS outcome chain."""
+        return period_end <= outcome_as_of <= outcome_created <= error_created <= cutoff
+
+    def measured_coverage(self, *, cohort_id: str, as_of: datetime) -> dict[str, Any]:
+        """Measure the frozen denominator against persisted errors AND outcomes.
+
+        This is a read-only, descriptive audit of stored evidence. It cannot
+        establish independent market provenance, predictive skill or approval.
+        """
+        from app.repositories.recommendation_research_forecast_error_repository import (
+            RecommendationResearchForecastErrorRepository,
+        )
+        from app.repositories.recommendation_research_outcome_attribution_repository import (
+            RecommendationResearchOutcomeAttributionRepository,
+        )
+
+        cutoff = self._time(as_of)
+        if cutoff > self._time(self._now()):
+            raise ValueError("El corte de medición OOS no puede ser futuro.")
+        cohort = self.get(cohort_id=cohort_id)
+        sealed = self._time(cohort["sealedAt"])
+        if cutoff < sealed:
+            raise ValueError("El corte es anterior al sellado prospectivo.")
+        refs = cohort["specificationHashes"]
+        specifications = {
+            record["artifact"]["specificationHash"]: record["artifact"]
+            for record in self._forecasts(refs)
+        }
+        if set(specifications) != set(refs):
+            raise ValueError("La selección no coincide con las specifications persistidas.")
+        due = {
+            ref for ref, specification in specifications.items()
+            if self._time(specification["periodEnd"]) <= cutoff
+        }
+        errors = RecommendationResearchForecastErrorRepository(self._database)
+        outcomes = RecommendationResearchOutcomeAttributionRepository(self._database)
+        measured: dict[str, str] = {}
+        measured_artifacts: list[dict[str, Any]] = []
+        store_present = False
+        with self._database.connect() as connection:
+            connection.execute("BEGIN")
+            store_present = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='athena_research_forecast_errors'"
+            ).fetchone() is not None
+            if store_present:
+                for offset in range(0, len(refs), 400):
+                    batch = refs[offset:offset + 400]
+                    placeholders = ",".join("?" for _ in batch)
+                    rows = connection.execute(
+                        "SELECT * FROM athena_research_forecast_errors "
+                        f"WHERE specification_hash IN ({placeholders})",
+                        batch,
+                    ).fetchall()
+                    for row in rows:
+                        created_at = self._time(row["created_at"])
+                        if created_at > cutoff:
+                            continue
+                        record = errors.validate_record(errors._row(row))
+                        artifact = record["artifact"]
+                        ref = record["specification_hash"]
+                        specification = specifications[ref]
+                        if ref in measured:
+                            raise ValueError("Hay más de un error persistido para la misma previsión.")
+                        if ref not in due or created_at < self._time(specification["periodEnd"]):
+                            raise ValueError("Un error fue persistido antes de vencer su horizonte.")
+                        for key in (
+                            "cycleHash", "instrumentId", "symbol", "metric",
+                            "periodStart", "periodEnd", "horizonSeconds", "expectedValue",
+                        ):
+                            if artifact.get(key) != specification.get(key):
+                                raise ValueError(f"Forecast error no coincide con specification.{key}.")
+                        outcome_row = connection.execute(
+                            "SELECT * FROM athena_research_outcome_attributions WHERE outcome_hash = ?",
+                            (record["outcome_hash"],),
+                        ).fetchone() if connection.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='athena_research_outcome_attributions'"
+                        ).fetchone() is not None else None
+                        if outcome_row is None:
+                            raise ValueError("Falta el outcome persistido asociado al forecast error.")
+                        outcome = outcomes.validate_record(outcomes._row(outcome_row))
+                        payload = outcome["payload"]
+                        outcome_created = self._time(outcome["created_at"])
+                        if not self._measurement_times_consistent(
+                            period_end=self._time(specification["periodEnd"]),
+                            outcome_as_of=self._time(payload["asOf"]),
+                            outcome_created=outcome_created,
+                            error_created=created_at,
+                            cutoff=cutoff,
+                        ):
+                            raise ValueError("El outcome no respeta la secuencia temporal persistida.")
+                        for key in ("cycleHash", "instrumentId", "symbol", "periodStart", "periodEnd"):
+                            if payload.get(key) != specification.get(key):
+                                raise ValueError(f"Outcome no coincide con specification.{key}.")
+                        if payload["attribution"].get("totalReturn") != artifact.get("realizedValue"):
+                            raise ValueError("El retorno realizado no coincide con el outcome persistido.")
+                        measured[ref] = record["error_hash"]
+                        measured_artifacts.append(artifact)
+        if self.get(cohort_id=cohort_id)["cohortHash"] != cohort["cohortHash"]:
+            raise ValueError("La selección cambió durante la medición.")
+        missing_due = sorted(due - set(measured))
+        return {
+            "cohortHash": cohort["cohortHash"],
+            "asOf": cutoff.isoformat(),
+            "selectedCount": len(refs),
+            "maturedCount": len(due),
+            "notYetDueCount": len(refs) - len(due),
+            "measuredErrorCount": len(measured),
+            "maturedMeasurementCoverage": len(measured) / len(due) if due else None,
+            "observedErrorStatistics": self._observed_error_statistics(measured_artifacts),
+            "missingMaturedSpecificationHashes": missing_due,
+            "measuredErrorHashes": sorted(measured.values()),
+            "membershipComplete": len(measured) == len(refs),
+            "errorStorePresent": store_present,
+            "persistedOutcomeChainVerified": bool(measured),
+            "independentMarketSourceVerified": False,
+            "predictiveSkillEstablished": False,
+            "outcomeEvidenceVerified": False,
+            "productionEligible": False,
+            "productionLearningEligible": False,
+            "automaticTrading": False,
+        }
+
+    def coverage(self, *, cohort_id: str, evaluated_specification_hashes: list[str]) -> dict[str, Any]:
+        """Membership accounting only; supplied refs do not prove outcome measurement."""
+        artifact = self.get(cohort_id=cohort_id)
+        if not isinstance(evaluated_specification_hashes, list):
+            raise ValueError("Las referencias evaluadas deben ser una lista explícita.")
+        evaluated = self._refs(evaluated_specification_hashes) if evaluated_specification_hashes else []
+        selected = set(artifact["specificationHashes"])
+        if set(evaluated) - selected:
+            raise ValueError("La evaluación añade forecasts ajenos a la preselección.")
+        missing = sorted(selected - set(evaluated))
+        return {"cohortHash": artifact["cohortHash"], "selectedCount": len(selected),
+                "providedEvaluationCount": len(evaluated), "missingSpecificationHashes": missing,
+                "membershipComplete": not missing, "outcomeEvidenceVerified": False,
+                "productionEligible": False, "productionLearningEligible": False, "automaticTrading": False}
