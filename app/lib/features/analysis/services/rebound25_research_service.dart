@@ -777,8 +777,9 @@ class Rebound25ResearchService {
        _client = client ?? http.Client(),
        _ownsClient = client == null,
        _session = session ?? AuthSession.instance {
-    if (requestTimeout <= Duration.zero)
+    if (requestTimeout <= Duration.zero) {
       throw ArgumentError('Timeout inválido.');
+    }
   }
   static const int maxBodyBytes = 2 * 1024 * 1024;
   final String _baseUrl;
@@ -841,8 +842,9 @@ class Rebound25ResearchService {
     if (_disposed ||
         !_session.isAuthenticated ||
         _session.accessToken != token ||
-        _session.authorityVersion != version)
+        _session.authorityVersion != version) {
       throw StateError('La sesión cambió durante la simulación.');
+    }
   }
 
   Future<Rebound25ResearchResult> _run(
@@ -884,8 +886,9 @@ class Rebound25ResearchService {
       throw StateError('No se pudo completar la simulación sintética.');
     }
     _checkAuthority(token, version);
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw StateError('Simulación sintética no disponible para esta sesión.');
+    }
     try {
       final decoded = _object(jsonDecode(utf8.decode(bytes)));
       return Rebound25ResearchResult._parse(_object(decoded['data']), frozen);
